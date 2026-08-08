@@ -1,4 +1,20 @@
-# DeskHop - Fast Desktop Switching
+# deskhopplus
+
+> **A hard fork of [DeskHop](https://github.com/hrvach/deskhop) by Hrvoje Cavrak.**
+>
+> deskhopplus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a USB CDC channel with per-OS companion helpers.
+>
+> This is a **hard fork, not a downstream branch.** It deliberately replaces upstream models where they don't fit — most significantly the linear screen chain in `src/mouse.c`, which assumes each computer's monitors are arranged along the same axis as the border between computers.
+>
+> **Upstream sync policy.** Fixes from upstream — particularly PIO/USB stability work — are evaluated at each upstream **release** and cherry-picked selectively. Feature work is not tracked.
+>
+> **When syncing stops.** Once the new layout model lands, `src/mouse.c` will have diverged past the point where upstream patches apply cleanly. At that point this fork stops tracking upstream and this section will say so plainly, rather than maintaining the appearance of a relationship that no longer functions.
+>
+> Licensed **GPLv3**, as upstream. All original copyright notices are retained; modified files carry an additional notice recording the change.
+
+---
+
+The original DeskHop README follows.
 
 Did you ever notice how, in the crazy world of tech, there's always that one quirky little project trying to solve a problem so niche that its only competitors might be a left-handed screwdriver and a self-hiding alarm clock?
 
