@@ -1,3 +1,11 @@
 build
 
 .idea/
+
+# Raw output from tools/windows-checks - contains corporate hostnames, usernames,
+# domain names and clipboard previews of internal documents. Never commit to a
+# public repo; transcribe the findings into the issue by hand instead.
+tools/windows-checks/deskhopplus-*.log
+tools/windows-checks/deskhopplus-*.json
+
+.DS_Store
