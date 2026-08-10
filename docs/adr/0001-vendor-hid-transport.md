@@ -164,7 +164,7 @@ inferences behind it.
 | Option | Why not |
 | --- | --- |
 | **USB CDC** | Retained as fallback. Costs the unresolved `usbser.sys` device-installation question and sits on a class carrying a live Trellix filter. Otherwise sound: driverless, and permission-free on macOS. |
-| **WinUSB** | Rejected in the original comparison and still rejected: requires a driver association and administrator rights. |
+| **WinUSB** | Still rejected, but ~~requires a driver association and administrator rights~~ — that rationale was stale: with MS OS 2.0 descriptors WinUSB binds in-box with no admin, and #7 had already found Windows parity, rejecting it as "strictly more work on both sides". The reasons that hold today: extra descriptor work in firmware, IOKit/libusb work on macOS where HID is free, and — decisive on this ADR's own evidence — WinUSB devices land in the **USBDevice** class, where `hdlpdbk` is a registered filter, while HIDClass carries none. Its bulk endpoints (~1 MB/s at full speed) would have removed the throughput ceiling ADR-0002 exists to mitigate; that forgone bandwidth is a real cost of choosing HID and is recorded here. |
 | **Reusing the existing config-mode vendor HID interface** | It exists only in the config-mode descriptor, alongside the MSC ramdisk — so the clipboard would work only in config mode, which also mounts mass storage and raises a Trellix justification prompt (#58). |
 | **Appending the vendor collection to the keyboard interface** | Cheaper descriptor change, but acquires the macOS Input Monitoring requirement via `conformsTo`. Rejected on the constraint above. |
 

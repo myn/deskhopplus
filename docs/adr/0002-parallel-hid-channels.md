@@ -18,8 +18,9 @@ Specifically:
    take different channels.
 3. **Channel 0 carries session, control and placement**; bulk stripes across all channels.
 4. **The channel count is negotiated in the hello** and is not a wire-format property. Ship `N = 1`;
-   raise to 3 once [#39](https://github.com/myn/deskhopplus/issues/39) has measured throughput and the
-   longer descriptor has been tested at a BIOS/UEFI prompt.
+   raise it once [#39](https://github.com/myn/deskhopplus/issues/39) has measured throughput and the
+   longer descriptor has been tested at a BIOS/UEFI prompt. *(Amended 2026-08-09: `N = 2` is the
+   default candidate for the raise — see Outstanding.)*
 5. **All-or-nothing exclusivity.** The helper acquires every channel exclusively or fails the session.
 6. **The channel is invisible to the firmware and to the wire format.** No channel field on any frame.
 
@@ -106,5 +107,17 @@ inter-board link, which remains a single serialised path.
   an observation — the same status the spec's earlier ~200 KB/s UART figure had, and it should be
   treated with the same suspicion.
 - The working **chunk size** is a build constant to be set after that measurement. The design fixes only
-  that a chunk is one frame's payload, within the unchanged 4 KiB frame maximum.
-- A follow-up ticket raises `N` from 1 to 3 and carries the BIOS/UEFI re-test at the longer descriptor.
+  that a chunk is one frame's payload, within the unchanged 4 KiB frame maximum. **The
+  loss-amplification math, not only measured throughput, should drive the choice** *(amended
+  2026-08-09)*: the chunk is the retransmission unit, and a 4 KiB chunk is 512 inter-board packets —
+  one lost packet retransmits all 512. At 512 bytes a chunk is 64 packets, for roughly 2% additional
+  header overhead.
+- A follow-up ticket ([#63](https://github.com/myn/deskhopplus/issues/63)) raises `N` from 1 and
+  carries the BIOS/UEFI re-test at the longer descriptor.
+- **Amended 2026-08-09: `N = 2` is the default candidate for that raise, not an off-ramp.** The
+  latency benefit — placement on channel 0 never queuing behind bulk — arrives fully at two channels.
+  The third channel moves bulk from ~128 to ~192 KB/s against a UART wall the same arithmetic puts at
+  ~200 KB/s, while carrying the longest descriptor and a third exclusive acquisition. Raise to 3 only
+  if #39 shows a single channel actually achieves its arithmetic and the inter-board link, not the
+  USB hop, is measurably the wall. The negotiated count makes this a late, cheap choice — which is
+  the point of negotiating it.
