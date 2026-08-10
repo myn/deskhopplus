@@ -115,6 +115,8 @@ public static class H {
     [DllImport("hid.dll", SetLastError = true)] public static extern bool HidD_GetFeature(IntPtr h, byte[] buf, int len);
     [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool HidD_GetProductString(IntPtr h, StringBuilder s, int len);
+    [DllImport("hid.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool HidD_GetSerialNumberString(IntPtr h, StringBuilder s, int len);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct HIDP_CAPS {
@@ -233,6 +235,8 @@ function Invoke-CheckA {
                 if ([H]::HidP_GetCaps($ppd, [ref]$caps) -ne 0x110000) { continue }  # HIDP_STATUS_SUCCESS
                 $sb = New-Object Text.StringBuilder 256
                 [void][H]::HidD_GetProductString($h, $sb, 512)
+                $sn = New-Object Text.StringBuilder 256
+                [void][H]::HidD_GetSerialNumberString($h, $sn, 512)
                 $attr = New-Object H+HIDD_ATTRIBUTES
                 $attr.Size = [Runtime.InteropServices.Marshal]::SizeOf($attr)
                 if (-not [H]::HidD_GetAttributes($h, [ref]$attr)) { $attr.VendorID = 0; $attr.ProductID = 0 }
@@ -245,7 +249,7 @@ function Invoke-CheckA {
                 $rows += [pscustomobject]@{
                     Path = $p; UsagePage = $up; Usage = $u
                     Product = $sb.ToString()
-                    Vid = $attr.VendorID; Pid = $attr.ProductID
+                    Vid = $attr.VendorID; Pid = $attr.ProductID; Serial = $sn.ToString()
                     Feature = $caps.FeatureReportByteLength
                     Input   = $caps.InputReportByteLength
                     SystemHeld = $sysHeld; Vendor = $vendor
@@ -303,6 +307,7 @@ function Invoke-CheckA {
     Write-Log ("TARGET: UP=0x{0:X4} U=0x{1:X4} VID=0x{2:X4} PID=0x{3:X4} feat={4} '{5}'" -f `
         $script:Target.UsagePage, $script:Target.Usage, $script:Target.Vid, $script:Target.Pid, `
         $script:Target.Feature, $script:Target.Product) 'PASS'
+    Write-Log ("        serial '{0}' - this is what a helper matches on, never the path below" -f $script:Target.Serial)
     Write-Log ("        {0}" -f $script:Target.Path)
     if (-not $TargetPath -and -not ($VendorId -and $ProductId)) {
         Write-Log "        Target was picked by heuristic. If this run is meant to be about a specific device, re-run with -Vid/-Pid and confirm the line above names it." 'WARN'
