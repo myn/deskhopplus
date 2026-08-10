@@ -17,7 +17,8 @@ process that can open the endpoint can push files across it. On a COM port that 
 exclusive by construction
 ([CreateFileA, "Communications Resources"](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea),
 quoted in `docs/research/windows-helper-constraints.md` §1.1). If vendor HID cannot reproduce it,
-decision 6 on #31 reopens.
+the exclusive-ownership control locked by #34 reopens. (Not to be confused with map #31's *standing*
+decision 6, which is cursor placement.)
 
 **Sourcing.** Microsoft Learn (HID driver documentation, `hidsdi.h` / `hidclass.h` API references,
 WDM kernel documentation) and the WDK's own `hidclass.h` header. Microsoft's `hclient` WDK sample

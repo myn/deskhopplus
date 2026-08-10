@@ -4,8 +4,9 @@ Research for [issue #59](https://github.com/myn/deskhopplus/issues/59) — the C
 transport decision. It exists to settle one of the two unknowns that #59's own correction note says
 block the choice, and it tests whether the zero-permission finding locked by
 [issue #35](https://github.com/myn/deskhopplus/issues/35) survives a move off CDC. The outcome feeds
-back to the [map](https://github.com/myn/deskhopplus/issues/31), where decisions 1, 2 and 6 depend on
-it.
+back to the [map](https://github.com/myn/deskhopplus/issues/31), where standing decisions 1 and 2 —
+and the exclusive-ownership control locked by
+[#34](https://github.com/myn/deskhopplus/issues/34) — depend on it.
 
 ## The question
 

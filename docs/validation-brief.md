@@ -20,8 +20,8 @@ Read the ADRs for the reasoning. Read the issues for how the reasoning changed u
 | Artifact | Location |
 | --- | --- |
 | Decisions | `docs/adr/0001-*.md`, `docs/adr/0002-*.md` |
-| Research | `docs/research/` — 4 documents |
-| Measurement tooling | `tools/windows-checks/*.ps1` — 4 scripts |
+| Research | `docs/research/` — 5 documents |
+| Measurement tooling | `tools/windows-checks/*.ps1` — 3 scripts |
 | **Raw evidence** | `tools/windows-checks/deskhopplus-*.log` and `*.json` — **gitignored, local disk only** |
 | Channel spec | issue #42 |
 | Map holding locked decisions | issue #31 |
