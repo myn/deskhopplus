@@ -59,8 +59,11 @@ Baseline on stock firmware for comparison: two nodes, both flagged, and the scri
 
 ```
 powershell -ExecutionPolicy Bypass -File tools\windows-checks\Confirm-HidExclusivity.ps1 `
-    -Check A,E -Vid 0x1209 -Pid 0xC000 -Usage 0x20
+    -Check A,E -VendorId 0x1209 -ProductId 0xC000 -Usage 0x20
 ```
+
+(The parameters are named in full because a PowerShell parameter binds a variable of the same
+name, and `$Pid` is a read-only automatic variable — a `-Pid` parameter fails at bind time.)
 
 Run **as a normal user**, not elevated: "without administrator rights" is part of what is
 being measured.
@@ -80,13 +83,21 @@ before recording anything below.
 
 ### 3. The one that cannot be answered from source
 
-Both descriptor variants, on real hardware. Normal mode is the everyday case; config mode is
-reached with `Left Ctrl + Right Shift + C + O`.
+**Normal mode only.** #25 originally asked for both descriptor variants, but the config-mode
+descriptor was shown to be byte-for-byte identical to its predecessor, so its pre-boot
+behaviour cannot have changed and re-testing it measures nothing. Only the normal-mode
+descriptor grew an interface. Should a future change touch the config-mode descriptor, this
+section grows back.
 
-- [ ] Keyboard works at the BIOS/UEFI setup prompt — normal mode
-- [ ] Keyboard works at the disk-encryption prompt — normal mode
-- [ ] Keyboard works at the BIOS/UEFI setup prompt — config mode
-- [ ] Keyboard works at the disk-encryption prompt — config mode
+**Switch to the machine under test first.** The device routes the keyboard to one output at a
+time (`Left Ctrl + Caps Lock`). Rebooting a computer the device is not pointed at looks
+exactly like a keyboard failure and is the easiest way to record a false negative here.
+
+- [ ] Windows: keyboard works at the UEFI/BIOS setup prompt
+- [ ] Windows: keyboard works at the BitLocker pre-boot prompt, or *not applicable* if the
+      machine unlocks from the TPM without prompting
+- [ ] macOS: keyboard works in Startup Manager (hold Option at power-on)
+- [ ] macOS: keyboard works at the FileVault unlock screen, or *not applicable* if disabled
 
 If any of these fail, the interface count is the cause and the finding belongs in the issue
 before anything else is built on the channel.

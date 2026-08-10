@@ -56,8 +56,11 @@ param(
     # heuristic that prefers a vendor collection supporting feature reports, and
     # the deskhopplus channel has none - so it would silently measure some other
     # vendor device and report a pass that means nothing (#25).
-    [uint16]$Vid,
-    [uint16]$Pid,
+    # Named in full: a parameter binds a variable of the same name, and $Pid is a
+    # read-only automatic variable, so -Pid fails at bind time with
+    # "Cannot overwrite variable Pid because it is read-only or constant".
+    [uint16]$VendorId,
+    [uint16]$ProductId,
     # Usage within the vendor page, e.g. 0x20 for the channel. Optional; only
     # needed when one device publishes several vendor collections.
     [uint16]$Usage
@@ -264,17 +267,17 @@ function Invoke-CheckA {
         $script:Target = $rows | Where-Object { $_.Path -eq $TargetPath } | Select-Object -First 1
         if (-not $script:Target) { Write-Log "-TargetPath did not match any enumerated collection." 'FAIL'; return }
         Write-Log ("Target: caller-supplied.") 'WARN'
-    } elseif ($Vid -and $Pid) {
+    } elseif ($VendorId -and $ProductId) {
         # Identity selection. Never falls back to the heuristic: a run that cannot
         # find the requested collection must fail visibly, because a pass against
         # somebody else's device is worse than no answer at all.
         $script:Target = $rows |
-            Where-Object { $_.Vid -eq $Vid -and $_.Pid -eq $Pid -and
+            Where-Object { $_.Vid -eq $VendorId -and $_.Pid -eq $ProductId -and
                            (-not $Usage -or $_.Usage -eq $Usage) } |
             Select-Object -First 1
         if (-not $script:Target) {
             Write-Log ("No collection matches VID=0x{0:X4} PID=0x{1:X4}{2}. The device is absent, in config mode, or running firmware without the channel interface." -f `
-                $Vid, $Pid, $(if ($Usage) { " Usage=0x{0:X4}" -f $Usage } else { "" })) 'FAIL'
+                $VendorId, $ProductId, $(if ($Usage) { " Usage=0x{0:X4}" -f $Usage } else { "" })) 'FAIL'
             return
         }
         Write-Log ("Target: selected by identity, not by device path.") 'PASS'
@@ -301,7 +304,7 @@ function Invoke-CheckA {
         $script:Target.UsagePage, $script:Target.Usage, $script:Target.Vid, $script:Target.Pid, `
         $script:Target.Feature, $script:Target.Product) 'PASS'
     Write-Log ("        {0}" -f $script:Target.Path)
-    if (-not $TargetPath -and -not ($Vid -and $Pid)) {
+    if (-not $TargetPath -and -not ($VendorId -and $ProductId)) {
         Write-Log "        Target was picked by heuristic. If this run is meant to be about a specific device, re-run with -Vid/-Pid and confirm the line above names it." 'WARN'
     }
     if ($script:Target.SystemHeld) { Write-Log "        WARNING: target is system-held. Results will describe RIM, not our case." 'FAIL' }
