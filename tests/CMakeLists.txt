@@ -20,3 +20,7 @@ add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
 target_include_directories(frame_test PRIVATE ${CORE})
 target_compile_definitions(frame_test PRIVATE DH_TEST_VECTORS="${VECTORS}")
 add_test(NAME frame_test COMMAND frame_test)
+
+add_executable(txq_test txq_test.c)
+target_include_directories(txq_test PRIVATE ${CORE})
+add_test(NAME txq_test COMMAND txq_test)

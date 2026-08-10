@@ -83,7 +83,7 @@ void tud_hid_set_report_cb(uint8_t instance,
         restore_leds(&global_state);
 
     /* Always send to the other one, so it is aware of the change */
-    send_value(leds, KBD_SET_REPORT_MSG);
+    (void)send_value(leds, KBD_SET_REPORT_MSG);
 }
 
 /* Invoked when device is mounted */
@@ -202,7 +202,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     blink_led(&global_state);
 
     /* Also signal the other board to flash LED, to enable easy verification if serial works */
-    send_value(ENABLE, FLASH_LED_MSG);
+    (void)send_value(ENABLE, FLASH_LED_MSG);
 
     /* Kick off the report querying */
     tuh_hid_receive_report(dev_addr, instance);

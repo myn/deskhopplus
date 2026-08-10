@@ -146,7 +146,7 @@ void request_byte(device_t *state, uint32_t address) {
     };
     state->fw.byte_done = false;
 
-    queue_try_add(&global_state.uart_tx_queue, &packet);
+    (void)queue_uart_packet(&packet, state);
 }
 
 void reboot(void) {

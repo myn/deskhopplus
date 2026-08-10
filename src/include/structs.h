@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "dh_txq.h"
 #include "flash.h"
 #include "packet.h"
 #include "screen.h"
@@ -109,11 +110,12 @@ typedef struct {
     int16_t pointer_y;
     int16_t mouse_buttons; // Store and update the state of mouse buttons
 
-    config_t config;       // Device configuration, loaded from flash or defaults used
-    queue_t hid_queue_out; // Queue that stores outgoing hid messages
-    queue_t kbd_queue;     // Queue that stores keyboard reports
-    queue_t mouse_queue;   // Queue that stores mouse reports
-    queue_t uart_tx_queue; // Queue that stores outgoing packets
+    config_t config;            // Device configuration, loaded from flash or defaults used
+    queue_t hid_queue_out;      // Queue that stores outgoing hid messages
+    queue_t kbd_queue;          // Queue that stores keyboard reports
+    queue_t mouse_queue;        // Queue that stores mouse reports
+    queue_t uart_tx_queue;      // Queue that stores outgoing packets
+    dh_txq_stats uart_tx_stats; // Drops from a full uart_tx_queue (#43)
 
     hid_interface_t iface[MAX_DEVICES][MAX_INTERFACES]; // Store info about HID interfaces
     uart_packet_t in_packet;

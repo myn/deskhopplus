@@ -37,7 +37,7 @@ void _screensaver_set(device_t *state, uint8_t value) {
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT)
         state->config.output[BOARD_ROLE].screensaver.mode = value;
     else
-        send_value(value, SCREENSAVER_MSG);
+        (void)send_value(value, SCREENSAVER_MSG);
 };
 
 /* This key combo records switch y top coordinate for different-size monitors  */
@@ -48,7 +48,7 @@ void screen_border_hotkey_handler(device_t *state, hid_keyboard_report_t *report
         save_config(state);
     }
 
-    queue_packet((uint8_t *)border, SYNC_BORDERS_MSG, sizeof(border_size_t));
+    (void)queue_packet((uint8_t *)border, SYNC_BORDERS_MSG, sizeof(border_size_t));
 };
 
 /* This key combo puts board A in firmware upgrade mode */
@@ -58,19 +58,19 @@ void fw_upgrade_hotkey_handler_A(device_t *state, hid_keyboard_report_t *report)
 
 /* This key combo puts board B in firmware upgrade mode */
 void fw_upgrade_hotkey_handler_B(device_t *state, hid_keyboard_report_t *report) {
-    send_value(ENABLE, FIRMWARE_UPGRADE_MSG);
+    (void)send_value(ENABLE, FIRMWARE_UPGRADE_MSG);
 };
 
 /* This key combo prevents mouse from switching outputs */
 void switchlock_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     state->switch_lock ^= 1;
-    send_value(state->switch_lock, SWITCH_LOCK_MSG);
+    (void)send_value(state->switch_lock, SWITCH_LOCK_MSG);
 }
 
 /* This key combo toggles gaming mode */
 void toggle_gaming_mode_handler(device_t *state, hid_keyboard_report_t *report) {
     state->gaming_mode ^= 1;
-    send_value(state->gaming_mode, GAMING_MODE_MSG);
+    (void)send_value(state->gaming_mode, GAMING_MODE_MSG);
 };
 
 /* This key combo locks both outputs simultaneously */
@@ -96,8 +96,8 @@ void screenlock_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
             queue_kbd_report(&lock_report, state);
             release_all_keys(state);
         } else {
-            queue_packet((uint8_t *)&lock_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
-            queue_packet((uint8_t *)&release_keys, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
+            (void)queue_packet((uint8_t *)&lock_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
+            (void)queue_packet((uint8_t *)&release_keys, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
         }
     }
 }
@@ -106,13 +106,13 @@ void screenlock_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
 void wipe_config_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     wipe_config();
     load_config(state);
-    send_value(ENABLE, WIPE_CONFIG_MSG);
+    (void)send_value(ENABLE, WIPE_CONFIG_MSG);
 }
 
 /* When pressed, toggles the current mouse zoom mode state */
 void mouse_zoom_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     state->mouse_zoom ^= 1;
-    send_value(state->mouse_zoom, MOUSE_ZOOM_MSG);
+    (void)send_value(state->mouse_zoom, MOUSE_ZOOM_MSG);
 };
 
 /* When pressed, enables the pong screensaver on active output */
@@ -227,7 +227,7 @@ void handle_sync_borders_msg(uart_packet_t *packet, device_t *state) {
 
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
         _get_border_position(state, border);
-        queue_packet((uint8_t *)border, SYNC_BORDERS_MSG, sizeof(border_size_t));
+        (void)queue_packet((uint8_t *)border, SYNC_BORDERS_MSG, sizeof(border_size_t));
     } else
         memcpy(border, packet->data, sizeof(border_size_t));
 
@@ -267,7 +267,7 @@ void handle_reboot_msg(uart_packet_t *packet, device_t *state) {
 
 /* Decapsulate and send to the other box */
 void handle_proxy_msg(uart_packet_t *packet, device_t *state) {
-    queue_packet(&packet->data[1], (enum packet_type_e)packet->data[0], PACKET_DATA_LENGTH - 1);
+    (void)queue_packet(&packet->data[1], (enum packet_type_e)packet->data[0], PACKET_DATA_LENGTH - 1);
 }
 
 /* Process relative mouse command */
@@ -325,7 +325,7 @@ void handle_request_byte_msg(uart_packet_t *packet, device_t *state) {
     uint32_t data = *(uint32_t *)&ADDR_FW_RUNNING[address];
     packet->data32[1] = data;
 
-    queue_packet(packet->data, RESPONSE_BYTE_MSG, PACKET_DATA_LENGTH);
+    (void)queue_packet(packet->data, RESPONSE_BYTE_MSG, PACKET_DATA_LENGTH);
 }
 
 /* Process response message following a request we sent to read a byte */
@@ -386,7 +386,7 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
 void set_active_output(device_t *state, uint8_t new_output) {
     state->active_output = new_output;
     restore_leds(state);
-    send_value(new_output, OUTPUT_SELECT_MSG);
+    (void)send_value(new_output, OUTPUT_SELECT_MSG);
 
     /* If we were holding a key down and drag the mouse to another screen, the key gets stuck.
        Changing outputs = no more keypresses on the previous system. */

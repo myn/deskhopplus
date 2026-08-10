@@ -27,17 +27,30 @@ void write_raw_packet(uint8_t *dst, uart_packet_t *packet) {
     memcpy(dst, &pkt, RAW_PACKET_LENGTH);
 }
 
+/* The one entry to the transmit queue: returns false when the queue was full
+   and the packet dropped, counting every drop in uart_tx_stats. The log is
+   held to power-of-two counts so a congested link isn't stalled by logging. */
+bool queue_uart_packet(uart_packet_t *packet, device_t *state) {
+    bool queued = dh_txq_track(&state->uart_tx_stats,
+                               queue_try_add(&state->uart_tx_queue, packet));
+    uint32_t dropped = state->uart_tx_stats.dropped;
+    if (!queued && (dropped & (dropped - 1)) == 0)
+        dh_debug_printf("uart_tx_queue full, dropped type 0x%02x (%lu total)\r\n",
+                        packet->type, (unsigned long)dropped);
+    return queued;
+}
+
 /* Schedule packet for sending to the other box */
-void queue_packet(const uint8_t *data, enum packet_type_e packet_type, int length) {
+bool queue_packet(const uint8_t *data, enum packet_type_e packet_type, int length) {
     uart_packet_t packet = {.type = packet_type};
     memcpy(packet.data, data, length);
 
-    queue_try_add(&global_state.uart_tx_queue, &packet);
+    return queue_uart_packet(&packet, &global_state);
 }
 
 /* Sends just one byte of a certain packet type to the other box. */
-void send_value(const uint8_t value, enum packet_type_e packet_type) {
-    queue_packet(&value, packet_type, sizeof(uint8_t));
+bool send_value(const uint8_t value, enum packet_type_e packet_type) {
+    return queue_packet(&value, packet_type, sizeof(uint8_t));
 }
 
 /* Process outgoing config report messages. */

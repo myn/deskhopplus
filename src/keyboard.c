@@ -263,7 +263,7 @@ void send_key(hid_keyboard_report_t *report, device_t *state) {
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
         /* Send the combined report to ensure all keys are included */
-        queue_packet((uint8_t *)&combined_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
+        (void)queue_packet((uint8_t *)&combined_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
     }
 }
 
@@ -273,7 +273,7 @@ void send_consumer_control(uint8_t *raw_report, device_t *state) {
         queue_cc_packet(raw_report, state);
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
-        queue_packet((uint8_t *)raw_report, CONSUMER_CONTROL_MSG, CONSUMER_CONTROL_LENGTH);
+        (void)queue_packet((uint8_t *)raw_report, CONSUMER_CONTROL_MSG, CONSUMER_CONTROL_LENGTH);
     }
 }
 
@@ -283,7 +283,7 @@ void send_system_control(uint8_t *raw_report, device_t *state) {
         queue_system_packet(raw_report, state);
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
-        queue_packet((uint8_t *)raw_report, SYSTEM_CONTROL_MSG, SYSTEM_CONTROL_LENGTH);
+        (void)queue_packet((uint8_t *)raw_report, SYSTEM_CONTROL_MSG, SYSTEM_CONTROL_LENGTH);
     }
 }
 
@@ -355,7 +355,7 @@ void process_consumer_report(uint8_t *raw_report, int length, uint8_t itf, hid_i
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
         send_consumer_control(new_report, state);
     } else {
-        queue_packet((uint8_t *)new_report, CONSUMER_CONTROL_MSG, CONSUMER_CONTROL_LENGTH);
+        (void)queue_packet((uint8_t *)new_report, CONSUMER_CONTROL_MSG, CONSUMER_CONTROL_LENGTH);
     }
 }
 
@@ -370,7 +370,7 @@ void process_system_report(uint8_t *raw_report, int length, uint8_t itf, hid_int
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
         send_system_control(report_ptr, state);
     } else {
-        queue_packet(report_ptr, SYSTEM_CONTROL_MSG, SYSTEM_CONTROL_LENGTH);
+        (void)queue_packet(report_ptr, SYSTEM_CONTROL_MSG, SYSTEM_CONTROL_LENGTH);
     }
 }
 

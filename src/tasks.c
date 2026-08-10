@@ -167,7 +167,7 @@ void heartbeat_output_task(device_t *state) {
         },
     };
 
-    queue_try_add(&global_state.uart_tx_queue, &packet);
+    (void)queue_uart_packet(&packet, state);
 }
 
 
