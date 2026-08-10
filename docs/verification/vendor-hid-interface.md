@@ -110,6 +110,26 @@ before anything else is built on the channel.
 - [ ] The web config page loads and reads values
 - [ ] Firmware upgrade through config mode still works
 
+## Bump the version, or only one board changes
+
+`handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
+newer** version:
+
+```c
+if (other_running_version <= state->_running_fw.version)
+    return;
+```
+
+So flashing a build that carries the same version as the board already running leaves the
+second board on the old firmware, silently and with no error anywhere — the pair ends up
+split, presenting different USB descriptors to the two computers. Measured on 2026-08-10: the
+macOS side had the channel interface and the Windows side did not, purely because the version
+had not moved.
+
+**Any descriptor or protocol change must bump `VERSION_MINOR` in `CMakeLists.txt` before
+flashing.** Verify propagation by confirming both computers see the new interface, not just
+the one whose board was flashed directly.
+
 ## Recovery
 
 The ROM bootloader is always reachable: hold the on-board button while connecting the Pico and
