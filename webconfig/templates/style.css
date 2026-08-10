@@ -663,3 +663,8 @@ img {
 .online {
   opacity: 0.5;
 }
+
+.dev-warning {
+  color: #b0342b;
+  font-weight: bold;
+}

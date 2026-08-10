@@ -129,6 +129,7 @@ typedef struct {
     /* Firmware */
     fw_upgrade_state_t fw;           // State of the firmware upgrader
     firmware_metadata_t _running_fw; // RAM copy of running fw metadata
+    bool dev_build;                  // True when channel authentication is compiled out (#44)
     bool reboot_requested;           // If set, stop updating watchdog
     uint64_t config_mode_timer;      // Counts how long are we to remain in config mode
 

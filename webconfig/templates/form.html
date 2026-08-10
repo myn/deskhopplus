@@ -20,6 +20,10 @@
     {{ label(item, class='') }}
     {{ input(item) }} data-fw-ver readonly />
 
+  {% elif item.get("elem") == "dev_build" %}
+    {{ label(item, class='') }}
+    {{ input(item) }} data-dev-build readonly />
+
   {% elif item.get("elem") == "label" %}
     {{ label(item, class='') }}
 

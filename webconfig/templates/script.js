@@ -156,6 +156,17 @@ function updateElement(key, event) {
       const minor = (value - 100) % 1000;
       setValue(element, `v${major}.${minor}`);
     }
+
+    if (element.hasAttribute('data-dev-build')) {
+      setValue(element, value ? 'development — channel authentication is disabled' : 'release');
+      if (value) {
+        element.classList.add('dev-warning');
+        /* Field 83 arrives after 78 (map order), so the version is rendered by now */
+        const ver = document.querySelector('[data-fw-ver]');
+        if (ver && ver.value && !ver.value.endsWith('-dev'))
+          setValue(ver, `${ver.value}-dev`);
+      }
+    }
   }
 }
 

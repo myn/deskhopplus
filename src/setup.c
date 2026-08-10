@@ -221,6 +221,11 @@ void initial_setup(device_t *state) {
     /* Check if we should boot in configuration mode or not */
     state->config_mode_active = is_config_mode_active(state);
 
+    /* A build without channel authentication must identify itself */
+#ifdef DH_DEV_NO_AUTH
+    state->dev_build = true;
+#endif
+
     /* Detect which board we're running on */
     state->board_role = board_autoprobe();
 

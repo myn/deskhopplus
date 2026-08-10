@@ -24,6 +24,7 @@ SHORTCUTS = {
 STATUS_ = [
     FormField(78, "Running FW version", None, {}, "uint16", elem="fw_version"),
     FormField(79, "Running FW checksum", None, {}, "uint32", elem="hex_info"),
+    FormField(83, "Build", None, {}, "uint8", elem="dev_build"),
 ]
 
 CONFIG_ = [

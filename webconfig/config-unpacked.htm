@@ -672,6 +672,11 @@ img {
 .online {
   opacity: 0.5;
 }
+
+.dev-warning {
+  color: #b0342b;
+  font-weight: bold;
+}
   </style>
 
   <title>DeskHop Config</title>
@@ -1682,6 +1687,27 @@ img {
   
 
           
+            
+
+
+
+
+
+
+
+
+  
+    
+<label class=""> Build</label>
+
+    
+<input class="api" type="text" name="name83" data-type="uint8" data-key="83"
+  onchange="valueChangedHandler(this)"
+ data-dev-build readonly />
+
+  
+
+          
 
         </div>
 
@@ -1848,6 +1874,17 @@ function updateElement(key, event) {
       const major = Math.floor((value - 100) / 1000);
       const minor = (value - 100) % 1000;
       setValue(element, `v${major}.${minor}`);
+    }
+
+    if (element.hasAttribute('data-dev-build')) {
+      setValue(element, value ? 'development — channel authentication is disabled' : 'release');
+      if (value) {
+        element.classList.add('dev-warning');
+        /* Field 83 arrives after 78 (map order), so the version is rendered by now */
+        const ver = document.querySelector('[data-fw-ver]');
+        if (ver && ver.value && !ver.value.endsWith('-dev'))
+          setValue(ver, `${ver.value}-dev`);
+      }
     }
   }
 }
