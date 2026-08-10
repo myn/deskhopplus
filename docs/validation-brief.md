@@ -100,3 +100,65 @@ ls tools/windows-checks/deskhopplus-*.log   # raw evidence, if not yet deleted
 ```
 
 The scripts are runnable and unelevated. `Confirm-HidExclusivity.ps1 -Check A,E` reproduces the exclusivity result on any machine with a vendor-page HID device; `Confirm-Check1.ps1 -Part A` reproduces the cursor-placement result and needs one UAC approval.
+
+---
+
+## Validation outcome (2026-08-09, appended by the reviewing session)
+
+The review ran. Everything above this line is the original brief, unmodified except two inventory
+counts corrected in its table (5 research documents, not 4; 3 scripts, not 4). The raw logs were
+deliberately not opened, per instruction — so the transcriptions were checked for internal
+consistency across the ADRs, issues, research documents and source tree, not against the raw
+evidence. Within that scope, the record held: every number, section reference, script invocation and
+supersession note cited across the corpus checked out, and the arithmetic is right (one benign
+note: the "~200 KB/s" UART figure rounds down from ~246 KB/s of pure framing arithmetic —
+conservative in the safe direction, and flagged everywhere as unmeasured anyway).
+
+### Defects found and fixed (commit `b8531f9`)
+
+- **"Decision 6" meant two different things.** `windows-helper-constraints.md` uses "standing
+  decision 6" correctly for map #31's cursor-placement decision, but both HID transport research
+  documents used "decision 6" for the exclusive-ownership control, which actually lives in #34.
+  Both now point at #34.
+- **#63 declared its blockers (#25, #39) in prose only.** The repo convention makes native GitHub
+  dependencies the canonical gate, so a frontier query would have offered #63 prematurely. Both
+  `blocked_by` edges now exist.
+
+### Four amendments adopted after review (commit `e9cf15d`; comments on #34, #42, #63; #42's body rewritten to match)
+
+1. **The pairing window and the exclusivity race compose into an attack path** — this answers the
+   open question above ("what can a hostile process that *wins* that race actually do"): it waits
+   for the user to press the config chord, because "not paired — press the config chord" was the
+   documented remedy for exactly the state the attacker causes. The chord protects against a
+   *remote* process opening the window, not against a *local* one being the thing provisioned.
+   Fixed in posture, not mechanism: a refused open now surfaces as "another program holds the
+   channel" and never prompts the chord; pairing success is confirmed visibly by the helper; #46
+   decides secret rotation per window. Full analysis in the #34 comment.
+2. **ADR-0001's WinUSB rejection rationale was stale.** "Requires administrator rights" contradicted
+   #7's own finding (MS OS 2.0 descriptors bind WinUSB in-box, no admin; rejected then as "strictly
+   more work on both sides"). The row now records the reasons that hold — extra work both sides,
+   and `hdlpdbk` registered on the USBDevice class where WinUSB devices land — plus the genuine
+   forgone cost: WinUSB's ~1 MB/s bulk endpoints would have made ADR-0002 unnecessary.
+3. **Seams 1 and 2 consolidated to one shared C core** (frame codec and transfer state machine),
+   compiled into the firmware and linked into both helpers, instead of three independent
+   implementations. The golden-vector file keeps its exact role; the surface it must keep honest
+   drops to one implementation plus thin bindings. mkroamer's per-platform codec ports are not
+   reused — the re-cast message set meant they needed substantive rework anyway.
+4. **ADR-0002 amended: `N = 2` is the default candidate for the channel raise, not an off-ramp.**
+   The latency benefit arrives fully at two channels; the third buys ~64 KB/s against the UART wall
+   while carrying the longest descriptor and a third exclusive acquisition, so it now needs #39 to
+   make the case. The chunk-size choice also gained the loss-amplification constraint this brief
+   raised: a 4 KiB chunk is a 512-packet retransmission unit; ~512 bytes costs ~2% more overhead
+   for 8× less amplification.
+
+### Status of this brief's open questions
+
+- 4 KiB frame maximum vs 8-byte inter-board packets — **recorded as a binding constraint on the
+  chunk-size choice** in ADR-0002 (amendment 4). Not resolved; #39 still sets the number.
+- ~256 KB eager/lazy threshold — **still open on #55**, unchanged.
+- Exclusivity × late helper start — **partially addressed** by amendment 1 (the remedy-separation
+  closes the provisioning path; the DoS-by-holding remains accepted and stated).
+- Hostile race-winner — **answered**; see amendment 1.
+- Nothing has been built — **still true.** The soft-claims ranking above stands, with one stake
+  lowered: if the 3× striping arithmetic is wrong, the amended default (`N = 2`) loses less than
+  the original plan did.
