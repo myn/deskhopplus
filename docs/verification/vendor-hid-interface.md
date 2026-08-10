@@ -130,6 +130,22 @@ had not moved.
 flashing.** Verify propagation by confirming both computers see the new interface, not just
 the one whose board was flashed directly.
 
+## Do not flash from macOS if it can be avoided
+
+The config-mode `DESKHOP` volume is not a general-purpose drive — it is a small FAT image
+served by the firmware. macOS writes `.fseventsd`, and often `._` resource-fork files, onto any
+volume it mounts, and those unexpected directory entries can make the device reject the image.
+The failure is silent in the worst way: the volume disappears and the device reboots exactly as
+it would on success, but it comes back running the *old* firmware.
+
+Observed 2026-08-10: the first flash from macOS worked with only `config.htm` on the volume; a
+second flash minutes later, by which time macOS had created `.fseventsd`, left the board on its
+previous firmware with no error anywhere. It was only detectable indirectly, because the peer
+board never upgraded.
+
+Prefer flashing from Windows, or use the ROM bootloader below. If a flash from macOS appears to
+do nothing, assume it was rejected rather than that it succeeded.
+
 ## Recovery
 
 The ROM bootloader is always reachable: hold the on-board button while connecting the Pico and
