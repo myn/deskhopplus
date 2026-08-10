@@ -1,0 +1,22 @@
+# Host test harness for the pure-logic core (src/core/) — the standalone build
+# decided in #9: no SDK, no cross-compiler, no framework, invoked separately so
+# the firmware build is untouched. Runs as its own CI job.
+#
+#   cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir tests/build
+
+cmake_minimum_required(VERSION 3.13)
+project(deskhopplus_core_tests C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+add_compile_options(-Wall -Wextra -pedantic)
+
+set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../src/core)
+set(VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/frames.txt)
+
+enable_testing()
+
+add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
+target_include_directories(frame_test PRIVATE ${CORE})
+target_compile_definitions(frame_test PRIVATE DH_TEST_VECTORS="${VECTORS}")
+add_test(NAME frame_test COMMAND frame_test)

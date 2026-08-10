@@ -1,0 +1,27 @@
+# deskhopplus golden protocol frames — the cross-implementation compatibility gate.
+# Format: <name> | <hex bytes, spaces ignored>
+# The shared C core (src/core/) and every binding of it must decode each frame and
+# re-encode it to the identical bytes. Any protocol change updates docs/protocol.md,
+# this file, and the core in the same change.
+#
+# Five vectors are ported byte-identical (names included) from mkroamer's
+# test-vectors/frames.txt, where the message survived the re-cast unchanged:
+# heartbeat, clip_offer_text2, clip_request_1, clip_done_2, clip_cancel_2.
+
+hello_mac                    | 01 00 17 00  01 00  01  00  01  00 04  ef be ad de ef be ad de ef be ad de ef be ad de
+hello_ack_ok                 | 02 00 07 00  01 00  00  00  01  00 04
+hello_ack_auth_failed        | 02 00 07 00  01 00  01  00  00  00 00
+hello_ack_version_mismatch   | 02 00 07 00  01 00  02  00  00  00 00
+heartbeat                    | 05 00 00 00
+pair_request                 | 08 00 00 00
+pair_grant_example           | 09 00 10 00  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+place_chain2_mid             | 20 00 04 00  02  01  00 80
+pos_query                    | 21 00 00 00
+pos_response_chain1          | 22 00 05 00  01  00 40  00 c0
+clip_offer_text2             | 30 00 0f 00  01 00 00 00  00  02 00 00 00 00 00 00 00  00 00
+clip_request_1               | 31 00 04 00  01 00 00 00
+clip_chunk_hi                | 32 00 0e 00  02 00 00 00  00 00 00 00  ac 2a 93 d8  68 69
+clip_done_2                  | 33 00 04 00  02 00 00 00
+clip_cancel_2                | 34 00 04 00  02 00 00 00
+clip_retransmit_seq5         | 35 00 08 00  02 00 00 00  05 00 00 00
+clip_credit_8                | 36 00 02 00  08 00

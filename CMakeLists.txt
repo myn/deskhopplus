@@ -70,6 +70,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/usb.c
   ${SRC_DIR}/main.c
   ${SRC_DIR}/ramdisk.c
+  ${SRC_DIR}/core/dh_frame.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )
@@ -77,6 +78,7 @@ set(COMMON_SOURCES
 ## Include Directories
 set(COMMON_INCLUDES
   ${SRC_DIR}/include
+  ${SRC_DIR}/core
   ${PICO_PIO_USB_DIR}/src
 )
 
