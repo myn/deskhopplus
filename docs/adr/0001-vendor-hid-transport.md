@@ -92,6 +92,34 @@ Both of DeskHop's existing normal-mode HID interfaces are TCC-flagged today. **A
 collection to the keyboard interface's report descriptor — the cheaper-looking change — would acquire
 the exact Input Monitoring requirement this decision avoids.**
 
+### Throughput: the USB hop becomes the system bottleneck
+
+This is the real cost of the decision, and it was not visible when the choice was framed.
+
+A full-speed interrupt endpoint moves **one report per 1 ms frame**. At a 64-byte report that is
+**64 KB/s per direction, per interface** — and `CFG_TUD_HID_EP_BUFSIZE` is currently 32, i.e. 32 KB/s
+until raised. CDC bulk on the same full-speed device would have carried roughly an order of magnitude
+more.
+
+The inter-board UART carries ~200 KB/s (8 payload bytes per 12 wire bytes). So where the UART was
+previously the system bottleneck, **a single HID channel is about 3× worse than the link it feeds**:
+
+| Payload | One channel at 64 KB/s |
+| --- | --- |
+| Text, small images (the everyday path) | imperceptible |
+| 10 MB default cap | ~2.7 minutes |
+| 64 MB maximum cap | ~17 minutes |
+
+The mitigation — striping across parallel vendor HID interfaces — is a separate decision, recorded in
+**[ADR-0002](0002-parallel-hid-channels.md)**. It restores roughly the UART's ceiling and no more,
+because beyond that the UART is the wall.
+
+This does not reverse ADR-0001. Interactive clipboard content is far below any of these numbers, files
+were always the lazy pull-on-paste case behind a confirmation prompt, and the transport's permission
+and policy properties are what the project could not otherwise buy. But the ceiling is a genuine loss
+against CDC and is recorded here so that a future reader weighing this decision sees its cost, not
+only its benefits.
+
 ### The helper must open with `dwShareMode = 0` as early after login as it can
 
 Exclusivity is **first-come** on HID exactly as it is on CDC. `docs/research/windows-helper-constraints.md`
