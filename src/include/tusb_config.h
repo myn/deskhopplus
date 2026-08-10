@@ -127,7 +127,10 @@ extern int dh_debug_printf(const char *__restrict __format, ...);
  *==============================================================================*/
 
 // HID endpoint buffer size (must be large enough for report ID + data).
-#define CFG_TUD_HID_EP_BUFSIZE 32
+// Sized for the channel's 64-byte reports (CHANNEL_REPORT_SIZE). The keyboard
+// and mouse interfaces keep their 32-byte wMaxPacketSize, which is passed
+// explicitly in their descriptors - this is only the driver's buffer.
+#define CFG_TUD_HID_EP_BUFSIZE 64
 
 // MSC endpoint buffer size.
 #define CFG_TUD_MSC_EP_BUFSIZE 512

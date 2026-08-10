@@ -25,6 +25,18 @@
 // Interface 2
 #define REPORT_ID_VENDOR 6
 
+/* Channel report size, in bytes. One report is one full-speed interrupt
+   packet, so this is also the endpoint's wMaxPacketSize and must not exceed
+   CFG_TUD_HID_EP_BUFSIZE (a static assert in usb_descriptors.c holds the two
+   together). */
+#define CHANNEL_REPORT_SIZE 64
+
+/* wMaxPacketSize of the keyboard, mouse and config interfaces. Pinned to the
+   value they have always enumerated with, so that sizing the driver buffer
+   for the channel leaves the interfaces that already work - including at BIOS
+   and disk-encryption prompts - byte-identical on the wire. */
+#define LEGACY_EP_PACKET_SIZE 32
+
 
 #define DEVICE_DESCRIPTOR(vid, pid) \
 {.bLength         = sizeof(tusb_desc_device_t),\
@@ -148,6 +160,27 @@
     HID_INPUT        ( HID_DATA | HID_ARRAY | HID_ABSOLUTE ) ,\
     HID_USAGE       ( 0x10                                )  ,\
     HID_OUTPUT       ( HID_DATA | HID_ARRAY | HID_ABSOLUTE ) ,\
+  HID_COLLECTION_END \
+
+// Channel Descriptor Template - vendor-page collections only. Sharing an
+// interface with keyboard or mouse would make macOS require Input Monitoring
+// for the whole node (ADR-0001; docs/research/hid-transport-macos-tcc.md §4).
+// The usage differs from the config interface's 0x10 so a helper can match on
+// usage page and usage rather than on a device path.
+#define TUD_HID_REPORT_DESC_CHANNEL(...) \
+  HID_USAGE_PAGE_N ( HID_USAGE_PAGE_VENDOR, 2 )             ,\
+  HID_USAGE      ( 0x20 )                                   ,\
+  HID_COLLECTION ( HID_COLLECTION_APPLICATION )             ,\
+    /* Report ID if any */\
+    __VA_ARGS__ \
+    HID_LOGICAL_MIN  ( 0x00                               )  ,\
+    HID_LOGICAL_MAX_N( 0x00FF, 2                          )  ,\
+    HID_REPORT_SIZE ( 8                                   )  ,\
+    HID_REPORT_COUNT( CHANNEL_REPORT_SIZE                 )  ,\
+    HID_USAGE       ( 0x21                                )  ,\
+    HID_INPUT        ( HID_DATA | HID_VARIABLE | HID_ABSOLUTE ) ,\
+    HID_USAGE       ( 0x22                                )  ,\
+    HID_OUTPUT       ( HID_DATA | HID_VARIABLE | HID_ABSOLUTE ) ,\
   HID_COLLECTION_END \
 
 #define HID_USAGE_DIGITIZER 0x01

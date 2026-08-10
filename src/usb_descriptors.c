@@ -48,20 +48,26 @@ uint8_t const desc_hid_report_relmouse[] = {TUD_HID_REPORT_DESC_MOUSEHELP(HID_RE
 
 uint8_t const desc_hid_report_vendor[] = {TUD_HID_REPORT_DESC_VENDOR_CTRL(HID_REPORT_ID(REPORT_ID_VENDOR))};
 
+/* The always-on channel. No report ID, so a report is exactly one
+   CHANNEL_REPORT_SIZE packet carried opaquely. */
+uint8_t const desc_hid_report_channel[] = {TUD_HID_REPORT_DESC_CHANNEL()};
+
 
 // Invoked when received GET HID REPORT DESCRIPTOR
 // Application return pointer to descriptor
 // Descriptor contents must exist long enough for transfer to complete
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
-    if (global_state.config_mode_active)
-        if (instance == ITF_NUM_HID_VENDOR)
-            return desc_hid_report_vendor;
-
     switch(instance) {
         case ITF_NUM_HID:
             return desc_hid_report;
         case ITF_NUM_HID_REL_M:
             return desc_hid_report_relmouse;
+        case ITF_NUM_HID_VENDOR:
+            /* One interface slot, a different purpose in each mode: the config
+               API in config mode, the channel in normal mode. The two never
+               coexist - config mode reboots under a different identity. */
+            return global_state.config_mode_active ? desc_hid_report_vendor
+                                                   : desc_hid_report_channel;
         default:
             return desc_hid_report;
     }
@@ -98,8 +104,9 @@ char const *string_desc_arr[] = {
     "DeskHop Helper",           // 4: Mouse Helper Interface
     "DeskHop Config",           // 5: Vendor Interface
     "DeskHop Disk",             // 6: Disk Interface
+    "DeskHop Channel",          // 7: Helper Channel Interface
 #ifdef DH_DEBUG
-    "DeskHop Debug",            // 7: Debug Interface
+    "DeskHop Debug",            // 8: Debug Interface
 #endif
 };
 
@@ -112,6 +119,7 @@ enum {
     STRID_MOUSE,
     STRID_VENDOR,
     STRID_DISK,
+    STRID_CHANNEL,
     STRID_DEBUG,
 };
 
@@ -169,26 +177,33 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 #define EPNUM_HID_REL_M  0x82
 #define EPNUM_HID_VENDOR 0x83
 
+/* The channel needs an interrupt OUT endpoint as well as IN, so that
+   host-to-device traffic does not fall back to the shared control pipe. It
+   takes the vendor IN address because it occupies the same interface slot, in
+   the mode where the config interface does not exist. */
+#define EPNUM_HID_CHANNEL_OUT 0x03
+#define EPNUM_HID_CHANNEL_IN  EPNUM_HID_VENDOR
+
 #define EPNUM_MSC_OUT    0x04
 #define EPNUM_MSC_IN     0x84
 
 #ifndef DH_DEBUG
 
-#define ITF_NUM_TOTAL 2
+#define ITF_NUM_TOTAL 3
 #define ITF_NUM_TOTAL_CONFIG 4
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 #define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN)
 
 #else
 /* CDC uses 2 interfaces (control + data). In normal mode, place it right after
-   the 2 HID interfaces (at 2, 3). In config mode, place it after HID_VENDOR (2)
+   the 3 HID interfaces (at 3, 4). In config mode, place it after HID_VENDOR (2)
    and MSC (3), so at 4, 5. */
-#define ITF_NUM_CDC 2
+#define ITF_NUM_CDC 3
 #define ITF_NUM_CDC_CONFIG 4
-#define ITF_NUM_TOTAL 4
+#define ITF_NUM_TOTAL 5
 #define ITF_NUM_TOTAL_CONFIG 6
 
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN + TUD_CDC_DESC_LEN)
 #define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + TUD_CDC_DESC_LEN)
 
 #define EPNUM_CDC_NOTIF  0x85
@@ -208,7 +223,7 @@ uint8_t const desc_configuration[] = {
                        HID_ITF_PROTOCOL_NONE,
                        sizeof(desc_hid_report),
                        EPNUM_HID,
-                       CFG_TUD_HID_EP_BUFSIZE,
+                       LEGACY_EP_PACKET_SIZE,
                        1),
 
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_REL_M,
@@ -216,8 +231,21 @@ uint8_t const desc_configuration[] = {
                        HID_ITF_PROTOCOL_NONE,
                        sizeof(desc_hid_report_relmouse),
                        EPNUM_HID_REL_M,
-                       CFG_TUD_HID_EP_BUFSIZE,
+                       LEGACY_EP_PACKET_SIZE,
                        1),
+
+    /* The always-on channel. Its own interface, carrying vendor-page
+       collections only - sharing an interface with keyboard or mouse would
+       make macOS require Input Monitoring for the whole node (ADR-0001).
+       Interrupt IN and OUT, one 64-byte report per 1 ms frame each way. */
+    TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID_VENDOR,
+                             STRID_CHANNEL,
+                             HID_ITF_PROTOCOL_NONE,
+                             sizeof(desc_hid_report_channel),
+                             EPNUM_HID_CHANNEL_OUT,
+                             EPNUM_HID_CHANNEL_IN,
+                             CHANNEL_REPORT_SIZE,
+                             1),
 #ifdef DH_DEBUG
     // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
     TUD_CDC_DESCRIPTOR(
@@ -235,7 +263,7 @@ uint8_t const desc_configuration_config[] = {
                        HID_ITF_PROTOCOL_NONE,
                        sizeof(desc_hid_report),
                        EPNUM_HID,
-                       CFG_TUD_HID_EP_BUFSIZE,
+                       LEGACY_EP_PACKET_SIZE,
                        1),
 
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_REL_M,
@@ -243,7 +271,7 @@ uint8_t const desc_configuration_config[] = {
                        HID_ITF_PROTOCOL_NONE,
                        sizeof(desc_hid_report_relmouse),
                        EPNUM_HID_REL_M,
-                       CFG_TUD_HID_EP_BUFSIZE,
+                       LEGACY_EP_PACKET_SIZE,
                        1),
 
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_VENDOR,
@@ -251,7 +279,7 @@ uint8_t const desc_configuration_config[] = {
                        HID_ITF_PROTOCOL_NONE,
                        sizeof(desc_hid_report_vendor),
                        EPNUM_HID_VENDOR,
-                       CFG_TUD_HID_EP_BUFSIZE,
+                       LEGACY_EP_PACKET_SIZE,
                        1),
 
     TUD_MSC_DESCRIPTOR(ITF_NUM_MSC,
@@ -265,6 +293,17 @@ uint8_t const desc_configuration_config[] = {
         ITF_NUM_CDC_CONFIG, STRID_DEBUG, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, CFG_TUD_CDC_EP_BUFSIZE),
 #endif
 };
+
+/* A configuration descriptor whose declared wTotalLength disagrees with its
+   real length enumerates in confusing, host-specific ways rather than failing
+   outright, and adding an interface is exactly when that happens. Both
+   variants are checked at build time, in every build configuration. */
+TU_VERIFY_STATIC(sizeof(desc_configuration) == CONFIG_TOTAL_LEN,
+                 "normal-mode descriptor length disagrees with CONFIG_TOTAL_LEN");
+TU_VERIFY_STATIC(sizeof(desc_configuration_config) == CONFIG_TOTAL_LEN_CFG,
+                 "config-mode descriptor length disagrees with CONFIG_TOTAL_LEN_CFG");
+TU_VERIFY_STATIC(CHANNEL_REPORT_SIZE <= CFG_TUD_HID_EP_BUFSIZE,
+                 "helper channel report exceeds the HID endpoint buffer");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index; // for multiple configurations

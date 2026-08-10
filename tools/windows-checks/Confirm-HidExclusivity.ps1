@@ -50,7 +50,17 @@ param(
     [string]$OutDir = [Environment]::GetFolderPath('Desktop'),
     [string[]]$Check = @('A','B','C','D','E'),
     # Override check A's automatic pick, e.g. -TargetPath '\\?\hid#vid_...'
-    [string]$TargetPath
+    [string]$TargetPath,
+    # Select the target by identity instead. Supply these whenever the answer is
+    # meant to be about OUR collection: without them the script falls back to a
+    # heuristic that prefers a vendor collection supporting feature reports, and
+    # the deskhopplus channel has none - so it would silently measure some other
+    # vendor device and report a pass that means nothing (#25).
+    [uint16]$Vid,
+    [uint16]$Pid,
+    # Usage within the vendor page, e.g. 0x20 for the channel. Optional; only
+    # needed when one device publishes several vendor collections.
+    [uint16]$Usage
 )
 
 $ErrorActionPreference = 'Continue'
@@ -119,6 +129,13 @@ public static class H {
         public ushort NumberFeatureButtonCaps, NumberFeatureValueCaps, NumberFeatureDataIndices;
     }
     [DllImport("hid.dll", SetLastError = true)] public static extern int HidP_GetCaps(IntPtr ppd, ref HIDP_CAPS caps);
+
+    // Identity, so a target can be selected by what the device IS rather than by
+    // where Windows happened to enumerate it. Device interface paths embed a
+    // collection index and are not stable across reconnects (#42).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct HIDD_ATTRIBUTES { public int Size; public ushort VendorID, ProductID, VersionNumber; }
+    [DllImport("hid.dll", SetLastError = true)] public static extern bool HidD_GetAttributes(IntPtr h, ref HIDD_ATTRIBUTES a);
 
     // SetupAPI - enumerate the HID device interfaces.
     [StructLayout(LayoutKind.Sequential)]
@@ -213,6 +230,9 @@ function Invoke-CheckA {
                 if ([H]::HidP_GetCaps($ppd, [ref]$caps) -ne 0x110000) { continue }  # HIDP_STATUS_SUCCESS
                 $sb = New-Object Text.StringBuilder 256
                 [void][H]::HidD_GetProductString($h, $sb, 512)
+                $attr = New-Object H+HIDD_ATTRIBUTES
+                $attr.Size = [Runtime.InteropServices.Marshal]::SizeOf($attr)
+                if (-not [H]::HidD_GetAttributes($h, [ref]$attr)) { $attr.VendorID = 0; $attr.ProductID = 0 }
 
                 $up = $caps.UsagePage; $u = $caps.Usage
                 $sysHeld =
@@ -222,6 +242,7 @@ function Invoke-CheckA {
                 $rows += [pscustomobject]@{
                     Path = $p; UsagePage = $up; Usage = $u
                     Product = $sb.ToString()
+                    Vid = $attr.VendorID; Pid = $attr.ProductID
                     Feature = $caps.FeatureReportByteLength
                     Input   = $caps.InputReportByteLength
                     SystemHeld = $sysHeld; Vendor = $vendor
@@ -235,14 +256,28 @@ function Invoke-CheckA {
     foreach ($r in ($rows | Sort-Object -Property @{e={-$_.UsagePage}})) {
         $tag = if ($r.SystemHeld) { 'SYSTEM-HELD (Exclusive)' } elseif ($r.Vendor) { 'VENDOR-DEFINED' } else { 'shared/other' }
         $lvl = if ($r.Vendor) { 'WARN' } else { 'INFO' }
-        Write-Log ("  UP=0x{0:X4} U=0x{1:X4}  feat={2,-4} in={3,-4} {4,-24} {5}" -f `
-            $r.UsagePage, $r.Usage, $r.Feature, $r.Input, $tag, $r.Product) $lvl
+        Write-Log ("  UP=0x{0:X4} U=0x{1:X4}  VID=0x{2:X4} PID=0x{3:X4}  feat={4,-4} in={5,-4} {6,-24} {7}" -f `
+            $r.UsagePage, $r.Usage, $r.Vid, $r.Pid, $r.Feature, $r.Input, $tag, $r.Product) $lvl
     }
 
     if ($TargetPath) {
         $script:Target = $rows | Where-Object { $_.Path -eq $TargetPath } | Select-Object -First 1
         if (-not $script:Target) { Write-Log "-TargetPath did not match any enumerated collection." 'FAIL'; return }
         Write-Log ("Target: caller-supplied.") 'WARN'
+    } elseif ($Vid -and $Pid) {
+        # Identity selection. Never falls back to the heuristic: a run that cannot
+        # find the requested collection must fail visibly, because a pass against
+        # somebody else's device is worse than no answer at all.
+        $script:Target = $rows |
+            Where-Object { $_.Vid -eq $Vid -and $_.Pid -eq $Pid -and
+                           (-not $Usage -or $_.Usage -eq $Usage) } |
+            Select-Object -First 1
+        if (-not $script:Target) {
+            Write-Log ("No collection matches VID=0x{0:X4} PID=0x{1:X4}{2}. The device is absent, in config mode, or running firmware without the channel interface." -f `
+                $Vid, $Pid, $(if ($Usage) { " Usage=0x{0:X4}" -f $Usage } else { "" })) 'FAIL'
+            return
+        }
+        Write-Log ("Target: selected by identity, not by device path.") 'PASS'
     } else {
         # Prefer a vendor-defined collection that actually supports feature reports, since
         # that is the closest analogue to ours and the only one check C can exercise.
@@ -262,9 +297,13 @@ function Invoke-CheckA {
         Write-Log "No usable target: every collection on this machine is system-held. Re-run with -TargetPath, or attach any cheap vendor HID device." 'FAIL'
         return
     }
-    Write-Log ("TARGET: UP=0x{0:X4} U=0x{1:X4} feat={2} '{3}'" -f `
-        $script:Target.UsagePage, $script:Target.Usage, $script:Target.Feature, $script:Target.Product) 'PASS'
+    Write-Log ("TARGET: UP=0x{0:X4} U=0x{1:X4} VID=0x{2:X4} PID=0x{3:X4} feat={4} '{5}'" -f `
+        $script:Target.UsagePage, $script:Target.Usage, $script:Target.Vid, $script:Target.Pid, `
+        $script:Target.Feature, $script:Target.Product) 'PASS'
     Write-Log ("        {0}" -f $script:Target.Path)
+    if (-not $TargetPath -and -not ($Vid -and $Pid)) {
+        Write-Log "        Target was picked by heuristic. If this run is meant to be about a specific device, re-run with -Vid/-Pid and confirm the line above names it." 'WARN'
+    }
     if ($script:Target.SystemHeld) { Write-Log "        WARNING: target is system-held. Results will describe RIM, not our case." 'FAIL' }
     elseif (-not $script:Target.Vendor) { Write-Log "        Note: not a vendor-defined page. Closest available analogue, slightly weaker evidence." 'WARN' }
 }
