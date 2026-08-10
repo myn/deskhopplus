@@ -72,6 +72,9 @@ set(COMMON_SOURCES
   ${SRC_DIR}/main.c
   ${SRC_DIR}/ramdisk.c
   ${SRC_DIR}/core/dh_frame.c
+  ${SRC_DIR}/core/dh_crc32.c
+  ${SRC_DIR}/core/dh_clip.c
+  ${SRC_DIR}/core/dh_xfer.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )

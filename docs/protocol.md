@@ -68,7 +68,7 @@ type byte, without reading a payload:
 | 0x33 | CLIP_DONE         | h↔h | `id:u32` — unchanged from mkroamer |
 | 0x34 | CLIP_CANCEL       | h↔h | `id:u32` — unchanged from mkroamer |
 | 0x35 | CLIP_RETRANSMIT   | h↔h | `id:u32` `seq:u32` — request selective retransmission of one chunk |
-| 0x36 | CLIP_CREDIT       | h↔h | `credits:u16` (global window across all channels; semantics owned by #48) |
+| 0x36 | CLIP_CREDIT       | h↔h | `id:u32` `credits:u16` — the id makes a grant for a superseded transfer recognisably stale (#48) |
 
 `dir`: h→d helper to device, d→h device to helper, h↔h helper to helper (relayed opaquely
 by the firmware, which parses frame headers only, never payloads).
@@ -76,6 +76,49 @@ by the firmware, which parses frame headers only, never payloads).
 **Dropped from mkroamer:** PING/PONG, MOUSE_MOVE, MOUSE_BTN, WHEEL, KEY (input rides HID),
 HANDOFF/HANDOFF_ACK (inverted into PLACE), RELEASE_CONTROL, RESET_MODIFIERS,
 CONFIG_SYNC/CONFIG_ACK (configuration lives on the device).
+
+## Transfer semantics
+
+The chunked transfer state machine (#48) lives in the shared core and runs **end-to-end
+between the helpers**; the firmware relays its messages opaquely.
+
+- **Chunking.** A payload divides into chunks of `DH_XFER_CHUNK_SIZE` (1024 bytes — a build
+  constant until [#39](https://github.com/myn/deskhopplus/issues/39) measures; the hello
+  negotiates the effective value). Every chunk except the last is exactly that size, so a
+  chunk's offset is `seq × chunk_size` and reassembly needs no bookkeeping beyond a
+  received-set. A chunk is exactly one CLIP_CHUNK frame's payload.
+- **Streaming starts on request, never before.** An offered transfer emits nothing until
+  CLIP_REQUEST arrives — a lazy payload (files) is not even read until then.
+- **Integrity and loss.** The paste side verifies each chunk's CRC32 and tracks received
+  seqs. A corrupt chunk, a skipped seq, or a gap found when CLIP_DONE arrives produces
+  CLIP_RETRANSMIT for exactly the missing chunks. After retransmitting, the sender repeats
+  CLIP_DONE. A loss is reported once per round: a DONE sweep leaves a freshly requested
+  chunk alone once — its retransmission is behind that DONE in the FIFO — **but a chunk
+  still missing a full round later is requested again**, so a retransmitted chunk that is
+  itself lost converges on the next DONE round. Only the loss of a message with no DONE
+  behind it (the final DONE, a lone request) is left to the helper's transfer timeout.
+- **The sender retains its payload after CLIP_DONE** — retransmit requests may still
+  arrive. It is released when the transfer is superseded by a newer offer, cancelled, or
+  the link drops. There is no completion acknowledgement in v1: CLIP_DONE always travels
+  sender→receiver, which keeps it unambiguous when both sides transfer at once.
+- **Flow control.** The sender spends one credit per chunk sent (retransmits included) and
+  stops at zero; CLIP_DONE is not gated. The paste side grants `DH_XFER_CREDIT_WINDOW`
+  (16 chunks) with its CLIP_REQUEST, replenishes in half-window batches as chunks arrive,
+  and **every CLIP_RETRANSMIT is accompanied by a covering credit grant** — a lost or
+  corrupt chunk consumed the sender's credit without ever being counted on the paste side,
+  and without the covering grant sustained loss would drain the window permanently. (When
+  the lost message was the *request* rather than the chunk, the covering grant mildly
+  inflates the window — bounded and harmless, where draining is fatal.) **The window is
+  per transfer**; a direction carries one transfer at a time, so this is per-direction
+  accounting in practice, and grants carry the transfer id so a superseded transfer's
+  grants are ignored rather than credited to its successor. What is protected globally —
+  the shared inter-board queue behind all channels — is the egress board's burst cap
+  (#47) plus this window.
+- **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
+  paste side discards its partial payload — never delivering it as complete — and its
+  helper deletes any partial file and reports the failure. No resumption.
+- **Supersede.** A newer offer replaces an incomplete transfer in either direction; stale
+  messages for the old id are ignored.
 
 ## Golden vectors
 

@@ -24,3 +24,8 @@ add_test(NAME frame_test COMMAND frame_test)
 add_executable(txq_test txq_test.c)
 target_include_directories(txq_test PRIVATE ${CORE})
 add_test(NAME txq_test COMMAND txq_test)
+
+add_executable(xfer_test xfer_test.c ${CORE}/dh_xfer.c ${CORE}/dh_clip.c
+               ${CORE}/dh_crc32.c ${CORE}/dh_frame.c)
+target_include_directories(xfer_test PRIVATE ${CORE})
+add_test(NAME xfer_test COMMAND xfer_test)

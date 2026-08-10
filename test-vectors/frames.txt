@@ -24,4 +24,4 @@ clip_chunk_hi                | 32 00 0e 00  02 00 00 00  00 00 00 00  ac 2a 93 d
 clip_done_2                  | 33 00 04 00  02 00 00 00
 clip_cancel_2                | 34 00 04 00  02 00 00 00
 clip_retransmit_seq5         | 35 00 08 00  02 00 00 00  05 00 00 00
-clip_credit_8                | 36 00 02 00  08 00
+clip_credit_8                | 36 00 06 00  02 00 00 00  08 00
