@@ -5,6 +5,7 @@
 
 #include "main.h"
 
+#include "dh_pair.h"
 #include "dh_relay.h"
 #include "dh_session.h"
 #include "dh_txq.h"
@@ -17,6 +18,7 @@
 
 static struct {
     dh_session session;
+    dh_pair pair;
     dh_frame_reader reader;
     dh_txq_stats tx; /* replies lost to a busy endpoint, never silently */
 
@@ -39,6 +41,9 @@ static struct {
 
 void channel_init(void) {
     dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
+    /* The stored secret comes from flash next (#46 firmware half); until it
+       does, a release build authenticates nobody and the remedy is a chord. */
+    dh_pair_init(&channel.pair, NULL);
     dh_frame_reader_init(&channel.reader);
     dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
                      channel.relay_bulk, sizeof channel.relay_bulk);
@@ -106,7 +111,11 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
              * addressed to this firmware and is never forwarded. The payload
              * is not read on either path.
              */
+            /* Nothing is relayed for an unauthenticated peer (#34). */
             if (dh_msg_is_bulk(frame.hdr.type)) {
+                if (!dh_session_may_relay(&channel.session))
+                    continue;
+
                 (void)dh_relay_tx_offer(&channel.relay_tx,
                                         frame.payload - DH_FRAME_HEADER_SIZE,
                                         DH_FRAME_HEADER_SIZE + frame.hdr.len);
@@ -115,8 +124,8 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
 
             uint8_t reply[DH_FRAME_MAX_SIZE];
             size_t reply_len = 0;
-            if (dh_session_on_frame(&channel.session, &frame, now, reply, sizeof reply,
-                                    &reply_len) == DH_FRAME_OK &&
+            if (dh_session_on_frame(&channel.session, &channel.pair, &frame, now, reply,
+                                    sizeof reply, &reply_len) == DH_FRAME_OK &&
                 reply_len > 0)
                 (void)channel_queue_frame(reply, reply_len);
         } else if (consumed == 0) {
@@ -195,7 +204,9 @@ static void channel_pump_out(void) {
 void channel_task(device_t *state) {
     (void)state;
 
-    (void)dh_session_tick(&channel.session, channel_now_ms());
+    const uint32_t now = channel_now_ms();
+    (void)dh_session_tick(&channel.session, now);
+    dh_pair_tick(&channel.pair, now);
     channel_pump_relay();
     channel_pump_out();
 }

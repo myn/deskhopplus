@@ -11,9 +11,11 @@
  *      channel count and chunk size, and heartbeat liveness — the helper is
  *      marked absent after a couple of missed intervals.
  *
- * Authentication is not decided here (#46). A hello is answered
- * DH_HELLO_OK on version grounds alone; the status byte already carries
- * DH_HELLO_AUTH_FAILED so the remedy stays distinguishable when it lands.
+ * Authentication (#46) is enforced here and decided in dh_pair.h: a hello
+ * carrying no valid token is answered DH_HELLO_AUTH_FAILED, which is a
+ * different status from a version mismatch because the remedies differ and
+ * each is told to the user verbatim. A development build compiles the check
+ * out and says so in its build type.
  *
  * Pure C11, no I/O, no platform dependencies. Wire format: docs/protocol.md;
  * test-vectors/frames.txt is the gate.
@@ -27,6 +29,7 @@
 #include <stdint.h>
 
 #include "dh_frame.h"
+#include "dh_pair.h"
 #include "dh_xfer.h"
 
 #define DH_PROTO_VERSION 1u
@@ -119,6 +122,8 @@ typedef struct {
     uint8_t channel_count; /* effective, negotiated; 0 until a session exists */
     uint16_t max_chunk;    /* effective, negotiated */
     uint32_t last_seen_ms;
+    /* Authenticated peers are the only ones anything is relayed for. */
+    bool authenticated;
 } dh_session;
 
 /*
@@ -133,8 +138,18 @@ void dh_session_init(dh_session *s, uint8_t build_type);
  * result is DH_FRAME_OK. Frames outside the session band are not this layer's
  * business and are ignored with no reply.
  */
-dh_frame_result dh_session_on_frame(dh_session *s, const dh_frame_view *f, uint32_t now_ms,
-                                    uint8_t *out, size_t out_cap, size_t *out_len);
+dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame_view *f,
+                                    uint32_t now_ms, uint8_t *out, size_t out_cap,
+                                    size_t *out_len);
+
+/*
+ * May anything be relayed for this peer? False until a hello authenticated —
+ * the device relays nothing for an unauthenticated peer (#34), and that is
+ * one check rather than a second state machine.
+ */
+static inline bool dh_session_may_relay(const dh_session *s) {
+    return s->present && s->authenticated;
+}
 
 /*
  * Advance the clock. Returns true on the call that marks a present helper

@@ -99,8 +99,9 @@ static uint8_t negotiate_channels(uint8_t requested) {
     return requested < DH_SESSION_CHANNEL_COUNT ? requested : DH_SESSION_CHANNEL_COUNT;
 }
 
-static dh_frame_result answer_hello(dh_session *s, const dh_frame_view *f, uint32_t now_ms,
-                                    uint8_t *out, size_t out_cap, size_t *out_len) {
+static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame_view *f,
+                                    uint32_t now_ms, uint8_t *out, size_t out_cap,
+                                    size_t *out_len) {
     dh_hello hello;
     if (!dh_hello_decode(f->payload, f->hdr.len, &hello)) {
         /* Not a hello this build can read. Silence rather than a guessed
@@ -118,9 +119,14 @@ static dh_frame_result answer_hello(dh_session *s, const dh_frame_view *f, uint3
     };
 
     /*
-     * Authentication is #46's; when it lands it sets DH_HELLO_AUTH_FAILED
-     * here, and the effective fields stay zero on that path too.
+     * A development build compiles the check out entirely (#44). A well-known
+     * development secret was rejected as worse than none: it has the
+     * appearance of security and would eventually ship. Such a build says so
+     * in its build type, in its product string and in the configuration UI.
      */
+    const bool authenticated = (s->build_type == DH_BUILD_DEVELOPMENT) ||
+                               dh_pair_authenticate(pair, hello.token, hello.token_len);
+
     if (hello.proto_version != DH_PROTO_VERSION) {
         ack.status = DH_HELLO_VERSION_INCOMPATIBLE;
         /*
@@ -130,11 +136,21 @@ static dh_frame_result answer_hello(dh_session *s, const dh_frame_view *f, uint3
          * a stray frame's to end. A session that never started stays absent.
          */
         if (!s->present) dh_session_drop(s);
+    } else if (!authenticated) {
+        /*
+         * Refused, and distinctly: the remedy is a chord press, not a helper
+         * update. The session does not start, so nothing is relayed — but the
+         * helper stays connected and may ask to be paired, which is what
+         * makes provisioning during a window silent and automatic.
+         */
+        ack.status = DH_HELLO_AUTH_FAILED;
+        if (!s->present) dh_session_drop(s);
     } else {
         ack.channel_count = negotiate_channels(hello.channel_count);
         ack.max_chunk = negotiate_chunk(hello.max_chunk);
 
         s->present = true;
+        s->authenticated = true;
         s->peer_os = hello.os;
         s->channel_count = ack.channel_count;
         s->max_chunk = ack.max_chunk;
@@ -144,13 +160,30 @@ static dh_frame_result answer_hello(dh_session *s, const dh_frame_view *f, uint3
     return dh_hello_ack_encode(&ack, out, out_cap, out_len);
 }
 
-dh_frame_result dh_session_on_frame(dh_session *s, const dh_frame_view *f, uint32_t now_ms,
-                                    uint8_t *out, size_t out_cap, size_t *out_len) {
+dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame_view *f,
+                                    uint32_t now_ms, uint8_t *out, size_t out_cap,
+                                    size_t *out_len) {
     *out_len = 0;
 
     switch (f->hdr.type) {
         case DH_MSG_HELLO:
-            return answer_hello(s, f, now_ms, out, out_cap, out_len);
+            return answer_hello(s, pair, f, now_ms, out, out_cap, out_len);
+
+        case DH_MSG_PAIR_REQUEST: {
+            /*
+             * Provisioned silently, with no user interaction — but only
+             * inside a window, and a window can only be opened by a physical
+             * chord on the device. Outside one, the request is refused by
+             * saying nothing: there is no failure a caller could act on that
+             * pressing the chord would not also fix.
+             */
+            uint8_t secret[DH_PAIR_SECRET_LEN];
+            if (!dh_pair_grant(pair, now_ms, secret))
+                return DH_FRAME_OK;
+
+            return dh_frame_encode(DH_MSG_PAIR_GRANT, 0, secret, sizeof secret, out, out_cap,
+                                   out_len);
+        }
 
         case DH_MSG_HEARTBEAT:
             /* Only a session that said hello can be kept alive: the device

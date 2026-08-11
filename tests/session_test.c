@@ -16,6 +16,19 @@
 
 #include "dh_session.h"
 
+/* The token in the hello_mac vector, which the device therefore holds as its
+ * secret: the golden exchange only round-trips if authentication passes. */
+static const uint8_t test_secret[DH_PAIR_SECRET_LEN] = {
+    0xef, 0xbe, 0xad, 0xde, 0xef, 0xbe, 0xad, 0xde,
+    0xef, 0xbe, 0xad, 0xde, 0xef, 0xbe, 0xad, 0xde,
+};
+
+static dh_pair test_pair;
+
+static void reset_pairing(void) {
+    dh_pair_init(&test_pair, test_secret);
+}
+
 static int failures = 0;
 
 #define CHECK(cond, name, what)                                                 \
@@ -108,7 +121,8 @@ static size_t feed(dh_session *s, const uint8_t *frame, size_t frame_len, uint32
     size_t consumed = 0;
     if (dh_frame_decode(frame, frame_len, &v, &consumed) != DH_FRAME_OK) return 0;
     size_t out_len = 0;
-    if (dh_session_on_frame(s, &v, now_ms, reply, reply_cap, &out_len) != DH_FRAME_OK) return 0;
+    if (dh_session_on_frame(s, &test_pair, &v, now_ms, reply, reply_cap, &out_len) != DH_FRAME_OK)
+        return 0;
     return out_len;
 }
 
@@ -195,6 +209,7 @@ static void test_device_answers_the_golden_hello(const char *path) {
 
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
     CHECK(!s.present, "session", "helper present before any hello");
 
     uint8_t reply[MAX_VECTOR_BYTES];
@@ -217,7 +232,8 @@ static void test_negotiation_clamps_to_what_the_device_has(void) {
     /* A helper asking for three channels and a 4 KiB chunk gets what ships. */
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
-    size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 3, 4096, NULL, 0, hello, sizeof hello);
+    reset_pairing();
+    size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 3, 4096, test_secret, sizeof test_secret, hello, sizeof hello);
     size_t reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
     CHECK(reply_len > 0, "negotiate", "no answer to a hello");
     CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "negotiate",
@@ -230,7 +246,8 @@ static void test_negotiation_clamps_to_what_the_device_has(void) {
 
     /* Asking for less than the device offers is honoured, not raised. */
     dh_session_init(&s, DH_BUILD_RELEASE);
-    len = encode_hello(DH_OS_WINDOWS, DH_PROTO_VERSION, 1, 512, NULL, 0, hello, sizeof hello);
+    reset_pairing();
+    len = encode_hello(DH_OS_WINDOWS, DH_PROTO_VERSION, 1, 512, test_secret, sizeof test_secret, hello, sizeof hello);
     reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
     CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "negotiate",
           "reply is not a frame");
@@ -240,7 +257,8 @@ static void test_negotiation_clamps_to_what_the_device_has(void) {
 
     /* A helper asking for nothing usable is not handed a zero-sized chunk. */
     dh_session_init(&s, DH_BUILD_RELEASE);
-    len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 0, 0, NULL, 0, hello, sizeof hello);
+    reset_pairing();
+    len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 0, 0, test_secret, sizeof test_secret, hello, sizeof hello);
     reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
     CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "negotiate",
           "reply is not a frame");
@@ -253,11 +271,12 @@ static void test_negotiation_clamps_to_what_the_device_has(void) {
 static void test_version_mismatch_is_distinct_and_has_no_session(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     const size_t len =
-        encode_hello(DH_OS_MAC, DH_PROTO_VERSION + 1, 1, 1024, NULL, 0, hello, sizeof hello);
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION + 1, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     const size_t reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
 
     dh_frame_view v;
@@ -281,16 +300,17 @@ static void test_version_mismatch_is_distinct_and_has_no_session(void) {
 static void test_a_mismatched_hello_does_not_end_a_live_session(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     uint32_t now = 4000;
-    size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+    size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "version", "no answer to hello");
     CHECK(s.present, "version", "no session to begin with");
 
     now += 10;
-    len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION + 1, 1, 1024, NULL, 0, hello, sizeof hello);
+    len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION + 1, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     const size_t reply_len = feed(&s, hello, len, now, reply, sizeof reply);
 
     dh_frame_view v;
@@ -322,11 +342,12 @@ static void test_a_token_length_without_a_token_is_refused(void) {
 static void test_the_ack_carries_the_device_build_type(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_DEVELOPMENT);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     const size_t len =
-        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     const size_t reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
 
     dh_frame_view v;
@@ -342,12 +363,13 @@ static void test_the_ack_carries_the_device_build_type(void) {
 static void test_heartbeat_keeps_the_session_and_silence_ends_it(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     uint32_t now = 100000;
     const size_t len =
-        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "liveness", "no answer to hello");
 
     uint8_t beat[DH_FRAME_HEADER_SIZE];
@@ -397,11 +419,12 @@ static void test_heartbeat_keeps_the_session_and_silence_ends_it(void) {
 static void test_liveness_survives_the_clock_wrapping(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     const size_t len =
-        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
 
     /* Hello just before the millisecond counter wraps; beat just after. */
     const uint32_t before_wrap = UINT32_MAX - (DH_SESSION_HEARTBEAT_MS / 2);
@@ -417,12 +440,13 @@ static void test_liveness_survives_the_clock_wrapping(void) {
 static void test_other_bands_are_not_this_layers_business(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     uint8_t hello[MAX_VECTOR_BYTES];
     uint8_t reply[MAX_VECTOR_BYTES];
     const uint32_t now = 7000;
     const size_t len =
-        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "bands", "no answer to hello");
 
     /* A bulk frame is relayed opaquely (#47), never answered here — and it
@@ -451,6 +475,7 @@ static void test_other_bands_are_not_this_layers_business(void) {
 static void test_a_malformed_hello_is_not_a_session(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
 
     /* A hello whose payload is too short to hold the negotiated fields. */
     uint8_t frame[16];
@@ -466,8 +491,89 @@ static void test_a_malformed_hello_is_not_a_session(void) {
     CHECK(!s.present, "malformed", "a truncated hello created a session");
 }
 
+/* The gate everything else on the channel sits behind: an unpaired helper is
+ * refused, told so distinctly, and relayed nothing for. */
+static void test_an_unpaired_helper_is_refused_and_told_which_remedy(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    dh_pair_init(&test_pair, NULL); /* a wiped device: no secret at all */
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+    const size_t reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
+
+    dh_frame_view v;
+    size_t consumed = 0;
+    dh_hello_ack a;
+    CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "auth",
+          "reply is not a frame");
+    CHECK(dh_hello_ack_decode(v.payload, v.hdr.len, &a), "auth", "ack decode failed");
+    CHECK(a.status == DH_HELLO_AUTH_FAILED, "auth", "an unpaired helper was not refused");
+    CHECK(a.status != DH_HELLO_VERSION_INCOMPATIBLE, "auth",
+          "authentication failure was reported as a version mismatch");
+    CHECK(a.channel_count == 0 && a.max_chunk == 0, "auth",
+          "effective fields not zeroed on a refused hello");
+    CHECK(!dh_session_may_relay(&s), "auth", "the device would relay for an unpaired peer");
+
+    /* Outside a window, asking to pair gets nothing back. */
+    uint8_t pair_req[DH_FRAME_HEADER_SIZE];
+    size_t req_len = 0;
+    (void)dh_frame_encode(DH_MSG_PAIR_REQUEST, 0, NULL, 0, pair_req, sizeof pair_req, &req_len);
+    CHECK(feed(&s, pair_req, req_len, 2000, reply, sizeof reply) == 0, "auth",
+          "a pairing request was granted outside a window");
+
+    /* A chord press, and the same helper is provisioned with no interaction. */
+    const uint8_t fresh[DH_PAIR_SECRET_LEN] = {9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9};
+    dh_pair_open_window(&test_pair, fresh, 3000);
+    const size_t grant_len = feed(&s, pair_req, req_len, 3000, reply, sizeof reply);
+    CHECK(dh_frame_decode(reply, grant_len, &v, &consumed) == DH_FRAME_OK, "auth",
+          "the grant is not a frame");
+    CHECK(v.hdr.type == DH_MSG_PAIR_GRANT, "auth", "the reply is not a pair grant");
+    CHECK(v.hdr.len == DH_PAIR_SECRET_LEN, "auth", "the grant is not a secret");
+
+    /* And the helper that stored it now gets a session. */
+    uint8_t token[DH_PAIR_SECRET_LEN];
+    memcpy(token, v.payload, sizeof token);
+    const size_t paired_len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, token,
+                                           sizeof token, hello, sizeof hello);
+    (void)feed(&s, hello, paired_len, 4000, reply, sizeof reply);
+    CHECK(dh_session_may_relay(&s), "auth", "a freshly paired helper still cannot relay");
+
+    reset_pairing();
+}
+
+/* Development builds compile the check out — a well-known development secret
+ * was rejected as worse than none — and say so in the build type. */
+static void test_a_development_build_needs_no_secret(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_DEVELOPMENT);
+    dh_pair_init(&test_pair, NULL);
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    const size_t len =
+        encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+    const size_t reply_len = feed(&s, hello, len, 1000, reply, sizeof reply);
+
+    dh_frame_view v;
+    size_t consumed = 0;
+    dh_hello_ack a;
+    CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "dev",
+          "reply is not a frame");
+    CHECK(dh_hello_ack_decode(v.payload, v.hdr.len, &a), "dev", "ack decode failed");
+    CHECK(a.status == DH_HELLO_OK, "dev", "a development build still demanded a secret");
+    CHECK(a.build_type == DH_BUILD_DEVELOPMENT, "dev",
+          "a development build did not identify itself");
+    CHECK(dh_session_may_relay(&s), "dev", "a development build refused to relay");
+
+    reset_pairing();
+}
+
 int main(int argc, char **argv) {
     const char *path = argc > 1 ? argv[1] : DH_TEST_VECTORS;
+    reset_pairing();
 
     test_hello_codec_matches_vectors(path);
     test_malformed_payloads_rejected();
@@ -481,6 +587,8 @@ int main(int argc, char **argv) {
     test_liveness_survives_the_clock_wrapping();
     test_other_bands_are_not_this_layers_business();
     test_a_malformed_hello_is_not_a_session();
+    test_an_unpaired_helper_is_refused_and_told_which_remedy();
+    test_a_development_build_needs_no_secret();
 
     if (failures) {
         printf("%d session check(s) failed\n", failures);
