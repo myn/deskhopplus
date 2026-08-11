@@ -29,6 +29,7 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("a working session resets the backoff", testWorkingSessionResetsBackoff),
     ("a granted secret is stored and pairs the helper", testPairingRoundTrip),
     ("a stored secret is offered on the next hello", testStoredSecretIsOffered),
+    ("a grant outside a session is ignored", testGrantOutsideSessionIgnored),
 ]
 
 /// One engine, one clock, and the small vocabulary the tests read outputs with.
@@ -404,6 +405,25 @@ private func testStoredSecretIsOffered() throws {
     }
     let hello = try Hello.decode(payload: FrameCodec.decode(first).frame.payload)
     Check.equal(hello.token, stored, "a stored secret was not offered in the hello")
+}
+
+/* A grant arriving after the connection was dropped must not restart a
+   handshake down a channel that is closed: the hello would go nowhere and the
+   engine would sit in awaitingAck until it timed out, on top of a
+   reconnection already scheduled. */
+private func testGrantOutsideSessionIgnored() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(.transportFailed("link went away"))
+
+    let granted = [UInt8](repeating: 0xC3, count: SecretStore.length)
+    let grant = try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: granted))
+    let outputs = f.send(.received(grant))
+
+    Check.equal(try f.sentFrames(outputs), [], "a grant outside a session started a handshake")
+    Check.that(!outputs.contains(.storeSecret(granted)),
+               "a grant outside a session was stored")
+    Check.that(f.retries(outputs).isEmpty, "a grant outside a session scheduled another retry")
 }
 
 // MARK: - Reconnection

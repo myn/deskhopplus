@@ -151,7 +151,7 @@ void config_enable_hotkey_handler(device_t *state, hid_keyboard_report_t *report
      * boot rather than immediately. Physical-chord-gated is the whole
      * security property — no remote or background process can press it.
      */
-    watchdog_hw->scratch[4] = MAGIC_WORD_PAIR;
+    watchdog_hw->scratch[3] = MAGIC_WORD_PAIR;
 
     /* If config mode is already active, skip this and reboot to return to normal mode */
     if (!state->config_mode_active) {

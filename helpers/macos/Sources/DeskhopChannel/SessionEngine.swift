@@ -303,6 +303,13 @@ public final class SessionEngine {
      * provisioned instead.
      */
     private func pairGranted(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+        guard phase != .idle else {
+            /* A grant for a session this helper has already dropped. Acting
+               on it would send a hello down a channel that is closed and then
+               sit in awaitingAck until it timed out, on top of a reconnection
+               already scheduled. */
+            return [.note("ignoring a pair grant outside a session")]
+        }
         guard frame.payload.count == SecretStore.length else {
             return [.note("ignoring a pair grant carrying \(frame.payload.count) bytes")]
         }

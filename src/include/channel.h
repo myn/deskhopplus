@@ -16,8 +16,12 @@
 
 #include "structs.h"
 
-/* Reset the session — called when the channel's USB interface goes away. */
+/* One-time setup, at boot. */
 void channel_init(void);
+
+/* The USB interface went away: drop the connection but keep any open pairing
+   window, which belongs to the user's chord press rather than to the link. */
+void channel_link_lost(void);
 
 /* One HID OUT report from the channel interface, verbatim. */
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize);

@@ -5,6 +5,7 @@
 
 #include "main.h"
 
+#include <pico/critical_section.h>
 #include <pico/rand.h>
 
 #include "dh_pair.h"
@@ -39,14 +40,16 @@ static struct {
     uint8_t relay_priority[DH_RELAY_PRIORITY_MAX];
     uint8_t relay_bulk[DH_FRAME_MAX_SIZE];
     uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
+    /*
+     * The outbound slot is written from both cores: core 0 in the USB
+     * callback and the pump, core 1 in the inter-board packet handler. An
+     * interleaving there splices two frames into one byte stream, which the
+     * helper reads as a framing error and drops the session over.
+     */
+    critical_section_t out_lock;
+    bool locked;
 } channel;
 
-/*
- * A fresh secret. pico_rand seeds from ring-oscillator jitter, the bus
- * performance counters and the board id — a secret that is guessable is no
- * secret, and this one is never displayed or typed, so its only source of
- * unpredictability is here.
- */
 static uint32_t channel_now_ms(void) {
     /*
      * Milliseconds off the 64-bit timer, so this counter uses the full uint32
@@ -59,6 +62,12 @@ static uint32_t channel_now_ms(void) {
     return to_ms_since_boot(get_absolute_time());
 }
 
+/*
+ * A fresh secret. pico_rand seeds from ring-oscillator jitter, the bus
+ * performance counters and the board id — a secret that is guessable is no
+ * secret, and this one is never displayed or typed, so its only source of
+ * unpredictability is here.
+ */
 static void channel_fresh_secret(uint8_t *out) {
     for (size_t i = 0; i < DH_PAIR_SECRET_LEN; i += sizeof(uint64_t)) {
         const uint64_t bits = get_rand_64();
@@ -68,19 +77,48 @@ static void channel_fresh_secret(uint8_t *out) {
     }
 }
 
+/*
+ * Everything that belongs to one connection: the session, the frame reader,
+ * the relay and whatever was owed to a helper that is no longer there.
+ * Pairing is deliberately *not* here — see channel_reset_link's caller.
+ */
+static void channel_reset_link(void) {
+    dh_session_drop(&channel.session);
+    dh_frame_reader_init(&channel.reader);
+    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
+                     channel.relay_bulk, sizeof channel.relay_bulk);
+    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
+
+    critical_section_enter_blocking(&channel.out_lock);
+    channel.out_len = 0;
+    channel.out_sent = 0;
+    critical_section_exit(&channel.out_lock);
+}
+
 void channel_init(void) {
+    if (!channel.locked) {
+        critical_section_init(&channel.out_lock);
+        channel.locked = true;
+    }
+
     dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
 
     /* The secret survives a restart because it lives in the configuration.
        A wiped configuration leaves none, and one chord press restores it. */
     dh_pair_init(&channel.pair,
                  global_state.config.channel_paired ? global_state.config.channel_secret : NULL);
-    dh_frame_reader_init(&channel.reader);
-    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
-                     channel.relay_bulk, sizeof channel.relay_bulk);
-    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
-    channel.out_len = 0;
-    channel.out_sent = 0;
+    channel_reset_link();
+}
+
+/*
+ * The USB interface went away — a re-enumeration, a suspend, or the config
+ * mode round trip. The connection goes with it, but an open pairing window
+ * does not: the user pressed the chord and has a minute, and a bus reset in
+ * the middle of it is not their doing and must not silently cost them the
+ * window.
+ */
+void channel_link_lost(void) {
+    channel_reset_link();
 }
 
 void channel_open_pairing_window(device_t *state) {
@@ -104,10 +142,10 @@ void channel_open_pairing_window(device_t *state) {
 
 /* Consumed once, on the normal-mode boot after a config chord. */
 bool channel_pairing_window_owed(void) {
-    if (watchdog_hw->scratch[4] != MAGIC_WORD_PAIR)
+    if (watchdog_hw->scratch[3] != MAGIC_WORD_PAIR)
         return false;
 
-    watchdog_hw->scratch[4] = 0;
+    watchdog_hw->scratch[3] = 0;
     return true;
 }
 
@@ -116,19 +154,28 @@ bool channel_helper_present(void) {
 }
 
 
-/* Hand a whole frame to this board's helper. One at a time: the credit window
-   upstream is what keeps a second from arriving before this one drains. */
+/* Hand a whole frame to this board's helper, one at a time. */
 static bool channel_queue_frame(const uint8_t *frame, size_t len) {
     if (len == 0 || len > sizeof channel.out)
         return dh_txq_track(&channel.tx, false);
 
-    if (channel.out_len != 0)
-        return dh_txq_track(&channel.tx, false);
+    critical_section_enter_blocking(&channel.out_lock);
+    const bool busy = channel.out_len != 0;
+    if (!busy) {
+        memcpy(channel.out, frame, len);
+        channel.out_len = (uint16_t)len;
+        channel.out_sent = 0;
+    }
+    critical_section_exit(&channel.out_lock);
 
-    memcpy(channel.out, frame, len);
-    channel.out_len = (uint16_t)len;
-    channel.out_sent = 0;
-    return dh_txq_track(&channel.tx, true);
+    /*
+     * A refusal here is data loss with no retransmit beneath it (#69): the
+     * slot holds one frame and a 4 KiB one occupies it for ~64 ms of USB
+     * drain, which the inter-board link can outrun. Counted rather than
+     * silent, which is the least this can do until the outbound path grows a
+     * queue or the credit window is enforced on the device.
+     */
+    return dh_txq_track(&channel.tx, !busy);
 }
 
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
@@ -164,13 +211,28 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
                 if (!dh_session_may_relay(&channel.session))
                     continue;
 
-                (void)dh_relay_tx_offer(&channel.relay_tx,
-                                        frame.payload - DH_FRAME_HEADER_SIZE,
-                                        DH_FRAME_HEADER_SIZE + frame.hdr.len);
+                /*
+                 * A refusal means the previous frame is still fragmenting.
+                 * Nothing here can hold the new one — the reader releases it
+                 * on the next push — so it is counted, not silently dropped
+                 * (#43). Making the helper wait instead is the credit
+                 * window's job, which the device does not yet enforce (#69).
+                 */
+                const dh_relay_result offered =
+                    dh_relay_tx_offer(&channel.relay_tx, frame.payload - DH_FRAME_HEADER_SIZE,
+                                      DH_FRAME_HEADER_SIZE + frame.hdr.len);
+                (void)dh_txq_track(&channel.tx, offered == DH_RELAY_OK);
                 continue;
             }
 
-            uint8_t reply[DH_FRAME_MAX_SIZE];
+            /*
+             * Report-sized, deliberately: this runs on core 0's main stack
+             * inside a USB callback, and that stack is 2 KB inside a 4 KB
+             * SCRATCH_Y whose neighbour is core 1's stack. A frame-sized
+             * buffer here overruns both. The largest reply this path can
+             * produce is a 20-byte pair grant.
+             */
+            uint8_t reply[CHANNEL_REPORT_SIZE];
             size_t reply_len = 0;
             if (dh_session_on_frame(&channel.session, &channel.pair, &frame, now, reply,
                                     sizeof reply, &reply_len) == DH_FRAME_OK &&
@@ -195,6 +257,16 @@ void handle_channel_relay_msg(uart_packet_t *packet, device_t *state) {
     dh_frame_view frame;
     if (dh_relay_rx_push(&channel.relay_rx, &relayed, &frame) != DH_RELAY_OK)
         return; /* incomplete, or a loss the reassembler has already counted */
+
+    /*
+     * The same gate as the outbound direction, and for the sharper reason:
+     * without it, a local process that holds this board's channel and never
+     * authenticates is still handed everything the *other* computer's paired
+     * helper sends. That is precisely the cross-machine path #34 exists to
+     * close, and it is not closed by refusing to relay outward alone.
+     */
+    if (!dh_session_may_relay(&channel.session))
+        return;
 
     (void)channel_queue_frame(frame.payload - DH_FRAME_HEADER_SIZE,
                               DH_FRAME_HEADER_SIZE + frame.hdr.len);
@@ -231,6 +303,7 @@ static void channel_pump_out(void) {
         return;
 
     uint8_t report[CHANNEL_REPORT_SIZE];
+    critical_section_enter_blocking(&channel.out_lock);
     const uint16_t remaining = (uint16_t)(channel.out_len - channel.out_sent);
     const uint16_t take = remaining < CHANNEL_REPORT_SIZE ? remaining : CHANNEL_REPORT_SIZE;
 
@@ -238,15 +311,18 @@ static void channel_pump_out(void) {
        and DH_FRAME_PAD is what a decoder skips between frames. */
     memset(report, DH_FRAME_PAD, sizeof report);
     memcpy(report, channel.out + channel.out_sent, take);
+    critical_section_exit(&channel.out_lock);
 
     if (!tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, report, CHANNEL_REPORT_SIZE))
         return;
 
+    critical_section_enter_blocking(&channel.out_lock);
     channel.out_sent = (uint16_t)(channel.out_sent + take);
     if (channel.out_sent >= channel.out_len) {
         channel.out_len = 0;
         channel.out_sent = 0;
     }
+    critical_section_exit(&channel.out_lock);
 }
 
 void channel_task(device_t *state) {
