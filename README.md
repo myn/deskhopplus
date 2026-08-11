@@ -54,7 +54,12 @@ FLASH THIS  /path/to/deskhopplus/build/deskhop.uf2
 
 This matters because a board upgrades its peer only from a **strictly newer** version. Flash a build carrying the version already running and the second board silently stays on the old firmware — no error, anywhere — leaving the pair split and presenting different USB descriptors to the two computers. **Any descriptor or protocol change must bump `VERSION_MINOR` in `CMakeLists.txt` before flashing.**
 
-The timestamp is the artifact's mtime, so a rebuild that changes nothing won't move it. That is the truthful reading — same bytes, same file — not a sign the build didn't run.
+The timestamp is the artifact's mtime, so an incremental build with no changed inputs won't move it — the same bytes, the same file, correctly left alone. Because that looks identical to a build that never ran, the line says which happened:
+
+```
+  built    2026-08-11 12:23:28  ← unchanged: no inputs changed, already current
+  built    2026-08-11 12:24:02  ← rebuilt just now
+```
 
 ### Toolchain
 

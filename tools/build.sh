@@ -54,8 +54,17 @@ need_toolchain() {
 
 # ----------------------------------------------------------------- firmware
 
+# The artifact's mtime before the build, so the report can distinguish "just
+# rebuilt" from "already current". An unchanged timestamp is the honest result
+# of an incremental build with no changed inputs -- but it looks identical to a
+# build that never ran, which is a bad thing to leave ambiguous right before
+# someone flashes a board.
+uf2_stamp() { stat -f '%m' build/deskhop.uf2 2>/dev/null || echo none; }
+before=""
+
 build_fw() {
     need_toolchain
+    before="$(uf2_stamp)"
     say "firmware → build/ (cmake)  [$(arm-none-eabi-gcc -dumpversion), $(cmake --version | head -1)]"
 
     # Reconfigure every time. It is cheap, and a stale cache is exactly how a
@@ -100,7 +109,16 @@ report() {
 
     printf '\n%s────────────────────────────────────────────────────%s\n' "$bold" "$off"
     printf '%sFLASH THIS%s  %s\n' "$green" "$off" "$repo/$uf2"
-    printf '  built    %s\n' "$(date -r "$uf2" '+%Y-%m-%d %H:%M:%S')"
+
+    local freshness=""
+    if [ -n "$before" ]; then
+        if [ "$before" = "$(uf2_stamp)" ]; then
+            freshness="  ← unchanged: no inputs changed, already current"
+        else
+            freshness="  ← rebuilt just now"
+        fi
+    fi
+    printf '  built    %s%s\n' "$(date -r "$uf2" '+%Y-%m-%d %H:%M:%S')" "$freshness"
 
     if [ -f "$crc" ]; then
         local v
