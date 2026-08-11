@@ -100,6 +100,10 @@ const uart_handler_t uart_handler[] = {
     {.type = RESPONSE_BYTE_MSG, .handler = handle_response_byte_msg},
     {.type = FIRMWARE_UPGRADE_MSG, .handler = handle_fw_upgrade_msg},
 
+    /* Helper channel relay (#47) - carried opaquely, never parsed */
+    {.type = CHANNEL_START_MSG, .handler = handle_channel_relay_msg},
+    {.type = CHANNEL_DATA_MSG, .handler = handle_channel_relay_msg},
+
     {.type = HEARTBEAT_MSG, .handler = handle_heartbeat_msg},
     {.type = PROXY_PACKET_MSG, .handler = handle_proxy_msg},
 };

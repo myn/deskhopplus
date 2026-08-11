@@ -14,6 +14,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "structs.h"
+
 /* Reset the session — called when the channel's USB interface goes away. */
 void channel_init(void);
 
@@ -22,6 +24,9 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize);
 
 /* channel_task — runs the liveness timeout and drains anything owed to the
    helper — is declared with the rest of the scheduler's tasks, in tasks.h. */
+
+/* One inter-board packet of a frame being relayed from the peer board. */
+void handle_channel_relay_msg(uart_packet_t *, device_t *);
 
 /* Is a helper live on this board's channel? The configuration UI shows it
    per side (#50) — the surface that survives the helper being disabled. */

@@ -74,6 +74,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/ramdisk.c
   ${SRC_DIR}/core/dh_frame.c
   ${SRC_DIR}/core/dh_session.c
+  ${SRC_DIR}/core/dh_relay.c
   ${SRC_DIR}/core/dh_crc32.c
   ${SRC_DIR}/core/dh_clip.c
   ${SRC_DIR}/core/dh_xfer.c

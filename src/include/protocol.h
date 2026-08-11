@@ -36,6 +36,13 @@ enum packet_type_e {
     PROXY_PACKET_MSG     = 23,
     REQUEST_BYTE_MSG     = 24,
     RESPONSE_BYTE_MSG    = 25,
+
+    /* The helper channel's relay (#47). A frame crosses as one start packet
+       carrying its total length, then data packets each carrying a full
+       8-byte payload. The two kinds differ so that orphaned data - data whose
+       start was lost - is discardable without a sequence number. */
+    CHANNEL_START_MSG    = 26,
+    CHANNEL_DATA_MSG     = 27,
 };
 
 typedef enum {

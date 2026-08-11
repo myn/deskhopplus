@@ -1,9 +1,11 @@
 /*
- * The device's end of the helper channel (#45). See include/channel.h.
+ * The device's end of the helper channel (#45) and its relay across the
+ * inter-board link (#47). See include/channel.h.
  */
 
 #include "main.h"
 
+#include "dh_relay.h"
 #include "dh_session.h"
 #include "dh_txq.h"
 
@@ -18,17 +20,31 @@ static struct {
     dh_frame_reader reader;
     dh_txq_stats tx; /* replies lost to a busy endpoint, never silently */
 
-    /* One report owed to the helper. Every session reply fits in a single
-       report — the largest is an 11-byte hello_ack — so this slice needs no
-       queue. The fragmenting writer bulk needs arrives with the relay (#47). */
-    uint8_t pending[CHANNEL_REPORT_SIZE];
-    bool has_pending;
+    /*
+     * Outbound to this board's helper: one frame at a time, emitted a report
+     * per tick. Session replies fit in a single report; a frame relayed from
+     * the peer does not, so both go through the same writer.
+     */
+    uint8_t out[DH_FRAME_MAX_SIZE];
+    uint16_t out_len;
+    uint16_t out_sent;
+
+    /* The relay to and from the peer board, with the storage it owns. */
+    dh_relay_tx relay_tx;
+    dh_relay_rx relay_rx;
+    uint8_t relay_priority[DH_RELAY_PRIORITY_MAX];
+    uint8_t relay_bulk[DH_FRAME_MAX_SIZE];
+    uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
 } channel;
 
 void channel_init(void) {
     dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
     dh_frame_reader_init(&channel.reader);
-    channel.has_pending = false;
+    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
+                     channel.relay_bulk, sizeof channel.relay_bulk);
+    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
+    channel.out_len = 0;
+    channel.out_sent = 0;
 }
 
 bool channel_helper_present(void) {
@@ -47,21 +63,19 @@ static uint32_t channel_now_ms(void) {
     return to_ms_since_boot(get_absolute_time());
 }
 
-/* Pad the tail: a report is a fixed 64 bytes with no length of its own, and
-   DH_FRAME_PAD is what a decoder skips between frames (docs/protocol.md). */
-static void channel_send(const uint8_t *frame, size_t len) {
-    if (len == 0 || len > CHANNEL_REPORT_SIZE)
-        return;
+/* Hand a whole frame to this board's helper. One at a time: the credit window
+   upstream is what keeps a second from arriving before this one drains. */
+static bool channel_queue_frame(const uint8_t *frame, size_t len) {
+    if (len == 0 || len > sizeof channel.out)
+        return dh_txq_track(&channel.tx, false);
 
-    if (channel.has_pending) {
-        (void)dh_txq_track(&channel.tx, false);
-        return;
-    }
+    if (channel.out_len != 0)
+        return dh_txq_track(&channel.tx, false);
 
-    memset(channel.pending, DH_FRAME_PAD, sizeof channel.pending);
-    memcpy(channel.pending, frame, len);
-    channel.has_pending = true;
-    (void)dh_txq_track(&channel.tx, true);
+    memcpy(channel.out, frame, len);
+    channel.out_len = (uint16_t)len;
+    channel.out_sent = 0;
+    return dh_txq_track(&channel.tx, true);
 }
 
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
@@ -86,23 +100,72 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
         offset += consumed;
 
         if (rc == DH_FRAME_OK) {
-            uint8_t reply[CHANNEL_REPORT_SIZE];
+            /*
+             * The whole routing decision, on the type byte alone: bulk is
+             * relayed to the peer helper opaquely, everything below is
+             * addressed to this firmware and is never forwarded. The payload
+             * is not read on either path.
+             */
+            if (dh_msg_is_bulk(frame.hdr.type)) {
+                (void)dh_relay_tx_offer(&channel.relay_tx,
+                                        frame.payload - DH_FRAME_HEADER_SIZE,
+                                        DH_FRAME_HEADER_SIZE + frame.hdr.len);
+                continue;
+            }
+
+            uint8_t reply[DH_FRAME_MAX_SIZE];
             size_t reply_len = 0;
             if (dh_session_on_frame(&channel.session, &frame, now, reply, sizeof reply,
-                                    &reply_len) == DH_FRAME_OK)
-                channel_send(reply, reply_len);
+                                    &reply_len) == DH_FRAME_OK &&
+                reply_len > 0)
+                (void)channel_queue_frame(reply, reply_len);
         } else if (consumed == 0) {
             break; /* nothing more to take from this report */
         }
     }
 }
 
-void channel_task(device_t *state) {
+/* One inter-board packet of relayed frame, arriving from the peer board. */
+void handle_channel_relay_msg(uart_packet_t *packet, device_t *state) {
     (void)state;
 
-    (void)dh_session_tick(&channel.session, channel_now_ms());
+    dh_relay_packet relayed = {
+        .kind = (packet->type == CHANNEL_START_MSG) ? DH_RELAY_PKT_START : DH_RELAY_PKT_DATA,
+        .len = DH_RELAY_PAYLOAD,
+    };
+    memcpy(relayed.data, packet->data, DH_RELAY_PAYLOAD);
 
-    if (!channel.has_pending || global_state.config_mode_active)
+    dh_frame_view frame;
+    if (dh_relay_rx_push(&channel.relay_rx, &relayed, &frame) != DH_RELAY_OK)
+        return; /* incomplete, or a loss the reassembler has already counted */
+
+    (void)channel_queue_frame(frame.payload - DH_FRAME_HEADER_SIZE,
+                              DH_FRAME_HEADER_SIZE + frame.hdr.len);
+}
+
+/* Drain what the relay owes into the shared inter-board queue. The burst cap
+   inside the relay is what keeps a chunk's packets from filling the queue
+   ahead of keyboard and mouse traffic. */
+static void channel_pump_relay(void) {
+    dh_relay_tx_yield(&channel.relay_tx);
+
+    dh_relay_packet packet;
+    while (dh_relay_tx_peek(&channel.relay_tx, &packet)) {
+        const enum packet_type_e type =
+            (packet.kind == DH_RELAY_PKT_START) ? CHANNEL_START_MSG : CHANNEL_DATA_MSG;
+
+        /* A refused enqueue leaves the packet owed rather than lost: a frame
+           missing one data packet would corrupt everything after it. */
+        if (!queue_packet(packet.data, type, DH_RELAY_PAYLOAD))
+            break;
+
+        dh_relay_tx_commit(&channel.relay_tx);
+    }
+}
+
+/* One report's worth of whatever is owed to this board's helper. */
+static void channel_pump_out(void) {
+    if (channel.out_len == 0 || global_state.config_mode_active)
         return;
 
     /* The channel occupies the vendor interface slot in normal mode, with no
@@ -110,6 +173,29 @@ void channel_task(device_t *state) {
     if (!tud_hid_n_ready(ITF_NUM_HID_VENDOR))
         return;
 
-    if (tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, channel.pending, CHANNEL_REPORT_SIZE))
-        channel.has_pending = false;
+    uint8_t report[CHANNEL_REPORT_SIZE];
+    const uint16_t remaining = (uint16_t)(channel.out_len - channel.out_sent);
+    const uint16_t take = remaining < CHANNEL_REPORT_SIZE ? remaining : CHANNEL_REPORT_SIZE;
+
+    /* Pad the tail: a report is a fixed 64 bytes with no length of its own,
+       and DH_FRAME_PAD is what a decoder skips between frames. */
+    memset(report, DH_FRAME_PAD, sizeof report);
+    memcpy(report, channel.out + channel.out_sent, take);
+
+    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, report, CHANNEL_REPORT_SIZE))
+        return;
+
+    channel.out_sent = (uint16_t)(channel.out_sent + take);
+    if (channel.out_sent >= channel.out_len) {
+        channel.out_len = 0;
+        channel.out_sent = 0;
+    }
+}
+
+void channel_task(device_t *state) {
+    (void)state;
+
+    (void)dh_session_tick(&channel.session, channel_now_ms());
+    channel_pump_relay();
+    channel_pump_out();
 }
