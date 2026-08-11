@@ -58,12 +58,12 @@ public final class SessionEngine {
      * "absent after a couple of missed intervals" is measured against the
      * same number at both ends.
      *
-     * Known gap: the heartbeat has no acknowledgement in v1, so if the device
-     * drops the session on its side — its liveness timeout, or a framing
-     * error on its reader — this helper cannot tell, and goes on reporting a
-     * session that is gone. Closing it means a wire-format change (an
-     * acknowledged beat, or a periodic device-to-helper frame) and belongs in
-     * a protocol decision rather than here.
+     * Known gap (#68): the heartbeat has no acknowledgement in v1, so if the
+     * device drops the session on its side — its liveness timeout, or a
+     * framing error on its reader — this helper cannot tell, and goes on
+     * reporting a session that is gone. Closing it means a wire-format change
+     * (an acknowledged beat, or a periodic device-to-helper frame) and
+     * belongs in a protocol decision rather than here.
      */
     public static let heartbeatInterval = TimeInterval(DH_SESSION_HEARTBEAT_MS) / 1000
 
