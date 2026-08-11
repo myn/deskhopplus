@@ -2,7 +2,7 @@
 
 > **A hard fork of [DeskHop](https://github.com/hrvach/deskhop) by Hrvoje Cavrak.**
 >
-> deskhopplus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a USB CDC channel with per-OS companion helpers.
+> deskhopplus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a vendor-defined USB HID channel with per-OS companion helpers.
 >
 > This is a **hard fork, not a downstream branch.** It deliberately replaces upstream models where they don't fit — most significantly the linear screen chain in `src/mouse.c`, which assumes each computer's monitors are arranged along the same axis as the border between computers.
 >
@@ -11,6 +11,52 @@
 > **When syncing stops.** Once the new layout model lands, `src/mouse.c` will have diverged past the point where upstream patches apply cleanly. At that point this fork stops tracking upstream and this section will say so plainly, rather than maintaining the appearance of a relationship that no longer functions.
 >
 > Licensed **GPLv3**, as upstream. All original copyright notices are retained; modified files carry an additional notice recording the change.
+
+---
+
+## Building this fork
+
+```shell
+./tools/build.sh
+```
+
+That builds the firmware, the macOS helper, and both host test suites. Upstream's `cmake -S . -B build` still works and still does the right thing — the script exists because this fork adds a Swift helper and a second test suite next to the firmware, and because of the version trap described below.
+
+| Target | What it does |
+|---|---|
+| `./tools/build.sh` | Firmware, helper, and both test suites |
+| `./tools/build.sh fw` | Firmware only |
+| `./tools/build.sh helper` | The macOS helper and its tests |
+| `./tools/build.sh tests` | Both host test suites, no firmware |
+| `./tools/build.sh clean` | Remove `build/`, `tests/build/`, `.build/` |
+
+### Read the version it prints
+
+Every run ends by naming the artifact to flash, its timestamp, and the firmware version **read back out of `build/deskhop.crc`** — what is actually in the binary, not what `CMakeLists.txt` intended:
+
+```
+FLASH THIS  /path/to/deskhopplus/build/deskhop.uf2
+  built    2026-08-11 10:07:52
+  version  180  (v0.80, crc 0xd9981727)
+```
+
+This matters because a board upgrades its peer only from a **strictly newer** version. Flash a build carrying the version already running and the second board silently stays on the old firmware — no error, anywhere — leaving the pair split and presenting different USB descriptors to the two computers. **Any descriptor or protocol change must bump `VERSION_MINOR` in `CMakeLists.txt` before flashing.**
+
+The timestamp is the artifact's mtime, so a rebuild that changes nothing won't move it. That is the truthful reading — same bytes, same file — not a sign the build didn't run.
+
+### Toolchain
+
+The script finds these itself and fails with the install command if one is missing:
+
+- **CMake** — on `PATH`, or `CMake.app`
+- **Arm GNU Toolchain** — `brew install --cask gcc-arm-embedded`. Its `.pkg` step needs `sudo` in an interactive terminal; it fails headless. Located by glob under `/Applications/ArmGNUToolchain/*/`, so a version upgrade doesn't silently fall back to a system `gcc`
+- **Swift** — from the Command Line Tools, for the helper only
+
+Rebuilding the web UI (`webconfig/`) and the disk image (`disk/`) is unchanged from upstream and not covered by the script.
+
+### Hardware verification
+
+Changes to the USB descriptors or the helper channel are verified against real boards, with the procedures recorded in [`docs/verification/`](docs/verification/) so each change has a baseline to compare against.
 
 ---
 
