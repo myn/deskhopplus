@@ -44,19 +44,16 @@ the `RPI-RP2` drive.
 ### Build
 
 ```sh
-export PATH="/Applications/CMake.app/Contents/bin:/Applications/ArmGNUToolchain/14.2.rel1/arm-none-eabi/bin:$PATH"
-cmake -S . -B build && cmake --build build
+./tools/build.sh                 # firmware, helper, and both test suites
 ```
+
+It ends by printing the artifact to flash, its timestamp, and **the version stamped into it**,
+read back out of `build/deskhop.crc` rather than out of `CMakeLists.txt` — so it reports what
+is in the file rather than what someone intended to be. Check that number is above what the
+boards are running before you flash anything. A red bar in either test suite means stop.
 
 Auth must be **on** — `DH_DEV_NO_AUTH` defaults to `OFF` and the pairing checks are meaningless
 without it. Do not pass the flag for this sitting.
-
-The helper:
-
-```sh
-swift build -c release
-swift run channel-tests          # 29 tests; a red bar here means stop
-```
 
 ### The boards
 
