@@ -57,9 +57,29 @@ without it. Do not pass the flag for this sitting.
 
 ### The boards
 
-Board A `E6654854577F452F` (Mac), board B `E665485457895030` (Windows) — #46 pins pairing to
-these. The config chord is **Left Ctrl + Right Shift + C + O**; it both enters and leaves
-config mode, and either direction opens a pairing window.
+Board A `E6654854577F452F`, board B `E665485457895030` — #46 pins pairing to these serials.
+**Which computer each board serves has changed at least once** (as of 2026-08-11: A on the Mac,
+B on Windows), so check the serial the machine actually enumerates rather than assuming.
+
+### Two things that will waste an hour if you do not know them
+
+**The config chord is a toggle.** `Left Ctrl + Right Shift + C + O` enters config mode; pressing
+it again leaves. Two presses in quick succession therefore enter and immediately exit —
+measured at about **3 seconds** in config mode, far too brief for macOS to mount the `DESKHOP`
+volume. The symptom is "the chord does not work, I never see the drive", and the cause is
+pressing it twice. Tap once, then leave the keyboard alone. `config_enable_hotkey_handler` is
+the whole story: it sets the config magic only when config mode is *not* already active.
+
+**The pairing window is per-board.** `scratch[3] = MAGIC_WORD_PAIR` is set only on the board
+that processes the chord, and `channel_open_pairing_window` writes the secret into *that
+board's* flash. Nothing crosses the UART. So the chord must be pressed on the board attached to
+the computer whose helper you want paired, and a secret from one board is refused by the other
+(measured 2026-08-11). Pressing the chord on the Windows side does nothing for the Mac's helper.
+
+**The helper must already be running when the window opens.** The window is 60 s from the
+normal-mode boot, and it can only provision a helper that is connected while it is open. Start
+the helper — ideally as the `LaunchAgent`, so it survives the device's reboot — *before*
+pressing the chord.
 
 ## Recording results
 
@@ -121,15 +141,21 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
 ```
 
 - [ ] `pico_rand` produces a different secret on each window — two chord presses, two distinct
-      digests from the command above
-- [ ] The secret survives a power cycle, and the helper reconnects paired with no interaction
+      digests from the command above. **Passed 2026-08-11** across five windows
+- [ ] The secret survives a power cycle, and the helper reconnects paired with no interaction.
+      **Failed on 0.80 and was the symptom that found [#74](https://github.com/myn/deskhopplus/issues/74)**
+      — `config_t`'s CRC covered the checksum field, so every boot loaded defaults and the
+      secret went with it. Fixed in `5fb082d`; **must be run against 0.81 or later**, and any
+      other check that spans a device reboot is meaningless before it passes
 - [ ] `scratch[3]` survives the config-mode reboot: press the chord to **enter** config mode,
       then leave by the inactivity timeout or the web UI **rather than the chord**, and confirm
       the window opens on the way back. This is the exact path the review found broken when the
       flag lived in `scratch[4]`, which the SDK's own `watchdog_enable()` overwrites
 - [ ] Rotation evicts: pair, press the chord again, confirm the old secret no longer
       authenticates. Keep a copy of the first secret file and restore it over the new one to
-      test this — the helper must be refused, and must report **not paired**
+      test this — the helper must be refused, and must report **not paired**. **Wait out the
+      60 s window first**: inside an open window the device simply re-grants and the test looks
+      like a failure to evict, when in fact the old secret *was* rejected before the new grant
 - [ ] A configuration wipe leaves the helper unpaired, and one chord press restores it. The
       8 → 9 config version change gives you this for free on first boot: the helper should come
       up **not paired — press the config chord on the device**
