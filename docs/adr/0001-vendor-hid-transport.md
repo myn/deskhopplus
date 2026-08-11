@@ -57,8 +57,8 @@ Control: with the owner handle closed, the same zero-access open succeeds. Becau
 uniform across unrelated vendors' minidrivers, the enforcement is in `hidclass.sys` rather than in any
 one driver.
 
-**[INFERENCE]** It will therefore behave the same for our device. Cheap to confirm once the interface
-exists — see *Outstanding confirmations*.
+~~**[INFERENCE]** It will therefore behave the same for our device.~~ **Confirmed on hardware
+2026-08-10** against our own collection — see *Confirmations, retired*.
 
 ### macOS: no TCC requirement — sourced and measured
 
@@ -147,17 +147,33 @@ a transport discriminator, and it is the real residual risk on either transport.
 - **#58** — the mass-storage web-config path is unaffected by this ADR, but HID now looks like a
   plausible route for web config too, for the same reason: HIDClass carries no Trellix filter.
 
-## Outstanding confirmations
+## Confirmations, retired
 
-Both need hardware that does not exist yet. Neither blocks the decision; both would retire the last
-inferences behind it.
+Both were outstanding on hardware that did not exist when this decision was taken. Both were
+measured on 2026-08-10 once [#25](https://github.com/myn/deskhopplus/issues/25) put the interface
+on real boards, and both came back as the decision assumed. **No inference remains behind this
+ADR.** Evidence is on #25 and in `docs/verification/vendor-hid-interface.md`.
 
-1. **Re-run `tools/windows-checks/Confirm-HidExclusivity.ps1 -Check A,E`** against our own vendor
-   collection, confirming `hidclass.sys` refuses the zero-access open for our driver as it does for
-   the ten measured.
-2. **One `ioreg -c IOHIDDevice -r -l` on macOS**, confirming the vendor collection landed in its own
-   `IOHIDDevice` with no `RequiresTCCAuthorization` property — i.e. that the separate-interface
-   constraint above was honoured.
+1. **`tools/windows-checks/Confirm-HidExclusivity.ps1 -Check A,E` against our own vendor
+   collection** — `zero-access UP=0xFF00 U=0x0020 'DeskHop Channel' -> FAILED (err=32)`. Twice, on
+   two independent runs, with 11 of 11 vendor collections excluded. `hidclass.sys` refuses the
+   zero-access open for our device exactly as it did for the ten measured before it, which is what
+   the *Windows: exclusivity survives* inference above rested on.
+2. **`ioreg -c IOHIDDevice -r -l` on macOS** — the vendor collection landed in its own
+   `IOHIDDevice` with no `RequiresTCCAuthorization` property. The separate-interface constraint was
+   honoured, and the permission-free property this transport was chosen for holds on our hardware.
+
+Also measured there, and worth having beside them: the device is locatable by identifier and
+serial (board A `E6654854577F452F`, board B `E665485457895030`, stable across every flash), and
+the 64-byte carrier reaches the Windows host intact.
+
+**What is *not* retired** is pre-boot behaviour, which was never a claim of this ADR but is easily
+mistaken for one. The keyboard does not work at either computer's pre-boot prompt — measured on
+both, and on macOS control-tested against stock upstream, so it predates this fork rather than
+following from this decision. The Windows control is still missing, and until it is run a
+regression caused by the added interface cannot be fully excluded there. Tracked on
+[#66](https://github.com/myn/deskhopplus/issues/66); the possible remedy is
+[#67](https://github.com/myn/deskhopplus/issues/67).
 
 ## Alternatives considered
 
