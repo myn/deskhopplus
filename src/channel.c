@@ -36,8 +36,15 @@ bool channel_helper_present(void) {
 }
 
 static uint32_t channel_now_ms(void) {
-    /* Wraps every ~49 days; the session's comparisons are wrap-safe. */
-    return time_us_32() / 1000u;
+    /*
+     * Milliseconds off the 64-bit timer, so this counter uses the full uint32
+     * range and wraps every ~49 days — which is what the session's wrap-safe
+     * comparisons expect. time_us_32() / 1000 would not do: it spans only
+     * 0..4,294,967 and jumps back to zero every ~72 minutes, and that
+     * discontinuity reads as a difference of ~4.29e9 ms, marking a healthy
+     * helper absent with no way back.
+     */
+    return to_ms_since_boot(get_absolute_time());
 }
 
 /* Pad the tail: a report is a fixed 64 bytes with no length of its own, and

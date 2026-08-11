@@ -58,16 +58,23 @@ public enum FrameCodec {
         return Array(out.prefix(written))
     }
 
-    /* Decode exactly one frame at the start of bytes, with what it consumed. */
+    /* Decode exactly one frame at the start of bytes, with what it consumed.
+       The decoded view points into `bytes`, whose pointer is only guaranteed
+       for the length of the closure — so the payload is copied inside it. */
     public static func decode(_ bytes: [UInt8]) throws -> (frame: Frame, consumed: Int) {
         var view = dh_frame_view()
         var consumed = 0
-        let rc = bytes.withUnsafeBufferPointer { buffer in
-            dh_frame_decode(buffer.baseAddress, buffer.count, &view, &consumed)
+        var frame: Frame?
+        let rc = bytes.withUnsafeBufferPointer { buffer -> dh_frame_result in
+            let rc = dh_frame_decode(buffer.baseAddress, buffer.count, &view, &consumed)
+            if rc == DH_FRAME_OK {
+                frame = Frame(type: view.hdr.type, flags: view.hdr.flags,
+                              payload: view.payloadBytes)
+            }
+            return rc
         }
-        guard rc == DH_FRAME_OK else { throw ChannelError.from(rc) }
-        return (Frame(type: view.hdr.type, flags: view.hdr.flags, payload: view.payloadBytes),
-                consumed)
+        guard rc == DH_FRAME_OK, let frame else { throw ChannelError.from(rc) }
+        return (frame, consumed)
     }
 
     /*

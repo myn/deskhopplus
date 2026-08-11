@@ -27,6 +27,11 @@ public enum SessionInput: Equatable {
     case channelsAcquired(count: Int)
     case acquisitionRefused(acquired: Int, of: Int)
     case received([UInt8])
+    /* The transport could not carry something it was given. A frame written
+       in part leaves the device's reader mid-frame, where the padding skip
+       does not apply and the next frame is eaten as its tail — so this is a
+       dropped connection, not a retryable write. */
+    case transportFailed(String)
     case tick
 }
 
@@ -48,9 +53,18 @@ public struct Negotiated: Equatable {
 }
 
 public final class SessionEngine {
-    /* A helper beats at the interval the shared core defines, so the device's
-       "absent after a couple of missed intervals" is measured against the
-       same number at both ends. */
+    /*
+     * A helper beats at the interval the shared core defines, so the device's
+     * "absent after a couple of missed intervals" is measured against the
+     * same number at both ends.
+     *
+     * Known gap: the heartbeat has no acknowledgement in v1, so if the device
+     * drops the session on its side — its liveness timeout, or a framing
+     * error on its reader — this helper cannot tell, and goes on reporting a
+     * session that is gone. Closing it means a wire-format change (an
+     * acknowledged beat, or a periodic device-to-helper frame) and belongs in
+     * a protocol decision rather than here.
+     */
     public static let heartbeatInterval = TimeInterval(DH_SESSION_HEARTBEAT_MS) / 1000
 
     /*
@@ -104,6 +118,8 @@ public final class SessionEngine {
             return acquisitionRefused(acquired: acquired, of: total)
         case .received(let bytes):
             return received(bytes, at: now)
+        case .transportFailed(let reason):
+            return dropConnection(note: "transport failed: \(reason)")
         case .tick:
             return tick(at: now)
         }
@@ -219,12 +235,12 @@ public final class SessionEngine {
             return dropConnection(note: "hello_ack payload could not be decoded")
         }
 
-        phase = .live
         lastHeartbeatAt = now
         backoff.reset()
 
         switch ack.status {
         case .ok:
+            phase = .live
             negotiated = Negotiated(channelCount: ack.channelCount,
                                     maxChunk: ack.maxChunk,
                                     deviceBuild: ack.buildType)
@@ -238,10 +254,19 @@ public final class SessionEngine {
         case .authenticationFailed:
             /* The session stays up and beating: the pairing window (#46)
                provisions a helper that is connected when it opens. */
+            phase = .live
             negotiated = nil
             return emit(.notPaired)
 
         case .versionIncompatible:
+            /*
+             * The device dropped the session on its side, so there is nothing
+             * to keep alive — beating at a peer that will never answer would
+             * only look like a session. The channels stay held so nothing
+             * else takes them, and a firmware or helper update re-enumerates,
+             * which is what starts the next attempt.
+             */
+            phase = .idle
             negotiated = nil
             return [.note("device speaks protocol version \(ack.protocolVersion), "
                           + "this helper speaks \(DH_PROTO_VERSION)")]

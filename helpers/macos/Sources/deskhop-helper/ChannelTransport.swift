@@ -113,6 +113,12 @@ final class ChannelTransport {
     private func removed(_ device: IOHIDDevice) {
         if identity(of: device) == .configMode {
             configModeNodes = max(0, configModeNodes - 1)
+            /* Unplugged while in config mode: the device is now absent, not
+               configuring, and saying nothing would leave "Device in config
+               mode" showing for as long as it stays unplugged. */
+            if configModeNodes == 0 && channels.isEmpty {
+                onEvent?(.deviceDisappeared)
+            }
             return
         }
 
@@ -238,7 +244,11 @@ final class ChannelTransport {
                                      buffer.baseAddress!, buffer.count)
             }
             if result != kIOReturnSuccess {
-                log?("report write failed: \(String(format: "0x%08x", result))")
+                /* A frame written in part leaves the device's reader holding
+                   half of one, where the padding skip does not apply — the
+                   next frame would be eaten as its tail. The connection goes. */
+                onEvent?(.transportFailed("report write failed: "
+                                          + String(format: "0x%08x", result)))
                 return
             }
         }

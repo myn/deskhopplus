@@ -9,12 +9,18 @@ import Foundation
 final class HelperRuntime {
     private let engine = SessionEngine()
     private let transport = ChannelTransport()
-    private let started = Date()
+    private let started = ProcessInfo.processInfo.systemUptime
 
     /// The engine's tick — fine enough that a heartbeat is never late by much.
     private static let tickInterval: TimeInterval = 0.25
 
-    private var now: TimeInterval { Date().timeIntervalSince(started) }
+    /*
+     * Monotonic, deliberately. `Date()` is not: a backwards clock correction
+     * of more than a couple of seconds — routine on a laptop coming out of
+     * sleep — would stall the heartbeat past the device's three-second
+     * timeout and kill a healthy session.
+     */
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime - started }
 
     func run() {
         transport.log = { message in Self.note(message) }

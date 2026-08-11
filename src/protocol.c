@@ -105,6 +105,18 @@ void _queue_packet(uint8_t *payload, device_t *state, uint8_t type, uint8_t len,
 }
 
 void queue_cfg_packet(uart_packet_t *packet, device_t *state) {
+    /*
+     * The config API and the helper channel share an interface slot, one per
+     * mode. Outside config mode that slot is the channel, whose descriptor
+     * declares no report ID — so sending this would put REPORT_ID_VENDOR on
+     * the wire as the first byte of the helper's frame stream, which reads it
+     * as an unknown message type and drops the connection. Reachable without
+     * config mode on this board: a config-mode peer can proxy an API read
+     * over the UART (handle_api_msgs).
+     */
+    if (!state->config_mode_active)
+        return;
+
     uint8_t raw_packet[RAW_PACKET_LENGTH];
     write_raw_packet(raw_packet, packet);
     _queue_packet(raw_packet, state, 0, RAW_PACKET_LENGTH, REPORT_ID_VENDOR, ITF_NUM_HID_VENDOR);

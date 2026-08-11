@@ -16,6 +16,9 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("the heartbeat beats at the interval the device measures", testHeartbeatKeepsBeating),
     ("an unanswered hello is not left half-open", testUnansweredHello),
     ("a protocol error drops the connection", testProtocolErrorDropsConnection),
+    ("a failed write drops the connection", testFailedWriteDropsConnection),
+    ("a mismatched helper does not beat at a peer that dropped it",
+     testMismatchedHelperDoesNotBeat),
     ("a brief disappearance says nothing", testBriefDisappearanceIsSilent),
     ("a long absence is eventually reported", testLongAbsenceIsReported),
     ("starting before the device is attached is reported", testStartingWithNoDevice),
@@ -212,6 +215,46 @@ private func testProtocolErrorDropsConnection() throws {
     let outputs = f.send(.received([0xEE, 0x00, 0x00, 0x00]))
     Check.that(outputs.contains(.closeChannels), "a protocol error kept the connection")
     Check.that(!f.retries(outputs).isEmpty, "a protocol error did not reconnect")
+}
+
+/* A frame written in part leaves the device's reader mid-frame, where the
+   padding skip does not apply — so a failed write is a dropped connection,
+   not a write to shrug off. */
+private func testFailedWriteDropsConnection() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    let outputs = f.send(.transportFailed("report write failed"))
+    Check.that(outputs.contains(.closeChannels), "a failed write kept the connection")
+    Check.that(!f.retries(outputs).isEmpty, "a failed write did not reconnect")
+
+    /* And the session is gone: no heartbeat into a desynchronised reader. */
+    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+                "kept beating after the connection was dropped")
+}
+
+/* The device drops the session on a version mismatch, so there is nothing to
+   keep alive — beating at a peer that will never answer only looks like one. */
+private func testMismatchedHelperDoesNotBeat() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.normal))
+    f.send(.channelsAcquired(count: 1))
+    f.send(try f.ack(.versionIncompatible, version: 2))
+
+    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+                "beat at a device that had refused the session")
+    Check.equal(f.engine.state, .versionIncompatible, "the state did not survive the ticks")
+
+    /* An unpaired helper is the opposite case: the session is real, and it
+       keeps beating so the pairing window can provision it. */
+    let unpaired = Fixture()
+    unpaired.send(.deviceAppeared(.normal))
+    unpaired.send(.channelsAcquired(count: 1))
+    unpaired.send(try unpaired.ack(.authenticationFailed))
+    Check.equal(try unpaired.sentFrames(unpaired.advance(SessionEngine.heartbeatInterval))
+                    .map(\.type),
+                [MessageType.heartbeat],
+                "an unpaired helper stopped beating, so a pairing window could not reach it")
 }
 
 // MARK: - Coming and going

@@ -65,20 +65,24 @@ public struct Hello: Equatable {
         return Array(out.prefix(written))
     }
 
+    /* The decoded token points into `payload`, whose pointer is only
+       guaranteed for the length of the closure — so it is copied inside it. */
     public static func decode(payload: [UInt8]) throws -> Hello {
         var hello = dh_hello()
-        let ok = payload.withUnsafeBufferPointer { buffer in
-            dh_hello_decode(buffer.baseAddress, buffer.count, &hello)
+        var decoded: Hello?
+        payload.withUnsafeBufferPointer { buffer in
+            guard dh_hello_decode(buffer.baseAddress, buffer.count, &hello) else { return }
+            decoded = Hello(protocolVersion: hello.proto_version,
+                            os: hello.os,
+                            buildType: BuildType(rawValue: hello.build_type) ?? .release,
+                            channelCount: hello.channel_count,
+                            maxChunk: hello.max_chunk,
+                            token: hello.token.map {
+                                Array(UnsafeBufferPointer(start: $0, count: Int(hello.token_len)))
+                            } ?? [])
         }
-        guard ok else { throw ChannelError.malformedPayload }
-        return Hello(protocolVersion: hello.proto_version,
-                     os: hello.os,
-                     buildType: BuildType(rawValue: hello.build_type) ?? .release,
-                     channelCount: hello.channel_count,
-                     maxChunk: hello.max_chunk,
-                     token: hello.token.map {
-                         Array(UnsafeBufferPointer(start: $0, count: Int(hello.token_len)))
-                     } ?? [])
+        guard let decoded else { throw ChannelError.malformedPayload }
+        return decoded
     }
 }
 

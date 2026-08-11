@@ -33,7 +33,11 @@ bool dh_hello_decode(const uint8_t *payload, size_t len, dh_hello *out) {
 }
 
 dh_frame_result dh_hello_encode(const dh_hello *in, uint8_t *out, size_t cap, size_t *out_len) {
+    /* A length without a pointer is a caller bug, not a short token: the
+       bindings build this struct by hand, so it is checked rather than
+       assumed. */
     if (in == NULL || in->token_len > DH_HELLO_TOKEN_MAX) return DH_FRAME_ERR_BUFFER;
+    if (in->token == NULL && in->token_len > 0) return DH_FRAME_ERR_BUFFER;
 
     uint8_t payload[DH_HELLO_FIXED_LEN + DH_HELLO_TOKEN_MAX];
     wr_u16(payload, in->proto_version);
@@ -119,7 +123,13 @@ static dh_frame_result answer_hello(dh_session *s, const dh_frame_view *f, uint3
      */
     if (hello.proto_version != DH_PROTO_VERSION) {
         ack.status = DH_HELLO_VERSION_INCOMPATIBLE;
-        dh_session_drop(s);
+        /*
+         * Refuse the hello, but do not tear down a session already running:
+         * one process holds the channel, so a hello carrying a version this
+         * device negotiated past is anomalous, and a working session is not
+         * a stray frame's to end. A session that never started stays absent.
+         */
+        if (!s->present) dh_session_drop(s);
     } else {
         ack.channel_count = negotiate_channels(hello.channel_count);
         ack.max_chunk = negotiate_chunk(hello.max_chunk);

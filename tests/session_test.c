@@ -274,6 +274,51 @@ static void test_version_mismatch_is_distinct_and_has_no_session(void) {
     CHECK(!s.present, "version", "an incompatible helper was admitted to a session");
 }
 
+/* A live session is not the mismatched hello's to destroy. Only one process
+ * holds the channel, so a hello carrying a version the device already
+ * negotiated past is anomalous — refuse it and leave the session standing,
+ * rather than letting one stray frame end a working one. */
+static void test_a_mismatched_hello_does_not_end_a_live_session(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    uint32_t now = 4000;
+    size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, NULL, 0, hello, sizeof hello);
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "version", "no answer to hello");
+    CHECK(s.present, "version", "no session to begin with");
+
+    now += 10;
+    len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION + 1, 1, 1024, NULL, 0, hello, sizeof hello);
+    const size_t reply_len = feed(&s, hello, len, now, reply, sizeof reply);
+
+    dh_frame_view v;
+    size_t consumed = 0;
+    dh_hello_ack a;
+    CHECK(dh_frame_decode(reply, reply_len, &v, &consumed) == DH_FRAME_OK, "version",
+          "reply is not a frame");
+    CHECK(dh_hello_ack_decode(v.payload, v.hdr.len, &a), "version", "ack decode failed");
+    CHECK(a.status == DH_HELLO_VERSION_INCOMPATIBLE, "version", "mismatch not refused");
+    CHECK(s.present, "version", "a stray mismatched hello ended a working session");
+    CHECK(s.last_seen_ms == 4000, "version", "a refused hello counted as a sign of life");
+}
+
+/* A token pointer and its length must agree; the Swift binding builds this
+ * struct by hand, so the invariant cannot rest on convention. */
+static void test_a_token_length_without_a_token_is_refused(void) {
+    dh_hello h = {
+        .proto_version = DH_PROTO_VERSION,
+        .os = DH_OS_MAC,
+        .token = NULL,
+        .token_len = 16,
+    };
+    uint8_t out[MAX_VECTOR_BYTES];
+    size_t len = 0;
+    CHECK(dh_hello_encode(&h, out, sizeof out, &len) != DH_FRAME_OK, "token",
+          "a null token with a non-zero length was encoded");
+}
+
 static void test_the_ack_carries_the_device_build_type(void) {
     dh_session s;
     dh_session_init(&s, DH_BUILD_DEVELOPMENT);
@@ -429,6 +474,8 @@ int main(int argc, char **argv) {
     test_device_answers_the_golden_hello(path);
     test_negotiation_clamps_to_what_the_device_has();
     test_version_mismatch_is_distinct_and_has_no_session();
+    test_a_mismatched_hello_does_not_end_a_live_session();
+    test_a_token_length_without_a_token_is_refused();
     test_the_ack_carries_the_device_build_type();
     test_heartbeat_keeps_the_session_and_silence_ends_it();
     test_liveness_survives_the_clock_wrapping();
