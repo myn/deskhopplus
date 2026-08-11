@@ -78,8 +78,9 @@ void load_config(device_t *state) {
     /* Load the flash config first, including the checksum */
     memcpy(running_config, config, sizeof(config_t));
 
-    /* Calculate and update checksum, size without checksum */
-    uint32_t checksum = calc_crc32((uint8_t *)running_config, sizeof(config_t) - sizeof(uint32_t));
+    /* Calculate and update checksum, over everything ahead of it. Derived from
+       offsetof, not sizeof: the struct can carry trailing padding (#74). */
+    uint32_t checksum = calc_crc32((uint8_t *)running_config, offsetof(config_t, checksum));
 
     /* We expect a certain byte to start the config header */
     bool magic_header_fail = (running_config->magic_header != 0xB00B1E5);
@@ -98,8 +99,9 @@ void load_config(device_t *state) {
 void save_config(device_t *state) {
     uint8_t *raw_config = (uint8_t *)&state->config;
 
-    /* Calculate and update checksum, size without checksum */
-    uint32_t checksum       = calc_crc32(raw_config, sizeof(config_t) - sizeof(uint32_t));
+    /* Calculate and update checksum, over everything ahead of it. Derived from
+       offsetof, not sizeof: the struct can carry trailing padding (#74). */
+    uint32_t checksum       = calc_crc32(raw_config, offsetof(config_t, checksum));
     state->config.checksum = checksum;
 
     /* Copy the config to buffer and pad the rest with zeros */

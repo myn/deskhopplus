@@ -12,6 +12,7 @@
 
 #include "dh_pair.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include "dh_txq.h"
 #include "flash.h"
@@ -95,11 +96,30 @@ typedef struct {
     uint8_t channel_secret[DH_PAIR_SECRET_LEN];
     uint8_t channel_paired;
 
-    uint32_t _reserved;
+    /* Two words, so the struct ends exactly on the checksum. #46's 17 bytes
+       rounded config_t up to 160 and left four bytes of padding *behind* the
+       checksum, which is what broke persistence (#74); absorbing them here
+       keeps the tail intentional rather than whatever alignment happens to
+       leave over. */
+    uint32_t _reserved[2];
 
     // Keep checksum at the end of the struct
     uint32_t checksum;
 } config_t;
+
+/*
+ * The checksum must be the last field *and* leave no trailing padding, because
+ * both save_config and load_config checksum everything ahead of it (#74).
+ *
+ * This is asserted rather than trusted: config_t inherits 8-byte alignment from
+ * the uint64_t timers in screensaver_t, so adding a field can round the struct
+ * up and silently leave padding behind the checksum. #46 did exactly that —
+ * sizeof went 136 -> 160 with the checksum at 152 — and the CRC then covered
+ * the checksum field itself, so no stored config ever validated again and every
+ * boot fell back to defaults.
+ */
+_Static_assert(offsetof(config_t, checksum) == sizeof(config_t) - sizeof(uint32_t),
+               "config_t: checksum must be last, with no trailing padding (see #74)");
 
 
 /*==============================================================================
