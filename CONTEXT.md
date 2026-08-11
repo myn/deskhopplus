@@ -19,6 +19,26 @@ The companion application on each computer (Swift on macOS, C++ on Windows) that
 the pasteboard and places the cursor. An enhancement, never a dependency.
 _Avoid_: agent, daemon, client, companion app
 
+**Link**:
+The physical USB attachment between a computer and its board. Losing it takes the connection and
+the session with it; neither of those falling over touches the link. The board-to-board one is
+always written **inter-board link** in full — bare "link" is the helper↔firmware one.
+_Avoid_: connection, session, cable
+
+**Connection**:
+The channels a helper holds open, exclusively and all-or-nothing. It can be dropped and reopened
+without the device going anywhere, which is a helper's ordinary recovery from a session it has
+lost.
+_Avoid_: session, link, socket
+
+**Session**:
+The negotiated state established by the hello exchange: the agreed protocol version, channel count
+and chunk size, plus the authentication that makes the peer one anything may be relayed for. It
+ends when either end times the other out, on a protocol error, or when the pairing chord rotates
+the secret. A session can be gone while the connection and the link are both perfectly healthy —
+that gap is the whole reason these are three words and not one.
+_Avoid_: connection, link, pairing (pairing is what authorises a session, not the session itself)
+
 **Opaque relay**:
 The firmware's role on the channel: it parses frame headers only — never payloads — and forwards
 fragments between the USB and inter-board links. Clipboard format changes never touch firmware.
