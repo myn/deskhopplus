@@ -27,6 +27,8 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("the channels are released when the device goes", testChannelsReleasedOnDeparture),
     ("reconnection backs off to a capped delay", testBackoffIsCapped),
     ("a working session resets the backoff", testWorkingSessionResetsBackoff),
+    ("a granted secret is stored and pairs the helper", testPairingRoundTrip),
+    ("a stored secret is offered on the next hello", testStoredSecretIsOffered),
 ]
 
 /// One engine, one clock, and the small vocabulary the tests read outputs with.
@@ -246,15 +248,20 @@ private func testMismatchedHelperDoesNotBeat() throws {
     Check.equal(f.engine.state, .versionIncompatible, "the state did not survive the ticks")
 
     /* An unpaired helper is the opposite case: the session is real, and it
-       keeps beating so the pairing window can provision it. */
+       both keeps beating and keeps asking — the window can only provision a
+       helper that is connected when the user presses the chord, and it stays
+       connected by beating. */
     let unpaired = Fixture()
     unpaired.send(.deviceAppeared(.normal))
     unpaired.send(.channelsAcquired(count: 1))
     unpaired.send(try unpaired.ack(.authenticationFailed))
-    Check.equal(try unpaired.sentFrames(unpaired.advance(SessionEngine.heartbeatInterval))
-                    .map(\.type),
-                [MessageType.heartbeat],
-                "an unpaired helper stopped beating, so a pairing window could not reach it")
+
+    let types = try unpaired.sentFrames(unpaired.advance(SessionEngine.heartbeatInterval))
+        .map(\.type)
+    Check.that(types.contains(MessageType.heartbeat),
+               "an unpaired helper stopped beating, so a pairing window could not reach it")
+    Check.that(types.contains(MessageType.pairRequest),
+               "an unpaired helper never asked to be paired")
 }
 
 // MARK: - Coming and going
@@ -340,6 +347,63 @@ private func testChannelsReleasedOnDeparture() throws {
     /* And nothing is released twice — there is nothing to release. */
     Check.that(!f.send(.deviceDisappeared).contains(.closeChannels),
                "channels were released twice")
+}
+
+// MARK: - Pairing
+
+/* The window provisions whoever is connected, and the state changing to
+   connected is the confirmation the user was told to expect (#34). */
+private func testPairingRoundTrip() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.normal))
+    f.send(.channelsAcquired(count: 1))
+    f.send(try f.ack(.authenticationFailed))
+    Check.equal(f.engine.state, .notPaired, "the helper did not report being unpaired")
+
+    /* The user presses the chord; the device grants the rotated secret. */
+    let granted = [UInt8](repeating: 0xA5, count: SecretStore.length)
+    let grant = try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: granted))
+    let outputs = f.send(.received(grant))
+
+    Check.that(outputs.contains(.storeSecret(granted)),
+               "the granted secret was not kept — pairing would not survive a restart")
+
+    /* And the helper immediately says hello again, carrying it. */
+    let frames = try f.sentFrames(outputs)
+    Check.equal(frames.map(\.type), [MessageType.hello], "no fresh hello after being paired")
+    let hello = try Hello.decode(payload: frames[0].payload)
+    Check.equal(hello.token, granted, "the new hello did not carry the granted secret")
+
+    /* The device accepts it, and *that* is what the user sees. */
+    Check.equal(f.states(f.send(try f.ack(.ok))), [.connected],
+                "pairing succeeded but the helper never confirmed it visibly")
+    Check.that(!f.engine.state.promptsConfigChord, "a paired helper still prompts the chord")
+
+    /* A grant of the wrong size is not a secret. */
+    let short = try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: [1, 2, 3]))
+    Check.that(!f.send(.received(short)).contains(where: {
+        if case .storeSecret = $0 { return true } else { return false }
+    }), "a malformed grant was stored as a secret")
+}
+
+private func testStoredSecretIsOffered() throws {
+    /* What the helper does on the next launch: the secret comes off disk and
+       goes straight into the hello, so a paired helper never asks again. */
+    let stored = [UInt8](repeating: 0x5A, count: SecretStore.length)
+    let engine = SessionEngine(secret: stored)
+
+    _ = engine.handle(.deviceAppeared(.normal), at: 0)
+    let outputs = engine.handle(.channelsAcquired(count: 1), at: 0)
+
+    let sent = outputs.compactMap { output -> [UInt8]? in
+        if case .send(let bytes) = output { return bytes } else { return nil }
+    }
+    guard let first = sent.first else {
+        Check.that(false, "no hello was sent")
+        return
+    }
+    let hello = try Hello.decode(payload: FrameCodec.decode(first).frame.payload)
+    Check.equal(hello.token, stored, "a stored secret was not offered in the hello")
 }
 
 // MARK: - Reconnection

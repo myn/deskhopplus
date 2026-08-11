@@ -7,7 +7,8 @@ import Foundation
  * file only carries messages and owns the clock.
  */
 final class HelperRuntime {
-    private let engine = SessionEngine()
+    private let secrets = SecretStore()
+    private lazy var engine = SessionEngine(secret: secrets.load())
     private let transport = ChannelTransport()
     private let started = ProcessInfo.processInfo.systemUptime
 
@@ -43,6 +44,14 @@ final class HelperRuntime {
 
     private func apply(_ output: SessionOutput) {
         switch output {
+        case .storeSecret(let secret):
+            /* The only local state the helper keeps; everything else is the
+               device's. See SecretStore for why this is a file. */
+            if !secrets.save(secret) {
+                Self.note("paired, but the secret could not be stored — pairing "
+                          + "will not survive a restart")
+            }
+
         case .openChannels:
             transport.acquire()
 

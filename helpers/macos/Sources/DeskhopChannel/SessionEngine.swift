@@ -36,6 +36,9 @@ public enum SessionInput: Equatable {
 }
 
 public enum SessionOutput: Equatable {
+    /* A secret the device just granted. Storing it is the transport's job;
+       the engine only decides that it is worth keeping. */
+    case storeSecret([UInt8])
     case openChannels
     case closeChannels
     case send([UInt8])
@@ -92,6 +95,9 @@ public final class SessionEngine {
     private var holdingChannels = false
     /* A state the user will be told about once the silence window passes. */
     private var deferredState: (state: HelperState, at: TimeInterval)?
+    /* The token every hello carries. nil until the device grants one. */
+    private var secret: [UInt8]?
+    private var pairingRequestedAt: TimeInterval?
     /* A helper that starts before the device is attached — the ordinary case
        at login — reports the absence on the same delay as one that loses it. */
     private var startedAt: TimeInterval?
@@ -100,7 +106,17 @@ public final class SessionEngine {
     public private(set) var state: HelperState = .quiet
     public private(set) var negotiated: Negotiated?
 
-    public init() {}
+    /*
+     * How often an unpaired helper asks to be paired. The window is about a
+     * minute and the user may press the chord at any point in it, so asking
+     * periodically is what makes provisioning silent — the alternative is
+     * telling the user to press the chord *and then* restart the helper.
+     */
+    public static let pairingRetryInterval: TimeInterval = 2
+
+    public init(secret: [UInt8]? = nil) {
+        self.secret = secret
+    }
 
     public func handle(_ input: SessionInput, at now: TimeInterval) -> [SessionOutput] {
         if startedAt == nil { startedAt = now }
@@ -169,7 +185,7 @@ public final class SessionEngine {
         deferredState = nil
 
         do {
-            return [.send(try Hello().encoded())]
+            return [.send(try Hello(token: secret ?? []).encoded())]
         } catch {
             /* Encoding a hello cannot fail against a working core; if it ever
                does, say so rather than sit silently in awaitingAck. */
@@ -215,6 +231,9 @@ public final class SessionEngine {
             switch frame.type {
             case MessageType.helloAck:
                 outputs += helloAck(frame, at: now)
+
+            case MessageType.pairGrant:
+                outputs += pairGranted(frame, at: now)
             default:
                 /* Placement and the bulk band belong to later tickets; a
                    frame this build does not act on is not an error. */
@@ -252,10 +271,12 @@ public final class SessionEngine {
             return outputs + emit(.connected)
 
         case .authenticationFailed:
-            /* The session stays up and beating: the pairing window (#46)
-               provisions a helper that is connected when it opens. */
+            /* The session stays up and asking: the pairing window (#46)
+               provisions a helper that is connected when it opens, and this
+               helper is only connected if it keeps a session alive. */
             phase = .live
             negotiated = nil
+            pairingRequestedAt = nil
             return emit(.notPaired)
 
         case .versionIncompatible:
@@ -272,6 +293,29 @@ public final class SessionEngine {
                           + "this helper speaks \(DH_PROTO_VERSION)")]
                 + emit(.versionIncompatible)
         }
+    }
+
+    /*
+     * The window provisioned us. Storing the secret and saying hello again is
+     * the whole of pairing — and the state changing to connected is the
+     * confirmation the user was told to expect (#34): a chord press that does
+     * not produce it is the signal that something else may have been
+     * provisioned instead.
+     */
+    private func pairGranted(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+        guard frame.payload.count == SecretStore.length else {
+            return [.note("ignoring a pair grant carrying \(frame.payload.count) bytes")]
+        }
+
+        secret = frame.payload
+        pairingRequestedAt = nil
+
+        guard let hello = try? Hello(token: frame.payload).encoded() else {
+            return [.note("paired, but the hello could not be encoded")]
+        }
+        helloSentAt = now
+        phase = .awaitingAck
+        return [.storeSecret(frame.payload), .note("paired by the device"), .send(hello)]
     }
 
     private func tick(at now: TimeInterval) -> [SessionOutput] {
@@ -291,10 +335,28 @@ public final class SessionEngine {
         case .awaitingAck where now - helloSentAt >= Self.helloTimeout:
             outputs += dropConnection(note: "no hello_ack within \(Self.helloTimeout)s")
 
-        case .live where now - lastHeartbeatAt >= Self.heartbeatInterval:
-            lastHeartbeatAt = now
-            if let beat = try? FrameCodec.encode(Frame(type: MessageType.heartbeat)) {
-                outputs.append(.send(beat))
+        case .live:
+            /*
+             * Beating and asking are independent, not alternatives. An
+             * unpaired helper must keep the session alive *and* keep asking:
+             * the window can only provision a helper that is connected when
+             * the user presses the chord, and it stays connected by beating.
+             */
+            if now - lastHeartbeatAt >= Self.heartbeatInterval {
+                lastHeartbeatAt = now
+                if let beat = try? FrameCodec.encode(Frame(type: MessageType.heartbeat)) {
+                    outputs.append(.send(beat))
+                }
+            }
+
+            /* The device answers with silence outside a window, so this costs
+               one frame every couple of seconds and no state on either side. */
+            if state == .notPaired,
+               now - (pairingRequestedAt ?? 0) >= Self.pairingRetryInterval {
+                pairingRequestedAt = now
+                if let request = try? FrameCodec.encode(Frame(type: MessageType.pairRequest)) {
+                    outputs.append(.send(request))
+                }
             }
 
         default:

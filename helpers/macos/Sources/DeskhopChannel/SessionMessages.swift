@@ -139,4 +139,6 @@ public enum MessageType {
     public static let hello = UInt8(DH_MSG_HELLO.rawValue)
     public static let helloAck = UInt8(DH_MSG_HELLO_ACK.rawValue)
     public static let heartbeat = UInt8(DH_MSG_HEARTBEAT.rawValue)
+    public static let pairRequest = UInt8(DH_MSG_PAIR_REQUEST.rawValue)
+    public static let pairGrant = UInt8(DH_MSG_PAIR_GRANT.rawValue)
 }
