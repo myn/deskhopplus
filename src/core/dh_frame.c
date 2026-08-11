@@ -94,6 +94,14 @@ dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, si
     }
 
     while (used < len) {
+        /* Skip carrier padding, which only ever appears between frames. */
+        if (r->have == 0) {
+            while (used < len && data[used] == DH_FRAME_PAD)
+                used++;
+            if (used == len)
+                break;
+        }
+
         /* Fill the header, then validate it once complete. */
         if (r->have < DH_FRAME_HEADER_SIZE) {
             used += reader_fill(r, data, len, used, DH_FRAME_HEADER_SIZE - r->have);

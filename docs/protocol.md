@@ -35,6 +35,21 @@ offset  size  field
 A frame with `len > 4096` or an unknown `type` is a protocol error: log, drop the
 connection, reconnect.
 
+### The report carrier
+
+The channel's HID reports are a fixed 64 bytes with no report ID and no length field of their
+own, so the framing layer owns every byte of a report. Frames are packed into that byte stream
+back to back, and the tail of the last report of a batch is filled with **`0x00`**.
+
+`0x00` is not a message type — the registry starts at `0x01` — so it cannot begin a frame. A
+decoder skips it **between** frames and nowhere else: inside a frame it is ordinary payload,
+accounted for by the length the header already gave. An all-padding report is idle traffic and
+means nothing.
+
+This is a property of a fixed-size carrier, not of the framing: it costs no golden vector, and a
+carrier that already delimits its own records (the inter-board link's packets, a CDC stream)
+never emits it.
+
 ## Bands
 
 Ids are banded so the firmware's two decisions are each **a single range test** on the

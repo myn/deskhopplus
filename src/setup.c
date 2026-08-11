@@ -226,6 +226,10 @@ void initial_setup(device_t *state) {
     state->dev_build = true;
 #endif
 
+    /* No helper has said hello yet, and the session carries the build type
+       every hello_ack reports */
+    channel_init();
+
     /* Detect which board we're running on */
     state->board_role = board_autoprobe();
 

@@ -186,6 +186,63 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Carrier padding: the channel's reports are a fixed 64 bytes with no
+     * length field of their own, so a sender fills the tail with DH_FRAME_PAD.
+     * The reader skips it between frames — and only between frames, since the
+     * same byte inside a payload is data the header already accounted for. */
+    {
+        uint8_t report[64];
+        memset(report, DH_FRAME_PAD, sizeof report);
+        /* Two frames packed into one report, the second with a zero-heavy
+         * payload, then padding to the report boundary. */
+        const uint8_t body[6] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
+        size_t len = 0, at = 0;
+        CHECK(dh_frame_encode(DH_MSG_HEARTBEAT, 0, NULL, 0, report + at, sizeof report - at,
+                              &len) == DH_FRAME_OK,
+              "padding", "heartbeat encode failed");
+        at += len;
+        CHECK(dh_frame_encode(DH_MSG_CLIP_CREDIT, 0, body, sizeof body, report + at,
+                              sizeof report - at, &len) == DH_FRAME_OK,
+              "padding", "credit encode failed");
+        at += len;
+
+        dh_frame_reader r;
+        dh_frame_reader_init(&r);
+        uint8_t seen[2] = {0};
+        size_t frames = 0, off = 0;
+        while (off < sizeof report) {
+            size_t consumed = 0;
+            dh_frame_view fv;
+            const dh_frame_result rc =
+                dh_frame_reader_push(&r, report + off, sizeof report - off, &consumed, &fv);
+            CHECK(rc == DH_FRAME_OK || rc == DH_FRAME_AGAIN, "padding",
+                  "padding read as a frame");
+            if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) break;
+            CHECK(consumed > 0, "padding", "reader consumed nothing");
+            if (consumed == 0) break;
+            if (rc == DH_FRAME_OK && frames < 2) {
+                seen[frames] = fv.hdr.type;
+                CHECK(fv.hdr.type != DH_MSG_CLIP_CREDIT || (fv.hdr.len == sizeof body &&
+                      memcmp(fv.payload, body, sizeof body) == 0),
+                      "padding", "zero bytes inside a payload were skipped");
+                frames++;
+            }
+            off += consumed;
+        }
+        CHECK(frames == 2, "padding", "packed frames not both recovered");
+        CHECK(seen[0] == DH_MSG_HEARTBEAT && seen[1] == DH_MSG_CLIP_CREDIT, "padding",
+              "frames recovered out of order");
+
+        /* A report that is nothing but padding yields nothing and errors not. */
+        memset(report, DH_FRAME_PAD, sizeof report);
+        dh_frame_reader_init(&r);
+        size_t consumed = 0;
+        dh_frame_view fv;
+        CHECK(dh_frame_reader_push(&r, report, sizeof report, &consumed, &fv) == DH_FRAME_AGAIN,
+              "padding", "an idle report was not silent");
+        CHECK(consumed == sizeof report, "padding", "idle report not consumed");
+    }
+
     /* Over-long length is a protocol error everywhere. */
     {
         const uint8_t bad[] = {DH_MSG_HEARTBEAT, 0x00, 0x01, 0x10}; /* len 0x1001 = 4097 */

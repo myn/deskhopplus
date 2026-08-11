@@ -22,6 +22,7 @@
  *  Individual Task Functions
  *==============================================================================*/
 
+void channel_task(device_t *);
 void firmware_upgrade_task(device_t *);
 void heartbeat_output_task(device_t *);
 void kick_watchdog_task(device_t *);

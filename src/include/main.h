@@ -33,6 +33,7 @@
 
 #include "dma.h"
 
+#include "channel.h"
 #include "firmware.h"
 #include "flash.h"
 #include "handlers.h"

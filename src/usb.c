@@ -42,6 +42,15 @@ void tud_hid_set_report_cb(uint8_t instance,
                            uint8_t const *buffer,
                            uint16_t bufsize) {
 
+    /* The helper channel occupies the vendor interface slot in normal mode and
+       declares no report ID, so a report is 64 bytes the framing layer owns
+       end to end (#45). */
+    if (instance == ITF_NUM_HID_VENDOR && report_id == 0 && !global_state.config_mode_active) {
+        if (report_type == HID_REPORT_TYPE_OUTPUT)
+            channel_receive_report(buffer, bufsize);
+        return;
+    }
+
     /* We received a report on the config report ID */
     if (instance == ITF_NUM_HID_VENDOR && report_id == REPORT_ID_VENDOR) {
         /* Security - only if config mode is enabled are we allowed to do anything. While the report_id
@@ -94,6 +103,11 @@ void tud_mount_cb(void) {
 /* Invoked when device is unmounted */
 void tud_umount_cb(void) {
     global_state.tud_connected = false;
+
+    /* The channel went with it. Config mode reboots the device under a
+       different USB identity, so this is also the ordinary path in and out of
+       it — the helper reconnects and says hello again. */
+    channel_init();
 }
 
 #ifdef DH_DEBUG_CDC_FLASH

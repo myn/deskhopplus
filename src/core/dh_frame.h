@@ -49,6 +49,16 @@ enum dh_msg_type {
 
 #define DH_MSG_BULK_BASE 0x30u
 
+/*
+ * Inter-frame padding. The registry starts at 0x01, so 0x00 is not a message
+ * type and cannot begin a frame. A fixed-size report carrier — the channel's
+ * 64-byte HID reports, which have no length field of their own — fills the
+ * tail of its last report with this byte, and dh_frame_reader_push skips it
+ * between frames. Inside a frame it is ordinary payload, distinguished by the
+ * length the header already gave.
+ */
+#define DH_FRAME_PAD 0x00u
+
 typedef enum {
     DH_FRAME_OK = 0,
     DH_FRAME_AGAIN = 1, /* incomplete: need more bytes */
@@ -101,9 +111,10 @@ dh_frame_result dh_frame_encode(uint8_t type, uint8_t flags, const uint8_t *payl
 
 /*
  * Incremental reader over an ordered byte stream — the channel delivers frames
- * packed into 63-byte HID report carriers, so frame boundaries never align
- * with delivery boundaries. Fixed storage, no allocation. Feed arbitrary
- * slices; call in a loop while *consumed < len:
+ * packed into 64-byte HID report carriers, so frame boundaries never align
+ * with delivery boundaries. DH_FRAME_PAD bytes between frames are skipped.
+ * Fixed storage, no allocation. Feed arbitrary slices; call in a loop while
+ * *consumed < len:
  *
  *   DH_FRAME_OK    — a complete frame is in *out (viewing the reader's buffer,
  *                    valid until the next push); *consumed bytes were eaten.

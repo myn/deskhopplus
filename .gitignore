@@ -1,5 +1,9 @@
 build
 
+# Swift Package Manager, for the macOS helper (Package.swift at the root)
+.build/
+.swiftpm/
+
 .idea/
 
 # Raw output from tools/windows-checks - contains corporate hostnames, usernames,
