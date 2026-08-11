@@ -25,6 +25,14 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize);
 /* channel_task — runs the liveness timeout and drains anything owed to the
    helper — is declared with the rest of the scheduler's tasks, in tasks.h. */
 
+/*
+ * A chord press was recorded before the last reboot: rotate the secret, open
+ * the pairing window, and persist. Only meaningful in normal mode, which is
+ * the only mode with a channel for a helper to be provisioned over.
+ */
+void channel_open_pairing_window(device_t *);
+bool channel_pairing_window_owed(void);
+
 /* One inter-board packet of a frame being relayed from the peer board. */
 void handle_channel_relay_msg(uart_packet_t *, device_t *);
 

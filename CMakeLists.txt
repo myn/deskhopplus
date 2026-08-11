@@ -103,6 +103,7 @@ set(COMMON_LINK_LIBRARIES
   tinyusb_host
   pico_multicore
   pico_unique_id
+  pico_rand
   Pico-PIO-USB
 )
 set(binary deskhop)

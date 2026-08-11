@@ -17,4 +17,8 @@
 #define CORE1_HANG_TIMEOUT_US   WATCHDOG_TIMEOUT * 1000 // Convert to microseconds
 
 #define MAGIC_WORD_1 0xdeadf00f // When these are set, we'll boot to configuration mode
+/* Set by the config chord and consumed on the next normal-mode boot: a
+   pairing window is owed (#46). Config mode has no channel interface, so the
+   window can only be honoured once the device is back in normal mode. */
+#define MAGIC_WORD_PAIR 0x9a17c0de
 #define MAGIC_WORD_2 0x00c0ffee

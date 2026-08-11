@@ -5,6 +5,8 @@
 
 #include "main.h"
 
+#include <pico/rand.h>
+
 #include "dh_pair.h"
 #include "dh_relay.h"
 #include "dh_session.h"
@@ -39,23 +41,12 @@ static struct {
     uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
 } channel;
 
-void channel_init(void) {
-    dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
-    /* The stored secret comes from flash next (#46 firmware half); until it
-       does, a release build authenticates nobody and the remedy is a chord. */
-    dh_pair_init(&channel.pair, NULL);
-    dh_frame_reader_init(&channel.reader);
-    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
-                     channel.relay_bulk, sizeof channel.relay_bulk);
-    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
-    channel.out_len = 0;
-    channel.out_sent = 0;
-}
-
-bool channel_helper_present(void) {
-    return channel.session.present;
-}
-
+/*
+ * A fresh secret. pico_rand seeds from ring-oscillator jitter, the bus
+ * performance counters and the board id — a secret that is guessable is no
+ * secret, and this one is never displayed or typed, so its only source of
+ * unpredictability is here.
+ */
 static uint32_t channel_now_ms(void) {
     /*
      * Milliseconds off the 64-bit timer, so this counter uses the full uint32
@@ -67,6 +58,63 @@ static uint32_t channel_now_ms(void) {
      */
     return to_ms_since_boot(get_absolute_time());
 }
+
+static void channel_fresh_secret(uint8_t *out) {
+    for (size_t i = 0; i < DH_PAIR_SECRET_LEN; i += sizeof(uint64_t)) {
+        const uint64_t bits = get_rand_64();
+        const size_t take = (DH_PAIR_SECRET_LEN - i) < sizeof bits ? (DH_PAIR_SECRET_LEN - i)
+                                                                  : sizeof bits;
+        memcpy(out + i, &bits, take);
+    }
+}
+
+void channel_init(void) {
+    dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
+
+    /* The secret survives a restart because it lives in the configuration.
+       A wiped configuration leaves none, and one chord press restores it. */
+    dh_pair_init(&channel.pair,
+                 global_state.config.channel_paired ? global_state.config.channel_secret : NULL);
+    dh_frame_reader_init(&channel.reader);
+    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
+                     channel.relay_bulk, sizeof channel.relay_bulk);
+    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
+    channel.out_len = 0;
+    channel.out_sent = 0;
+}
+
+void channel_open_pairing_window(device_t *state) {
+    /*
+     * Rotate, always (#46). A window that reissued the same secret would
+     * leave a pairing that leaked to whatever was connected last time valid
+     * for good, recoverable only by wiping every setting the user has. This
+     * evicts the helper on *this* board, which then re-pairs silently inside
+     * the window it is standing in.
+     */
+    uint8_t fresh[DH_PAIR_SECRET_LEN];
+    channel_fresh_secret(fresh);
+
+    dh_pair_open_window(&channel.pair, fresh, channel_now_ms());
+    dh_session_drop(&channel.session);
+
+    memcpy(state->config.channel_secret, fresh, sizeof fresh);
+    state->config.channel_paired = 1;
+    save_config(state);
+}
+
+/* Consumed once, on the normal-mode boot after a config chord. */
+bool channel_pairing_window_owed(void) {
+    if (watchdog_hw->scratch[4] != MAGIC_WORD_PAIR)
+        return false;
+
+    watchdog_hw->scratch[4] = 0;
+    return true;
+}
+
+bool channel_helper_present(void) {
+    return channel.session.present;
+}
+
 
 /* Hand a whole frame to this board's helper. One at a time: the credit window
    upstream is what keeps a second from arriving before this one drains. */

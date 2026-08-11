@@ -230,6 +230,11 @@ void initial_setup(device_t *state) {
        every hello_ack reports */
     channel_init();
 
+    /* A config chord before the last reboot owes a pairing window. Config
+       mode has no channel, so it is honoured here, on the way back. */
+    if (!state->config_mode_active && channel_pairing_window_owed())
+        channel_open_pairing_window(state);
+
     /* Detect which board we're running on */
     state->board_role = board_autoprobe();
 

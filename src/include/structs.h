@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include "dh_pair.h"
+
 #include <stdint.h>
 #include "dh_txq.h"
 #include "flash.h"
@@ -81,6 +83,18 @@ typedef struct {
     uint16_t jump_threshold;
 
     output_t output[NUM_SCREENS];
+
+    /*
+     * The device-held pairing secret (#46). Deliberately *not* in
+     * api_field_map: config is only ever exposed field by field, so a secret
+     * kept out of that map is unreadable through the API and never syncs to
+     * the peer board — which is what keeps a rotation on this board from
+     * evicting the other computer's helper. Wiped with the rest of the
+     * configuration, so one chord press restores pairing afterwards.
+     */
+    uint8_t channel_secret[DH_PAIR_SECRET_LEN];
+    uint8_t channel_paired;
+
     uint32_t _reserved;
 
     // Keep checksum at the end of the struct
