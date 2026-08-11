@@ -56,7 +56,7 @@ need_toolchain() {
 
 build_fw() {
     need_toolchain
-    say "firmware → build/  ($(arm-none-eabi-gcc -dumpversion), $(cmake --version | head -1))"
+    say "firmware → build/ (cmake)  [$(arm-none-eabi-gcc -dumpversion), $(cmake --version | head -1)]"
 
     # Reconfigure every time. It is cheap, and a stale cache is exactly how a
     # changed VERSION_MINOR fails to reach the compile flags.
@@ -68,7 +68,10 @@ build_fw() {
 
 build_helper() {
     command -v swift >/dev/null 2>&1 || die "no swift. Install the Command Line Tools."
-    say "macOS helper → .build/"
+    # .build/ is SwiftPM's own default, not a choice made here, and not the
+    # same tree as cmake's build/. Named in full every time because the two
+    # differ by one character and only one of them holds the flashable image.
+    say "macOS helper → .build/ (swiftpm — not build/)"
     swift build
 }
 
@@ -111,6 +114,13 @@ PY
         printf '\n  A board upgrades its peer only from a %sstrictly newer%s version.\n' "$bold" "$off"
         printf '  If this number is not above what the boards run, bump VERSION_MINOR\n'
         printf '  in CMakeLists.txt — otherwise only the board you flash changes.\n'
+    fi
+
+    # The two output trees differ by one character. Say which is which here,
+    # so nobody goes looking for the image in the helper's directory.
+    if [ -d .build ]; then
+        printf '\n  %sbuild/%s   cmake, firmware — the .uf2 above\n' "$bold" "$off"
+        printf '  %s.build/%s  swiftpm, the macOS helper — nothing to flash\n' "$bold" "$off"
     fi
     printf '%s────────────────────────────────────────────────────%s\n' "$bold" "$off"
 }

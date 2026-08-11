@@ -30,6 +30,18 @@ That builds the firmware, the macOS helper, and both host test suites. Upstream'
 | `./tools/build.sh tests` | Both host test suites, no firmware |
 | `./tools/build.sh clean` | Remove `build/`, `tests/build/`, `.build/` |
 
+### `build/` and `.build/` are different trees
+
+They differ by one character and belong to different build systems. Only one of them holds anything you flash:
+
+| Directory | Built by | Holds |
+|---|---|---|
+| `build/` | CMake | The firmware — **`deskhop.uf2`, the image you flash** |
+| `.build/` | SwiftPM | The macOS helper and its tests. Nothing to flash |
+| `tests/build/` | CMake | The C core's host test suite |
+
+`.build/` is SwiftPM's hardcoded default, not a choice this project made — a bare `swift build` puts its output there too. All three are gitignored.
+
 ### Read the version it prints
 
 Every run ends by naming the artifact to flash, its timestamp, and the firmware version **read back out of `build/deskhop.crc`** — what is actually in the binary, not what `CMakeLists.txt` intended:
