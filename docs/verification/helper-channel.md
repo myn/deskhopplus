@@ -41,6 +41,26 @@ running the old firmware. The managed Windows laptop denies writes to that volum
 (#58). So for both boards: hold the on-board button while connecting, and copy the `.uf2` to
 the `RPI-RP2` drive.
 
+**Prefer `picotool` — it needs no mounted volume at all** (`brew install picotool`):
+
+```sh
+sudo picotool load -x /path/to/deskhop.uf2      # -x reboots into the new firmware
+```
+
+Board in BOOTSEL first (hold the on-board button while connecting). This sidesteps both hazards
+above, and it is the only route that worked on 2026-08-11: the `RPI-RP2` volume would not
+automount and `diskutil` hung, because `diskarbitrationd` was wedged — the visible tell being a
+stale root-owned `/Volumes/DESKHOP` mount point left behind by an earlier config-mode exit
+(`sudo rmdir` it). `sudo` is required, and it needs a real terminal: the `!` prefix inside a
+Claude Code session has no TTY for the password prompt.
+
+Note `picotool info -a` **segfaults** (v2.3.0, macOS) whenever a BOOTSEL board is present, with
+or without `sudo`. `load` is unaffected. Do not read that crash as a flashing problem.
+
+The UF2 spans `0x10000000`–`0x10040000`, and `FLASH_CONFIG` lives at the end of the 2 MB flash
+and is `NOLOAD` — so **a firmware write does not erase the configuration**. If a board comes
+back unpaired after flashing, the firmware write is not the reason.
+
 ### Build
 
 ```sh
@@ -157,8 +177,13 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       60 s window first**: inside an open window the device simply re-grants and the test looks
       like a failure to evict, when in fact the old secret *was* rejected before the new grant
 - [ ] A configuration wipe leaves the helper unpaired, and one chord press restores it. The
-      8 → 9 config version change gives you this for free on first boot: the helper should come
-      up **not paired — press the config chord on the device**
+      8 → 9 config version change gave this for free on the *first* boot of 0.80 and that is
+      spent — `CURRENT_CONFIG_VERSION` is still 9, so a later flash wipes nothing. Trigger it
+      deliberately with the wipe chord, **`Right Shift + F12 + D`**, which **wipes both boards**:
+      `wipe_config_hotkey_handler` erases locally and sends `WIPE_CONFIG_MSG` to the peer.
+      **The wipe does not take effect until the device is power-cycled** — see #75; the live
+      session keeps authenticating against the RAM-cached secret. So: wipe, power-cycle,
+      *then* expect **not paired — press the config chord on the device**
 
 ## 3. The #66 controls that could reopen #25
 
@@ -170,11 +195,19 @@ Switch the device to the machine under test *before* rebooting it. Rebooting a c
 device is not pointed at looks exactly like a keyboard failure and is the easiest way to record
 a false negative.
 
-- [ ] **Windows**: BOOTSEL board B, flash **stock upstream**, retest UEFI setup.
-      **If stock works where 0.80 does not, the added interface caused a regression and #25
-      should be reopened**
-- [ ] **macOS**: BOOTSEL board A, flash stock upstream, retest the FileVault prompt as an
-      isolated control
+**Both are superseded — do not run them.** Recorded 2026-08-11, agreed at the desk:
+
+- ~~**Windows**: BOOTSEL board B, flash **stock upstream**, retest UEFI setup~~ — #66's own
+  reference-device control settles it: the MKC75 receiver plugged *directly* into the HP
+  navigates UEFI, the same keyboard through the device does not, and interface 0 is
+  **byte-identical** between stock and this fork. #66 records this control as "not worth
+  running"
+- ~~**macOS**: BOOTSEL board A, flash stock upstream, retest the FileVault prompt~~ — already
+  run against stock upstream on 2026-08-10 and recorded on #66; it failed identically
+
+Running them would cost four ROM-bootloader flashes plus a manual downgrade on each board, for
+answers #66 already holds. This section stayed on the checklist only because it was written
+before #66's third comment landed; **#66 is the current record, not this sheet**.
 
 #66 already establishes against stock that the keyboard is not a boot keyboard
 (subclass/protocol 0) and does not work at the FileVault prompt — so the macOS control is
@@ -183,7 +216,9 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
 
 ## 4. Restore
 
-- [ ] Both boards back on 0.80 by ROM bootloader
+- [ ] Both boards back on the current release build by ROM bootloader (0.81 as of 2026-08-11).
+      Only a board actually reflashed needs restoring — a dev build stamped with the *same*
+      version as its peer cannot propagate, so the other board is never disturbed
 - [ ] Configuration re-entered through the web UI
 - [ ] Both computers: keyboard, mouse, switching, and config mode all still work
 
