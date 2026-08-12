@@ -344,8 +344,10 @@ void handle_response_byte_msg(uart_packet_t *packet, device_t *state) {
     uint32_t address = packet->data32[0];
 
     if (address != state->fw.address) {
-        state->fw.upgrade_in_progress = false;
-        state->fw.address = 0;
+        /* The pull has lost its place, so it is over. If pages had already
+           gone over the running image this hands the board to ROM recovery
+           rather than leaving it booting a half-written one (#90). */
+        abandon_firmware_upgrade(state);
         return;
     }
     else {
@@ -364,6 +366,9 @@ void handle_response_byte_msg(uart_packet_t *packet, device_t *state) {
     /* Neeeeeeext byte, please! */
     state->fw.address += sizeof(uint32_t);
     state->fw.byte_done = true;
+
+    /* The pull just advanced, so the stall clock starts over (#90). */
+    fw_upgrade_progress(&state->fw, time_us_32());
 }
 
 /* Process a request to read a firmware package from flash */
@@ -382,13 +387,18 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
     if (other_running_version <= state->_running_fw.version)
         return;
 
-    /* It is? Ok, kick off the firmware upgrade */
-    state->fw = (fw_upgrade_state_t) {
-        .upgrade_in_progress = true,
-        .byte_done = true,
-        .address = 0,
-        .checksum = 0xffffffff,
-    };
+    /* It is? Ok, kick off the firmware upgrade.
+
+       Set field by field rather than assigning a fresh struct: image_dirty and
+       repair_attempted have to survive this, or a restart would forget that
+       the running image is half-written and that its one repair has been
+       spent (#90). Starting the stall clock here matters for the same reason
+       a zeroed one would not do — it would read as quiet since boot. */
+    state->fw.upgrade_in_progress = true;
+    state->fw.byte_done           = true;
+    state->fw.address             = 0;
+    state->fw.checksum            = 0xffffffff;
+    fw_upgrade_progress(&state->fw, time_us_32());
 }
 
 

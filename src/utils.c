@@ -71,6 +71,58 @@ void write_flash_page(uint32_t target_addr, uint8_t *buffer) {
     restore_interrupts(ints);
 }
 
+/* Hand the board to the ROM bootloader, because the running image can no
+   longer be trusted to boot: wiping the stage 2 bootloader is what makes the
+   ROM take over on the next power-up rather than jumping into a broken image.
+
+   Reached from three places that all mean the same thing — a checksum that did
+   not match after a pull or a UF2 drop, and a transfer that could not be
+   repaired by restarting it (#90). Failing loudly here costs the user a manual
+   reflash; running an image that is part-old and part-new costs them a board
+   that misbehaves in ways nothing explains. Does not return.
+
+   Interrupts off around the erase for the same reason write_flash_page does
+   it: an interrupt handler that fetches from XIP flash mid-erase faults the
+   core, and here that would happen *after* the stage 2 sector is gone but
+   before reset_usb_boot is reached — leaving a board with neither a bootable
+   image nor an automatic way into ROM. */
+void recover_to_rom(void) {
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase((uint32_t)ADDR_FW_RUNNING - XIP_BASE, FLASH_SECTOR_SIZE);
+    restore_interrupts(ints);
+
+    reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
+}
+
+/* Give up on an upgrade being received, so the board stops behaving as though
+   one were in flight: the config-mode timeout can fire again, and the next
+   heartbeat from a newer peer board is free to start the pull over (#90).
+
+   Restarting is the repair, not merely a second chance. A pull runs from
+   address 0 to the end of the image and writes every page on the way, so a
+   run that completes overwrites whatever a previous run left half-written.
+   That is why a dirty image gets a restart before it gets ROM recovery: the
+   usual causes of a stall — a dropped REQUEST_BYTE, a peer that rebooted — are
+   transient, and recovering to ROM for one of those would cost the user a
+   manual reflash to fix something the board could have fixed itself.
+
+   A second stall on a dirty image is the loud failure instead. By then a whole
+   restart has been tried and has not completed, so the image cannot be assumed
+   repairable, and leaving the board to run it is the outcome this issue exists
+   to prevent. That call does not return. */
+void abandon_firmware_upgrade(device_t *state) {
+    if (state->fw.image_dirty && state->fw.repair_attempted)
+        recover_to_rom();
+
+    /* Only a dirty image spends the one restart; a transfer that stopped
+       before any page was written has nothing to repair and stays eligible. */
+    if (state->fw.image_dirty)
+        state->fw.repair_attempted = true;
+
+    state->fw.upgrade_in_progress = false;
+    state->fw.address             = 0;
+}
+
 void load_config(device_t *state) {
     const config_t *config   = ADDR_CONFIG;
     config_t *running_config = &state->config;
@@ -134,9 +186,19 @@ void request_byte(device_t *state, uint32_t address) {
         .data32[0] = address,
         .type = REQUEST_BYTE_MSG,
     };
-    state->fw.byte_done = false;
 
-    (void)queue_uart_packet(&packet, state);
+    /* Only treat the byte as outstanding if the request actually went out.
+       uart_tx_queue is shared with channel_task on core0, so it can fill
+       between firmware_upgrade_task's queue_is_full check and this enqueue —
+       and clearing byte_done on a request that was dropped is a pull that
+       never advances again. That is #90's hang at its finest grain, and it is
+       the same discipline channel_pump_relay already states: a refused enqueue
+       leaves the packet owed rather than lost.
+
+       Leaving byte_done set means the task simply asks again on its next pass,
+       at 4 kHz, long before the 30 s stall window is reached. */
+    if (queue_uart_packet(&packet, state))
+        state->fw.byte_done = false;
 }
 
 void reboot(void) {

@@ -138,34 +138,63 @@ void screensaver_task(device_t *state) {
     last_pointer_move = time_us_32();
 }
 
-/* Periodically emit heartbeat packets */
+/* Periodically emit heartbeat packets.
+ *
+ * This task used to return early on upgrade_in_progress — a flag only
+ * completion cleared — which took the heartbeat, the config-mode timeout and
+ * the config-mode LED down with any transfer that stopped. The board went
+ * silent to its peer board, could not retry, could not leave config mode, and
+ * looked healthy throughout. Only a power cycle got it back (#90).
+ *
+ * The guard's own justification was "don't touch flash_cs", and exactly one
+ * thing here does that: is_bootsel_pressed, which drives the QSPI chip select
+ * by hand. That call keeps a guard; the rest no longer have one, because
+ * queueing a packet and setting a blink counter touch no flash at all.
+ *
+ * The config-mode reboot keeps a guard too, for a different reason given at
+ * the call. Both remaining guards are now bounded by FW_UPGRADE_STALL_US,
+ * which is what stops a transfer that stopped from holding either forever.
+ */
 void heartbeat_output_task(device_t *state) {
-    /* Forget a peer that has stopped heartbeating, so its version is not left
-       reading as current after it has gone (#89). This task's own cadence is
-       the heartbeat interval, which is what the staleness window counts.
+    uint64_t now = time_us_64();
 
-       Ahead of the upgrade guard below, and touching no flash, deliberately:
-       an upgrade that stalls never clears upgrade_in_progress, so expiring
-       behind the guard would suspend it for good. A peer that dies mid-flash
-       is exactly when a version left reading as current does the most harm. */
-    peer_fw_expire(&state->peer_fw, time_us_64());
+    /* Forget a peer board that has stopped heartbeating, so its version is not
+       left reading as current after it has gone (#89). This task's own cadence
+       is the heartbeat interval, which is what the staleness window counts. */
+    peer_fw_expire(&state->peer_fw, now);
 
-    /* If firmware upgrade is in progress, don't touch flash_cs */
-    if (state->fw.upgrade_in_progress)
-        return;
+    /* Give up on a transfer that has gone quiet, so the board can start it
+       again instead of waiting for a power cycle. Restarting a pull rewrites
+       every page, so this is also how a half-written image gets repaired —
+       see abandon_firmware_upgrade for when it stops being worth trying.
+
+       The 32-bit clock rather than `now` is deliberate, not an oversight: the
+       UF2 path stamps that timestamp from core0, and fw_upgrade.h explains why
+       a 64-bit one could tear across cores. */
+    if (fw_upgrade_stalled(&state->fw, time_us_32()))
+        abandon_firmware_upgrade(state);
 
     if (state->config_mode_active) {
-        /* Leave config mode if timeout expired and user didn't click exit */
-        if (time_us_64() > state->config_mode_timer)
+        /* Leave config mode if timeout expired and user didn't click exit.
+           A live upgrade still defers this, because the UF2 disk only exists
+           in config mode and rebooting mid-write would brick the board — but
+           "live" is now bounded by FW_UPGRADE_STALL_US, so a stalled transfer
+           can hold config mode open for that long and no longer. */
+        if (now > state->config_mode_timer && !state->fw.upgrade_in_progress)
             reboot();
 
-        /* Keep notifying the user we're still in config mode */
+        /* Keep notifying the user we're still in config mode. Skipping this
+           was what made a stalled board look like it had left config mode:
+           restore_leds went unopposed and the LED reverted to the normal-mode
+           indicator, which is the opposite of the truth. */
         blink_led(state);
     }
 
 #ifdef DH_DEBUG
-    /* Holding the button invokes bootsel firmware upgrade */
-    if (is_bootsel_pressed())
+    /* Holding the button invokes bootsel firmware upgrade. This is the
+       flash_cs toucher the original guard was written for, so it keeps one:
+       the UF2 path writes flash from core0 while this runs on core1. */
+    if (!state->fw.upgrade_in_progress && is_bootsel_pressed())
         reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
 #endif
 
@@ -213,12 +242,12 @@ void firmware_upgrade_task(device_t *state) {
         state->fw.checksum = ~state->fw.checksum;
 
         /* Checksum mismatch, we wipe the stage 2 bootloader and rely on ROM recovery */
-        if(calculate_firmware_crc32() != state->fw.checksum) {
-            flash_range_erase((uint32_t)ADDR_FW_RUNNING - XIP_BASE, FLASH_SECTOR_SIZE);
-            reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
-        }
-
+        if(calculate_firmware_crc32() != state->fw.checksum)
+            recover_to_rom();
         else {
+            /* The image is whole again, so nothing is left to repair. */
+            state->fw.image_dirty      = false;
+            state->fw.repair_attempted = false;
             state->_running_fw = _firmware_metadata;
             global_state.reboot_requested = true;
         }
@@ -229,6 +258,10 @@ void firmware_upgrade_task(device_t *state) {
 
         uint32_t page_start_addr = (state->fw.address - 1) & 0xFFFFFF00;
         write_flash_page((uint32_t)ADDR_FW_RUNNING + page_start_addr - XIP_BASE, state->page_buffer);
+
+        /* From here on the running image is part-old and part-new, so stopping
+           short of the end must not leave the board booting it (#90). */
+        state->fw.image_dirty = true;
     }
 
     request_byte(state, state->fw.address);

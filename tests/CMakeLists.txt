@@ -69,3 +69,10 @@ add_test(NAME config_test COMMAND config_test)
 add_executable(peer_fw_test peer_fw_test.c ${FW}/peer_fw.c)
 target_include_directories(peer_fw_test PRIVATE ${FW}/include)
 add_test(NAME peer_fw_test COMMAND peer_fw_test)
+
+# Whether an upgrade being received is still alive (#90). Split out for the
+# same reason as the two above: the flag that a stalled transfer left set for
+# good sat inside a core1 task, where no test could reach the decision.
+add_executable(fw_upgrade_test fw_upgrade_test.c ${FW}/fw_upgrade.c)
+target_include_directories(fw_upgrade_test PRIVATE ${FW}/include)
+add_test(NAME fw_upgrade_test COMMAND fw_upgrade_test)

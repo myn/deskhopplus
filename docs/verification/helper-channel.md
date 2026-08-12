@@ -31,35 +31,41 @@ mundane reason that the version had never moved between flashes. Flash board A b
 `picotool`, leave B alone, and B pulls the new firmware over the inter-board link. Both boards
 ended that sitting on 0.83 from a single `picotool load`.
 
-### A board mid-upgrade goes silent, and looks broken
+### A board mid-upgrade takes minutes, and used to go silent
 
 Budget **minutes**, not seconds: the pull is byte-at-a-time over the UART with a round trip each,
-across a 256 KB image. Throughout it the receiving board sends no heartbeat at all, so its peer
-reports *not detected* — checking the peer version straight after flashing shows nothing even when
-everything is working. This was misread for over an hour as a dead inter-board link and then as an
-unpowered board; the link was carrying keyboard and mouse traffic the whole time, which is the
-evidence that should have settled it immediately.
+across a 256 KB image.
 
-Worse, a stalled upgrade never ends. Nothing clears `upgrade_in_progress`, so the board stays
-silent, cannot retry, and cannot even time out of config mode — measured at 14 minutes, well past
-the 300 s that should have rebooted it. Recovery is a power cycle. Tracked as
-[#90](https://github.com/myn/deskhopplus/issues/90).
+**What this looked like on 2026-08-12, before #90 was fixed.** Throughout the pull the receiving
+board sent no heartbeat at all, so its peer reported *not detected* — checking the peer version
+straight after flashing showed nothing even when everything was working. That was misread for over
+an hour as a dead inter-board link and then as an unpowered board; the link was carrying keyboard
+and mouse traffic the whole time, which is the evidence that should have settled it immediately.
+Worse, a stalled upgrade never ended: nothing cleared `upgrade_in_progress`, so the board stayed
+silent, could not retry, and could not time out of config mode — measured at 14 minutes, well past
+the 300 s that should have rebooted it. Recovery was a power cycle. The deceptive tell was the
+**LED reverting to the normal-mode indicator** — lit while that board was the active output, dark
+when the cursor was on the other computer — because `blink_led` sat behind the same early return,
+so the board looked precisely as though it had left config mode.
 
-**The tell, and it is a deceptive one:** during an upgrade the board's LED **goes back to behaving
-as if it were in normal mode** — lit while that board is the active output, dark when the cursor is
-on the other computer. It is not dark, and it is not blinking. `blink_led` is called from the task
-that returned early, so nothing overrides the active-output indicator `restore_leds` maintains, and
-the board looks precisely as though it had left config mode.
+**What to expect now.** The early return is gone, so during a pull the board keeps heartbeating
+(its peer reports a version throughout), keeps blinking if it is in config mode, and still honours
+the config-mode timeout. A transfer that makes no progress for 30 s is abandoned: the pull restarts
+from address 0, which rewrites every page and repairs a half-written image. If that restart also
+stalls, the board erases its stage 2 bootloader and drops to ROM — a `RPI-RP2` volume and a manual
+UF2 drop, deliberately loud rather than a board quietly running a part-written image.
 
-So the LED cannot tell you what mode the board is in during an upgrade. **Use the USB identity** —
-`0x2e8a/0x107c` is config mode, `0x1209/0xc000` is normal:
+So the peer version reading *not detected* is no longer expected during an upgrade, and is now
+worth investigating rather than waiting out.
+
+**The LED is still not a mode indicator during an upgrade.** In config mode the once-a-second
+config blink now runs at the same time as the per-block `toggle_led` of a UF2 drop, and the two
+overlap for the few seconds a drop takes. **Use the USB identity** — `0x2e8a/0x107c` is config
+mode, `0x1209/0xc000` is normal:
 
 ```sh
 system_profiler SPUSBDataType | grep -A4 "DeskHop Switch" | grep -E "Product ID|Vendor ID"
 ```
-
-A **blinking** LED means config mode with no upgrade running. An LED **following the cursor** while
-the identity still says `0x107c` means an upgrade is in flight — or stalled.
 
 ### Reading a running version without the DESKHOP volume
 

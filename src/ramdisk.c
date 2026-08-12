@@ -86,15 +86,22 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
 
     write_flash_page(flash_addr, &buffer[32]);
 
+    /* The running image is now part-old and part-new, and the drop has just
+       advanced. A host that stops writing partway through must not leave the
+       board booting what it wrote (#90). */
+    global_state.fw.image_dirty = true;
+    fw_upgrade_progress(&global_state.fw, time_us_32());
+
     if (is_final_block) {
         global_state.fw.checksum = ~global_state.fw.checksum;
 
         /* If checksums don't match, overwrite first sector and rely on ROM bootloader for recovery */
-        if (global_state.fw.checksum != calculate_firmware_crc32()) {
-            flash_range_erase((uint32_t)ADDR_FW_RUNNING - XIP_BASE, FLASH_SECTOR_SIZE);
-            reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
-        }
+        if (global_state.fw.checksum != calculate_firmware_crc32())
+            recover_to_rom();
         else {
+            /* The image is whole again, so nothing is left to repair. */
+            global_state.fw.image_dirty      = false;
+            global_state.fw.repair_attempted = false;
             global_state.reboot_requested = true;
         }
     }

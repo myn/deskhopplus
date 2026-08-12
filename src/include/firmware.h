@@ -21,6 +21,14 @@
  void     reboot(void);
  void     write_flash_page(uint32_t, uint8_t *);
 
+ /* Give up on an upgrade being received (#90). Returns if nothing had been
+    written over the running image yet; otherwise recovers to ROM and doesn't. */
+ void     abandon_firmware_upgrade(device_t *);
+
+ /* Wipe the stage 2 bootloader and reboot into the ROM bootloader. The running
+    image cannot be trusted to boot, so this never returns. */
+ void     recover_to_rom(void);
+
  /*==============================================================================
   *  UART Packet Fetching
   *  Functions to handle incoming UART packets, especially for firmware updates.

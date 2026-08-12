@@ -63,6 +63,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/utils.c
   ${SRC_DIR}/config_store.c
   ${SRC_DIR}/peer_fw.c
+  ${SRC_DIR}/fw_upgrade.c
   ${SRC_DIR}/handlers.c
   ${SRC_DIR}/setup.c
   ${SRC_DIR}/keyboard.c

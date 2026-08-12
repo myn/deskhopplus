@@ -17,6 +17,7 @@
 #include "config_layout.h"
 #include "dh_txq.h"
 #include "flash.h"
+#include "fw_upgrade.h"
 #include "packet.h"
 #include "peer_fw.h"
 #include "screen.h"
@@ -63,15 +64,10 @@ typedef struct {
 
 typedef enum { IDLE, READING_PACKET, PROCESSING_PACKET } receiver_state_t;
 
-typedef struct {
-    uint32_t address;         // Address we're sending to the other box
-    uint32_t checksum;
-    uint16_t version;
-    bool byte_done;           // Has the byte been successfully transferred
-    bool upgrade_in_progress; // True if firmware transfer from the other box is in progress
-} fw_upgrade_state_t;
+/* fw_upgrade_state_t lives in fw_upgrade.h — split out so the decision that a
+   transfer has stalled can be tested on the host (#90).
 
-/* config_t, its magic and its version live in config_layout.h — split out so
+   config_t, its magic and its version live in config_layout.h — split out so
    the validation in config_store.h can be tested on the host (#74). */
 
 
