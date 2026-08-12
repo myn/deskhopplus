@@ -124,11 +124,6 @@ set_property(SOURCE ${DISK_ASM} APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-
 # the old page shipped, looking exactly like a change that did not take.
 set_property(SOURCE ${DISK_ASM} APPEND PROPERTY OBJECT_DEPENDS ${DISK_BIN})
 
-# disk.S pulls the image in with .incbin, which CMake's dependency scanning
-# cannot see through — so a rebuilt config UI left the firmware untouched and
-# the old page shipped, looking exactly like a change that did not take.
-set_property(SOURCE ${DISK_ASM} APPEND PROPERTY OBJECT_DEPENDS ${DISK_BIN})
-
 add_executable(${binary} ${DISK_ASM})
 
 target_sources(${binary} PUBLIC ${COMMON_SOURCES})

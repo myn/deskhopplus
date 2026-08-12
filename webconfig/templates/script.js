@@ -158,8 +158,8 @@ function updateElement(key, event) {
       setValue(element, formatVersion(value));
 
     /* The other board, as heard from its heartbeats. Zero means none has been
-       heard from — unplugged, or the link is down — and that is an absence,
-       not a version: formatVersion would render it as v-1.-100. */
+       heard from — unplugged, or the inter-board link is down — and that is an
+       absence, not a version: formatVersion would render it as v-1.-100. */
     if (element.hasAttribute('data-peer-fw-ver'))
       setValue(element, value ? formatVersion(value) : 'not detected');
 

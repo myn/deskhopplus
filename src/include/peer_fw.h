@@ -36,12 +36,14 @@
 /*
  * Three heartbeat intervals of silence and the peer is forgotten. Heartbeats
  * go out at 1 Hz, so this is two missed beats plus one of grace for a beat
- * already on the wire — the same discipline, and the same reasoning, as the
- * channel's own liveness window (ADR-0004) applied to the other link.
+ * already on the wire — the same discipline as the channel's liveness window
+ * (ADR-0004), deliberately not the same constant: DH_SESSION_ABSENT_MS counts
+ * a different link at a cadence the helper negotiates, and tying the two
+ * together would make one link's timing a hostage to the other's.
  *
- * Forgetting matters more than remembering here. A version left reading as
- * current after the peer has gone answers "are both boards on the same build?"
- * with a confident lie, which is worse than the absence it replaced.
+ * A version left reading as current after the peer has gone answers "are both
+ * boards on the same build?" with a confident lie, which is worse than the
+ * absence it replaced.
  */
 #define PEER_FW_STALE_US (3ull * 1000000ull)
 
