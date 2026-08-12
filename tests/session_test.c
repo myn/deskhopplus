@@ -126,6 +126,31 @@ static size_t feed(dh_session *s, const uint8_t *frame, size_t frame_len, uint32
     return out_len;
 }
 
+/* Advance the clock, handing back whatever the device owed its helper. The
+ * eviction transition *is* the SESSION_END frame — there is no separate
+ * signal to disagree with it — so a tick that emits one is a tick that
+ * dropped the session. */
+static size_t tick(dh_session *s, uint32_t now_ms, uint8_t *out, size_t out_cap) {
+    size_t out_len = 0;
+    if (dh_session_tick(s, now_ms, out, out_cap, &out_len) != DH_FRAME_OK) return 0;
+    return out_len;
+}
+
+/* Is this the frame the device was supposed to emit? */
+static bool is_frame(const uint8_t *buf, size_t len, uint8_t type) {
+    dh_frame_view v;
+    size_t consumed = 0;
+    return len > 0 && dh_frame_decode(buf, len, &v, &consumed) == DH_FRAME_OK && consumed == len &&
+           v.hdr.type == type;
+}
+
+static bool is_session_end(const uint8_t *buf, size_t len, uint8_t reason) {
+    dh_frame_view v;
+    size_t consumed = 0;
+    return len > 0 && dh_frame_decode(buf, len, &v, &consumed) == DH_FRAME_OK &&
+           v.hdr.type == DH_MSG_SESSION_END && v.hdr.len == 1 && v.payload[0] == reason;
+}
+
 static void test_hello_codec_matches_vectors(const char *path) {
     uint8_t raw[MAX_VECTOR_BYTES];
     dh_frame_view v;
@@ -321,7 +346,13 @@ static void test_a_mismatched_hello_does_not_end_a_live_session(void) {
     CHECK(dh_hello_ack_decode(v.payload, v.hdr.len, &a), "version", "ack decode failed");
     CHECK(a.status == DH_HELLO_VERSION_INCOMPATIBLE, "version", "mismatch not refused");
     CHECK(s.present, "version", "a stray mismatched hello ended a working session");
-    CHECK(s.last_seen_ms == 4000, "version", "a refused hello counted as a sign of life");
+    /* Refused, but still a sign of life. This reverses the original rule
+     * (ADR-0004): the channel is held exclusively, so the frame came from
+     * the one process that owns this session, and a process that is writing
+     * is alive — which is the only thing the deadline measures. Anomalous
+     * and proves-nothing are different claims, and the anomaly is already
+     * answered by refusing the hello without touching the session. */
+    CHECK(s.last_seen_ms == now, "version", "a refused hello did not count as a sign of life");
 }
 
 /* A token pointer and its length must agree; the Swift binding builds this
@@ -379,26 +410,37 @@ static void test_heartbeat_keeps_the_session_and_silence_ends_it(void) {
           "liveness", "heartbeat encode failed");
 
     /* Beating on time keeps the helper present indefinitely, and a heartbeat
-     * is not answered — it costs the device nothing but a timestamp. */
+     * is not answered — it costs the device nothing but a timestamp. The
+     * device's own beat is idle-gated, so a direction kept busy by note_sent
+     * emits none of its own. */
     for (int i = 0; i < 10; i++) {
         now += DH_SESSION_HEARTBEAT_MS;
-        CHECK(!dh_session_tick(&s, now), "liveness", "marked absent while beating");
+        dh_session_note_sent(&s, now);
+        CHECK(tick(&s, now, reply, sizeof reply) == 0, "liveness",
+              "marked absent, or beat into a direction that was not idle");
         CHECK(feed(&s, beat, beat_len, now, reply, sizeof reply) == 0, "liveness",
               "heartbeat drew a reply");
         CHECK(s.present, "liveness", "not present while beating");
     }
 
-    /* One missed interval is not enough — a late beat is normal. */
+    /* One missed interval is not enough — a late beat is normal. The device
+     * fills the now-idle direction with a beat of its own, which is not an
+     * eviction. */
     now += DH_SESSION_HEARTBEAT_MS * DH_SESSION_MISSED_INTERVALS;
-    CHECK(!dh_session_tick(&s, now), "liveness", "absent after one missed interval");
+    CHECK(is_frame(reply, tick(&s, now, reply, sizeof reply), DH_MSG_DEVICE_HEARTBEAT), "liveness",
+          "an idle direction did not draw the device's own beat");
     CHECK(s.present, "liveness", "absent after one missed interval");
 
-    /* A couple of missed intervals is. The transition is reported once. */
+    /* A couple of missed intervals is. The transition is the frame, and it
+     * is emitted exactly once. */
     now += DH_SESSION_HEARTBEAT_MS;
-    CHECK(dh_session_tick(&s, now), "liveness", "not marked absent after the timeout");
+    CHECK(is_session_end(reply, tick(&s, now, reply, sizeof reply),
+                         DH_SESSION_END_LIVENESS_TIMEOUT),
+          "liveness", "the timeout did not announce the eviction");
     CHECK(!s.present, "liveness", "still present after the timeout");
     now += DH_SESSION_HEARTBEAT_MS;
-    CHECK(!dh_session_tick(&s, now), "liveness", "absence reported more than once");
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "liveness",
+          "absence announced more than once, or a beat without a session");
 
     /* A heartbeat from a helper with no session does not resurrect one:
      * the session starts at hello, so the device knows what it negotiated. */
@@ -426,15 +468,224 @@ static void test_liveness_survives_the_clock_wrapping(void) {
     const size_t len =
         encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
 
-    /* Hello just before the millisecond counter wraps; beat just after. */
+    /* Hello just before the millisecond counter wraps; beat just after. Both
+     * timers cross the wrap here — the liveness deadline and the idle timer
+     * the device's own beat runs on. */
     const uint32_t before_wrap = UINT32_MAX - (DH_SESSION_HEARTBEAT_MS / 2);
     CHECK(feed(&s, hello, len, before_wrap, reply, sizeof reply) > 0, "wrap", "no answer to hello");
+
     const uint32_t after_wrap = before_wrap + DH_SESSION_HEARTBEAT_MS; /* wraps */
-    CHECK(!dh_session_tick(&s, after_wrap), "wrap", "marked absent across the wrap");
-    CHECK(!dh_session_tick(&s, before_wrap + DH_SESSION_ABSENT_MS - 1), "wrap",
-          "marked absent early across the wrap");
-    CHECK(dh_session_tick(&s, before_wrap + DH_SESSION_ABSENT_MS + 1), "wrap",
-          "not marked absent across the wrap");
+    CHECK(is_frame(reply, tick(&s, after_wrap, reply, sizeof reply), DH_MSG_DEVICE_HEARTBEAT),
+          "wrap", "the idle timer did not survive the wrap");
+    CHECK(s.present, "wrap", "marked absent across the wrap");
+
+    CHECK(!is_session_end(reply, tick(&s, before_wrap + DH_SESSION_ABSENT_MS - 1, reply,
+                                      sizeof reply),
+                          DH_SESSION_END_LIVENESS_TIMEOUT),
+          "wrap", "marked absent early across the wrap");
+
+    CHECK(is_session_end(reply,
+                         tick(&s, before_wrap + DH_SESSION_ABSENT_MS + 1, reply, sizeof reply),
+                         DH_SESSION_END_LIVENESS_TIMEOUT),
+          "wrap", "not marked absent across the wrap");
+}
+
+/*
+ * The device's beat fills an idle direction and nothing else. It is not the
+ * liveness signal — traffic is — so a direction carrying anything at all
+ * emits none. This is what keeps a sustained transfer from starving the beat
+ * out of the one outbound frame slot and manufacturing a false eviction
+ * (ADR-0004).
+ */
+static void test_the_device_beats_only_into_an_idle_direction(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    uint32_t now = 500000;
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "idle", "no answer to hello");
+
+    /* The ack is itself traffic, so the direction is not idle yet. */
+    now += DH_SESSION_HEARTBEAT_MS - 1;
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle", "beat before the direction was idle");
+
+    /* A full interval of nothing draws one beat, and only one. */
+    now += 1;
+    CHECK(is_frame(reply, tick(&s, now, reply, sizeof reply), DH_MSG_DEVICE_HEARTBEAT), "idle",
+          "an idle interval drew no beat");
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle", "beat twice in one interval");
+
+    /* Something else going out resets the idle timer just as a beat does:
+     * whatever occupied the slot has already proved the device alive. */
+    for (int i = 0; i < 5; i++) {
+        now += DH_SESSION_HEARTBEAT_MS - 1;
+        dh_session_note_sent(&s, now);
+        CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle",
+              "a busy direction still drew a beat");
+        /* Keep the helper's own liveness fresh so this is about idleness. */
+        CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "idle", "no answer to re-hello");
+    }
+
+    /* No session, no beat — its absence is what makes the helper's timeout
+     * mean something. */
+    dh_session_drop(&s);
+    now += DH_SESSION_HEARTBEAT_MS * 4;
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle", "beat with no session to keep alive");
+}
+
+/*
+ * Liveness is carried by traffic, not by the beat. A helper busy sending real
+ * frames suppresses its own beat, so a device that credited only beats would
+ * evict it in the middle of its own traffic — the mirror of the starvation
+ * the device's beat is idle-gated to avoid (ADR-0004).
+ */
+static void test_any_frame_from_the_helper_is_liveness(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    uint32_t now = 900000;
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "traffic", "no answer to hello");
+
+    /* A position response is not a beat, is not answered, and is not even
+       this layer's frame — and it still proves the helper is there. */
+    uint8_t pos[DH_FRAME_HEADER_SIZE + 5];
+    size_t pos_len = 0;
+    const uint8_t pos_payload[5] = {1, 0x00, 0x40, 0x00, 0xC0};
+    CHECK(dh_frame_encode(DH_MSG_POS_RESPONSE, 0, pos_payload, sizeof pos_payload, pos, sizeof pos,
+                          &pos_len) == DH_FRAME_OK,
+          "traffic", "pos_response encode failed");
+
+    for (int i = 0; i < 10; i++) {
+        now += DH_SESSION_HEARTBEAT_MS * DH_SESSION_MISSED_INTERVALS;
+        CHECK(feed(&s, pos, pos_len, now, reply, sizeof reply) == 0, "traffic",
+              "a position response drew a reply");
+        (void)tick(&s, now, reply, sizeof reply);
+        CHECK(s.present, "traffic", "a helper sending real frames was evicted for not beating");
+    }
+
+    /* And silence still ends it — traffic refreshes the deadline, it does
+       not remove it. */
+    now += DH_SESSION_ABSENT_MS;
+    CHECK(is_session_end(reply, tick(&s, now, reply, sizeof reply),
+                         DH_SESSION_END_LIVENESS_TIMEOUT),
+          "traffic", "silence after traffic did not end the session");
+}
+
+/*
+ * An eviction the device knows about is announced rather than left to the
+ * helper's timeout. It is an optimisation over that timeout and never a
+ * substitute — a device that reboots announces nothing — so the only thing
+ * under test is that it says so when it can.
+ */
+static void test_an_eviction_the_device_knows_about_is_announced(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    size_t out_len = 0;
+    const uint32_t now = 700000;
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+
+    /* A framing error on the device's reader: the stream is untrustworthy
+     * and the helper is told, rather than going on writing into a reader it
+     * has desynchronised. */
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "end", "no answer to hello");
+    CHECK(dh_session_end(&s, DH_SESSION_END_PROTOCOL_ERROR, reply, sizeof reply, &out_len) ==
+              DH_FRAME_OK,
+          "end", "ending on a protocol error failed");
+    CHECK(is_session_end(reply, out_len, DH_SESSION_END_PROTOCOL_ERROR), "end",
+          "a protocol error did not announce the end");
+    CHECK(!s.present, "end", "a protocol error left the session up");
+
+    /* The config chord rotates the secret and evicts the helper on this
+     * board. #34 promises the state changing to connected is the
+     * confirmation the press worked — which cannot happen if the helper is
+     * never told it was evicted. */
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "end", "no answer to re-hello");
+    CHECK(dh_session_end(&s, DH_SESSION_END_RE_PAIRED, reply, sizeof reply, &out_len) ==
+              DH_FRAME_OK,
+          "end", "ending on a re-pair failed");
+    CHECK(is_session_end(reply, out_len, DH_SESSION_END_RE_PAIRED), "end",
+          "the chord did not announce the eviction");
+    CHECK(!s.present, "end", "the chord left the session up");
+
+    /* Nothing to end, nothing to say. A helper that never had a session
+     * would otherwise be told one of its had ended. */
+    out_len = 0;
+    CHECK(dh_session_end(&s, DH_SESSION_END_PROTOCOL_ERROR, reply, sizeof reply, &out_len) ==
+              DH_FRAME_OK,
+          "end", "ending a session that never started was an error");
+    CHECK(out_len == 0, "end", "announced the end of a session that never started");
+
+    /* The silent form is for a link that is already gone: there is nobody
+     * left to tell, and the bytes would go nowhere. */
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "end", "no answer to re-hello");
+    dh_session_drop(&s);
+    CHECK(!s.present, "end", "a dropped link left the helper present");
+}
+
+/* The announcement is the wire format's, not this build's idea of it. */
+static void test_session_end_matches_the_vectors(const char *path) {
+    static const struct {
+        const char *name;
+        uint8_t reason;
+    } cases[] = {
+        {"session_end_liveness", DH_SESSION_END_LIVENESS_TIMEOUT},
+        {"session_end_protocol_error", DH_SESSION_END_PROTOCOL_ERROR},
+        {"session_end_repaired", DH_SESSION_END_RE_PAIRED},
+    };
+
+    uint8_t raw[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        const size_t want = load_vector(path, cases[i].name, raw, sizeof raw);
+        CHECK(want > 0, cases[i].name, "vector missing");
+
+        dh_session s;
+        dh_session_init(&s, DH_BUILD_RELEASE);
+        reset_pairing();
+
+        uint8_t hello[MAX_VECTOR_BYTES];
+        const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                        sizeof test_secret, hello, sizeof hello);
+        CHECK(feed(&s, hello, len, 1000, reply, sizeof reply) > 0, cases[i].name,
+              "no answer to hello");
+
+        size_t out_len = 0;
+        CHECK(dh_session_end(&s, cases[i].reason, reply, sizeof reply, &out_len) == DH_FRAME_OK,
+              cases[i].name, "encode failed");
+        CHECK(out_len == want && memcmp(reply, raw, want) == 0, cases[i].name,
+              "the device's announcement is not the golden frame");
+    }
+
+    /* The device's own beat, likewise. */
+    const size_t want = load_vector(path, "device_heartbeat", raw, sizeof raw);
+    CHECK(want > 0, "device_heartbeat", "vector missing");
+
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
+    uint8_t hello[MAX_VECTOR_BYTES];
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+    CHECK(feed(&s, hello, len, 1000, reply, sizeof reply) > 0, "device_heartbeat",
+          "no answer to hello");
+    const size_t beat_len = tick(&s, 1000 + DH_SESSION_HEARTBEAT_MS, reply, sizeof reply);
+    CHECK(beat_len == want && memcmp(reply, raw, want) == 0, "device_heartbeat",
+          "the device's beat is not the golden frame");
 }
 
 static void test_other_bands_are_not_this_layers_business(void) {
@@ -449,9 +700,12 @@ static void test_other_bands_are_not_this_layers_business(void) {
         encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret, sizeof test_secret, hello, sizeof hello);
     CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "bands", "no answer to hello");
 
-    /* A bulk frame is relayed opaquely (#47), never answered here — and it
-     * is not a sign of life either: the relay does not prove a helper is
-     * still beating. */
+    /* A bulk frame is relayed opaquely (#47) and never answered here — but
+     * it is a sign of life, which reverses the original rule (ADR-0004). A
+     * helper suppresses its own beat while it has real traffic to send, so a
+     * device crediting only beats would evict it in the middle of a transfer.
+     * In the firmware bulk never reaches this function at all; channel.c
+     * notes it on the relay path, and this covers the rule itself. */
     uint8_t chunk[64];
     size_t chunk_len = 0;
     const uint8_t body[12] = {0};
@@ -460,7 +714,7 @@ static void test_other_bands_are_not_this_layers_business(void) {
           "bands", "chunk encode failed");
     CHECK(feed(&s, chunk, chunk_len, now + 10, reply, sizeof reply) == 0, "bands",
           "a bulk frame drew a session reply");
-    CHECK(s.last_seen_ms == now, "bands", "a bulk frame counted as a heartbeat");
+    CHECK(s.last_seen_ms == now + 10, "bands", "a bulk frame did not count as a sign of life");
 
     /* Pairing is #46's; this layer stays silent rather than guessing. */
     uint8_t pair[DH_FRAME_HEADER_SIZE];
@@ -585,6 +839,10 @@ int main(int argc, char **argv) {
     test_the_ack_carries_the_device_build_type();
     test_heartbeat_keeps_the_session_and_silence_ends_it();
     test_liveness_survives_the_clock_wrapping();
+    test_the_device_beats_only_into_an_idle_direction();
+    test_any_frame_from_the_helper_is_liveness();
+    test_an_eviction_the_device_knows_about_is_announced();
+    test_session_end_matches_the_vectors(path);
     test_other_bands_are_not_this_layers_business();
     test_a_malformed_hello_is_not_a_session();
     test_an_unpaired_helper_is_refused_and_told_which_remedy();

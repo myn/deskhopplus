@@ -155,6 +155,10 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
         s->channel_count = ack.channel_count;
         s->max_chunk = ack.max_chunk;
         s->last_seen_ms = now_ms;
+        /* The ack about to be returned is this direction's first traffic, so
+           the session starts with a full idle interval ahead of it rather
+           than owing a beat immediately. */
+        s->last_sent_ms = now_ms;
     }
 
     return dh_hello_ack_encode(&ack, out, out_cap, out_len);
@@ -164,6 +168,12 @@ dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame
                                     uint32_t now_ms, uint8_t *out, size_t out_cap,
                                     size_t *out_len) {
     *out_len = 0;
+
+    /* Arriving at all is the proof. The frame does not have to be one this
+       layer acts on, or even one addressed to it — a helper that is writing
+       is a helper that is alive. Bulk never reaches here, so the transport
+       notes that itself. */
+    dh_session_note_received(s, now_ms);
 
     switch (f->hdr.type) {
         case DH_MSG_HELLO:
@@ -186,10 +196,10 @@ dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame
         }
 
         case DH_MSG_HEARTBEAT:
-            /* Only a session that said hello can be kept alive: the device
-               would otherwise hold a helper present without knowing what it
-               negotiated with. */
-            if (s->present) s->last_seen_ms = now_ms;
+            /* Nothing beyond having arrived, which is already accounted for
+               above. The beat carries no more weight than any other frame —
+               it exists to fill a direction with nothing else in it, so that
+               silence means something. */
             return DH_FRAME_OK;
 
         default:
@@ -199,13 +209,55 @@ dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame
     }
 }
 
-bool dh_session_tick(dh_session *s, uint32_t now_ms) {
-    if (!s->present) return false;
+void dh_session_note_sent(dh_session *s, uint32_t now_ms) {
+    s->last_sent_ms = now_ms;
+}
 
-    /* Unsigned difference, so a wrapping millisecond counter is just
-       arithmetic rather than a session dropped once every 49 days. */
-    if ((uint32_t)(now_ms - s->last_seen_ms) < DH_SESSION_ABSENT_MS) return false;
+void dh_session_note_received(dh_session *s, uint32_t now_ms) {
+    if (s->present) s->last_seen_ms = now_ms;
+}
+
+dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint8_t *out, size_t out_cap,
+                               size_t *out_len) {
+    *out_len = 0;
+    if (!s->present) return DH_FRAME_OK;
 
     dh_session_drop(s);
-    return true;
+
+    const uint8_t payload[DH_SESSION_END_LEN] = {reason};
+    return dh_frame_encode(DH_MSG_SESSION_END, 0, payload, sizeof payload, out, out_cap, out_len);
+}
+
+dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, size_t out_cap,
+                                size_t *out_len) {
+    *out_len = 0;
+    if (!s->present) return DH_FRAME_OK;
+
+    /* Unsigned difference throughout, so a wrapping millisecond counter is
+       just arithmetic rather than a session dropped once every 49 days. */
+    if ((uint32_t)(now_ms - s->last_seen_ms) >= (uint32_t)DH_SESSION_ABSENT_MS)
+        return dh_session_end(s, DH_SESSION_END_LIVENESS_TIMEOUT, out, out_cap, out_len);
+
+    /* Fill an idle direction, and only an idle one. Anything else this device
+       sent has already told the helper the same thing. */
+    if ((uint32_t)(now_ms - s->last_sent_ms) < DH_SESSION_HEARTBEAT_MS) return DH_FRAME_OK;
+
+    const dh_frame_result rc =
+        dh_frame_encode(DH_MSG_DEVICE_HEARTBEAT, 0, NULL, 0, out, out_cap, out_len);
+
+    /*
+     * The timer is charged for a beat this layer *produced*, which is not
+     * quite the same as one the transport managed to send — deliberately.
+     * The caller's slot refuses only while it is occupied by a frame already
+     * draining to this same helper, and that frame refreshes the helper just
+     * as well as a beat would. A slot stuck for longer than that means the
+     * endpoint is wedged, and a helper that genuinely cannot hear this device
+     * is one that should be reconnecting, not one to keep reassuring.
+     *
+     * Retrying instead would encode a beat on every tick for as long as the
+     * slot stayed busy, and each refusal would be counted as loss against
+     * #69's diagnostic — turning a healthy transfer into an alarm.
+     */
+    if (rc == DH_FRAME_OK) dh_session_note_sent(s, now_ms);
+    return rc;
 }

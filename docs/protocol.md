@@ -61,7 +61,7 @@ type byte, without reading a payload:
 
 | band | range | contents |
 |------|-------|----------|
-| session | 0x01–0x1F | hello, heartbeat, pairing |
+| session | 0x01–0x1F | hello, heartbeats, session end, pairing |
 | placement | 0x20–0x2F | placement, position query/response |
 | bulk | 0x30–0x3F | clipboard transfer and its reliability machinery |
 
@@ -72,6 +72,8 @@ type byte, without reading a payload:
 | 0x01 | HELLO             | h→d | `proto_version:u16` `os:u8` (1=mac, 2=windows) `build_type:u8` (0=release, 1=development) `channel_count:u8` (requested) `max_chunk:u16` (requested, bytes) `token:bytes` (authentication; format owned by #46 — example vectors use 16 bytes) |
 | 0x02 | HELLO_ACK         | d→h | `proto_version:u16` `status:u8` (0=ok, 1=auth_failed, 2=version_incompatible — distinguishable because the remedies differ) `build_type:u8` `channel_count:u8` (effective) `max_chunk:u16` (effective). On a non-ok status the effective fields are zero. |
 | 0x05 | HEARTBEAT         | h→d | empty (id kept from mkroamer; vector ports verbatim) |
+| 0x06 | DEVICE_HEARTBEAT  | d→h | empty. The device's own beat, sent only while a session exists, so its absence is meaningful. Idle-gated — see Liveness. |
+| 0x07 | SESSION_END       | d→h | `reason:u8` (0=unspecified, 1=liveness_timeout, 2=protocol_error, 3=re_paired). An unknown reason reads as unspecified rather than as an error, so a later device may end a session for a reason this helper predates. |
 | 0x08 | PAIR_REQUEST      | h→d | empty (semantics owned by #46) |
 | 0x09 | PAIR_GRANT        | d→h | `secret:bytes` (length and rotation owned by #46; example vectors use 16 bytes) |
 | 0x20 | PLACE             | d→h | `chain_index:u8` `border_direction:u8` (which side of the output the seam was crossed from) `entry_pos:u16` (0–65535 normalized along the seam segment). Fire-and-forget; no reply path. mkroamer's HANDOFF minus epoch and modifiers — one arbiter needs no epoch, and input rides HID. |
@@ -91,6 +93,39 @@ by the firmware, which parses frame headers only, never payloads).
 **Dropped from mkroamer:** PING/PONG, MOUSE_MOVE, MOUSE_BTN, WHEEL, KEY (input rides HID),
 HANDOFF/HANDOFF_ACK (inverted into PLACE), RELEASE_CONTROL, RESET_MODIFIERS,
 CONFIG_SYNC/CONFIG_ACK (configuration lives on the device).
+
+## Liveness
+
+Per [ADR-0004](adr/0004-independent-bidirectional-liveness.md). Liveness is **symmetric and
+independently timed in each direction**, and it is carried by **traffic**, not by an
+acknowledgement. There is no request/response pair here: each end runs its own timer over what
+arrives.
+
+- **Any frame proves the sender is alive, in both directions.** An end treats its peer as present
+  while anything at all has arrived from it within three heartbeat intervals — hello, placement,
+  clipboard bulk, a refused hello, a heartbeat. Nothing is excluded, and an implementation that
+  credits only heartbeats is wrong: the *other* end suppresses its beat whenever it has real
+  traffic to send, so counting only beats evicts a peer in the middle of its own transfer. The
+  channel is held exclusively, so every frame on it comes from the one process that owns the
+  session; a process that is writing is alive, which is the only thing this deadline measures.
+- **Being alive and holding a session are different claims.** In the device→helper direction
+  arrival proves both, since the device relays and answers nothing for a peer it has no session
+  with. In the helper→device direction it proves only the first — which is all that is needed,
+  because the device is the end that owns the session state and does not need to be told.
+- **A heartbeat fills an idle direction only.** HEARTBEAT and DEVICE_HEARTBEAT are sent only when
+  that direction has carried nothing for a full interval. A busy link emits neither. They exist so
+  that silence is unambiguous, not to be the measurement.
+- **Why idle-gated rather than unconditional.** The device holds one outbound frame slot, shared
+  with relayed bulk, and a refused queue is a silent loss. An unconditional beat would be starved
+  by a sustained transfer, and a few starved beats in a row would look exactly like a dead session
+  — the mechanism would manufacture the failure it exists to detect. Gating on idleness removes
+  that: a busy direction emits no beat, and a beat refused by a busy slot is self-correcting,
+  because whatever occupied the slot refreshes the peer anyway.
+- **SESSION_END is an optimisation, never the mechanism.** The device announces an eviction it
+  knows about so the helper need not wait out a timeout. A device that reboots, wedges, or loses
+  power announces nothing, so the timeout above is what must be correct.
+- **On detection, drop and reconnect.** The peer is no longer trustworthy and the byte stream may
+  be mid-frame, so recovery is closing and reopening the channels, not re-introducing over them.
 
 ## Transfer semantics
 

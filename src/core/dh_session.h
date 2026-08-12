@@ -42,13 +42,29 @@
 #define DH_SESSION_CHANNEL_COUNT 1u
 
 /*
- * Liveness. The helper beats every DH_SESSION_HEARTBEAT_MS; the device marks
- * it absent once two intervals have gone by with nothing heard, plus one
- * interval of grace for a beat already on the wire.
+ * Liveness, symmetric and independently timed per direction (ADR-0004).
+ * Either end treats its peer as present while *anything at all* has arrived
+ * within DH_SESSION_ABSENT_MS — two missed intervals plus one of grace for a
+ * beat already on the wire. Traffic is the measurement; the heartbeat only
+ * fills a direction that has carried nothing for a full interval, so silence
+ * is unambiguous.
+ *
+ * The gating is not a micro-optimisation. The device holds one outbound frame
+ * slot, shared with relayed bulk, and a refused queue is a silent loss — an
+ * unconditional beat would be starved by a sustained transfer, and a few
+ * starved beats look exactly like a dead session. The mechanism would
+ * manufacture the failure it exists to detect.
  */
 #define DH_SESSION_HEARTBEAT_MS 1000u
 #define DH_SESSION_MISSED_INTERVALS 2u
-#define DH_SESSION_ABSENT_MS (DH_SESSION_HEARTBEAT_MS * (DH_SESSION_MISSED_INTERVALS + 1u))
+
+/*
+ * An enum constant rather than a computed macro so the bindings import the
+ * value itself: a helper that had to re-derive `missed + 1` in its own
+ * language would be a third copy of the rule, free to drift from the two
+ * ends it is supposed to keep measuring the same thing.
+ */
+enum { DH_SESSION_ABSENT_MS = DH_SESSION_HEARTBEAT_MS * (DH_SESSION_MISSED_INTERVALS + 1u) };
 
 /*
  * The chunk size the device offers. It is DH_XFER_CHUNK_SIZE — the transfer
@@ -63,6 +79,22 @@
 #define DH_HELLO_FIXED_LEN 7u
 #define DH_HELLO_ACK_LEN 7u
 #define DH_HELLO_TOKEN_MAX 64u
+#define DH_SESSION_END_LEN 1u
+
+/*
+ * Why a session ended, told to the helper so it need not wait out its own
+ * timeout. Nothing about the *remedy* differs — every reason drops the
+ * connection and reconnects — so unlike dh_hello_status these are diagnostic,
+ * not behavioural, and an unknown value reads as unspecified rather than as
+ * an error. That is what lets a later device end a session for a reason a
+ * shipped helper predates.
+ */
+typedef enum {
+    DH_SESSION_END_UNSPECIFIED = 0,
+    DH_SESSION_END_LIVENESS_TIMEOUT = 1,
+    DH_SESSION_END_PROTOCOL_ERROR = 2,
+    DH_SESSION_END_RE_PAIRED = 3,
+} dh_session_end_reason;
 
 typedef enum {
     DH_OS_MAC = 1,
@@ -122,6 +154,9 @@ typedef struct {
     uint8_t channel_count; /* effective, negotiated; 0 until a session exists */
     uint16_t max_chunk;    /* effective, negotiated */
     uint32_t last_seen_ms;
+    /* When this device last had something to say. The beat fills the gaps
+       between real traffic rather than adding to it. */
+    uint32_t last_sent_ms;
     /* Authenticated peers are the only ones anything is relayed for. */
     bool authenticated;
 } dh_session;
@@ -152,13 +187,62 @@ static inline bool dh_session_may_relay(const dh_session *s) {
 }
 
 /*
- * Advance the clock. Returns true on the call that marks a present helper
- * absent, so a caller can act on the transition rather than poll the flag.
+ * Something went out to the helper. Feeds the idle timer the device's own
+ * beat runs on: any frame already proves this device alive and holding a
+ * session, so the beat is owed only when nothing else was sent.
+ *
+ * Called on a successful queue rather than a successful send — a frame the
+ * transport accepted is one the helper will see, and the distinction is
+ * beneath this layer.
+ */
+void dh_session_note_sent(dh_session *s, uint32_t now_ms);
+
+/*
+ * Something arrived from the helper. Any well-formed frame proves the sender
+ * is alive, so any frame refreshes the deadline — including bulk, which is
+ * relayed opaquely and never reaches dh_session_on_frame, so the transport
+ * has to hand it here itself.
+ *
+ * This is the mirror of dh_session_note_sent, and both ends must apply it, or
+ * they disagree about what liveness is: a helper that suppresses its beat
+ * because it is busy sending, talking to a device that only counts beats,
+ * is a helper evicted in the middle of its own traffic.
+ *
+ * Only a helper that already has a session — silence is what ends one, and
+ * a stray frame must not start one.
+ */
+void dh_session_note_received(dh_session *s, uint32_t now_ms);
+
+/*
+ * Advance the clock, encoding whatever is owed the helper into out — the
+ * device's beat when the direction has been idle for an interval, or a
+ * SESSION_END on the call that evicts a helper for silence. Never both: an
+ * evicted session is not beaten at. *out_len is 0 when nothing is due.
+ *
+ * There is no separate transition flag. The eviction *is* the frame, so the
+ * signal and what goes on the wire cannot disagree.
+ *
  * Time is uint32_t milliseconds and comparisons are wrap-safe.
  */
-bool dh_session_tick(dh_session *s, uint32_t now_ms);
+dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, size_t out_cap,
+                                size_t *out_len);
 
-/* The link dropped underneath us — no timeout needs to elapse. */
+/*
+ * End the session and say so — for the evictions this device decides on and
+ * can still write about: a framing error on its reader, and the config chord
+ * rotating the secret. Encodes a SESSION_END into out.
+ *
+ * A session that was never established emits nothing (*out_len is 0): a
+ * helper that never had one must not be told that one of its ended.
+ */
+dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint8_t *out, size_t out_cap,
+                               size_t *out_len);
+
+/*
+ * The link dropped underneath us — no timeout needs to elapse, and no
+ * announcement is possible or wanted: there is nobody on the other end to
+ * hear it. dh_session_end is the form for an eviction this device chose.
+ */
 void dh_session_drop(dh_session *s);
 
 #endif /* DH_SESSION_H_ */

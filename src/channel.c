@@ -77,6 +77,10 @@ static void channel_fresh_secret(uint8_t *out) {
     }
 }
 
+/* Defined below the writer it queues through, needed by the pairing window
+   above it. */
+static void channel_end_session(uint8_t reason);
+
 /*
  * Everything that belongs to one connection: the session, the frame reader,
  * the relay and whatever was owed to a helper that is no longer there.
@@ -133,7 +137,20 @@ void channel_open_pairing_window(device_t *state) {
     channel_fresh_secret(fresh);
 
     dh_pair_open_window(&channel.pair, fresh, channel_now_ms());
-    dh_session_drop(&channel.session);
+
+    /*
+     * Evicting the helper on this board is the point — it re-pairs silently
+     * inside the window it is standing in.
+     *
+     * Today this announces nothing, and that is correct rather than broken:
+     * the only caller is setup.c, on the normal-mode boot after the chord's
+     * reboot, where channel_init has just cleared the session and no helper
+     * has said hello yet. The helper learns of the eviction from the USB
+     * re-enumeration, which is a louder signal than any frame. The call
+     * stands so that a window opened while a session *is* live — which is
+     * what this function's contract would otherwise quietly break — says so.
+     */
+    channel_end_session(DH_SESSION_END_RE_PAIRED);
 
     memcpy(state->config.channel_secret, fresh, sizeof fresh);
     state->config.channel_paired = 1;
@@ -159,12 +176,32 @@ static bool channel_queue_frame(const uint8_t *frame, size_t len) {
     if (len == 0 || len > sizeof channel.out)
         return dh_txq_track(&channel.tx, false);
 
+    const uint32_t now = channel_now_ms();
+
     critical_section_enter_blocking(&channel.out_lock);
     const bool busy = channel.out_len != 0;
     if (!busy) {
         memcpy(channel.out, frame, len);
         channel.out_len = (uint16_t)len;
         channel.out_sent = 0;
+        /*
+         * Anything accepted for this helper already proves the device is
+         * alive and holding a session, so it feeds the idle timer and the
+         * beat stays out of the way (ADR-0004). That gating is what keeps a
+         * sustained transfer from starving the beat out of this one slot and
+         * looking, to the helper, exactly like a device that stopped
+         * answering.
+         *
+         * This runs on core 1 as well as core 0, and the rest of the session
+         * is touched unlocked on core 0 — so being inside the out lock here
+         * is incidental (we already hold it) and guarantees nothing about
+         * the struct as a whole. It does not need to: this writes one
+         * aligned 32-bit word that only the beat's idle test reads, so a
+         * race costs a beat emitted or skipped one tick early. Core 0 can
+         * even evict between the two, leaving a dropped session carrying a
+         * fresh timestamp, which the next tick discards on !present.
+         */
+        dh_session_note_sent(&channel.session, now);
     }
     critical_section_exit(&channel.out_lock);
 
@@ -176,6 +213,19 @@ static bool channel_queue_frame(const uint8_t *frame, size_t len) {
      * queue or the credit window is enforced on the device.
      */
     return dh_txq_track(&channel.tx, !busy);
+}
+
+/*
+ * End the session and tell the helper why — best effort. A refused queue
+ * leaves it to notice for itself, which is precisely what its own timeout is
+ * for: this is an optimisation over that timeout, never a substitute for it.
+ */
+static void channel_end_session(uint8_t reason) {
+    uint8_t frame[DH_FRAME_HEADER_SIZE + DH_SESSION_END_LEN];
+    size_t len = 0;
+    if (dh_session_end(&channel.session, reason, frame, sizeof frame, &len) == DH_FRAME_OK &&
+        len > 0)
+        (void)channel_queue_frame(frame, len);
 }
 
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
@@ -191,8 +241,12 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
 
         if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) {
             /* A protocol error drops the session: the stream is no longer
-               trustworthy and the helper reconnects (docs/protocol.md). */
-            dh_session_drop(&channel.session);
+               trustworthy and the helper reconnects (docs/protocol.md). It is
+               told so rather than left to time out, because until it finds
+               out it goes on writing into a reader it has desynchronised —
+               and this is the one path where the helper is the thing in the
+               wrong and could stop. */
+            channel_end_session(DH_SESSION_END_PROTOCOL_ERROR);
             dh_frame_reader_init(&channel.reader);
             return;
         }
@@ -210,6 +264,18 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
             if (dh_msg_is_bulk(frame.hdr.type)) {
                 if (!dh_session_may_relay(&channel.session))
                     continue;
+
+                /*
+                 * Bulk is relayed opaquely and never reaches the session
+                 * layer, so its liveness has to be noted here or it counts
+                 * for nothing. It has to count: the helper suppresses its
+                 * own beat while it has real traffic to send, so a device
+                 * that only credited beats would evict a helper in the
+                 * middle of a clipboard transfer — the same starvation the
+                 * device's beat is idle-gated to avoid, in the other
+                 * direction (ADR-0004).
+                 */
+                dh_session_note_received(&channel.session, now);
 
                 /*
                  * A refusal means the previous frame is still fragmenting.
@@ -329,7 +395,18 @@ void channel_task(device_t *state) {
     (void)state;
 
     const uint32_t now = channel_now_ms();
-    (void)dh_session_tick(&channel.session, now);
+
+    /*
+     * Whichever the session owes its helper: the beat that fills an idle
+     * direction, or the announcement that a silent helper has just been
+     * evicted. Never both, and nothing at all on the ordinary tick.
+     */
+    uint8_t owed[DH_FRAME_HEADER_SIZE + DH_SESSION_END_LEN];
+    size_t owed_len = 0;
+    if (dh_session_tick(&channel.session, now, owed, sizeof owed, &owed_len) == DH_FRAME_OK &&
+        owed_len > 0)
+        (void)channel_queue_frame(owed, owed_len);
+
     dh_pair_tick(&channel.pair, now);
     channel_pump_relay();
     channel_pump_out();

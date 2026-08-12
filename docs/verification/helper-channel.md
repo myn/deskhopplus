@@ -131,10 +131,16 @@ swift run deskhop-helper         # foreground, logging to stderr
       only — running it once from a terminal that itself holds permissions is the false-pass
       trap recorded in the macOS research
 - [ ] Hello and heartbeat run end to end against real firmware
-- [ ] The device marks the helper absent a couple of intervals after the helper is stopped.
-      *Expected `not run`* — see the note below
+- [ ] The device marks the helper absent a couple of intervals after the helper is stopped, and
+      **says so**. Stop the helper (`SIGSTOP`, not `SIGTERM` — a clean exit closes the channel
+      and is a different path); about three seconds later the device emits `SESSION_END` with
+      reason `1`. Resume it and confirm it reconnects by itself
+- [ ] **The helper notices a session it no longer has.** With the helper running and idle,
+      confirm it is receiving `DEVICE_HEARTBEAT` about once a second, and that the beats stop
+      while a clipboard transfer is running and resume when it finishes — an idle-gated beat is
+      the thing keeping a transfer from starving it (ADR-0004)
 
-### Two boxes that cannot be measured on this build
+### Boxes that cannot be measured on this build
 
 **Partial acquisition is degenerate at one channel.** `DH_SESSION_CHANNEL_COUNT` is `1`
 (ADR-0002 ships one channel), so there is no *partial* to acquire: holding "one channel" from
@@ -144,13 +150,13 @@ hardware cannot distinguish it from a plain refusal until the channel count rise
 **This box becomes measurable at [#63](https://github.com/myn/deskhopplus/issues/63)** and
 should be recorded as not run, blocked on it.
 
-**The absent transition is invisible from outside.** `channel_task` discards
-`dh_session_tick`'s return — `(void)dh_session_tick(...)` — and nothing device-side signals the
-transition: no LED, no frame to the helper, no counter. The one observable consequence is
-`dh_session_may_relay` going false, and the relay checks moved out of this sitting. This is
-exactly the gap [#68](https://github.com/myn/deskhopplus/issues/68) exists to close, and it
-cannot be closed without a wire-format change. Record as not run, blocked on #68 — and note
-that #68 is therefore load-bearing for verification, not only for #52.
+**~~The absent transition is invisible from outside.~~** *Resolved by
+[#68](https://github.com/myn/deskhopplus/issues/68) / ADR-0004, 2026-08-11.* It used to be that
+`channel_task` discarded `dh_session_tick`'s return and nothing device-side signalled the
+transition — no LED, no frame, no counter — so the box was recorded as not run, blocked on #68.
+The tick now puts the transition on the wire as `SESSION_END`, and the box above is measurable.
+Both boxes are worth running together: the eviction and the helper's own detection of it are the
+two halves of the same mechanism, and only hardware exercises them against real timing.
 
 ## 2. Pairing (#46)
 

@@ -14,6 +14,16 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("a partial acquisition never prompts the chord", testPartialAcquisitionNeverPromptsChord),
     ("a wholly refused acquisition is the same state", testWhollyRefusedAcquisition),
     ("the heartbeat beats at the interval the device measures", testHeartbeatKeepsBeating),
+    ("a device that falls silent ends the session", testSilenceFromTheDeviceEndsTheSession),
+    ("any traffic from the device is liveness", testAnyDeviceTrafficIsLiveness),
+    ("an announced eviction is acted on at once", testSessionEndIsActedOnImmediately),
+    ("a session end outside a session is ignored", testSessionEndOutsideSessionIgnored),
+    ("an unpaired helper survives the device saying nothing",
+     testUnpairedHelperSurvivesTheDeviceSayingNothing),
+    ("a lost session is reported only if it stays lost", testALostSessionIsReportedOnlyIfItStaysLost),
+    ("a channel holder is not reported as an absent device",
+     testAChannelHolderIsNotReportedAsAnAbsentDevice),
+    ("bulk needs a session", testBulkNeedsASession),
     ("an unanswered hello is not left half-open", testUnansweredHello),
     ("a protocol error drops the connection", testProtocolErrorDropsConnection),
     ("a failed write drops the connection", testFailedWriteDropsConnection),
@@ -77,6 +87,11 @@ private final class Fixture {
                            channelCount: status == .ok ? channels : 0,
                            maxChunk: status == .ok ? chunk : 0)
         return .received(try ack.encoded())
+    }
+
+    /// A frame arriving from the device, as the transport would deliver it.
+    func deviceFrame(_ type: UInt8, payload: [UInt8] = []) throws -> SessionInput {
+        .received(try FrameCodec.encode(Frame(type: type, payload: payload)))
     }
 
     /// Device present, every channel seized, hello answered.
@@ -191,9 +206,178 @@ private func testHeartbeatKeepsBeating() throws {
         let frames = try f.sentFrames(f.advance(SessionEngine.heartbeatInterval))
         Check.equal(frames.map(\.type), [MessageType.heartbeat], "missed a beat")
         Check.equal(frames.first?.payload, [], "the heartbeat is not empty")
+
+        /* The device answers all the while. This test is about the helper's
+           own beat, not about the detector watching for the device's
+           silence — which would otherwise fire three intervals in. */
+        f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
     }
 
     Check.equal(f.engine.state, .connected, "beating did not keep the session")
+}
+
+/*
+ * The defect #68 was opened for: the device drops a session on its own — its
+ * liveness timeout, a framing error on its reader, the config chord — and
+ * with a one-way heartbeat the helper went on beating into a device that
+ * ignores beats, reporting a session it did not have.
+ */
+private func testSilenceFromTheDeviceEndsTheSession() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    Check.equal(f.advance(SessionEngine.deviceBeatTimeout - SessionEngine.heartbeatInterval)
+                    .filter { $0 == .closeChannels },
+                [], "gave up on the device before the timeout")
+
+    let outputs = f.advance(SessionEngine.heartbeatInterval)
+    Check.that(outputs.contains(.closeChannels), "a session the device had dropped was kept")
+    Check.that(!f.retries(outputs).isEmpty, "a lost session was not reconnected")
+
+    /* And nothing is beaten at afterwards: the session is gone, not stalled. */
+    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+                "kept beating after the session was lost")
+}
+
+/*
+ * Liveness is carried by traffic, not by the beat (ADR-0004) — the beat only
+ * fills an idle direction. A placement frame this build does not act on still
+ * proves the device is alive and holding a session, because the device does
+ * not relay for a peer it has no session with.
+ */
+private func testAnyDeviceTrafficIsLiveness() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    for _ in 0..<6 {
+        _ = f.advance(SessionEngine.deviceBeatTimeout - SessionEngine.heartbeatInterval)
+        f.send(try f.deviceFrame(0x20, payload: [1, 0, 0, 0x80]))
+    }
+
+    Check.equal(f.engine.state, .connected,
+                "traffic the engine ignores did not count as the device being alive")
+    Check.that(f.engine.canSendBulk, "a live session refused to carry bulk")
+}
+
+/* An eviction the device knows about is announced, so the helper need not
+   wait out the timeout. The reason is diagnostic: every one takes the same
+   recovery, which is what makes an unknown one safe. */
+private func testSessionEndIsActedOnImmediately() throws {
+    for reason: UInt8 in [1, 2, 3, 0x7F] {
+        let f = Fixture()
+        try f.establishSession()
+
+        let outputs = f.send(try f.deviceFrame(MessageType.sessionEnd, payload: [reason]))
+        Check.that(outputs.contains(.closeChannels),
+                   "an announced eviction (reason \(reason)) kept the connection")
+        Check.that(!f.retries(outputs).isEmpty,
+                   "an announced eviction (reason \(reason)) did not reconnect")
+        Check.that(f.notes(outputs).contains { $0.contains("ended the session") },
+                   "an announced eviction (reason \(reason)) was not recorded")
+    }
+}
+
+/* The tail of a session already dropped. Acting on it would tear down a
+   reconnection that is already in flight. */
+private func testSessionEndOutsideSessionIgnored() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(.transportFailed("link went away"))
+
+    let outputs = f.send(try f.deviceFrame(MessageType.sessionEnd, payload: [1]))
+    Check.that(!outputs.contains(.closeChannels), "a stale session end dropped the connection again")
+    Check.that(f.retries(outputs).isEmpty, "a stale session end scheduled a second reconnection")
+}
+
+/*
+ * The regression this design is most exposed to. A helper refused
+ * authentication is deliberately kept live — beating and asking — because
+ * #46's window can only provision a helper that is connected when the user
+ * presses the chord. The device holds no session for it and so sends it
+ * nothing, which means a detector keyed on the phase rather than on the
+ * session would tear it down every few seconds and break pairing outright.
+ */
+private func testUnpairedHelperSurvivesTheDeviceSayingNothing() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.normal))
+    f.send(.channelsAcquired(count: 1))
+    f.send(try f.ack(.authenticationFailed))
+
+    var beats = 0
+    var asks = 0
+    for _ in 0..<8 {
+        let types = try f.sentFrames(f.advance(SessionEngine.heartbeatInterval)).map(\.type)
+        Check.that(!f.states(f.advance(0)).contains(.deviceAbsent),
+                   "an unpaired helper was reported absent")
+        beats += types.filter { $0 == MessageType.heartbeat }.count
+        asks += types.filter { $0 == MessageType.pairRequest }.count
+    }
+
+    Check.equal(f.engine.state, .notPaired,
+                "an unpaired helper was torn down by the detector, so the chord could not reach it")
+    Check.that(beats >= 4, "an unpaired helper stopped beating")
+    Check.that(asks >= 2, "an unpaired helper stopped asking to be paired")
+    Check.that(!f.engine.canSendBulk, "an unpaired helper would carry bulk")
+}
+
+/*
+ * A lost session that comes back quickly is not worth mentioning; one that
+ * does not becomes, from the user's side, a device that is not there. Same
+ * window and same machinery as a device that physically disappears — no
+ * second vocabulary for a second kind of gone.
+ */
+private func testALostSessionIsReportedOnlyIfItStaysLost() throws {
+    let quick = Fixture()
+    try quick.establishSession()
+    _ = quick.advance(SessionEngine.deviceBeatTimeout)
+    Check.equal(quick.states(quick.advance(SessionEngine.silenceWindow / 2)), [],
+                "a session that dropped and returned was announced")
+
+    quick.send(.channelsAcquired(count: 1))
+    Check.equal(quick.states(quick.send(try quick.ack(.ok))), [],
+                "reconnecting inside the window was visible to the user")
+    Check.equal(quick.engine.state, .connected, "the reconnected session was not reported")
+
+    let stuck = Fixture()
+    try stuck.establishSession()
+    _ = stuck.advance(SessionEngine.deviceBeatTimeout)
+    Check.equal(stuck.states(stuck.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+                "a session lost for good went on reading as connected")
+}
+
+/*
+ * A dropped connection defers "the device is absent"; if the reconnection
+ * then finds the channel taken, that is a different state with a different
+ * remedy, and the stale deferral must not overwrite it five seconds later.
+ */
+private func testAChannelHolderIsNotReportedAsAnAbsentDevice() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(.transportFailed("link went away"))
+
+    /* The retry comes back to a channel somebody else now holds. */
+    Check.equal(f.states(f.send(.acquisitionRefused(acquired: 0, of: 1))), [.channelHeld],
+                "a channel holder was not reported")
+
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 2)), [],
+                "a stale absence overwrote the channel holder the user can act on")
+    Check.equal(f.engine.state, .channelHeld, "the actionable state did not survive")
+}
+
+/* Bulk needs a session, and #52 consumes this rather than inventing it. */
+private func testBulkNeedsASession() throws {
+    let f = Fixture()
+    Check.that(!f.engine.canSendBulk, "an idle helper would carry bulk")
+
+    f.send(.deviceAppeared(.normal))
+    f.send(.channelsAcquired(count: 1))
+    Check.that(!f.engine.canSendBulk, "a helper still awaiting an ack would carry bulk")
+
+    f.send(try f.ack(.ok))
+    Check.that(f.engine.canSendBulk, "an established session refused to carry bulk")
+
+    f.send(.transportFailed("link went away"))
+    Check.that(!f.engine.canSendBulk, "a dropped connection would still carry bulk")
 }
 
 private func testUnansweredHello() throws {

@@ -19,6 +19,24 @@ public enum BuildType: UInt8, Equatable {
     case development = 1
 }
 
+/*
+ * Why the device ended a session. Unlike HelloStatus these are diagnostic
+ * rather than behavioural — every one of them takes the same recovery — which
+ * is exactly what makes an unrecognised value safe to carry on with, rather
+ * than a decode failure. A later device may end a session for a reason this
+ * build predates.
+ */
+public enum SessionEndReason: UInt8, Equatable {
+    case unspecified = 0
+    case livenessTimeout = 1
+    case protocolError = 2
+    case rePaired = 3
+
+    public init(wire: UInt8) {
+        self = SessionEndReason(rawValue: wire) ?? .unspecified
+    }
+}
+
 public struct Hello: Equatable {
     public var protocolVersion: UInt16
     public var os: UInt8
@@ -139,6 +157,8 @@ public enum MessageType {
     public static let hello = UInt8(DH_MSG_HELLO.rawValue)
     public static let helloAck = UInt8(DH_MSG_HELLO_ACK.rawValue)
     public static let heartbeat = UInt8(DH_MSG_HEARTBEAT.rawValue)
+    public static let deviceHeartbeat = UInt8(DH_MSG_DEVICE_HEARTBEAT.rawValue)
+    public static let sessionEnd = UInt8(DH_MSG_SESSION_END.rawValue)
     public static let pairRequest = UInt8(DH_MSG_PAIR_REQUEST.rawValue)
     public static let pairGrant = UInt8(DH_MSG_PAIR_GRANT.rawValue)
 }

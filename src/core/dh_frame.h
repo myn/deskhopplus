@@ -28,6 +28,8 @@
     X(DH_MSG_HELLO, 0x01)            \
     X(DH_MSG_HELLO_ACK, 0x02)        \
     X(DH_MSG_HEARTBEAT, 0x05)        \
+    X(DH_MSG_DEVICE_HEARTBEAT, 0x06) \
+    X(DH_MSG_SESSION_END, 0x07)      \
     X(DH_MSG_PAIR_REQUEST, 0x08)     \
     X(DH_MSG_PAIR_GRANT, 0x09)      \
     X(DH_MSG_PLACE, 0x20)            \

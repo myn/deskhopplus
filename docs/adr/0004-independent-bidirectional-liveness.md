@@ -12,7 +12,10 @@ Liveness on the channel is **symmetric and independently timed in each direction
 carried by **any traffic**, not by an acknowledgement.
 
 - Each end considers its peer alive while **any frame** has arrived from it inside
-  `DH_SESSION_ABSENT_MS` (three heartbeat intervals). Traffic in a direction is itself the proof.
+  `DH_SESSION_ABSENT_MS` (three heartbeat intervals). Traffic in a direction is itself the proof,
+  in **both** directions and with nothing excluded — clipboard bulk and a refused hello count as
+  much as a heartbeat does. Crediting only heartbeats at either end would evict a peer in the
+  middle of its own traffic, because that peer suppresses its beat exactly when it is busiest.
 - A heartbeat is emitted **only when that direction has been idle** for a full interval. It is a
   filler for a quiet link, not the liveness signal. A busy link emits none at all.
 - `DEVICE_HEARTBEAT` (`0x06`, d→h, empty) is added so the device→helper direction has a filler of
@@ -27,16 +30,18 @@ stays a single range test.
 ## Context
 
 The v1 heartbeat was one-way. A helper beat every second and the device refreshed a timestamp;
-nothing travelled back. The device drops a session on **four** paths, none of which sent anything —
-its own liveness timeout, a framing error on its reader, a version mismatch, and (a path #68 did
-not list) the config chord opening a pairing window, which rotates the secret and evicts the helper
-on that board. On the first, second and fourth the helper went on beating into a device that
-ignores heartbeats, with no ack to miss and no re-hello timer, and its menu bar kept reading
-*connected and paired*.
+nothing travelled back. The device drops a session on three paths that send nothing — its own
+liveness timeout, a framing error on its reader, and a version mismatch. On the first two the
+helper went on beating into a device that ignores heartbeats, with no ack to miss and no re-hello
+timer, and its menu bar kept reading *connected and paired*.
 
-The chord path is the sharpest, because it is the one moment the user is watching: #34 promises
-that the state changing to connected is the confirmation the press worked, and the state never left
-connected, so the confirmation could not fire.
+A fourth path was claimed during the design session and is **not** a defect: the config chord
+calls `dh_session_drop` in `channel_open_pairing_window`, but that function's only caller is
+`setup.c`, on the normal-mode boot *after* the chord's reboot, where `channel_init` has just
+cleared the session and no helper has yet said hello. The helper learns of that eviction from the
+USB re-enumeration. Recorded here because the claim reached the issue and this ADR before it was
+checked, and a future reader finding the `re_paired` reason code deserves to know it is reserved
+for a window opened while a session is live — which nothing does today.
 
 The cost of the gap rises sharply at the first payload. Cursor placement degrading quietly is
 survivable; a helper that believes it holds a session it does not will offer clipboard content that
@@ -80,7 +85,7 @@ broken sessions — and only once #52 landed, which is the deadline it was writt
 | --- | --- |
 | **Acknowledged heartbeat** — the device answers each beat | Blind to a helper whose beats stall rather than stop, which is the first of the four failure paths. Also a strict 1:1 obligation inside the frame handler, and one guaranteed frame per second per direction contending for the single out slot. |
 | **Dedicated device beat, sent unconditionally** | Contends with relayed bulk for the one outbound slot; refusals are silent, and three of them is a false eviction mid-transfer. Idle-gating it costs one timestamp and removes the failure mode entirely. |
-| **Reuse existing traffic, helper→device** | Rejected, and stays rejected. Placement is fire-and-forget and may be hours apart, so silence there proves nothing about the helper. |
+| **Reuse existing traffic *instead of* a beat** | Rejected in both directions. Placement is fire-and-forget and may be hours apart, so *silence* proves nothing — which is what the idle-gated beat is for. Note this rejects traffic as a *substitute* for the beat, not traffic as proof of life: arrival still refreshes the deadline, in both directions. Conflating the two is what #68's original framing did, and it is why the first implementation credited only heartbeats on the device side. |
 | **`SESSION_END` as the mechanism, with no timeout** | A device that reboots, wedges, or loses power announces nothing. Announcement is an optimisation on top of a timeout, never in place of one. |
 | **Hoist the helper session engine into the shared core** so #49 inherits the detector | After idle-gating, the detector is one comparison against a constant the core already exports. A C module wrapping it would be worse code than the duplication it prevents. The larger question — whether all of the helper's session logic belongs in C — is real but far bigger than #68, and is tracked separately. |
 
