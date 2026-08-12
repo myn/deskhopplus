@@ -38,10 +38,15 @@ add_executable(pair_test pair_test.c ${CORE}/dh_pair.c)
 target_include_directories(pair_test PRIVATE ${CORE})
 add_test(NAME pair_test COMMAND pair_test)
 
-add_executable(relay_test relay_test.c ${CORE}/dh_relay.c ${CORE}/dh_frame.c)
+add_executable(relay_test relay_test.c ${CORE}/dh_relay.c ${CORE}/dh_outq.c ${CORE}/dh_frame.c)
 target_include_directories(relay_test PRIVATE ${CORE})
 target_compile_definitions(relay_test PRIVATE DH_TEST_VECTORS="${VECTORS}")
 add_test(NAME relay_test COMMAND relay_test)
+
+# The outbound queue both of the device's outbound seams drain through (#69).
+add_executable(outq_test outq_test.c ${CORE}/dh_outq.c ${CORE}/dh_frame.c)
+target_include_directories(outq_test PRIVATE ${CORE})
+add_test(NAME outq_test COMMAND outq_test)
 
 
 add_executable(xfer_test xfer_test.c ${CORE}/dh_xfer.c ${CORE}/dh_clip.c

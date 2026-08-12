@@ -115,12 +115,14 @@ arrives.
 - **A heartbeat fills an idle direction only.** HEARTBEAT and DEVICE_HEARTBEAT are sent only when
   that direction has carried nothing for a full interval. A busy link emits neither. They exist so
   that silence is unambiguous, not to be the measurement.
-- **Why idle-gated rather than unconditional.** The device holds one outbound frame slot, shared
-  with relayed bulk, and a refused queue is a silent loss. An unconditional beat would be starved
-  by a sustained transfer, and a few starved beats in a row would look exactly like a dead session
-  — the mechanism would manufacture the failure it exists to detect. Gating on idleness removes
-  that: a busy direction emits no beat, and a beat refused by a busy slot is self-correcting,
-  because whatever occupied the slot refreshes the peer anyway.
+- **Why idle-gated rather than unconditional.** The device's outbound path is a short bounded queue
+  ([ADR-0005](adr/0005-bounded-outbound-queues.md)), and a frame it cannot take is a silent loss.
+  An unconditional beat would be starved by a sustained transfer, and a few starved beats in a row
+  would look exactly like a dead session — the mechanism would manufacture the failure it exists to
+  detect. Gating on idleness removes that: a busy direction emits no beat, and a beat that is
+  refused anyway is self-correcting, because whatever displaced it refreshes the peer just as well.
+  The beat rides the queue's priority band, so it is never stuck behind clipboard bulk that is
+  merely waiting — only behind bulk already on the stream, which is bounded by one frame.
 - **SESSION_END is an optimisation, never the mechanism.** The device announces an eviction it
   knows about so the helper need not wait out a timeout. A device that reboots, wedges, or loses
   power announces nothing, so the timeout above is what must be correct.
@@ -163,7 +165,11 @@ between the helpers**; the firmware relays its messages opaquely.
   accounting in practice, and grants carry the transfer id so a superseded transfer's
   grants are ignored rather than credited to its successor. What is protected globally —
   the shared inter-board queue behind all channels — is the egress board's burst cap
-  (#47) plus this window.
+  (#47) plus this window. The device's own outbound queues absorb the *burst* either
+  direction can produce inside one drain ([ADR-0005](adr/0005-bounded-outbound-queues.md)),
+  but they are bounded and deliberately short: sustained overrun is this window's job, and
+  the firmware cannot help with it, because a credit lives in a payload the firmware may
+  not read ([ADR-0003](adr/0003-content-fidelity-over-content-validation.md)).
 - **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
   paste side discards its partial payload — never delivering it as complete — and its
   helper deletes any partial file and reports the failure. No resumption.

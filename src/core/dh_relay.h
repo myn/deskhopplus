@@ -26,6 +26,7 @@
 #include <stdint.h>
 
 #include "dh_frame.h"
+#include "dh_outq.h"
 
 /* One inter-board packet carries this many payload bytes (PACKET_DATA_LENGTH). */
 #define DH_RELAY_PAYLOAD 8u
@@ -36,9 +37,6 @@
  * packets must not be enqueued in one go — bulk never starves input.
  */
 #define DH_RELAY_BURST_MAX 8u
-
-/* Session and placement frames are small; this bounds the priority slot. */
-#define DH_RELAY_PRIORITY_MAX 128u
 
 typedef enum {
     DH_RELAY_PKT_START = 0, /* data[0..1] = total frame length, u16 LE */
@@ -55,45 +53,37 @@ typedef struct {
 typedef enum {
     DH_RELAY_OK = 0,
     DH_RELAY_AGAIN = 1,        /* reassembly incomplete */
-    DH_RELAY_ERR_BUSY = -1,    /* that band's slot still holds a frame */
-    DH_RELAY_ERR_OVERSIZE = -2,/* longer than the slot or the frame maximum */
+    DH_RELAY_ERR_BUSY = -1,    /* no room in that band now; retryable — includes
+                                  a bulk frame too long to wait in a queued slot,
+                                  which fits again once the band drains */
+    DH_RELAY_ERR_OVERSIZE = -2,/* longer than that band can ever hold: only the
+                                  priority band, which is capped below a frame */
     DH_RELAY_ERR_FRAME = -3,   /* not a well-formed frame header */
     DH_RELAY_ERR_ORPHAN = -4,  /* data with no start: discarded */
     DH_RELAY_ERR_TRUNCATED = -5, /* a start arrived mid-frame: the previous
                                     frame lost packets and is abandoned */
 } dh_relay_result;
 
-/* One band's frame in flight. Storage is the caller's. */
-typedef struct {
-    uint8_t *buf;
-    uint16_t cap;
-    uint16_t len;  /* 0 when idle */
-    uint16_t sent; /* bytes already emitted in data packets */
-    bool started;  /* the start packet has been emitted */
-} dh_relay_slot;
-
 /*
- * Two slots, because priority must be able to overtake bulk that is merely
- * queued. It does not overtake bulk that is in flight: one reassembly context
- * per direction means interleaved fragments would be spliced into each
- * other's frames. A bulk frame is a chunk, so the wait is bounded by the
- * chunk size rather than by the whole transfer.
+ * Storage, banding and the queue behind the bulk band all live in dh_outq —
+ * this side adds only what is specific to the wire: fragmentation into 8-byte
+ * packets, the start packet that carries each frame's length, and the burst
+ * cap. The band discipline it relies on (priority overtakes queued bulk, never
+ * bulk in flight) is dh_outq's invariant, and is the same one the helper's
+ * outbound seam needs — which is why it is shared rather than written twice.
  */
 typedef struct {
-    dh_relay_slot priority;
-    dh_relay_slot bulk;
-    uint16_t burst;         /* consecutive bulk packets since the last yield */
-    uint32_t refused;       /* frames refused because a slot was busy */
+    dh_outq q;
+    uint16_t burst; /* consecutive bulk packets since the last yield */
 } dh_relay_tx;
 
-void dh_relay_tx_init(dh_relay_tx *t, uint8_t *priority_buf, uint16_t priority_cap,
-                      uint8_t *bulk_buf, uint16_t bulk_cap);
+void dh_relay_tx_init(dh_relay_tx *t);
 
 /*
  * Take a complete frame for relaying. The band comes from one comparison on
- * the type byte. Refuses rather than truncates: a frame too long for the slot,
- * a malformed header, or a band whose slot is still draining. A refusal is
- * the backpressure — the caller must not drop it silently (#43).
+ * the type byte. Refuses rather than truncates: a malformed header, or a band
+ * with no room. A refusal is the backpressure — the caller must not drop it
+ * silently (#43). Refusals are counted in `q.refused`.
  */
 dh_relay_result dh_relay_tx_offer(dh_relay_tx *t, const uint8_t *frame, size_t len);
 
@@ -113,7 +103,12 @@ void dh_relay_tx_commit(dh_relay_tx *t);
 /* Start of a new pump: clears the burst counter. */
 void dh_relay_tx_yield(dh_relay_tx *t);
 
-/* True while any frame is in flight — the caller's "not now" for new offers. */
+/*
+ * True while any frame is still owed — queued as much as in flight. It is the
+ * pump's "there is work here", never a gate on offers: the queue exists to
+ * accept frames while it is busy, and a caller that offered only when idle
+ * would throw away the very burst it is there to absorb (#69).
+ */
 bool dh_relay_tx_busy(const dh_relay_tx *t);
 
 /* Reassembly, one context per direction. Storage is the caller's. */

@@ -8,6 +8,7 @@
 #include <pico/critical_section.h>
 #include <pico/rand.h>
 
+#include "dh_outq.h"
 #include "dh_pair.h"
 #include "dh_relay.h"
 #include "dh_session.h"
@@ -26,22 +27,20 @@ static struct {
     dh_txq_stats tx; /* replies lost to a busy endpoint, never silently */
 
     /*
-     * Outbound to this board's helper: one frame at a time, emitted a report
-     * per tick. Session replies fit in a single report; a frame relayed from
-     * the peer does not, so both go through the same writer.
+     * Outbound to this board's helper, emitted a report per tick. Session
+     * replies and frames relayed from the peer share the one byte stream, so
+     * they share the queue's band discipline: a reply overtakes bulk that is
+     * merely queued, never bulk already on the stream (#69).
      */
-    uint8_t out[DH_FRAME_MAX_SIZE];
-    uint16_t out_len;
-    uint16_t out_sent;
+    dh_outq out;
 
-    /* The relay to and from the peer board, with the storage it owns. */
+    /* The relay to and from the peer board; the transmitter carries its own
+       storage, the reassembler takes ours. */
     dh_relay_tx relay_tx;
     dh_relay_rx relay_rx;
-    uint8_t relay_priority[DH_RELAY_PRIORITY_MAX];
-    uint8_t relay_bulk[DH_FRAME_MAX_SIZE];
     uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
     /*
-     * The outbound slot is written from both cores: core 0 in the USB
+     * The outbound queue is written from both cores: core 0 in the USB
      * callback and the pump, core 1 in the inter-board packet handler. An
      * interleaving there splices two frames into one byte stream, which the
      * helper reads as a framing error and drops the session over.
@@ -85,13 +84,11 @@ static void channel_fresh_secret(uint8_t *out) {
 static void channel_reset_link(void) {
     dh_session_drop(&channel.session);
     dh_frame_reader_init(&channel.reader);
-    dh_relay_tx_init(&channel.relay_tx, channel.relay_priority, sizeof channel.relay_priority,
-                     channel.relay_bulk, sizeof channel.relay_bulk);
+    dh_relay_tx_init(&channel.relay_tx);
     dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
 
     critical_section_enter_blocking(&channel.out_lock);
-    channel.out_len = 0;
-    channel.out_sent = 0;
+    dh_outq_init(&channel.out);
     critical_section_exit(&channel.out_lock);
 }
 
@@ -163,24 +160,18 @@ bool channel_helper_present(void) {
 }
 
 
-/* Hand a whole frame to this board's helper, one at a time. */
+/* Hand a whole frame to this board's helper. */
 static bool channel_queue_frame(const uint8_t *frame, size_t len) {
-    if (len == 0 || len > sizeof channel.out)
-        return dh_txq_track(&channel.tx, false);
-
     const uint32_t now = channel_now_ms();
 
     critical_section_enter_blocking(&channel.out_lock);
-    const bool busy = channel.out_len != 0;
-    if (!busy) {
-        memcpy(channel.out, frame, len);
-        channel.out_len = (uint16_t)len;
-        channel.out_sent = 0;
+    const bool queued = dh_outq_offer(&channel.out, frame, len) == DH_OUTQ_OK;
+    if (queued) {
         /*
          * Anything accepted for this helper already proves the device is
          * alive and holding a session, so it feeds the idle timer and the
          * beat stays out of the way (ADR-0004). That gating is what keeps a
-         * sustained transfer from starving the beat out of this one slot and
+         * sustained transfer from starving the beat out of this queue and
          * looking, to the helper, exactly like a device that stopped
          * answering.
          *
@@ -198,13 +189,19 @@ static bool channel_queue_frame(const uint8_t *frame, size_t len) {
     critical_section_exit(&channel.out_lock);
 
     /*
-     * A refusal here is data loss with no retransmit beneath it (#69): the
-     * slot holds one frame and a 4 KiB one occupies it for ~64 ms of USB
-     * drain, which the inter-board link can outrun. Counted rather than
-     * silent, which is the least this can do until the outbound path grows a
-     * queue or the credit window is enforced on the device.
+     * A refusal is still data loss with no retransmit beneath it, but it now
+     * takes a burst deeper than the queue to cause one (#69, ADR-0005). What
+     * is left is sustained overrun, which no bounded queue can absorb and
+     * which the credit window owns end to end between the helpers — the device
+     * may not enforce it, because that means reading a payload (ADR-0003).
+     *
+     * Counted rather than silent, and what acts on the gap depends on what was
+     * lost: a chunk is re-requested by the receiving helper's chunk accounting,
+     * while an offer or a done has no retransmit behind it and costs the whole
+     * transfer, out to that helper's timeout. That asymmetry is why a queued
+     * slot is sized to hold either of them (dh_outq.h).
      */
-    return dh_txq_track(&channel.tx, !busy);
+    return dh_txq_track(&channel.tx, queued);
 }
 
 /*
@@ -270,11 +267,15 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
                 dh_session_note_received(&channel.session, now);
 
                 /*
-                 * A refusal means the previous frame is still fragmenting.
-                 * Nothing here can hold the new one — the reader releases it
-                 * on the next push — so it is counted, not silently dropped
-                 * (#43). Making the helper wait instead is the credit
-                 * window's job, which the device does not yet enforce (#69).
+                 * A refusal means the relay's queue is full, not merely that
+                 * the previous frame is still fragmenting — that burst is what
+                 * the queue absorbs now (#69, ADR-0005). Nothing here can hold
+                 * the frame if it is refused, since the reader releases it on
+                 * the next push, so it is counted rather than silently dropped
+                 * (#43). Making the helper wait instead is the credit window's
+                 * job, and that window is end to end between the helpers: the
+                 * device may not enforce it without reading a payload
+                 * (ADR-0003).
                  */
                 const dh_relay_result offered =
                     dh_relay_tx_offer(&channel.relay_tx, frame.payload - DH_FRAME_HEADER_SIZE,
@@ -352,7 +353,7 @@ static void channel_pump_relay(void) {
 
 /* One report's worth of whatever is owed to this board's helper. */
 static void channel_pump_out(void) {
-    if (channel.out_len == 0 || global_state.config_mode_active)
+    if (global_state.config_mode_active)
         return;
 
     /* The channel occupies the vendor interface slot in normal mode, with no
@@ -361,25 +362,32 @@ static void channel_pump_out(void) {
         return;
 
     uint8_t report[CHANNEL_REPORT_SIZE];
-    critical_section_enter_blocking(&channel.out_lock);
-    const uint16_t remaining = (uint16_t)(channel.out_len - channel.out_sent);
-    const uint16_t take = remaining < CHANNEL_REPORT_SIZE ? remaining : CHANNEL_REPORT_SIZE;
+    dh_outq_view owed;
+    uint16_t take = 0;
 
-    /* Pad the tail: a report is a fixed 64 bytes with no length of its own,
-       and DH_FRAME_PAD is what a decoder skips between frames. */
-    memset(report, DH_FRAME_PAD, sizeof report);
-    memcpy(report, channel.out + channel.out_sent, take);
+    critical_section_enter_blocking(&channel.out_lock);
+    if (dh_outq_peek(&channel.out, &owed)) {
+        take = owed.remaining < CHANNEL_REPORT_SIZE ? owed.remaining : CHANNEL_REPORT_SIZE;
+
+        /* Pad the tail: a report is a fixed 64 bytes with no length of its own,
+           and DH_FRAME_PAD is what a decoder skips between frames. */
+        memset(report, DH_FRAME_PAD, sizeof report);
+        memcpy(report, owed.at, take);
+    }
     critical_section_exit(&channel.out_lock);
 
-    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, report, CHANNEL_REPORT_SIZE))
+    if (take == 0)
         return;
 
+    /* The lock is released across this call rather than held into TinyUSB, so
+       the other core can still queue a frame here. Advancing the band the peek
+       named — not whatever is owed by the time we return — is what makes that
+       gap safe; a frame that arrived meanwhile simply waits its turn. */
+    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, report, CHANNEL_REPORT_SIZE))
+        return; /* refused: the bytes stay owed rather than being lost */
+
     critical_section_enter_blocking(&channel.out_lock);
-    channel.out_sent = (uint16_t)(channel.out_sent + take);
-    if (channel.out_sent >= channel.out_len) {
-        channel.out_len = 0;
-        channel.out_sent = 0;
-    }
+    dh_outq_advance(&channel.out, &owed, take);
     critical_section_exit(&channel.out_lock);
 }
 

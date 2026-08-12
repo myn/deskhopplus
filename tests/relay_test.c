@@ -77,9 +77,8 @@ static size_t load_vectors(const char *path, struct vector *out, size_t cap) {
     return n;
 }
 
-/* Storage the firmware would own. Priority frames are small; bulk is a frame. */
-static uint8_t priority_buf[DH_RELAY_PRIORITY_MAX];
-static uint8_t bulk_buf[DH_FRAME_MAX_SIZE];
+/* Storage the firmware would own. The transmitter carries its own (dh_outq);
+   only the reassembler still takes a caller buffer. */
 static uint8_t rx_buf[DH_FRAME_MAX_SIZE];
 
 /* Drain everything the transmitter owes, yielding between pumps as the
@@ -121,7 +120,7 @@ static void test_every_frame_crosses_intact(const char *path) {
     for (size_t i = 0; i < nvec; i++) {
         dh_relay_tx tx;
         dh_relay_rx rx;
-        dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+        dh_relay_tx_init(&tx);
         dh_relay_rx_init(&rx, rx_buf, sizeof rx_buf);
 
         CHECK(dh_relay_tx_offer(&tx, vectors[i].bytes, vectors[i].len) == DH_RELAY_OK,
@@ -152,7 +151,7 @@ static void test_a_payload_that_looks_like_frames_is_still_opaque(void) {
 
     dh_relay_tx tx;
     dh_relay_rx rx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
     dh_relay_rx_init(&rx, rx_buf, sizeof rx_buf);
     CHECK(dh_relay_tx_offer(&tx, frame, frame_len) == DH_RELAY_OK, "opaque", "frame refused");
 
@@ -171,7 +170,7 @@ static void test_data_packets_carry_a_full_payload(void) {
                           &frame_len);
 
     dh_relay_tx tx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
     CHECK(dh_relay_tx_offer(&tx, frame, frame_len) == DH_RELAY_OK, "payload", "frame refused");
 
     size_t starts = 0, data = 0;
@@ -207,7 +206,7 @@ static void test_a_lost_start_orphans_its_data(void) {
 
     dh_relay_tx tx;
     dh_relay_rx rx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
     dh_relay_rx_init(&rx, rx_buf, sizeof rx_buf);
     (void)dh_relay_tx_offer(&tx, frame, frame_len);
 
@@ -248,7 +247,7 @@ static void test_a_lost_data_packet_abandons_the_frame(void) {
     size_t n = 0;
     for (int round = 0; round < 2; round++) {
         dh_relay_tx tx;
-        dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+        dh_relay_tx_init(&tx);
         (void)dh_relay_tx_offer(&tx, frame, frame_len);
         while (dh_relay_tx_busy(&tx)) {
             dh_relay_tx_yield(&tx);
@@ -280,7 +279,7 @@ static void test_a_lost_data_packet_abandons_the_frame(void) {
 
 static void test_malformed_and_oversized_frames_are_refused(void) {
     dh_relay_tx tx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
 
     const uint8_t unknown[] = {0xEE, 0x00, 0x00, 0x00};
     CHECK(dh_relay_tx_offer(&tx, unknown, sizeof unknown) == DH_RELAY_ERR_FRAME, "refuse",
@@ -298,11 +297,11 @@ static void test_malformed_and_oversized_frames_are_refused(void) {
     /* Too long for the band's slot: refused, never truncated to fit. */
     uint8_t big[DH_FRAME_MAX_SIZE];
     size_t big_len = 0;
-    uint8_t body[DH_RELAY_PRIORITY_MAX] = {0};
+    uint8_t body[DH_OUTQ_PRIORITY_MAX] = {0};
     (void)dh_frame_encode(DH_MSG_PAIR_GRANT, 0, body, sizeof body, big, sizeof big, &big_len);
     CHECK(dh_relay_tx_offer(&tx, big, big_len) == DH_RELAY_ERR_OVERSIZE, "refuse",
           "a frame too long for its slot was accepted");
-    CHECK(tx.refused > 0, "refuse", "refusals were not counted");
+    CHECK(tx.q.refused > 0, "refuse", "refusals were not counted");
     CHECK(!dh_relay_tx_busy(&tx), "refuse", "a refused frame occupied a slot");
 }
 
@@ -325,7 +324,7 @@ static void test_a_reassembler_rejects_an_impossible_length(void) {
 
 static void test_priority_goes_ahead_of_queued_bulk(void) {
     dh_relay_tx tx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
 
     uint8_t bulk[DH_FRAME_MAX_SIZE];
     size_t bulk_len = 0;
@@ -357,7 +356,7 @@ static void test_priority_goes_ahead_of_queued_bulk(void) {
 
 static void test_bulk_in_flight_is_not_interrupted(void) {
     dh_relay_tx tx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
 
     uint8_t bulk[DH_FRAME_MAX_SIZE];
     size_t bulk_len = 0;
@@ -404,7 +403,7 @@ static void test_bulk_in_flight_is_not_interrupted(void) {
 
 static void test_bulk_never_starves_the_shared_queue(void) {
     dh_relay_tx tx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
 
     uint8_t bulk[DH_FRAME_MAX_SIZE];
     size_t bulk_len = 0;
@@ -445,7 +444,7 @@ static void test_a_full_queue_loses_nothing(void) {
 
     dh_relay_tx tx;
     dh_relay_rx rx;
-    dh_relay_tx_init(&tx, priority_buf, sizeof priority_buf, bulk_buf, sizeof bulk_buf);
+    dh_relay_tx_init(&tx);
     dh_relay_rx_init(&rx, rx_buf, sizeof rx_buf);
     (void)dh_relay_tx_offer(&tx, frame, frame_len);
 

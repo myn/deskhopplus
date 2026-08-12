@@ -9,8 +9,9 @@
 Both of the device's single-frame outbound seams — the slot feeding this board's helper
 (`channel.out`) and the bulk slot feeding the peer board (`dh_relay_tx`'s bulk slot) — grow a small
 bounded queue: the existing single slot stays as the head, sized `DH_FRAME_MAX_SIZE` so any legal
-bulk frame (including a large `CLIP_OFFER`) is still accepted, and **two** chunk-sized
-(`DH_XFER_CHUNK_SIZE`-ish, ~1040B) slots queue behind it. `channel.out` additionally splits into a
+bulk frame is still accepted, and **two** slots of `DH_OUTQ_STAGE_MAX` (1044B) queue behind it —
+sized to the largest bulk frame a transfer can actually *complete* with, which is a full-metadata
+`CLIP_OFFER` (1043B) rather than a `CLIP_CHUNK` (1040B). `channel.out` additionally splits into a
 priority slot (session replies, single-buffered as today) and this bulk queue, mirroring the
 priority/bulk split `dh_relay_tx` already has — so a burst of relayed bulk can never delay a
 session reply.
@@ -35,13 +36,22 @@ reader until the slot frees.
 
 ## Consequences
 
-- Slot sizing is heterogeneous by design: the head slot must stay full-size to keep accepting an
-  oversized one-off frame like `CLIP_OFFER`'s file-list meta; only the queued slots behind it are
-  chunk-sized, to keep the RAM cost down against the ~68 KB SRAM headroom the current build leaves
-  free.
+- Slot sizing is heterogeneous by design: the head slot stays full-size so that no legal frame is
+  ever un-carryable, while the queued slots behind it are bounded by the largest frame a transfer
+  can complete with, to keep the RAM cost down against the ~68 KB SRAM headroom the current build
+  leaves free. The measured cost is +4,088 bytes of SRAM (`data`+`bss`), leaving ~62 KB free.
+- **Not every refused frame is equally recoverable, and that sets the queued-slot size.** A refused
+  `CLIP_CHUNK` is re-requested by the receiving helper's chunk accounting. A refused `CLIP_OFFER`
+  has no retransmit behind it at all — protocol.md leaves the loss of a message with no `CLIP_DONE`
+  behind it to the helper's transfer timeout — so it costs the whole transfer. Sizing the queued
+  slots to a chunk alone would therefore have left the *expensive* refusal the only one the queue
+  could not absorb; they are sized to hold a full-metadata offer instead, which costs 16 bytes in
+  total. Beyond that bound an offer is one the receiver cancels on arrival (`DH_XFER_META_MAX`), so
+  there is no viable frame left that cannot queue.
 - A frame that still cannot be carried once the queue is full (a genuinely sustained overrun beyond
-  three frames in flight) is not given a new firmware-level signal. The existing end-to-end
-  `CLIP_RETRANSMIT` machinery between helpers already treats a missing chunk as loss and re-requests
-  it — that machinery is the "something that can act on it," not a device invention.
+  three frames in flight) is not given a new firmware-level signal. For the bulk traffic that
+  dominates, the existing end-to-end `CLIP_RETRANSMIT` machinery between helpers already treats a
+  missing chunk as loss and re-requests it — that machinery is the "something that can act on it,"
+  not a device invention.
 - Because the primitive is shared, `dh_relay_tx`'s bulk slot and a new path-(a) module both drain
   through the same host-tested code, rather than two divergent implementations of the same shape.

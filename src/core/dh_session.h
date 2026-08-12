@@ -49,11 +49,13 @@
  * fills a direction that has carried nothing for a full interval, so silence
  * is unambiguous.
  *
- * The gating is not a micro-optimisation. The device holds one outbound frame
- * slot, shared with relayed bulk, and a refused queue is a silent loss — an
- * unconditional beat would be starved by a sustained transfer, and a few
+ * The gating is not a micro-optimisation. The device's outbound path is a
+ * short bounded queue (ADR-0005), and a frame it cannot take is a silent loss
+ * — an unconditional beat would be starved by a sustained transfer, and a few
  * starved beats look exactly like a dead session. The mechanism would
- * manufacture the failure it exists to detect.
+ * manufacture the failure it exists to detect. The beat rides the queue's
+ * priority band, so it waits only on bulk already on the stream, never on bulk
+ * that is merely queued.
  */
 #define DH_SESSION_HEARTBEAT_MS 1000u
 #define DH_SESSION_MISSED_INTERVALS 2u
