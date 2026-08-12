@@ -370,6 +370,11 @@ void handle_response_byte_msg(uart_packet_t *packet, device_t *state) {
 void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
     uint16_t other_running_version = packet->data16[0];
 
+    /* Remember it, so this board can be asked what its peer is running (#89).
+       Recorded before the upgrade check below returns, since a heartbeat that
+       arrives mid-upgrade is still proof the peer is there. */
+    peer_fw_record(&state->peer_fw, other_running_version, time_us_64());
+
     if (state->fw.upgrade_in_progress)
         return;
 

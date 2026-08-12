@@ -62,3 +62,10 @@ set(FW ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_executable(config_test config_test.c ${FW}/config_store.c ${CORE}/dh_crc32.c)
 target_include_directories(config_test PRIVATE ${CORE} ${FW}/include)
 add_test(NAME config_test COMMAND config_test)
+
+# What the peer board is running, tracked from its heartbeats (#89). Firmware
+# domain like config_store.c above, and split out for the same reason: behind
+# a UART handler the decision could not be reached by a test.
+add_executable(peer_fw_test peer_fw_test.c ${FW}/peer_fw.c)
+target_include_directories(peer_fw_test PRIVATE ${FW}/include)
+add_test(NAME peer_fw_test COMMAND peer_fw_test)

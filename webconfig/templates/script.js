@@ -141,6 +141,10 @@ function updateElement(key, event) {
     "int8": event.data.getInt8
   };
 
+  /* u16 version = major * 1000 + minor + 100; */
+  const formatVersion = (value) =>
+    `v${Math.floor((value - 100) / 1000)}.${(value - 100) % 1000}`;
+
   dataType = element.getAttribute('data-type');
 
   if (dataType in methods) {
@@ -150,12 +154,14 @@ function updateElement(key, event) {
     if (element.hasAttribute('data-hex'))
       setValue(element, parseInt(value).toString(16));
 
-    if (element.hasAttribute('data-fw-ver')) {
-      /* u16 version = major * 1000 + minor + 100; */
-      const major = Math.floor((value - 100) / 1000);
-      const minor = (value - 100) % 1000;
-      setValue(element, `v${major}.${minor}`);
-    }
+    if (element.hasAttribute('data-fw-ver'))
+      setValue(element, formatVersion(value));
+
+    /* The other board, as heard from its heartbeats. Zero means none has been
+       heard from — unplugged, or the link is down — and that is an absence,
+       not a version: formatVersion would render it as v-1.-100. */
+    if (element.hasAttribute('data-peer-fw-ver'))
+      setValue(element, value ? formatVersion(value) : 'not detected');
 
     if (element.hasAttribute('data-dev-build')) {
       setValue(element, value ? 'development — channel authentication is disabled' : 'release');

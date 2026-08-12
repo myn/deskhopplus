@@ -62,6 +62,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/hid_report.c
   ${SRC_DIR}/utils.c
   ${SRC_DIR}/config_store.c
+  ${SRC_DIR}/peer_fw.c
   ${SRC_DIR}/handlers.c
   ${SRC_DIR}/setup.c
   ${SRC_DIR}/keyboard.c
@@ -117,6 +118,16 @@ set(binary deskhop)
 set(DISK_ASM "${CMAKE_CURRENT_LIST_DIR}/disk/disk.S")
 set(DISK_BIN "${CMAKE_CURRENT_LIST_DIR}/disk/disk.img")
 set_property(SOURCE ${DISK_ASM} APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp")
+
+# disk.S pulls the image in with .incbin, which CMake's dependency scanning
+# cannot see through — so a rebuilt config UI left the firmware untouched and
+# the old page shipped, looking exactly like a change that did not take.
+set_property(SOURCE ${DISK_ASM} APPEND PROPERTY OBJECT_DEPENDS ${DISK_BIN})
+
+# disk.S pulls the image in with .incbin, which CMake's dependency scanning
+# cannot see through — so a rebuilt config UI left the firmware untouched and
+# the old page shipped, looking exactly like a change that did not take.
+set_property(SOURCE ${DISK_ASM} APPEND PROPERTY OBJECT_DEPENDS ${DISK_BIN})
 
 add_executable(${binary} ${DISK_ASM})
 

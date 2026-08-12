@@ -22,7 +22,10 @@ SHORTCUTS = {
     }
 
 STATUS_ = [
-    FormField(78, "Running FW version", None, {}, "uint16", elem="fw_version"),
+    # "This board" and "other board" rather than A and B: which one you are
+    # looking at depends on which computer the browser is running on (#89).
+    FormField(78, "This board FW version", None, {}, "uint16", elem="fw_version"),
+    FormField(84, "Other board FW version", None, {}, "uint16", elem="peer_fw_version"),
     FormField(79, "Running FW checksum", None, {}, "uint32", elem="hex_info"),
     FormField(83, "Build", None, {}, "uint8", elem="dev_build"),
 ]

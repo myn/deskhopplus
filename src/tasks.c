@@ -144,6 +144,11 @@ void heartbeat_output_task(device_t *state) {
     if (state->fw.upgrade_in_progress)
         return;
 
+    /* Forget a peer that has stopped heartbeating, so its version is not left
+       reading as current after it has gone (#89). This task's own cadence is
+       the heartbeat interval, which is what the staleness window counts. */
+    peer_fw_expire(&state->peer_fw, time_us_64());
+
     if (state->config_mode_active) {
         /* Leave config mode if timeout expired and user didn't click exit */
         if (time_us_64() > state->config_mode_timer)

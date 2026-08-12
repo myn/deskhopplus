@@ -1,0 +1,60 @@
+/*
+ * What the *other* board is running, tracked from the heartbeats it sends
+ * (#89).
+ *
+ * Every heartbeat already carries the sender's firmware version — that is how
+ * `handle_heartbeat_msg` decides whether to pull an upgrade from a newer peer.
+ * It used to compare that version and then discard it, so the one question the
+ * upgrade mechanism exists to answer, *is my peer on a different build?*,
+ * could not be asked of either board. Answering it meant reading the local
+ * version through the config UI on each computer separately, which on a
+ * managed laptop is the difference between a check and an errand.
+ *
+ * Two facts and two operations, kept here rather than in the UART handler so
+ * a test can reach them — the same split, for the same reason, as
+ * config_store.c (#74).
+ *
+ * Pure C11: no SDK, no I/O, no clock of its own — the caller supplies the
+ * time. tests/peer_fw_test.c is the gate.
+ */
+#pragma once
+
+#include <stdint.h>
+
+/*
+ * No peer has been heard from: it is unplugged, the inter-board link is down,
+ * or this board has only just come up.
+ *
+ * Zero is safe as the sentinel because no firmware can legitimately report it:
+ * a version is `major * 1000 + minor + 100`, so the smallest one that exists
+ * is 100. It must also be *displayed* as an absence rather than converted —
+ * the config UI derives major and minor by subtracting that same 100, so a
+ * zero rendered as a version reads as a negative one.
+ */
+#define PEER_FW_UNKNOWN 0u
+
+/*
+ * Three heartbeat intervals of silence and the peer is forgotten. Heartbeats
+ * go out at 1 Hz, so this is two missed beats plus one of grace for a beat
+ * already on the wire — the same discipline, and the same reasoning, as the
+ * channel's own liveness window (ADR-0004) applied to the other link.
+ *
+ * Forgetting matters more than remembering here. A version left reading as
+ * current after the peer has gone answers "are both boards on the same build?"
+ * with a confident lie, which is worse than the absence it replaced.
+ */
+#define PEER_FW_STALE_US (3ull * 1000000ull)
+
+typedef struct {
+    uint16_t version;     // PEER_FW_UNKNOWN when nothing has been heard
+    uint64_t heard_at_us; // When the version above arrived
+} peer_fw_t;
+
+/* A heartbeat arrived carrying the peer's version. Replaces whatever was
+   held — a peer that upgrades under us reports its new version, and that is
+   the answer, not a duplicate to ignore. */
+void peer_fw_record(peer_fw_t *peer, uint16_t version, uint64_t now_us);
+
+/* Forget a peer that has gone quiet. Called periodically; does nothing while
+   heartbeats keep arriving, since each one refreshes the timestamp. */
+void peer_fw_expire(peer_fw_t *peer, uint64_t now_us);
