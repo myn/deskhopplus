@@ -26,6 +26,59 @@ board on the old firmware, silently. The four channel commits (#45, #46, #47 and
 touched `CMakeLists.txt` without bumping it; **`VERSION_MINOR` was raised 79 → 80 for this
 sitting**. Confirm it is still ahead of what the boards are running before flashing.
 
+**Peer propagation works — measured 2026-08-12.** It had never been observed until then, for the
+mundane reason that the version had never moved between flashes. Flash board A by chord and
+`picotool`, leave B alone, and B pulls the new firmware over the inter-board link. Both boards
+ended that sitting on 0.83 from a single `picotool load`.
+
+### A board mid-upgrade goes silent, and looks broken
+
+Budget **minutes**, not seconds: the pull is byte-at-a-time over the UART with a round trip each,
+across a 256 KB image. Throughout it the receiving board sends no heartbeat at all, so its peer
+reports *not detected* — checking the peer version straight after flashing shows nothing even when
+everything is working. This was misread for over an hour as a dead inter-board link and then as an
+unpowered board; the link was carrying keyboard and mouse traffic the whole time, which is the
+evidence that should have settled it immediately.
+
+Worse, a stalled upgrade never ends. Nothing clears `upgrade_in_progress`, so the board stays
+silent, cannot retry, and cannot even time out of config mode — measured at 14 minutes, well past
+the 300 s that should have rebooted it. Recovery is a power cycle. Tracked as
+[#90](https://github.com/myn/deskhopplus/issues/90).
+
+**The tell:** a **dark LED while the board is still in config mode** means an upgrade is in flight,
+because the blink sits behind the same early-return. Confirm against the USB identity —
+`0x2e8a/0x107c` is config mode, `0x1209/0xc000` is normal — since a dark LED alone could equally
+mean the board left config mode. A blinking LED in config mode means no upgrade is running.
+
+### Reading a running version without the DESKHOP volume
+
+The volume may never mount: `diskarbitrationd` wedges, `/dev/disk2` appears, and `diskutil` hangs
+indefinitely and returns nothing. `sudo killall diskarbitrationd` clears it — launchd respawns it.
+
+You do not need the volume. The config page drives the board over WebHID, so serving the repo's own
+copy works identically and sidesteps the mount, the wedge, and the hazard of macOS writing
+`.fseventsd` onto the device:
+
+```sh
+cd webconfig && python3 -m http.server 8777 --bind 127.0.0.1   # then open 127.0.0.1:8777/config.htm
+```
+
+Localhost is a secure context, which WebHID requires; `file://` is not reliably one. A config-mode
+entry reboots the board and drops the connection, so reconnect after each — but the page itself is
+static and needs no re-serving.
+
+Since [#89](https://github.com/myn/deskhopplus/issues/89) that page reports **both** versions: *This
+board FW version* and *Other board FW version*, the latter reading `not detected` when no heartbeat
+has arrived. That is how propagation was confirmed rather than inferred.
+
+**Regenerating the page** needs `/usr/local/bin/python3.13` and a jinja2 venv — the system python is
+3.9 and fails on `int | None`. On macOS the image is patched with mtools rather than
+`disk/create.sh`, which wants Linux mount and sudo:
+
+```sh
+cd disk && mcopy -o -i disk.img ../webconfig/config.htm ::/config.htm
+```
+
 ### This flash resets the configuration
 
 `CURRENT_CONFIG_VERSION` went **8 → 9** — the pairing secret joined `config_t`. `load_config`
@@ -222,7 +275,7 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
 
 ## 4. Restore
 
-- [ ] Both boards back on the current release build by ROM bootloader (0.81 as of 2026-08-11).
+- [ ] Both boards back on the current release build by ROM bootloader (0.83 as of 2026-08-12).
       Only a board actually reflashed needs restoring — a dev build stamped with the *same*
       version as its peer cannot propagate, so the other board is never disturbed
 - [ ] Configuration re-entered through the web UI
