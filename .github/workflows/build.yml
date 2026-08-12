@@ -56,3 +56,36 @@ jobs:
       with:
         name: deskhop-gha-${{ github.run_number }}
         path: build/deskhop.uf2
+
+  # The macOS helper's own suite (#77). A separate job because it needs a
+  # macOS runner, and parallel with the firmware because neither depends on
+  # the other's output.
+  #
+  # Deliberately not filtered to changes under helpers/: DHCore compiles
+  # src/core in place, so a change to the shared core is exactly what can
+  # break the binding without touching a line of Swift — which is the seam
+  # this is here to watch. Minutes are free on a public repository, so the
+  # only argument for filtering does not apply.
+  helper:
+    runs-on: macos-latest
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Split from the run so a compile failure reads as one, rather than as a
+    # test failure. swift run would build implicitly.
+    #
+    # Every product, not just channel-tests: this is the only thing that
+    # compiles deskhop-helper, whose IOKit transport no test reaches. A cold
+    # build is ~90s, nearly all of it here.
+    - name: Build helper
+      shell: bash
+      run: swift build
+
+    # An executable target, not a .testTarget — see Package.swift. No Xcode
+    # test host, no xcodebuild, and the same shape as the C harness: a main,
+    # an assertion helper, and a non-zero exit.
+    - name: Run helper tests
+      shell: bash
+      run: swift run channel-tests
