@@ -33,6 +33,8 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("a long absence is eventually reported", testLongAbsenceIsReported),
     ("starting before the device is attached is reported", testStartingWithNoDevice),
     ("config mode is distinct from an absent device", testConfigModeIsDistinct),
+    ("starting while the device is in config mode keeps saying config mode",
+     testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode),
     ("a config-mode round trip reconnects by itself", testConfigModeRoundTrip),
     ("the channels are released when the device goes", testChannelsReleasedOnDeparture),
     ("reconnection backs off to a capped delay", testBackoffIsCapped),
@@ -502,6 +504,43 @@ private func testConfigModeIsDistinct() throws {
     Check.unequal(f.engine.state, .deviceAbsent,
                   "seeing the config-mode identity was reported as an absent device")
     Check.that(!f.engine.state.promptsConfigChord, "config mode prompted the chord")
+
+    /* And it keeps saying so. Config mode lasts as long as the user leaves
+       it — up to minutes — so being right for five seconds is not being
+       right. */
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 4)), [],
+                "config mode was reported and then replaced by something else")
+    Check.equal(f.engine.state, .deviceInConfigMode, "config mode did not survive the ticks")
+}
+
+/*
+ * The sequence recorded on hardware in #73, which is the ordinary one at
+ * login: a LaunchAgent starts the helper while the device is already in
+ * config mode. Config mode *is* the device being present, under its other
+ * USB identity — so a helper that has seen it has seen a device, and the
+ * "nothing was ever attached" fallback must not fire behind it.
+ */
+private func testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.configMode))
+
+    /* Silent at first, exactly as a device that blinks is. */
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow / 2)), [],
+                "config mode was announced before the window closed")
+
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceInConfigMode],
+                "config mode was never reported")
+
+    /* The tick right after the deferred state fired is where this broke:
+       the fallback saw a helper that had never seen a device and said so. */
+    Check.equal(f.states(f.advance(0.25)), [],
+                "the tick after config mode was reported replaced it")
+
+    var reported: [HelperState] = []
+    for _ in 0..<40 { reported += f.states(f.advance(0.25)) }
+    Check.equal(reported, [], "config mode decayed into another state while it was still on")
+    Check.equal(f.engine.state, .deviceInConfigMode,
+                "the user was told the device was not connected while it sat in config mode")
 }
 
 private func testConfigModeRoundTrip() throws {

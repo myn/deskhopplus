@@ -112,6 +112,7 @@ public final class SessionEngine {
     /* A helper that starts before the device is attached — the ordinary case
        at login — reports the absence on the same delay as one that loses it. */
     private var startedAt: TimeInterval?
+    /* Under any identity, config mode included — see handle(_:at:). */
     private var everSawDevice = false
 
     public private(set) var state: HelperState = .quiet
@@ -144,6 +145,19 @@ public final class SessionEngine {
     public func handle(_ input: SessionInput, at now: TimeInterval) -> [SessionOutput] {
         if startedAt == nil { startedAt = now }
 
+        /*
+         * Any identity at all means a device is attached. Config mode is the
+         * same board under a different one (#33), so a helper that has seen
+         * it has seen a device, and the "nothing was ever attached" fallback
+         * in tick() must not fire behind it (#73) — that told the user the
+         * device was not connected for the whole of a config session, which
+         * is exactly the window in which they are looking for reassurance.
+         *
+         * Set here rather than in the per-identity handlers so that a third
+         * identity cannot reintroduce this by forgetting to.
+         */
+        if case .deviceAppeared = input { everSawDevice = true }
+
         switch input {
         case .deviceAppeared(.normal):
             return deviceAppeared()
@@ -168,7 +182,6 @@ public final class SessionEngine {
 
     private func deviceAppeared() -> [SessionOutput] {
         deferredState = nil
-        everSawDevice = true
         backoff.reset()
 
         /*
@@ -405,9 +418,10 @@ public final class SessionEngine {
             deferredState = nil
             outputs += emit(deferred.state)
         } else if !everSawDevice, let startedAt, now - startedAt >= Self.silenceWindow {
-            /* Nothing has ever been attached. The helper may well have
-               started before the device — a LaunchAgent runs at login — so
-               this waits out the same window before saying so. */
+            /* No device has ever been seen, under *either* identity — see
+               where everSawDevice is set. The helper may well have started
+               before the device, since a LaunchAgent runs at login, so this
+               waits out the same window before saying so. */
             outputs += emit(.deviceAbsent)
         }
 
