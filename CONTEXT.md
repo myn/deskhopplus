@@ -25,6 +25,13 @@ the session with it; neither of those falling over touches the link. The board-t
 always written **inter-board link** in full — bare "link" is the helper↔firmware one.
 _Avoid_: connection, session, cable
 
+**Peer board**:
+The other board of the pair, reached across the inter-board link. Each board knows only what its
+peer tells it. Written **peer board** in full wherever the boards are meant, because bare "peer"
+belongs to the session, where it is the authenticated other end of the channel — the two are
+different things at different layers, and the same word for both hides which one a rule governs.
+_Avoid_: other device, remote board, secondary, slave
+
 **Connection**:
 The channels a helper holds open, exclusively and all-or-nothing. It can be dropped and reopened
 without the device going anywhere, which is a helper's ordinary recovery from a session it has
