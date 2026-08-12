@@ -609,18 +609,6 @@ static void test_an_eviction_the_device_knows_about_is_announced(void) {
           "a protocol error did not announce the end");
     CHECK(!s.present, "end", "a protocol error left the session up");
 
-    /* The config chord rotates the secret and evicts the helper on this
-     * board. #34 promises the state changing to connected is the
-     * confirmation the press worked — which cannot happen if the helper is
-     * never told it was evicted. */
-    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "end", "no answer to re-hello");
-    CHECK(dh_session_end(&s, DH_SESSION_END_RE_PAIRED, reply, sizeof reply, &out_len) ==
-              DH_FRAME_OK,
-          "end", "ending on a re-pair failed");
-    CHECK(is_session_end(reply, out_len, DH_SESSION_END_RE_PAIRED), "end",
-          "the chord did not announce the eviction");
-    CHECK(!s.present, "end", "the chord left the session up");
-
     /* Nothing to end, nothing to say. A helper that never had a session
      * would otherwise be told one of its had ended. */
     out_len = 0;
@@ -644,7 +632,6 @@ static void test_session_end_matches_the_vectors(const char *path) {
     } cases[] = {
         {"session_end_liveness", DH_SESSION_END_LIVENESS_TIMEOUT},
         {"session_end_protocol_error", DH_SESSION_END_PROTOCOL_ERROR},
-        {"session_end_repaired", DH_SESSION_END_RE_PAIRED},
     };
 
     uint8_t raw[MAX_VECTOR_BYTES];

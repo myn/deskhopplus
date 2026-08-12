@@ -39,9 +39,12 @@ A fourth path was claimed during the design session and is **not** a defect: the
 calls `dh_session_drop` in `channel_open_pairing_window`, but that function's only caller is
 `setup.c`, on the normal-mode boot *after* the chord's reboot, where `channel_init` has just
 cleared the session and no helper has yet said hello. The helper learns of that eviction from the
-USB re-enumeration. Recorded here because the claim reached the issue and this ADR before it was
-checked, and a future reader finding the `re_paired` reason code deserves to know it is reserved
-for a window opened while a session is live — which nothing does today.
+USB re-enumeration, which is a louder signal than any frame. Recorded here because the claim
+reached the issue and this ADR before it was checked, and because a `re_paired` reason code
+briefly existed to serve it. That code and its golden vector were removed rather than reserved:
+a wire format should not carry a value nothing emits, held open for a caller that does not exist.
+If the window ever becomes openable while a session is live, the reason is one line to add back,
+in the same change that makes it reachable.
 
 The cost of the gap rises sharply at the first payload. Cursor placement degrading quietly is
 survivable; a helper that believes it holds a session it does not will offer clipboard content that

@@ -30,7 +30,6 @@ public enum SessionEndReason: UInt8, Equatable {
     case unspecified = 0
     case livenessTimeout = 1
     case protocolError = 2
-    case rePaired = 3
 
     public init(wire: UInt8) {
         self = SessionEndReason(rawValue: wire) ?? .unspecified

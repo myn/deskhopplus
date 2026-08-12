@@ -263,7 +263,7 @@ private func testAnyDeviceTrafficIsLiveness() throws {
    wait out the timeout. The reason is diagnostic: every one takes the same
    recovery, which is what makes an unknown one safe. */
 private func testSessionEndIsActedOnImmediately() throws {
-    for reason: UInt8 in [1, 2, 3, 0x7F] {
+    for reason: UInt8 in [1, 2, 0x7F] {
         let f = Fixture()
         try f.establishSession()
 

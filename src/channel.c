@@ -77,10 +77,6 @@ static void channel_fresh_secret(uint8_t *out) {
     }
 }
 
-/* Defined below the writer it queues through, needed by the pairing window
-   above it. */
-static void channel_end_session(uint8_t reason);
-
 /*
  * Everything that belongs to one connection: the session, the frame reader,
  * the relay and whatever was owed to a helper that is no longer there.
@@ -139,18 +135,14 @@ void channel_open_pairing_window(device_t *state) {
     dh_pair_open_window(&channel.pair, fresh, channel_now_ms());
 
     /*
-     * Evicting the helper on this board is the point — it re-pairs silently
-     * inside the window it is standing in.
-     *
-     * Today this announces nothing, and that is correct rather than broken:
-     * the only caller is setup.c, on the normal-mode boot after the chord's
-     * reboot, where channel_init has just cleared the session and no helper
-     * has said hello yet. The helper learns of the eviction from the USB
-     * re-enumeration, which is a louder signal than any frame. The call
-     * stands so that a window opened while a session *is* live — which is
-     * what this function's contract would otherwise quietly break — says so.
+     * Clearing the session here is defensive, not an eviction anyone hears
+     * about: the only caller is setup.c, on the normal-mode boot after the
+     * chord's reboot, where channel_init has just cleared it anyway and no
+     * helper has said hello. The helper re-pairs silently inside the window
+     * it is standing in, having learned of the reboot from the USB
+     * re-enumeration — a louder signal than any frame could be.
      */
-    channel_end_session(DH_SESSION_END_RE_PAIRED);
+    dh_session_drop(&channel.session);
 
     memcpy(state->config.channel_secret, fresh, sizeof fresh);
     state->config.channel_paired = 1;

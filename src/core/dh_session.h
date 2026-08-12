@@ -93,7 +93,6 @@ typedef enum {
     DH_SESSION_END_UNSPECIFIED = 0,
     DH_SESSION_END_LIVENESS_TIMEOUT = 1,
     DH_SESSION_END_PROTOCOL_ERROR = 2,
-    DH_SESSION_END_RE_PAIRED = 3,
 } dh_session_end_reason;
 
 typedef enum {
