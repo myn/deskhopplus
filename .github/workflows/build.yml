@@ -59,7 +59,8 @@ jobs:
 
   # The macOS helper's own suite (#77). A separate job because it needs a
   # macOS runner, and parallel with the firmware because neither depends on
-  # the other's output.
+  # the other's output — so this costs no wall-clock time at all: 39s
+  # against the firmware job's 50s, measured on run 31560674857.
   #
   # Deliberately not filtered to changes under helpers/: DHCore compiles
   # src/core in place, so a change to the shared core is exactly what can
@@ -77,8 +78,9 @@ jobs:
     # test failure. swift run would build implicitly.
     #
     # Every product, not just channel-tests: this is the only thing that
-    # compiles deskhop-helper, whose IOKit transport no test reaches. A cold
-    # build is ~90s, nearly all of it here.
+    # compiles deskhop-helper, whose IOKit transport no test reaches. Cheap
+    # despite that — ~11s cold on the runner, against ~85s on an older local
+    # machine, so this job finishes before the firmware one does.
     - name: Build helper
       shell: bash
       run: swift build
