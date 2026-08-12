@@ -14,6 +14,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "config_layout.h"
 #include "dh_txq.h"
 #include "flash.h"
 #include "packet.h"
@@ -69,57 +70,8 @@ typedef struct {
     bool upgrade_in_progress; // True if firmware transfer from the other box is in progress
 } fw_upgrade_state_t;
 
-typedef struct {
-    uint32_t magic_header;
-    uint32_t version;
-
-    uint8_t force_mouse_boot_mode;
-    uint8_t force_kbd_boot_protocol;
-
-    uint8_t kbd_led_as_indicator;
-    uint8_t hotkey_toggle;
-    uint8_t enable_acceleration;
-
-    uint8_t enforce_ports;
-    uint16_t jump_threshold;
-
-    output_t output[NUM_SCREENS];
-
-    /*
-     * The device-held pairing secret (#46). Deliberately *not* in
-     * api_field_map: config is only ever exposed field by field, so a secret
-     * kept out of that map is unreadable through the API and never syncs to
-     * the peer board — which is what keeps a rotation on this board from
-     * evicting the other computer's helper. Wiped with the rest of the
-     * configuration, so one chord press restores pairing afterwards.
-     */
-    uint8_t channel_secret[DH_PAIR_SECRET_LEN];
-    uint8_t channel_paired;
-
-    /* Two words, so the struct ends exactly on the checksum. #46's 17 bytes
-       rounded config_t up to 160 and left four bytes of padding *behind* the
-       checksum, which is what broke persistence (#74); absorbing them here
-       keeps the tail intentional rather than whatever alignment happens to
-       leave over. */
-    uint32_t _reserved[2];
-
-    // Keep checksum at the end of the struct
-    uint32_t checksum;
-} config_t;
-
-/*
- * The checksum must be the last field *and* leave no trailing padding, because
- * both save_config and load_config checksum everything ahead of it (#74).
- *
- * This is asserted rather than trusted: config_t inherits 8-byte alignment from
- * the uint64_t timers in screensaver_t, so adding a field can round the struct
- * up and silently leave padding behind the checksum. #46 did exactly that —
- * sizeof went 136 -> 160 with the checksum at 152 — and the CRC then covered
- * the checksum field itself, so no stored config ever validated again and every
- * boot fell back to defaults.
- */
-_Static_assert(offsetof(config_t, checksum) == sizeof(config_t) - sizeof(uint32_t),
-               "config_t: checksum must be last, with no trailing padding (see #74)");
+/* config_t, its magic and its version live in config_layout.h — split out so
+   the validation in config_store.h can be tested on the host (#74). */
 
 
 /*==============================================================================

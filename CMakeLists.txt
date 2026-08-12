@@ -61,6 +61,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/hid_parser.c
   ${SRC_DIR}/hid_report.c
   ${SRC_DIR}/utils.c
+  ${SRC_DIR}/config_store.c
   ${SRC_DIR}/handlers.c
   ${SRC_DIR}/setup.c
   ${SRC_DIR}/keyboard.c

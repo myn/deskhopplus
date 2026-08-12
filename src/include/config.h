@@ -15,10 +15,9 @@
 #include "misc.h"
 #include "screen.h"
 
-/* 9: the channel pairing secret joined config_t (#46). An older configuration
-   is not read as a newer one — it falls back to defaults, which is also how a
-   device with no secret ends up needing one chord press. */
-#define CURRENT_CONFIG_VERSION 9
+/* CURRENT_CONFIG_VERSION and CONFIG_MAGIC_HEADER live in config_layout.h,
+   alongside the layout they describe, and the version history moved with them
+   (#74). Reachable from here via structs.h. */
 
 /*==============================================================================
  *  Configuration Data

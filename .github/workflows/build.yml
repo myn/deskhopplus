@@ -35,6 +35,16 @@ jobs:
       working-directory: disk
       run: ./create.sh
 
+    # Before the firmware, so a logic regression fails fast and reads as a
+    # logic failure rather than as a build one. Needs no cross-compiler and
+    # no SDK — that is the point of the split.
+    - name: Run host tests
+      shell: bash
+      run: |
+        cmake -S tests -B tests/build
+        cmake --build tests/build
+        ctest --test-dir tests/build --output-on-failure
+
     - name: Build firmware
       shell: bash
       run: |

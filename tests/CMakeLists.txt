@@ -1,6 +1,10 @@
 # Host test harness for the pure-logic core (src/core/) — the standalone build
 # decided in #9: no SDK, no cross-compiler, no framework, invoked separately so
-# the firmware build is untouched. Runs as its own CI job.
+# the firmware build is untouched. Run in CI by the "Run host tests" step in
+# .github/workflows/build.yml, ahead of the firmware build.
+#
+# The macOS helper's suite (swift run channel-tests) is *not* run there: it
+# needs a macOS runner, which is a separate decision.
 #
 #   cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir tests/build
 
@@ -44,3 +48,12 @@ add_executable(xfer_test xfer_test.c ${CORE}/dh_xfer.c ${CORE}/dh_clip.c
                ${CORE}/dh_crc32.c ${CORE}/dh_frame.c)
 target_include_directories(xfer_test PRIVATE ${CORE})
 add_test(NAME xfer_test COMMAND xfer_test)
+
+# The configuration's validation decision (#74). Not part of src/core/ — it is
+# firmware domain, not the helper↔firmware protocol — but it is pure C with no
+# flash access, which is the whole point: the defect it guards shipped because
+# the arithmetic was locked behind write_flash_page and could not be reached.
+set(FW ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+add_executable(config_test config_test.c ${FW}/config_store.c ${CORE}/dh_crc32.c)
+target_include_directories(config_test PRIVATE ${CORE} ${FW}/include)
+add_test(NAME config_test COMMAND config_test)

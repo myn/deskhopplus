@@ -12,7 +12,7 @@
 
 /* Default configuration */
 const config_t default_config = {
-    .magic_header = 0xB00B1E5,
+    .magic_header = CONFIG_MAGIC_HEADER,
     .version = CURRENT_CONFIG_VERSION,
     .output[OUTPUT_A] =
         {
