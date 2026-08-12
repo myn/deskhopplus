@@ -45,10 +45,21 @@ silent, cannot retry, and cannot even time out of config mode — measured at 14
 the 300 s that should have rebooted it. Recovery is a power cycle. Tracked as
 [#90](https://github.com/myn/deskhopplus/issues/90).
 
-**The tell:** a **dark LED while the board is still in config mode** means an upgrade is in flight,
-because the blink sits behind the same early-return. Confirm against the USB identity —
-`0x2e8a/0x107c` is config mode, `0x1209/0xc000` is normal — since a dark LED alone could equally
-mean the board left config mode. A blinking LED in config mode means no upgrade is running.
+**The tell, and it is a deceptive one:** during an upgrade the board's LED **goes back to behaving
+as if it were in normal mode** — lit while that board is the active output, dark when the cursor is
+on the other computer. It is not dark, and it is not blinking. `blink_led` is called from the task
+that returned early, so nothing overrides the active-output indicator `restore_leds` maintains, and
+the board looks precisely as though it had left config mode.
+
+So the LED cannot tell you what mode the board is in during an upgrade. **Use the USB identity** —
+`0x2e8a/0x107c` is config mode, `0x1209/0xc000` is normal:
+
+```sh
+system_profiler SPUSBDataType | grep -A4 "DeskHop Switch" | grep -E "Product ID|Vendor ID"
+```
+
+A **blinking** LED means config mode with no upgrade running. An LED **following the cursor** while
+the identity still says `0x107c` means an upgrade is in flight — or stalled.
 
 ### Reading a running version without the DESKHOP volume
 
