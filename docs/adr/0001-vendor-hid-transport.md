@@ -151,8 +151,21 @@ a transport discriminator, and it is the real residual risk on either transport.
 
 Both were outstanding on hardware that did not exist when this decision was taken. Both were
 measured on 2026-08-10 once [#25](https://github.com/myn/deskhopplus/issues/25) put the interface
-on real boards, and both came back as the decision assumed. **No inference remains behind this
-ADR.** Evidence is on #25 and in `docs/verification/vendor-hid-interface.md`.
+on real boards, and both came back as the decision assumed. Evidence is on #25 and in
+`docs/verification/vendor-hid-interface.md`.
+
+> **Correction, 2026-08-13.** This section used to end *"No inference remains behind this ADR."*
+> That was wrong, and the way it was wrong is worth keeping. Confirmation 2 below measures that the
+> macOS vendor collection is **permission-free** — a TCC question — and was read as also settling
+> **exclusivity**, which is a different question it never touched. The two sat close enough
+> together to blur.
+>
+> Measured on 2026-08-13 ([#95](https://github.com/myn/deskhopplus/issues/95)): macOS does **not**
+> refuse a second `kIOHIDOptionsTypeSeizeDevice` open. A second process seizes the same collection,
+> gets `kIOReturnSuccess`, and receives the session's traffic, while the first process observes
+> nothing. The *"Exclusivity is first-come on HID exactly as it is on CDC"* claim below therefore
+> holds on Windows, where it was measured directly, and **not** on macOS. #34's exclusive-ownership
+> property does not survive on macOS as this ADR assumed.
 
 1. **`tools/windows-checks/Confirm-HidExclusivity.ps1 -Check A,E` against our own vendor
    collection** — `zero-access UP=0xFF00 U=0x0020 'DeskHop Channel' -> FAILED (err=32)`. Twice, on

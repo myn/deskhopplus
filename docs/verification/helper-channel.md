@@ -249,10 +249,17 @@ under launchd, or stderr when run in the foreground. Every state change prints a
 swift run deskhop-helper         # foreground, logging to stderr
 ```
 
-- [ ] Every channel opens with `kIOHIDOptionsTypeSeizeDevice` against the real device, and a
+- [x] Every channel opens with `kIOHIDOptionsTypeSeizeDevice` against the real device, and a
       second process is refused. Start a second `deskhop-helper` while the first holds the
       channel; the second must report **another program holds the channel** and must **not**
-      prompt the config chord — those are different states with different remedies
+      prompt the config chord — those are different states with different remedies.
+      **FAILED 2026-08-13 — see [#95](https://github.com/myn/deskhopplus/issues/95).** macOS does
+      not refuse the second seize. A second helper reported `holding 1 channel(s) exclusively` and
+      `Connected and paired` while the first held a live session and saw no disruption at all;
+      `tools/macos-checks/probe_seize_exclusivity.swift` independently got
+      `IOHIDDeviceOpen(seize) -> 0x00000000` and then **read ten `DEVICE_HEARTBEAT` frames off the
+      seized channel**. The state this box asks for is unreachable on macOS, so the check cannot
+      pass as written. Windows refusal was measured separately and stands
 - [ ] **Partial acquisition fails the session.** *Expected `not run`* — see the note below
 - [x] A config-mode round trip reconnects by itself. Press the chord, watch the helper report
       **device in config mode** distinctly from **device not connected**, leave config mode,
