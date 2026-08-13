@@ -89,6 +89,21 @@ public final class SessionEngine {
        session; give up and re-acquire rather than sit on a half-open one. */
     public static let helloTimeout: TimeInterval = 2
 
+    /*
+     * How often the connection may be rebuilt before that is worth reporting
+     * in its own right. Every individual cycle passes the silence window
+     * above — the connection is back long before it closes — so without a
+     * rate nothing is left to notice a helper reconnecting once a second
+     * (#94), which is the shape a wire-format mismatch takes.
+     *
+     * Both numbers are a judgement call, unlike the absence of any threshold.
+     * One reconnection is the ordinary recovery, and a re-enumeration, a
+     * config-mode round trip and a laptop waking up each cost one; four
+     * inside half a minute is not a link doing its job.
+     */
+    public static let reconnectWindow: TimeInterval = 30
+    public static let reconnectLimit = 4
+
     private enum Phase {
         case idle
         case awaitingAck
@@ -113,6 +128,10 @@ public final class SessionEngine {
     private var lastDeviceBeatAt: TimeInterval?
     private var deviceBeatQuietNoted = false
     private var holdingChannels = false
+    /* When the connection was last lost, oldest first and never more than
+       reconnectLimit of them — only the reconnectLimit-th most recent decides
+       anything, so the rest are not worth keeping. */
+    private var recentDrops: [TimeInterval] = []
     /* A state the user will be told about once the silence window passes. */
     private var deferredState: (state: HelperState, at: TimeInterval)?
     /* The token every hello carries. nil until the device grants one. */
@@ -206,6 +225,7 @@ public final class SessionEngine {
     }
 
     private func deviceLeft(for reason: HelperState, at now: TimeInterval) -> [SessionOutput] {
+        recordDrop(at: now)
         phase = .idle
         negotiated = nil
         stream.reset()
@@ -340,7 +360,15 @@ public final class SessionEngine {
                 outputs.append(.note("device is a development build: channel authentication "
                                      + "is compiled out"))
             }
-            return outputs + emit(.connected)
+
+            /*
+             * The successful reconnection is exactly what used to put
+             * `connected` back on the screen once a second. A helper that has
+             * been rebuilding this connection all along says so instead, and
+             * goes on saying it until the window passes quietly — see tick().
+             */
+            guard reconnectingRepeatedly(at: now) else { return outputs + emit(.connected) }
+            return outputs + emitRepeatedReconnection(at: now)
 
         case .authenticationFailed:
             /* The session stays up and asking: the pairing window (#46)
@@ -476,6 +504,18 @@ public final class SessionEngine {
             }
 
             /*
+             * The rebuilding has aged out of the window and this connection
+             * held throughout it, so it is a connected one again — the state
+             * reports a rate, and a rate recovers. Only ever from this state:
+             * every other one is a more specific diagnosis that outlives the
+             * window on its own.
+             */
+            if state == .reconnectingRepeatedly, negotiated != nil,
+               !reconnectingRepeatedly(at: now) {
+                outputs += emit(.connected)
+            }
+
+            /*
              * The beat stopped while the session did not — the device is
              * still sending, so the check above is satisfied, but the
              * idle-gated beat has dried up. Expected under a transfer and
@@ -523,7 +563,49 @@ public final class SessionEngine {
         return outputs
     }
 
+    // MARK: - How often the connection is rebuilt
+
+    /*
+     * Every loss of a connection this helper actually had, whatever took it —
+     * a protocol error, a failed write, the device ending the session, or the
+     * link itself going away. All of them are recovered the same way and all
+     * of them are invisible one at a time, so all of them are counted here.
+     *
+     * The guard is what keeps the count honest: a device that disappears
+     * twice, or a write that fails after the connection is already gone,
+     * loses nothing the second time.
+     */
+    private func recordDrop(at now: TimeInterval) {
+        guard holdingChannels || phase != .idle else { return }
+        recentDrops.append(now)
+        if recentDrops.count > Self.reconnectLimit { recentDrops.removeFirst() }
+    }
+
+    /* Whether the last reconnectLimit drops all fall inside the window. */
+    private func reconnectingRepeatedly(at now: TimeInterval) -> Bool {
+        guard recentDrops.count >= Self.reconnectLimit, let oldest = recentDrops.first else {
+            return false
+        }
+        return now - oldest <= Self.reconnectWindow
+    }
+
+    /*
+     * The rate, said once and with its measurement attached — a line per
+     * cycle is how #88 buried this for two days to begin with.
+     *
+     * "The last N" rather than a total, because that is what is measured:
+     * only the most recent reconnectLimit drops are kept, so a running count
+     * would read the same number however many there had been.
+     */
+    private func emitRepeatedReconnection(at now: TimeInterval) -> [SessionOutput] {
+        let reported = emit(.reconnectingRepeatedly)
+        guard !reported.isEmpty, let oldest = recentDrops.first else { return reported }
+        return [.note(String(format: "the last %d reconnections came inside %.1fs",
+                             recentDrops.count, now - oldest))] + reported
+    }
+
     private func dropConnection(note: String, at now: TimeInterval) -> [SessionOutput] {
+        recordDrop(at: now)
         phase = .idle
         holdingChannels = false
         negotiated = nil
@@ -541,7 +623,27 @@ public final class SessionEngine {
          * *connected* for a session that ended, which is the whole of #68.
          */
         deferredState = (.deviceAbsent, now + Self.silenceWindow)
-        return [.note(note), .closeChannels, .retry(after: backoff.next())]
+
+        /*
+         * Reported here as well as on a session coming up, because a
+         * connection that keeps dying may never reach another hello_ack: a
+         * device that takes the hello and says nothing loops on the timeout
+         * above, and the deferral just armed is cleared by the next
+         * acquisition a second before it comes due. A rate read only where a
+         * session establishes would never be read at all in that loop.
+         *
+         * Only where the rate falsifies what is on the screen: `connected`
+         * claims a link that is holding, and `quiet` claims there is nothing
+         * to say. Every other state is a more specific diagnosis with its own
+         * remedy and keeps its place — a channel somebody else holds does not
+         * become this.
+         */
+        let falsifiedByTheRate: [HelperState] = [.connected, .quiet]
+        let rate = reconnectingRepeatedly(at: now) && falsifiedByTheRate.contains(state)
+            ? emitRepeatedReconnection(at: now)
+            : []
+
+        return [.note(note), .closeChannels] + rate + [.retry(after: backoff.next())]
     }
 
     /* State is reported on change only — a menu bar item that rewrites itself

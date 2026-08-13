@@ -44,6 +44,15 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("a granted secret is stored and pairs the helper", testPairingRoundTrip),
     ("a stored secret is offered on the next hello", testStoredSecretIsOffered),
     ("a grant outside a session is ignored", testGrantOutsideSessionIgnored),
+    ("a connection rebuilt over and over is not reported as connected",
+     testRepeatedReconnectionIsNotReportedAsConnected),
+    ("a link that keeps re-enumerating is the same reading", testAFlappingLinkIsTheSameReading),
+    ("a handshake that never completes is reported too",
+     testAHandshakeThatNeverCompletesIsReported),
+    ("an occasional reconnection is an ordinary recovery",
+     testAnOccasionalReconnectionIsAnOrdinaryRecovery),
+    ("a connection that then holds goes back to connected",
+     testAConnectionThatHoldsGoesBackToConnected),
 ]
 
 /// One engine, one clock, and the small vocabulary the tests read outputs with.
@@ -101,8 +110,27 @@ private final class Fixture {
     /// Device present, every channel seized, hello answered.
     func establishSession() throws {
         send(.deviceAppeared(.normal))
+        try reacquire()
+    }
+
+    /// The recovery the engine asks for after a drop: channels back, hello answered.
+    @discardableResult
+    func reacquire() throws -> [SessionOutput] {
         send(.channelsAcquired(count: 1))
-        send(try ack(.ok))
+        return send(try ack(.ok))
+    }
+
+    /*
+     * One turn of the loop #94 is about: a frame this build cannot decode
+     * (0xEE is not in the message registry), the gap before the retry, and
+     * the reconnection that succeeds — the success being what put `connected`
+     * back on the screen each time.
+     */
+    @discardableResult
+    func dropAndReconnect(after gap: TimeInterval = 0.75) throws -> [SessionOutput] {
+        var outputs = send(.received([0xEE, 0x00, 0x00, 0x00]))
+        outputs += advance(gap)
+        return outputs + (try reacquire())
     }
 }
 
@@ -728,4 +756,149 @@ private func testWorkingSessionResetsBackoff() throws {
 
     Check.equal(f.retries(f.send(.acquisitionRefused(acquired: 0, of: 1))).first, delays.first,
                 "a working session did not reset the reconnection delay")
+}
+
+/*
+ * The defect #94 was opened for. A helper too old to decode a frame the
+ * device had started sending tore the connection down and rebuilt it about
+ * 1.4 times a second for two days, and reported `Connected and paired`
+ * throughout: every cycle is correctly too brief for the silence window, and
+ * nothing anywhere measured how often they happened.
+ *
+ * The rate is the missing quantity. One reconnection is a recovery; a
+ * reconnection a second is a fault with no other symptom the user can see.
+ */
+private func testRepeatedReconnectionIsNotReportedAsConnected() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    for _ in 0..<(SessionEngine.reconnectLimit - 1) { try f.dropAndReconnect() }
+    Check.equal(f.engine.state, .connected,
+                "a couple of reconnections is an ordinary recovery, not a fault")
+
+    /* The rate itself goes in the log, where the operator finds it. */
+    Check.that(f.notes(try f.dropAndReconnect()).contains { $0.contains("reconnections") },
+               "the measurement behind the state was never recorded")
+    Check.equal(f.engine.state, .reconnectingRepeatedly,
+                "a connection rebuilt \(SessionEngine.reconnectLimit) times in a few seconds "
+                + "went on reading as connected")
+    Check.that(!f.engine.state.promptsConfigChord,
+               "a connection being rebuilt prompted the chord: the chord provisions whoever is "
+               + "connected, and this helper barely is")
+    Check.that(f.engine.canSendBulk,
+               "reporting the rate also revoked the session — this is what the user is told, "
+               + "not what the session may carry")
+
+    /* And it stays said, once. Each cycle's successful hello_ack is exactly
+       what flapped the state back to connected, which is the whole defect —
+       and a line per cycle is the log that hid it (#88). */
+    var reported: [HelperState] = []
+    var recorded: [String] = []
+    for _ in 0..<SessionEngine.reconnectLimit {
+        let outputs = try f.dropAndReconnect()
+        reported += f.states(outputs)
+        recorded += f.notes(outputs)
+    }
+    Check.equal(reported, [], "the state flapped back to connected on every reconnection")
+    Check.equal(recorded.filter { $0.contains("reconnections") }, [],
+                "the measurement was repeated on every cycle rather than where it changed")
+}
+
+/* The same false-healthy reading reached the other way: a link that
+   re-enumerates once a second is never gone long enough for the silence
+   window either, and the device returning is not itself an announcement. */
+private func testAFlappingLinkIsTheSameReading() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    for _ in 0..<SessionEngine.reconnectLimit {
+        f.send(.deviceDisappeared)
+        _ = f.advance(0.5)
+        f.send(.deviceAppeared(.normal))
+        try f.reacquire()
+    }
+
+    Check.equal(f.engine.state, .reconnectingRepeatedly,
+                "a link re-enumerating once a second went on reading as connected")
+}
+
+/*
+ * The same loop one step further out: a helper that never finishes the
+ * handshake at all — a device that takes the hello and says nothing, or a
+ * first frame it cannot decode. A rate read only where a session comes up
+ * would never be read here at all.
+ *
+ * And the deferred "device not connected" cannot cover it either: every
+ * re-acquisition clears the deferral a second or so before it comes due, so
+ * a helper looping on this says nothing whatever — for ever, holding
+ * whatever it last said.
+ */
+private func testAHandshakeThatNeverCompletesIsReported() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    /* Acquire, hello, no answer, timeout, and round again. */
+    for _ in 0..<SessionEngine.reconnectLimit {
+        f.send(.channelsAcquired(count: 1))
+        _ = f.advance(SessionEngine.helloTimeout)
+    }
+    Check.equal(f.engine.state, .reconnectingRepeatedly,
+                "a helper that never got past hello went on reading as connected")
+
+    /* And from a standing start, where there is no stale `connected` to
+       replace: this helper has never had a session, and saying nothing at
+       all is the reading that sent someone looking at the wrong thing. */
+    let fresh = Fixture()
+    fresh.send(.deviceAppeared(.normal))
+    for _ in 0..<SessionEngine.reconnectLimit {
+        fresh.send(.channelsAcquired(count: 1))
+        _ = fresh.advance(SessionEngine.helloTimeout)
+    }
+    Check.equal(fresh.engine.state, .reconnectingRepeatedly,
+                "a helper that never once got a session reported nothing at all")
+}
+
+/*
+ * The other side of the judgement. A re-enumeration, a config-mode round
+ * trip and a laptop waking up each cost a reconnection, and a helper that
+ * called any of those a fault would be the more annoying defect.
+ */
+private func testAnOccasionalReconnectionIsAnOrdinaryRecovery() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    /* Well past the count, spread past the window. */
+    for _ in 0..<(SessionEngine.reconnectLimit * 3) {
+        try f.dropAndReconnect(after: SessionEngine.reconnectWindow)
+        Check.equal(f.engine.state, .connected,
+                    "an occasional reconnection was reported as a connection that will not hold")
+    }
+}
+
+/* The state is not a latch: a connection that then holds for the whole
+   window is a connected one again, and says so once. */
+private func testAConnectionThatHoldsGoesBackToConnected() throws {
+    let f = Fixture()
+    try f.establishSession()
+    for _ in 0..<SessionEngine.reconnectLimit { try f.dropAndReconnect() }
+    Check.equal(f.engine.state, .reconnectingRepeatedly,
+                "the repeated rebuilding was never reported")
+
+    /* The device beats all the while, so the only thing that changes is the
+       window passing. */
+    var reported: [HelperState] = []
+    func hold(_ seconds: Int) throws {
+        for _ in 0..<seconds {
+            reported += f.states(f.advance(SessionEngine.heartbeatInterval))
+            f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
+        }
+    }
+
+    try hold(Int(SessionEngine.reconnectWindow / 2))
+    Check.equal(f.engine.state, .reconnectingRepeatedly,
+                "the state cleared before the window it is measured over had passed")
+
+    try hold(Int(SessionEngine.reconnectWindow / 2) + 2)
+    Check.equal(reported, [.connected],
+                "a connection that then held for the whole window did not go back to connected")
 }

@@ -57,13 +57,17 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
    those.
 4. **Beats** at the interval the shared core defines, which is the same number the firmware
    measures its "absent after a couple of missed intervals" against.
-5. **Reconnects by itself**, with an exponential backoff capped at a few seconds.
+5. **Reconnects by itself**, with an exponential backoff capped at a few seconds — and says so
+   when it finds itself doing that over and over, because a single reconnection is invisible by
+   design and a great many of them must not be
+   ([#94](https://github.com/myn/deskhopplus/issues/94)).
 
 ## The states, and the one that matters
 
 | State | Shown as | Prompts the config chord |
 | --- | --- | --- |
 | connected | Connected and paired | no |
+| reconnecting repeatedly | Reconnecting repeatedly — check the link, and that the helper is up to date | no |
 | not paired | Not paired — press the config chord on the device | **yes** |
 | channel held | Another program holds the channel — find and stop it | **no** |
 | config mode | Device in config mode | no |
@@ -79,6 +83,19 @@ the open was refused, versus the open succeeded and authentication failed.
 Nothing is shown during a brief disappearance. Entering config mode reboots the device under a
 different USB identity for up to five minutes and then reboots back — that is normal operation,
 not an error, and it is reported distinctly from the device being absent.
+
+**A rate is a state too.** Every one of those silences is correctly judged too brief to report, so
+a connection torn down and rebuilt inside the window is invisible however often it happens — which
+is how a helper failing every frame it received read as *Connected and paired* for two days
+([#94](https://github.com/myn/deskhopplus/issues/94)). Four rebuilds inside thirty seconds is
+therefore its own state, and it does not flap back to connected on each successful hello.
+
+It is reported whether or not the handshake ever completes: a device that takes the hello and says
+nothing loops on the timeout, and each re-acquisition clears the deferred *device not connected* a
+second before it comes due, so that helper would otherwise say nothing at all — for ever. What the
+rate never overrides is a state with its own remedy; a held channel, an unpaired helper or a
+version mismatch each keeps its place. The session it reports on is otherwise ordinary, and carries
+what any other session carries.
 
 ## Installing the agent
 

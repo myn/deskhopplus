@@ -15,6 +15,13 @@ public enum HelperState: Equatable {
     case quiet
 
     case connected
+    /*
+     * The connection keeps having to be rebuilt. Each cycle on its own is
+     * correctly too brief to report — and a helper failing every frame it
+     * received once spent two days saying `Connected and paired` on exactly
+     * that reasoning (#94). This is what a rate says that no single cycle can.
+     */
+    case reconnectingRepeatedly
     case notPaired
     case channelHeld
     case deviceInConfigMode
@@ -25,6 +32,8 @@ public enum HelperState: Equatable {
         switch self {
         case .quiet: return nil
         case .connected: return "Connected and paired"
+        case .reconnectingRepeatedly:
+            return "Reconnecting repeatedly — check the link, and that the helper is up to date"
         case .notPaired: return "Not paired — press the config chord on the device"
         case .channelHeld: return "Another program holds the channel — find and stop it"
         case .deviceInConfigMode: return "Device in config mode"
@@ -37,8 +46,16 @@ public enum HelperState: Equatable {
     /* The chord remedy is shown only here. See the type's note. */
     public var promptsConfigChord: Bool { self == .notPaired }
 
-    /* An incompatible peer keeps placement and refuses bulk: a misparsed
-       placement puts the cursor somewhere wrong and self-corrects, while a
-       misparsed chunk header writes a corrupted file presented as valid. */
-    public var allowsBulkTransfers: Bool { self == .connected }
+    /*
+     * An incompatible peer keeps placement and refuses bulk: a misparsed
+     * placement puts the cursor somewhere wrong and self-corrects, while a
+     * misparsed chunk header writes a corrupted file presented as valid.
+     *
+     * A connection that keeps being rebuilt is *not* one of those: while it
+     * is up it is a negotiated session like any other, and this must keep
+     * agreeing with `SessionEngine.canSendBulk`, the seam #52 consumes.
+     * Reporting how often it is rebuilt changes what the user is told, not
+     * what the session may carry.
+     */
+    public var allowsBulkTransfers: Bool { self == .connected || self == .reconnectingRepeatedly }
 }
