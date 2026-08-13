@@ -7,6 +7,11 @@
  * could push bytes to the other computer, where a helper writes files and
  * sets the clipboard. Reading the clipboard in transit is the lesser half.
  *
+ * (That last ranking is #34's and does not survive a transport where reads
+ * cannot be prevented — see the correction below. Reading is the acquisition
+ * step for writing once the credential is on the wire, and the content read
+ * is the *other* machine's clipboard, which no local API would hand over.)
+ *
  * The control is a secret the device holds and a helper must prove it knows.
  * The secret is never displayed and never typed: it is handed to whichever
  * helper is connected during a window that only a **physical keyboard chord
@@ -19,6 +24,30 @@
  * the user every setting they have. The cost of rotating is that the helper
  * on *this* board re-pairs on the next chord press; the secret is per-board
  * and never syncs, so the other computer's helper is untouched.
+ *
+ * ---------------------------------------------------------------------------
+ * CORRECTION, 2026-08-13 (#95). Everything above holds only where the channel
+ * is genuinely exclusive. On **macOS it is not**: a second
+ * kIOHIDOptionsTypeSeizeDevice open succeeds, measured, and every client
+ * receives every report. Two consequences, both of which read the wrong way
+ * from the paragraphs above.
+ *
+ * 1. The secret is never displayed or typed, but it is **transmitted in the
+ *    clear** — it is a bearer token, not a key. PAIR_GRANT carries it as its
+ *    payload, and every HELLO carries it back verbatim (dh_session.c). So on
+ *    macOS it is obtainable by listening, with no filesystem access and no
+ *    permission of any kind. "Never displayed" is not "protected".
+ *
+ * 2. Rotation does not recover a stolen pairing there — it **re-issues it**.
+ *    The reasoning above is conditioned on a leak requiring an attacker to
+ *    have won the exclusivity race. Where there is no race, a listener still
+ *    attached when the user presses the chord simply receives the new secret
+ *    in the PAIR_GRANT. The documented remedy hands the thief the replacement.
+ *
+ * Windows is unaffected: hidclass.sys refuses the second open, so there is no
+ * listener and both properties hold as written. Do not delete this note when
+ * the posture is fixed — replace it with what replaced the bearer token.
+ * ---------------------------------------------------------------------------
  *
  * Pure C11: no I/O, no clock, no entropy source. Fresh secrets are handed in
  * by the caller, because a core that cannot be tested deterministically is

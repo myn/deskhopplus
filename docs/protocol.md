@@ -108,6 +108,11 @@ arrives.
   traffic to send, so counting only beats evicts a peer in the middle of its own transfer. The
   channel is held exclusively, so every frame on it comes from the one process that owns the
   session; a process that is writing is alive, which is the only thing this deadline measures.
+  **That premise does not hold on macOS** ([#95](https://github.com/myn/deskhopplus/issues/95)):
+  a second seize succeeds, so more than one process can write. The deadline still measures what it
+  claims — *something* is writing — but "the one process that owns the session" is not guaranteed,
+  and a second writer's traffic will hold the device's view of the helper alive after the real
+  helper has stopped. Exclusivity holds on Windows, where `hidclass.sys` refuses the second open.
 - **Being alive and holding a session are different claims.** In the device→helper direction
   arrival proves both, since the device relays and answers nothing for a peer it has no session
   with. In the helper→device direction it proves only the first — which is all that is needed,

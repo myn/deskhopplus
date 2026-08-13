@@ -17,6 +17,13 @@
  * each is told to the user verbatim. A development build compiles the check
  * out and says so in its build type.
  *
+ * The token is a **bearer credential sent in the clear**: dh_hello_encode
+ * copies the secret verbatim into the hello payload and dh_pair_authenticate
+ * compares those bytes. Nothing is derived, challenged or hashed. That is
+ * sound only while the channel is exclusive, which on macOS it is not — see
+ * the correction in dh_pair.h and #95. Anything that replaces this scheme
+ * changes both encoders, both decoders and test-vectors/frames.txt together.
+ *
  * Pure C11, no I/O, no platform dependencies. Wire format: docs/protocol.md;
  * test-vectors/frames.txt is the gate.
  */
