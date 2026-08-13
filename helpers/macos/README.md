@@ -21,10 +21,15 @@ which is exactly what [#64](https://github.com/myn/deskhopplus/issues/64) consol
 ## Build and test
 
 ```sh
-swift build                 # the library and the agent
+./tools/build.sh helper     # release build, tests, and what the agent is running
+swift build                 # the library and the agent, debug
 swift run channel-tests     # the host tests
 swift run deskhop-helper    # run it in the foreground, logging to stderr
 ```
+
+Prefer `./tools/build.sh helper` when the agent is installed. A bare `swift build` produces
+`.build/debug/`, which is **not** what the install below deploys, so it cannot refresh a running
+agent — and it reports success either way ([#93](https://github.com/myn/deskhopplus/issues/93)).
 
 The tests are an executable rather than a `.testTarget`: XCTest and swift-testing both ship with
 Xcode, not with the Command Line Tools, and a test suite that needs a 10 GB install to run is a
@@ -87,11 +92,35 @@ cp helpers/macos/LaunchAgent/com.deskhopplus.helper.plist ~/Library/LaunchAgents
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.deskhopplus.helper.plist
 ```
 
+To skip the `sudo`, edit `ProgramArguments` in your installed copy of the plist to point straight at
+`.build/release/deskhop-helper` in the repo. `tools/build.sh` reads the installed plist, so it
+understands either arrangement — but then anything that clears `.build/` (`./tools/build.sh clean`,
+`swift package clean`, `rm -rf .build`) deletes the binary launchd is running, leaving the agent
+holding a deleted file. `./tools/build.sh clean` warns when your plist points there; the others do
+not, and the next build reports it either way.
+
 Log output goes to `/tmp/deskhop-helper.log`. To stop it:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.deskhopplus.helper
 ```
+
+### Refreshing it after a change
+
+**Building is not deploying.** launchd holds the binary it started with, so a rebuild changes
+nothing until the agent is restarted:
+
+```sh
+./tools/build.sh helper                                        # builds .build/release/
+sudo cp .build/release/deskhop-helper /usr/local/bin/          # unless the plist points at .build/
+launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper     # the step that is easy to forget
+```
+
+Skipping the last step is [#93](https://github.com/myn/deskhopplus/issues/93): an agent that started
+before a wire-format change ran against newer firmware for two days, failing every frame it received
+at roughly 1.4 teardowns a second, while every rebuild reported success. `./tools/build.sh helper`
+now ends by printing where the agent points, whether anything is there, and whether the running
+process predates the binary you just built — so that state is visible instead of silent.
 
 ## Confirming the transport's premise on real hardware
 

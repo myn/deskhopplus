@@ -9,9 +9,17 @@
 
   ProgramArguments must be edited to the installed binary's path; packaging
   and distribution are out of scope for this ticket (#42, "Out of Scope").
+  Pointing it straight at .build/release/deskhop-helper in the repo is the
+  usual way to avoid the sudo, and tools/build.sh reads this file so it
+  understands either arrangement.
 
     cp helpers/macos/LaunchAgent/com.deskhopplus.helper.plist ~/Library/LaunchAgents/
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.deskhopplus.helper.plist
+
+  launchd holds the binary it started with, so a rebuild is not a deploy:
+  restart the agent, or it keeps running the old one (#93).
+
+    launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper
 -->
 <plist version="1.0">
 <dict>
