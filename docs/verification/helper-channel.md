@@ -267,11 +267,17 @@ swift run deskhop-helper         # foreground, logging to stderr
       *restarted* into a device already in config mode — the harder case, and the one #73 was
       filed for — reported `Device in config mode`, and held it for 30 s, six times the 5 s
       silence window, without decaying. It recovered unaided when the device returned
-- [ ] The `LaunchAgent` restarts the helper after a crash. Install per `helpers/macos/README.md`,
+- [x] The `LaunchAgent` restarts the helper after a crash. Install per `helpers/macos/README.md`,
       then `kill -9` it and confirm it comes back. Note: run the installed copy from launchd
       only — running it once from a terminal that itself holds permissions is the false-pass
-      trap recorded in the macOS research
-- [ ] Hello and heartbeat run end to end against real firmware
+      trap recorded in the macOS research. **Passed 2026-08-13**: pid 94445 `kill -9`'d, launchd
+      respawned it as 9454 with `ppid 1` and `launchctl list` reporting last exit `-9`, and the
+      session re-established unaided. One gotcha while checking this: `pgrep -f release/deskhop-helper`
+      matches its *own* shell, since the pattern is in that command line — it will show a phantom
+      second pid. Confirm against `ps -o ppid=` or `launchctl list`, not `pgrep` alone
+- [x] Hello and heartbeat run end to end against real firmware. **Passed 2026-08-13**, repeatedly
+      and incidentally: every session established during this sitting ran the full hello /
+      hello_ack / beat exchange against 0.89
 - [x] The device marks the helper absent a couple of intervals after the helper is stopped, and
       **says so**. Stop the helper (`SIGSTOP`, not `SIGTERM` — a clean exit closes the channel
       and is a different path); about three seconds later the device emits `SESSION_END` with
@@ -399,11 +405,18 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
 
 ## 4. Restore
 
-- [ ] Both boards back on the current release build by ROM bootloader (0.89 as of 2026-08-13).
+- [x] Both boards back on the current release build by ROM bootloader (0.89 as of 2026-08-13).
       Only a board actually reflashed needs restoring — a dev build stamped with the *same*
-      version as its peer cannot propagate, so the other board is never disturbed
-- [ ] Configuration re-entered through the web UI
-- [ ] Both computers: keyboard, mouse, switching, and config mode all still work
+      version as its peer cannot propagate, so the other board is never disturbed.
+      **Nothing to restore for the 2026-08-13 sitting**: no board was reflashed, both stayed on
+      0.89 throughout, and only the *helper* was rebuilt
+- [x] Configuration re-entered through the web UI — **not needed 2026-08-13**, the configuration
+      was never wiped. See the config-wipe box in §2, which remains outstanding
+- [ ] Both computers: keyboard, mouse, switching, and config mode all still work.
+      **Not run as a deliberate check on 2026-08-13.** Config mode was exercised on board A and
+      the Mac stayed usable throughout, but no switching test was run and the Windows side was
+      not observed at all — board B was never attached to this machine during the sitting. Do not
+      read the Mac's continued operation as covering this box
 
 ## Not in this sitting
 
