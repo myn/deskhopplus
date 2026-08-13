@@ -389,11 +389,12 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
 
     /* It is? Ok, kick off the firmware upgrade.
 
-       Set field by field rather than assigning a fresh struct: image_dirty and
-       repair_attempted have to survive this, or a restart would forget that
-       the running image is half-written and that its one repair has been
-       spent (#90). Starting the stall clock here matters for the same reason
-       a zeroed one would not do — it would read as quiet since boot. */
+       Set field by field rather than assigning a fresh struct: image_dirty has
+       to survive this, or a restart would forget that the running image is
+       half-written and that a peer board going away mid-repair is the one case
+       that must be loud (#90). Starting the stall clock here matters for the
+       same reason a zeroed one would not do — it would read as quiet since
+       boot. */
     state->fw.upgrade_in_progress = true;
     state->fw.byte_done           = true;
     state->fw.address             = 0;

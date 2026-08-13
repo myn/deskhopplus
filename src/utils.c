@@ -101,23 +101,13 @@ void recover_to_rom(void) {
    Restarting is the repair, not merely a second chance. A pull runs from
    address 0 to the end of the image and writes every page on the way, so a
    run that completes overwrites whatever a previous run left half-written.
-   That is why a dirty image gets a restart before it gets ROM recovery: the
-   usual causes of a stall — a dropped REQUEST_BYTE, a peer that rebooted — are
-   transient, and recovering to ROM for one of those would cost the user a
-   manual reflash to fix something the board could have fixed itself.
-
-   A second stall on a dirty image is the loud failure instead. By then a whole
-   restart has been tried and has not completed, so the image cannot be assumed
-   repairable, and leaving the board to run it is the outcome this issue exists
-   to prevent. That call does not return. */
+   While the peer board is still heartbeating, another attempt is therefore
+   always the better move — see fw_upgrade_must_recover for why that stays
+   true however many attempts it takes. Only a peer board that has gone makes
+   the damage permanent, and that call does not return. */
 void abandon_firmware_upgrade(device_t *state) {
-    if (state->fw.image_dirty && state->fw.repair_attempted)
+    if (fw_upgrade_must_recover(&state->fw, state->peer_fw.version != PEER_FW_UNKNOWN))
         recover_to_rom();
-
-    /* Only a dirty image spends the one restart; a transfer that stopped
-       before any page was written has nothing to repair and stays eligible. */
-    if (state->fw.image_dirty)
-        state->fw.repair_attempted = true;
 
     state->fw.upgrade_in_progress = false;
     state->fw.address             = 0;

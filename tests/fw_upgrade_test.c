@@ -171,6 +171,42 @@ int main(void) {
               "a dead link is still abandoned in the end");
     }
 
+    /* Giving up is a restart while the peer board is there, and ROM recovery
+       only when it is not. Both of the hardware brickings on 2026-08-12 were
+       stalls with the peer board present and heartbeating throughout — a
+       rebooting board and a busy link, both of which another attempt fixes. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .image_dirty = true};
+
+        CHECK(!fw_upgrade_must_recover(&fw, true), "recover",
+              "a peer board that is there can repair us");
+
+        CHECK(fw_upgrade_must_recover(&fw, false), "recover",
+              "a peer board that has gone cannot");
+    }
+
+    /* Nothing written means nothing to repair, so the board is free to wait
+       however long it takes — there is no half-written image to protect
+       anyone from. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .image_dirty = false};
+
+        CHECK(!fw_upgrade_must_recover(&fw, true), "recover", "a clean image just retries");
+        CHECK(!fw_upgrade_must_recover(&fw, false), "recover",
+              "a clean image retries even with no peer board");
+    }
+
+    /* However many times it takes. The policy this replaced spent one restart
+       and then went to ROM, which is what put a board in BOOTSEL twice for
+       what were dropped packets. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .image_dirty = true};
+
+        for (int attempt = 0; attempt < 100; attempt++)
+            CHECK(!fw_upgrade_must_recover(&fw, true), "patience",
+                  "retrying never runs out while the peer board is there");
+    }
+
     /* Which only holds because one interval fits inside the other many times
        over. If these ever converge, the retry stops being a retry. */
     CHECK(FW_UPGRADE_REREQUEST_US * 10 < FW_UPGRADE_STALL_US, "backstop",

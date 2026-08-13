@@ -27,3 +27,7 @@ bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us) {
 
     return (uint32_t)(now_us - fw->requested_at_us) >= FW_UPGRADE_REREQUEST_US;
 }
+
+bool fw_upgrade_must_recover(const fw_upgrade_state_t *fw, bool peer_present) {
+    return fw->image_dirty && !peer_present;
+}

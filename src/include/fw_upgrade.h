@@ -74,7 +74,6 @@ typedef struct {
     bool byte_done;            // Has the byte been successfully transferred
     bool upgrade_in_progress;  // True if firmware transfer from the other box is in progress
     bool image_dirty;          // A page has been written over the running image (#90)
-    bool repair_attempted;     // A dirty image has already been given one restart (#90)
     uint32_t progressed_at_us; // When the upgrade last advanced (#90)
     uint32_t requested_at_us;  // When the outstanding word was last asked for (#90)
 } fw_upgrade_state_t;
@@ -104,3 +103,24 @@ bool fw_upgrade_stalled(const fw_upgrade_state_t *fw, uint32_t now_us);
 /* Whether the outstanding word has gone unanswered long enough to ask again.
    False when nothing is outstanding, so a caller may ask unconditionally. */
 bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us);
+
+/*
+ * Whether giving up on this upgrade has to hand the board to ROM, rather than
+ * simply let the pull start over.
+ *
+ * Restarting *is* the repair — a pull runs from address 0 and writes every
+ * page, so a run that completes overwrites whatever a previous one left
+ * half-written. While the peer board is still there, another attempt is
+ * always the better move: it costs nothing but time, and the alternative
+ * costs the user a manual reflash. An earlier version of this spent one
+ * restart and then recovered to ROM, which on real hardware meant a board in
+ * BOOTSEL twice over for what were dropped packets on a busy link.
+ *
+ * A peer board that has gone is the case where no amount of retrying helps.
+ * Nothing can repair the image, and leaving a half-written one to be booted
+ * later is the failure this issue exists to prevent — so that, and only that,
+ * is loud.
+ *
+ * `peer_present` is peer_fw.h's question: a heartbeat inside PEER_FW_STALE_US.
+ */
+bool fw_upgrade_must_recover(const fw_upgrade_state_t *fw, bool peer_present);

@@ -257,8 +257,7 @@ void firmware_upgrade_task(device_t *state) {
             recover_to_rom();
         else {
             /* The image is whole again, so nothing is left to repair. */
-            state->fw.image_dirty      = false;
-            state->fw.repair_attempted = false;
+            state->fw.image_dirty = false;
             state->_running_fw = _firmware_metadata;
             global_state.reboot_requested = true;
         }

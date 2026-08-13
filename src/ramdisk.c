@@ -100,8 +100,7 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
             recover_to_rom();
         else {
             /* The image is whole again, so nothing is left to repair. */
-            global_state.fw.image_dirty      = false;
-            global_state.fw.repair_attempted = false;
+            global_state.fw.image_dirty = false;
             global_state.reboot_requested = true;
         }
     }
