@@ -103,6 +103,15 @@ public final class SessionEngine {
        did. The beat fills the gaps in the first; the second is the detector. */
     private var lastSentAt: TimeInterval = 0
     private var lastDeviceFrameAt: TimeInterval = 0
+    /*
+     * The device's own beat, tracked apart from lastDeviceFrameAt because
+     * ADR-0004 gates it on an idle direction: through a transfer, frames keep
+     * arriving while beats correctly stop, so the two quantities diverge and
+     * only this one answers "is the beat running". nil until the first beat
+     * of a session. Diagnostic — nothing decides on it.
+     */
+    private var lastDeviceBeatAt: TimeInterval?
+    private var deviceBeatQuietNoted = false
     private var holdingChannels = false
     /* A state the user will be told about once the silence window passes. */
     private var deferredState: (state: HelperState, at: TimeInterval)?
@@ -295,9 +304,9 @@ public final class SessionEngine {
                 outputs += sessionEnded(frame, at: now)
 
             case MessageType.deviceHeartbeat:
-                /* Nothing to do beyond having arrived, which already
-                   happened above. */
-                continue
+                /* Liveness is already recorded above, by virtue of the frame
+                   having arrived at all. What is left is the trace. */
+                outputs += deviceBeat(at: now)
             default:
                 /* Placement and the bulk band belong to later tickets; a
                    frame this build does not act on is not an error. */
@@ -390,6 +399,30 @@ public final class SessionEngine {
     }
 
     /*
+     * The device's beat, traced at its edges only: the first of a session,
+     * and a return after it had gone quiet. ADR-0004 stops the beat on a
+     * direction that is carrying traffic, so a gap is ordinarily the design
+     * working — but it is also what a stalled device looks like, and the two
+     * are indistinguishable without this. Nothing decides on it; a beat that
+     * never arrives is caught by the liveness deadline in tick().
+     *
+     * Per-beat logging is deliberately not offered. At a beat a second it
+     * buries everything else in the log, which is exactly how a helper
+     * thrashing on an unknown frame type went unnoticed for two days (#88).
+     */
+    private func deviceBeat(at now: TimeInterval) -> [SessionOutput] {
+        defer { lastDeviceBeatAt = now }
+
+        guard let last = lastDeviceBeatAt else {
+            return [.note("device heartbeat: first beat of the session")]
+        }
+        guard deviceBeatQuietNoted else { return [] }
+
+        deviceBeatQuietNoted = false
+        return [.note(String(format: "device heartbeat resumed after %.1fs", now - last))]
+    }
+
+    /*
      * The device evicted us and said so, rather than leaving it to the
      * timeout. The reason is a log line and nothing more: every one takes the
      * same recovery, and an unrecognised one is treated as unspecified so a
@@ -443,6 +476,20 @@ public final class SessionEngine {
             }
 
             /*
+             * The beat stopped while the session did not — the device is
+             * still sending, so the check above is satisfied, but the
+             * idle-gated beat has dried up. Expected under a transfer and
+             * suspicious otherwise, which is a distinction only the operator
+             * can make, so it is reported rather than acted on. Once per
+             * quiet spell; deviceBeat() arms it again.
+             */
+            if let last = lastDeviceBeatAt, !deviceBeatQuietNoted,
+               now - last >= Self.deviceBeatTimeout {
+                deviceBeatQuietNoted = true
+                outputs.append(.note(String(format: "device heartbeat quiet for %.1fs", now - last)))
+            }
+
+            /*
              * Beating and asking are independent, not alternatives. An
              * unpaired helper must keep the session alive *and* keep asking:
              * the window can only provision a helper that is connected when
@@ -481,6 +528,10 @@ public final class SessionEngine {
         holdingChannels = false
         negotiated = nil
         stream.reset()
+        /* The next session's first beat is worth a line of its own, and a
+           quiet spell does not outlive the session it was measured in. */
+        lastDeviceBeatAt = nil
+        deviceBeatQuietNoted = false
         /*
          * Held back, exactly as a device that physically disappears is: a
          * connection that comes back inside the window produces no visible

@@ -22,9 +22,8 @@ its control, believed for a day, and then retracted.
 
 `handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
 newer** version, so flashing a build carrying the version already running leaves the second
-board on the old firmware, silently. The four channel commits (#45, #46, #47 and the relay)
-touched `CMakeLists.txt` without bumping it; **`VERSION_MINOR` was raised 79 → 80 for this
-sitting**. Confirm it is still ahead of what the boards are running before flashing.
+board on the old firmware, silently. Confirm the number `./tools/build.sh` prints is ahead of
+what the boards are running before flashing. **Both boards ran 0.89 as of 2026-08-13.**
 
 **Peer propagation works — measured 2026-08-12.** It had never been observed until then, for the
 mundane reason that the version had never moved between flashes. Flash board A by chord and
@@ -145,12 +144,25 @@ has arrived. That is how propagation was confirmed rather than inferred.
 cd disk && mcopy -o -i disk.img ../webconfig/config.htm ::/config.htm
 ```
 
-### This flash resets the configuration
+### Which flashes reset the configuration, and which do not
 
-`CURRENT_CONFIG_VERSION` went **8 → 9** — the pairing secret joined `config_t`. `load_config`
-falls back to `default_config` on any version mismatch, so screen layout, hotkeys and every
-other setting return to defaults on first boot of this build. Expected, not a fault. Record
-anything you want to keep before starting.
+Two different mechanisms, routinely confused for each other:
+
+- **`CURRENT_CONFIG_VERSION` went 8 → 9** for #46's pairing secret. That was spent on the first
+  boot of 0.80. The constant is **still 9**, so a version bump is not in play today.
+- **`5cf72db` moved the checksum** from offset 152 to 156 (`_reserved` became `uint32_t[2]`), so
+  a config written by any earlier build cannot validate. That fired once, on the first boot of
+  **0.81**, and is also spent. `7541a25` is often blamed for this and did not do it: it named
+  interior padding and moved `config_t` to `config_layout.h`, moving no bytes.
+
+Since 0.81 the layout has been stable, and `FLASH_CONFIG` is `NOLOAD`, so **flashing does not
+reset anything**. If a board comes back unpaired after a flash, look elsewhere.
+
+One trap in how this recovers: `load_config` (`src/utils.c:116`) falls back to defaults **in RAM
+only** — it never writes them back. So an invalid stored config defaults on *every* boot, not
+once, until something calls `save_config`. "The first boot defaults and the second is the test"
+only holds because re-pairing performs that write
+(`channel_open_pairing_window` → `save_config`, `src/channel.c:146`).
 
 ### Flash by ROM bootloader
 
@@ -254,10 +266,17 @@ swift run deskhop-helper         # foreground, logging to stderr
       **says so**. Stop the helper (`SIGSTOP`, not `SIGTERM` — a clean exit closes the channel
       and is a different path); about three seconds later the device emits `SESSION_END` with
       reason `1`. Resume it and confirm it reconnects by itself
-- [ ] **The helper notices a session it no longer has.** With the helper running and idle,
-      confirm it is receiving `DEVICE_HEARTBEAT` about once a second, and that the beats stop
-      while a clipboard transfer is running and resume when it finishes — an idle-gated beat is
-      the thing keeping a transfer from starving it (ADR-0004)
+- [x] **The helper notices a session it no longer has.** The device's beat is traced at its
+      edges — `device heartbeat: first beat of the session`, then `quiet for Xs` / `resumed
+      after Xs`. Per-beat logging is deliberately absent: at a beat a second it buries
+      everything else, which is how #94 stayed invisible for two days. **Passed 2026-08-13**:
+      the first beat appeared on 0.89 and no `quiet` line followed, so beats kept arriving
+      inside the 3 s deadline for as long as the session was watched
+- [ ] **The beats stop while a transfer runs and resume when it finishes** (ADR-0004's
+      idle gating). ***Not run — not runnable on this build.*** Nothing can make a direction
+      busy: the helper has no payload source (`main.swift`: *"No payloads yet — clipboard
+      (#52, #55, #56) and cursor placement (#51)"*), and the device only *routes* bulk
+      (`channel.c:253`), never originates it. Blocked on a payload existing at either end
 
 ### Boxes that cannot be measured on this build
 
@@ -287,11 +306,15 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
 
 - [ ] `pico_rand` produces a different secret on each window — two chord presses, two distinct
       digests from the command above. **Passed 2026-08-11** across five windows
-- [ ] The secret survives a power cycle, and the helper reconnects paired with no interaction.
+- [x] The secret survives a power cycle, and the helper reconnects paired with no interaction.
       **Failed on 0.80 and was the symptom that found [#74](https://github.com/myn/deskhopplus/issues/74)**
       — `config_t`'s CRC covered the checksum field, so every boot loaded defaults and the
-      secret went with it. Fixed in `5fb082d`; **must be run against 0.81 or later**, and any
-      other check that spans a device reboot is meaningless before it passes
+      secret went with it. Fixed in `5cf72db`. (Earlier revisions of this sheet cited `5fb082d`,
+      which is a pre-rebase copy carrying the same subject and is **not reachable from `main`**.)
+      **Passed 2026-08-13 on 0.89**: board A unplugged and replugged, helper returned to
+      `Connected and paired` with no chord press and no restart of the helper process. The
+      config under test was written 2026-08-12 21:07, so it survived the whole 0.83 → 0.89
+      sequence as well as the deliberate cycle
 - [ ] `scratch[3]` survives the config-mode reboot: press the chord to **enter** config mode,
       then leave by the inactivity timeout or the web UI **rather than the chord**, and confirm
       the window opens on the way back. This is the exact path the review found broken when the
@@ -341,13 +364,20 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
 
 ## 4. Restore
 
-- [ ] Both boards back on the current release build by ROM bootloader (0.83 as of 2026-08-12).
+- [ ] Both boards back on the current release build by ROM bootloader (0.89 as of 2026-08-13).
       Only a board actually reflashed needs restoring — a dev build stamped with the *same*
       version as its peer cannot propagate, so the other board is never disturbed
 - [ ] Configuration re-entered through the web UI
 - [ ] Both computers: keyboard, mouse, switching, and config mode all still work
 
 ## Not in this sitting
+
+**ADR-0005's bounded outbound queues cannot be exercised.** *A sustained transfer neither drops
+frames nor delays a session reply behind bulk* needs a sustained transfer, and no payload source
+exists at either end — the same wall as the relay below, reached from the other side. The queues
+are covered by `outq_test` on the host and are otherwise unmeasured on hardware. This is worth
+knowing before treating this sitting as a complete baseline for #81: **the least-exercised change
+in the set stays least exercised.**
 
 **The relay (#47) moved out.** *A frame crosses a real UART and arrives intact* and *the burst
 cap holds under load* both need an endpoint on the far side to receive the frame, and only the

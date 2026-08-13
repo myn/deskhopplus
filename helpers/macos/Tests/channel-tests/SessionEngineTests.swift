@@ -16,6 +16,8 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("the heartbeat beats at the interval the device measures", testHeartbeatKeepsBeating),
     ("a device that falls silent ends the session", testSilenceFromTheDeviceEndsTheSession),
     ("any traffic from the device is liveness", testAnyDeviceTrafficIsLiveness),
+    ("the device's beat is traced where it changes, not where it beats",
+     testDeviceBeatTransitionsAreTraced),
     ("an announced eviction is acted on at once", testSessionEndIsActedOnImmediately),
     ("a session end outside a session is ignored", testSessionEndOutsideSessionIgnored),
     ("an unpaired helper survives the device saying nothing",
@@ -259,6 +261,51 @@ private func testAnyDeviceTrafficIsLiveness() throws {
     Check.equal(f.engine.state, .connected,
                 "traffic the engine ignores did not count as the device being alive")
     Check.that(f.engine.canSendBulk, "a live session refused to carry bulk")
+}
+
+/*
+ * ADR-0004 gates the device's beat on an idle direction, so beats stopping
+ * during a transfer is the design working — and it looks identical in a log
+ * to a device that has stalled. #88 has to tell those apart on hardware, and
+ * the helper had no surface for it at all: the beat arrived and was dropped
+ * on the floor.
+ *
+ * Traced at the edges rather than per beat. A line per arrival would be a
+ * line a second, which is precisely the log that hid a live defect for two
+ * days during this sitting.
+ */
+private func testDeviceBeatTransitionsAreTraced() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    /* The first beat says so, so "the beat never arrived" is distinguishable
+       from "the beat was never worth mentioning". */
+    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+                   .contains { $0.contains("device heartbeat") },
+               "the first beat of a session was not traced")
+
+    /* On time, it says nothing. */
+    for _ in 0..<5 {
+        _ = f.advance(SessionEngine.heartbeatInterval)
+        Check.equal(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat))), [],
+                    "a beat arriving on time was traced")
+    }
+
+    /* A transfer: the device keeps sending, so the session holds, while the
+       idle-gated beat correctly stops. */
+    var duringTransfer: [String] = []
+    for _ in 0..<4 {
+        duringTransfer += f.notes(f.advance(SessionEngine.heartbeatInterval))
+        f.send(try f.deviceFrame(0x20, payload: [1, 0, 0, 0x80]))
+    }
+    Check.equal(f.engine.state, .connected, "a transfer without beats dropped the session")
+    Check.equal(duringTransfer.filter { $0.contains("quiet") }.count, 1,
+                "the beat falling silent was not traced exactly once")
+
+    /* And the far side of it, with the measurement attached. */
+    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+                   .contains { $0.contains("resumed") },
+               "the beat coming back was not traced")
 }
 
 /* An eviction the device knows about is announced, so the helper need not
