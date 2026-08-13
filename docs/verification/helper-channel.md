@@ -59,6 +59,22 @@ UF2 drop, deliberately loud rather than a board quietly running a part-written i
 board FW version: v0.84* continuously through B's pull. Pre-fix that field read `not detected` for
 the whole transfer.
 
+### Why a pull used to need a power cycle to take effect
+
+Worth knowing, because every account of this before 0.88 describes the symptom rather than the
+cause. The transfer **could not terminate**: `firmware_upgrade_task` completed on
+`address > STAGING_IMAGE_SIZE`, the address only advanced on a response, and
+`handle_request_byte_msg` refused to answer anything at or beyond that bound. So the last request
+went unanswered every time, and the board waited on it forever.
+
+Every page is written before that point, so the flash was complete and correct when the wait began
+— which is why a power cycle "finished" the upgrade and why propagation looked like it worked. It
+had not; it had stopped one unanswered request from the end. The 14-minute config-mode hang
+recorded here was this, not a dropped packet.
+
+Fixed in 0.88. A pull now reboots the receiving board by itself. **If you find yourself
+power-cycling a board to make an upgrade take, that is a regression, not the procedure.**
+
 **One exception, and it will catch you on every first flash.** The heartbeat during a pull comes
 from the *receiving* board, which is by definition the one still running the **old** firmware. So
 the first propagation after any change to this path still shows `not detected`, and only the second
