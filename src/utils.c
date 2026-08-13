@@ -196,7 +196,15 @@ void request_byte(device_t *state, uint32_t address) {
        leaves the packet owed rather than lost.
 
        Leaving byte_done set means the task simply asks again on its next pass,
-       at 4 kHz, long before the 30 s stall window is reached. */
+       at 4 kHz, long before the 30 s stall window is reached.
+
+       The timestamp is set either way. On success it starts the clock on an
+       outstanding word, which is what fw_upgrade_request_lost measures. On a
+       refusal it costs one re-request interval before the next attempt, which
+       is the point: retrying a full queue at 4 kHz would drown #43's drop
+       statistics in attempts that were never going to land. */
+    state->fw.requested_at_us = time_us_32();
+
     if (queue_uart_packet(&packet, state))
         state->fw.byte_done = false;
 }

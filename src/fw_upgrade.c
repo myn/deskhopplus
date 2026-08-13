@@ -18,3 +18,12 @@ bool fw_upgrade_stalled(const fw_upgrade_state_t *fw, uint32_t now_us) {
        why the timestamp is not compared directly. */
     return (uint32_t)(now_us - fw->progressed_at_us) >= FW_UPGRADE_STALL_US;
 }
+
+bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us) {
+    /* byte_done means the last word came back and nothing is owed to us, so
+       there is no request to repeat. */
+    if (!fw->upgrade_in_progress || fw->byte_done)
+        return false;
+
+    return (uint32_t)(now_us - fw->requested_at_us) >= FW_UPGRADE_REREQUEST_US;
+}

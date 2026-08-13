@@ -44,6 +44,29 @@
  */
 #define FW_UPGRADE_STALL_US (30u * 1000000u)
 
+/*
+ * How long to wait for a requested word before asking again.
+ *
+ * The pull has no acknowledgement and no retransmission beneath it, and a
+ * request or its response can be dropped at either end: `uart_tx_queue` is
+ * shared with mouse and keyboard traffic, and both `request_byte` and
+ * `handle_request_byte_msg` enqueue into it. A single drop used to mean the
+ * receiving board waited forever for a word that was never coming, because
+ * `byte_done` is cleared by the request and set only by the response.
+ *
+ * Measured on hardware 2026-08-12: moving the cursor across the seam during a
+ * pull was enough to lose responses repeatedly, and each loss cost a full
+ * 30 s stall and a restart from address 0. Two of those in one transfer is
+ * ROM recovery, which is how a board ended up in BOOTSEL for what was really
+ * a dropped packet.
+ *
+ * A UART round trip is well under a millisecond, so 100 ms is around a
+ * hundredfold headroom, and it leaves room for three hundred attempts inside
+ * the stall window — which is what turns that window back into a backstop for
+ * a genuinely dead link rather than the routine cost of a busy one.
+ */
+#define FW_UPGRADE_REREQUEST_US (100u * 1000u)
+
 typedef struct {
     uint32_t address;          // Address we're sending to the other box
     uint32_t checksum;
@@ -53,6 +76,7 @@ typedef struct {
     bool image_dirty;          // A page has been written over the running image (#90)
     bool repair_attempted;     // A dirty image has already been given one restart (#90)
     uint32_t progressed_at_us; // When the upgrade last advanced (#90)
+    uint32_t requested_at_us;  // When the outstanding word was last asked for (#90)
 } fw_upgrade_state_t;
 
 /*
@@ -70,5 +94,13 @@ typedef struct {
 void fw_upgrade_progress(fw_upgrade_state_t *fw, uint32_t now_us);
 
 /* Whether an in-flight upgrade has gone quiet long enough to give up on.
-   False when no upgrade is running, so a caller may ask unconditionally. */
+   False when no upgrade is running, so a caller may ask unconditionally.
+
+   Re-requesting is deliberately not progress: a board that asks into the void
+   forever must still reach this, or the backstop would never fire. Only a
+   response that arrives calls fw_upgrade_progress. */
 bool fw_upgrade_stalled(const fw_upgrade_state_t *fw, uint32_t now_us);
+
+/* Whether the outstanding word has gone unanswered long enough to ask again.
+   False when nothing is outstanding, so a caller may ask unconditionally. */
+bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us);

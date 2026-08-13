@@ -230,8 +230,19 @@ void process_hid_queue_task(device_t *state) {
 
 /* Task that handles copying firmware from the other device to ours */
 void firmware_upgrade_task(device_t *state) {
-    if (!state->fw.upgrade_in_progress || !state->fw.byte_done)
+    if (!state->fw.upgrade_in_progress)
         return;
+
+    /* Waiting on a word we already asked for. The pull has no acknowledgement
+       and nothing retransmits beneath it, so a request or its response that
+       was dropped on a busy uart_tx_queue would otherwise be waited out for
+       the full stall window and cost a restart from address 0. Ask again for
+       the same address instead (#90). */
+    if (!state->fw.byte_done) {
+        if (fw_upgrade_request_lost(&state->fw, time_us_32()))
+            request_byte(state, state->fw.address);
+        return;
+    }
 
     if (queue_is_full(&state->uart_tx_queue))
         return;

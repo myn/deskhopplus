@@ -120,6 +120,62 @@ int main(void) {
         CHECK(!fw_upgrade_stalled(&fw, SECONDS(14 * 60)), "hang", "abandoning ends the stall");
     }
 
+    /* A dropped request or response is the common failure, not a rare one:
+       uart_tx_queue is shared with mouse traffic, and neither end retransmits.
+       Measured on hardware — moving the cursor during a pull lost responses
+       repeatedly, and each loss cost a full stall window and a restart. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .byte_done = true};
+        CHECK(!fw_upgrade_request_lost(&fw, SECONDS(100)), "outstanding",
+              "nothing owed to us is not a lost request");
+
+        /* request_byte clears byte_done and stamps the time together. */
+        fw.byte_done        = false;
+        fw.requested_at_us  = SECONDS(10);
+
+        CHECK(!fw_upgrade_request_lost(&fw, SECONDS(10) + FW_UPGRADE_REREQUEST_US - 1),
+              "outstanding", "still waiting one tick short");
+
+        CHECK(fw_upgrade_request_lost(&fw, SECONDS(10) + FW_UPGRADE_REREQUEST_US),
+              "outstanding", "asked again on the threshold");
+
+        /* Asking again restarts the wait rather than re-firing every pass. */
+        fw.requested_at_us = SECONDS(10) + FW_UPGRADE_REREQUEST_US;
+        CHECK(!fw_upgrade_request_lost(&fw, SECONDS(10) + FW_UPGRADE_REREQUEST_US + 1),
+              "outstanding", "re-asking restarts the wait");
+    }
+
+    {
+        fw_upgrade_state_t fw = {.byte_done = false};
+        CHECK(!fw_upgrade_request_lost(&fw, SECONDS(100)), "outstanding",
+              "no upgrade owes us nothing");
+    }
+
+    /* The backstop has to survive the retry. Re-requesting is not progress, so
+       a board asking into a dead link still reaches the stall window and gets
+       abandoned — otherwise the retry would replace the failure it was added
+       to make rare. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .byte_done = false};
+        fw_upgrade_progress(&fw, SECONDS(0));
+        fw.requested_at_us = SECONDS(0);
+
+        for (uint32_t us = FW_UPGRADE_REREQUEST_US; us < FW_UPGRADE_STALL_US;
+             us += FW_UPGRADE_REREQUEST_US) {
+            CHECK(fw_upgrade_request_lost(&fw, us), "deadlink", "keeps asking");
+            CHECK(!fw_upgrade_stalled(&fw, us), "deadlink", "and is not yet abandoned");
+            fw.requested_at_us = us; /* what request_byte does */
+        }
+
+        CHECK(fw_upgrade_stalled(&fw, FW_UPGRADE_STALL_US), "deadlink",
+              "a dead link is still abandoned in the end");
+    }
+
+    /* Which only holds because one interval fits inside the other many times
+       over. If these ever converge, the retry stops being a retry. */
+    CHECK(FW_UPGRADE_REREQUEST_US * 10 < FW_UPGRADE_STALL_US, "backstop",
+          "many attempts fit inside the stall window");
+
     /* There is deliberately no "a timestamp behind the recorded one stalls
        nothing" case here, unlike peer_fw_test.c. Under wrap arithmetic the two
        are the same thing: a caller passing an earlier time and a counter that

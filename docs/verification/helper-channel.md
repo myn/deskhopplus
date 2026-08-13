@@ -55,8 +55,21 @@ from address 0, which rewrites every page and repairs a half-written image. If t
 stalls, the board erases its stage 2 bootloader and drops to ROM — a `RPI-RP2` volume and a manual
 UF2 drop, deliberately loud rather than a board quietly running a part-written image.
 
-So the peer version reading *not detected* is no longer expected during an upgrade, and is now
-worth investigating rather than waiting out.
+**Confirmed on hardware 2026-08-12.** With 0.85 on A and 0.84 on B, A's config page read *Other
+board FW version: v0.84* continuously through B's pull. Pre-fix that field read `not detected` for
+the whole transfer.
+
+**One exception, and it will catch you on every first flash.** The heartbeat during a pull comes
+from the *receiving* board, which is by definition the one still running the **old** firmware. So
+the first propagation after any change to this path still shows `not detected`, and only the second
+one — once both boards carry the fix — measures anything. Losing an evening to this is how it was
+found.
+
+Watch out for one more thing while testing: **entering config mode reboots the board**, so chording
+A mid-pull leaves B's outstanding request unanswered. B re-asks every 100 ms and rides through it,
+but before that retry existed each such gap cost a full 30 s stall and a restart from address 0 —
+and two of those in one transfer is ROM recovery. That is exactly how a board ended up in BOOTSEL
+on 2026-08-12, for what was really a dropped packet.
 
 **The LED is still not a mode indicator during an upgrade.** In config mode the once-a-second
 config blink now runs at the same time as the per-block `toggle_led` of a UF2 drop, and the two
