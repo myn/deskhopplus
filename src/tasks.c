@@ -247,8 +247,34 @@ void firmware_upgrade_task(device_t *state) {
     if (queue_is_full(&state->uart_tx_queue))
         return;
 
-    /* End condition, when reached the process is completed. */
-    if (state->fw.address > STAGING_IMAGE_SIZE) {
+    /* If we're on the last element of the current page, page is done - write it.
+       Address zero is not the end of anything: nothing has arrived yet, and
+       (0 - 1) & 0xFFFFFF00 would send the write off the end of flash. */
+    if (TU_U32_BYTE0(state->fw.address) == 0x00 && state->fw.address != 0) {
+
+        uint32_t page_start_addr = (state->fw.address - 1) & 0xFFFFFF00;
+        write_flash_page((uint32_t)ADDR_FW_RUNNING + page_start_addr - XIP_BASE, state->page_buffer);
+
+        /* From here on the running image is part-old and part-new, so stopping
+           short of the end must not leave the board booting it (#90). */
+        state->fw.image_dirty = true;
+    }
+
+    /* End condition. Reaching STAGING_IMAGE_SIZE means the response for the
+       last word has arrived and the page write above has just put it in flash,
+       so the image is whole and the checksum can be taken.
+
+       This must not wait for the address to go *past* the image, which is what
+       it used to do: the address only advances on a response, and
+       handle_request_byte_msg refuses to answer anything at or beyond
+       STAGING_IMAGE_SIZE. The last request was therefore never answered and
+       the transfer never terminated — every pull ended in a permanent wait,
+       with the flash fully written and nothing to say so. That is what #90
+       recorded as "a stalled upgrade", and it is why propagation only ever
+       appeared to work: the image was complete, so a later power cycle booted
+       it. The two bounds arrived in different commits (1415c1d and b65e8eb)
+       and have disagreed ever since. */
+    if (state->fw.address >= STAGING_IMAGE_SIZE) {
         state->fw.upgrade_in_progress = 0;
         state->fw.checksum = ~state->fw.checksum;
 
@@ -261,17 +287,7 @@ void firmware_upgrade_task(device_t *state) {
             state->_running_fw = _firmware_metadata;
             global_state.reboot_requested = true;
         }
-    }
-
-    /* If we're on the last element of the current page, page is done - write it. */
-    if (TU_U32_BYTE0(state->fw.address) == 0x00) {
-
-        uint32_t page_start_addr = (state->fw.address - 1) & 0xFFFFFF00;
-        write_flash_page((uint32_t)ADDR_FW_RUNNING + page_start_addr - XIP_BASE, state->page_buffer);
-
-        /* From here on the running image is part-old and part-new, so stopping
-           short of the end must not leave the board booting it (#90). */
-        state->fw.image_dirty = true;
+        return;
     }
 
     request_byte(state, state->fw.address);
