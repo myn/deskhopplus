@@ -75,6 +75,26 @@ recorded here was this, not a dropped packet.
 Fixed in 0.88. A pull now reboots the receiving board by itself. **If you find yourself
 power-cycling a board to make an upgrade take, that is a regression, not the procedure.**
 
+**Confirmed 2026-08-12**, both boards on 0.88, A flashed to 0.89 by `picotool`: B pulled, rebooted
+itself, and both boards read v0.89. No power cycle, no intervention. That is the first pull in this
+tree's history known to have terminated on its own.
+
+### Getting a fix onto the receiving board
+
+The trap that cost most of that evening. Everything in the pull path that matters — the stall
+window, the retry, the end condition — runs on the **receiving** board, which is by definition the
+one still running the *old* firmware. So the first propagation after any change to this path
+exercises the old code and proves nothing about the new.
+
+Two ways through it, and it is worth picking one deliberately rather than discovering this again:
+
+- **Flash both boards directly.** Board B is reachable by moving its USB cable to the Mac and
+  holding BOOTSEL while plugging in — the role probe reads the inter-board harness, not the host,
+  so B stays B. Needed when the old firmware cannot deliver the new one at all.
+- **Let the old path deliver the fix, then verify it removed the need.** Flash A, let B pull, and
+  work around the old firmware's failure once (before 0.88, a power cycle during a quiet phase).
+  Then bump again and watch the same transfer complete unaided. This is how 0.88 reached B.
+
 **One exception, and it will catch you on every first flash.** The heartbeat during a pull comes
 from the *receiving* board, which is by definition the one still running the **old** firmware. So
 the first propagation after any change to this path still shows `not detected`, and only the second
