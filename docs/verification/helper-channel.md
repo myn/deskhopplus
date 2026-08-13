@@ -254,24 +254,38 @@ swift run deskhop-helper         # foreground, logging to stderr
       channel; the second must report **another program holds the channel** and must **not**
       prompt the config chord — those are different states with different remedies
 - [ ] **Partial acquisition fails the session.** *Expected `not run`* — see the note below
-- [ ] A config-mode round trip reconnects by itself. Press the chord, watch the helper report
+- [x] A config-mode round trip reconnects by itself. Press the chord, watch the helper report
       **device in config mode** distinctly from **device not connected**, leave config mode,
-      confirm it reconnects with no interaction
+      confirm it reconnects with no interaction. **Passed 2026-08-13 (#73).** The helper was
+      *restarted* into a device already in config mode — the harder case, and the one #73 was
+      filed for — reported `Device in config mode`, and held it for 30 s, six times the 5 s
+      silence window, without decaying. It recovered unaided when the device returned
 - [ ] The `LaunchAgent` restarts the helper after a crash. Install per `helpers/macos/README.md`,
       then `kill -9` it and confirm it comes back. Note: run the installed copy from launchd
       only — running it once from a terminal that itself holds permissions is the false-pass
       trap recorded in the macOS research
 - [ ] Hello and heartbeat run end to end against real firmware
-- [ ] The device marks the helper absent a couple of intervals after the helper is stopped, and
+- [x] The device marks the helper absent a couple of intervals after the helper is stopped, and
       **says so**. Stop the helper (`SIGSTOP`, not `SIGTERM` — a clean exit closes the channel
       and is a different path); about three seconds later the device emits `SESSION_END` with
-      reason `1`. Resume it and confirm it reconnects by itself
+      reason `1`. Resume it and confirm it reconnects by itself. **Passed 2026-08-13** — and
+      read the next paragraph before recording it, because the frame arrives *too late to act
+      on* and that is by design, not a fault
 - [x] **The helper notices a session it no longer has.** The device's beat is traced at its
       edges — `device heartbeat: first beat of the session`, then `quiet for Xs` / `resumed
       after Xs`. Per-beat logging is deliberately absent: at a beat a second it buries
       everything else, which is how #94 stayed invisible for two days. **Passed 2026-08-13**:
       the first beat appeared on 0.89 and no `quiet` line followed, so beats kept arriving
       inside the 3 s deadline for as long as the session was watched
+> **A reason-1 `SESSION_END` cannot be "acted on".** Measured 2026-08-13: the device does send it,
+> and it arrives and decodes — but the helper logs `ignoring a session end outside a session`,
+> because on resume its own 3 s deadline has already fired. That is structural, not a race worth
+> re-running: both ends take the deadline from the same constant, so a helper silent long enough
+> to earn the frame has necessarily already concluded the same thing. `channel.c:207` states the
+> intent — the frame is *"an optimisation over that timeout, never a substitute for it"*. Only a
+> reason-2 (protocol error) end can reach a healthy helper, and producing one means displacing the
+> helper whose reaction is the measurement.
+
 - [ ] **The beats stop while a transfer runs and resume when it finishes** (ADR-0004's
       idle gating). ***Not run — not runnable on this build.*** Nothing can make a direction
       busy: the helper has no payload source (`main.swift`: *"No payloads yet — clipboard
@@ -304,8 +318,9 @@ The secret is never displayed or typed, so distinctness is observed through the 
 shasum ~/Library/Application\ Support/deskhopplus/secret
 ```
 
-- [ ] `pico_rand` produces a different secret on each window — two chord presses, two distinct
-      digests from the command above. **Passed 2026-08-11** across five windows
+- [x] `pico_rand` produces a different secret on each window — two chord presses, two distinct
+      digests from the command above. **Passed 2026-08-11** across five windows, and re-confirmed
+      2026-08-13 on 0.89: `343e3568…` → `9ce4e1a7…` across one window
 - [x] The secret survives a power cycle, and the helper reconnects paired with no interaction.
       **Failed on 0.80 and was the symptom that found [#74](https://github.com/myn/deskhopplus/issues/74)**
       — `config_t`'s CRC covered the checksum field, so every boot loaded defaults and the
@@ -315,15 +330,28 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       `Connected and paired` with no chord press and no restart of the helper process. The
       config under test was written 2026-08-12 21:07, so it survived the whole 0.83 → 0.89
       sequence as well as the deliberate cycle
-- [ ] `scratch[3]` survives the config-mode reboot: press the chord to **enter** config mode,
+- [x] `scratch[3]` survives the config-mode reboot: press the chord to **enter** config mode,
       then leave by the inactivity timeout or the web UI **rather than the chord**, and confirm
       the window opens on the way back. This is the exact path the review found broken when the
-      flag lived in `scratch[4]`, which the SDK's own `watchdog_enable()` overwrites
-- [ ] Rotation evicts: pair, press the chord again, confirm the old secret no longer
+      flag lived in `scratch[4]`, which the SDK's own `watchdog_enable()` overwrites.
+      **Passed 2026-08-13**: entered by chord, left by the **inactivity timeout** at ~5 min
+      untouched, and the window opened on the normal-mode boot — `paired by the device` in the
+      log without anyone pressing anything. The timeout firing unaided also re-confirms #90's
+      fix, since a stalled board used to hold config mode open indefinitely (measured at 14 min)
+- [x] Rotation evicts: pair, press the chord again, confirm the old secret no longer
       authenticates. Keep a copy of the first secret file and restore it over the new one to
       test this — the helper must be refused, and must report **not paired**. **Wait out the
       60 s window first**: inside an open window the device simply re-grants and the test looks
-      like a failure to evict, when in fact the old secret *was* rejected before the new grant
+      like a failure to evict, when in fact the old secret *was* rejected before the new grant.
+      **Passed 2026-08-13, and observed without the restore trick.** On the normal-mode boot the
+      helper still held the *pre-rotation* secret, so the rejection and the re-grant both appear
+      in order, which is exactly the sequence this box exists to separate:
+
+      ```
+      state: Not paired — press the config chord on the device   <- old secret refused
+      paired by the device                                       <- window grants a new one
+      state: Connected and paired
+      ```
 - [ ] A configuration wipe leaves the helper unpaired, and one chord press restores it. The
       8 → 9 config version change gave this for free on the *first* boot of 0.80 and that is
       spent — `CURRENT_CONFIG_VERSION` is still 9, so a later flash wipes nothing. Trigger it
