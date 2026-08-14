@@ -208,6 +208,48 @@ public final class SessionEngine {
 
     // MARK: - Device presence
 
+    /*
+     * Everything a session leaves behind, in the one place every way out of
+     * one reaches: the device going away, the connection dying underneath us,
+     * an acquisition refused, a version the device will not speak, and a
+     * hello that could not be encoded. Kept together so a sixth cannot
+     * reintroduce the leak by forgetting a field — which is exactly how the
+     * beat trace broke (#98). It survived a dropped connection and not a
+     * config-mode round trip, and the round trip is the common path.
+     *
+     * The frame stream goes with it: a half-frame read from a session that
+     * has ended must never be glued to the front of the next one.
+     *
+     * Deliberately not `holdingChannels`, and not the deferred state. Those
+     * two differ between the callers — one releases handles it may not hold,
+     * another keeps them on purpose, and each names its own reason for the
+     * silence — so folding them in would make this lie about one caller.
+     */
+    private func forgetSession() {
+        phase = .idle
+        negotiated = nil
+        stream.reset()
+        forgetBeatTrace()
+    }
+
+    /*
+     * The beat belongs to a session: the next one's first beat is worth a
+     * line of its own, and a quiet spell does not outlive the session it was
+     * measured in.
+     *
+     * Split out of forgetSession() for the one path that loses a session
+     * without going idle — a helper refused authentication stays live,
+     * beating and asking, because #46 can only provision one that is
+     * connected when the chord lands. A teardown keyed on the phase steps
+     * straight past it, and then the session pairing establishes has its
+     * first beat swallowed: not the first any more, and with no quiet spell
+     * behind it to make it a resumption, it says nothing at all.
+     */
+    private func forgetBeatTrace() {
+        lastDeviceBeatAt = nil
+        deviceBeatQuietNoted = false
+    }
+
     private func deviceAppeared() -> [SessionOutput] {
         deferredState = nil
         backoff.reset()
@@ -226,9 +268,7 @@ public final class SessionEngine {
 
     private func deviceLeft(for reason: HelperState, at now: TimeInterval) -> [SessionOutput] {
         recordDrop(at: now)
-        phase = .idle
-        negotiated = nil
-        stream.reset()
+        forgetSession()
         /* Silence at first: the state is held back until the disappearance
            has lasted long enough to be worth mentioning. */
         deferredState = (reason, now + Self.silenceWindow)
@@ -256,7 +296,7 @@ public final class SessionEngine {
         } catch {
             /* Encoding a hello cannot fail against a working core; if it ever
                does, say so rather than sit silently in awaitingAck. */
-            phase = .idle
+            forgetSession()
             return [.note("hello could not be encoded: \(error)"),
                     .closeChannels,
                     .retry(after: backoff.next())]
@@ -264,9 +304,8 @@ public final class SessionEngine {
     }
 
     private func acquisitionRefused(acquired: Int, of total: Int) -> [SessionOutput] {
-        phase = .idle
+        forgetSession()
         holdingChannels = false
-        negotiated = nil
         /*
          * We now know something more useful than whatever a preceding drop
          * deferred. A dropped connection arms "the device is absent" against
@@ -377,6 +416,9 @@ public final class SessionEngine {
             phase = .live
             negotiated = nil
             pairingRequestedAt = nil
+            /* The session is gone even though the phase is not, so the beat
+               measured in it goes too — see forgetBeatTrace(). */
+            forgetBeatTrace()
             return emit(.notPaired)
 
         case .versionIncompatible:
@@ -385,10 +427,10 @@ public final class SessionEngine {
              * to keep alive — beating at a peer that will never answer would
              * only look like a session. The channels stay held so nothing
              * else takes them, and a firmware or helper update re-enumerates,
-             * which is what starts the next attempt.
+             * which is what starts the next attempt. The channels staying held
+             * is why holdingChannels is not forgetSession()'s business.
              */
-            phase = .idle
-            negotiated = nil
+            forgetSession()
             return [.note("device speaks protocol version \(ack.protocolVersion), "
                           + "this helper speaks \(DH_PROTO_VERSION)")]
                 + emit(.versionIncompatible)
@@ -436,9 +478,17 @@ public final class SessionEngine {
      *
      * Per-beat logging is deliberately not offered. At a beat a second it
      * buries everything else in the log, which is exactly how a helper
-     * thrashing on an unknown frame type went unnoticed for two days (#88).
+     * thrashing on an unknown frame type went unnoticed for two days (#94).
      */
     private func deviceBeat(at now: TimeInterval) -> [SessionOutput] {
+        guard phase != .idle else {
+            /* A beat already in the read queue when the connection went, like
+               the tail of any other frame type. Acting on it would announce
+               the first beat of a session that does not exist — and then
+               swallow the real one, which is only first while nothing has
+               claimed it. */
+            return [.note("ignoring a device heartbeat outside a session")]
+        }
         defer { lastDeviceBeatAt = now }
 
         guard let last = lastDeviceBeatAt else {
@@ -522,8 +572,15 @@ public final class SessionEngine {
              * suspicious otherwise, which is a distinction only the operator
              * can make, so it is reported rather than acted on. Once per
              * quiet spell; deviceBeat() arms it again.
+             *
+             * Scoped to a session, exactly as the check above it is and for
+             * the same reason: a helper refused authentication is deliberately
+             * live, and the device holds no session for it and so sends it
+             * nothing. Tracing the absence of beats that are not supposed to
+             * exist is noise in the log this trace exists to keep readable
+             * (#98).
              */
-            if let last = lastDeviceBeatAt, !deviceBeatQuietNoted,
+            if negotiated != nil, let last = lastDeviceBeatAt, !deviceBeatQuietNoted,
                now - last >= Self.deviceBeatTimeout {
                 deviceBeatQuietNoted = true
                 outputs.append(.note(String(format: "device heartbeat quiet for %.1fs", now - last)))
@@ -574,6 +631,10 @@ public final class SessionEngine {
      * The guard is what keeps the count honest: a device that disappears
      * twice, or a write that fails after the connection is already gone,
      * loses nothing the second time.
+     *
+     * Call this *before* forgetSession(), which clears the state the guard
+     * reads — reversed, every drop would look like the second one and the
+     * rate would never rise.
      */
     private func recordDrop(at now: TimeInterval) {
         guard holdingChannels || phase != .idle else { return }
@@ -591,7 +652,7 @@ public final class SessionEngine {
 
     /*
      * The rate, said once and with its measurement attached — a line per
-     * cycle is how #88 buried this for two days to begin with.
+     * cycle is how #94 stayed invisible for two days to begin with.
      *
      * "The last N" rather than a total, because that is what is measured:
      * only the most recent reconnectLimit drops are kept, so a running count
@@ -606,14 +667,8 @@ public final class SessionEngine {
 
     private func dropConnection(note: String, at now: TimeInterval) -> [SessionOutput] {
         recordDrop(at: now)
-        phase = .idle
+        forgetSession()
         holdingChannels = false
-        negotiated = nil
-        stream.reset()
-        /* The next session's first beat is worth a line of its own, and a
-           quiet spell does not outlive the session it was measured in. */
-        lastDeviceBeatAt = nil
-        deviceBeatQuietNoted = false
         /*
          * Held back, exactly as a device that physically disappears is: a
          * connection that comes back inside the window produces no visible

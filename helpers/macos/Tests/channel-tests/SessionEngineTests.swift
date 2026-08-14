@@ -18,6 +18,13 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("any traffic from the device is liveness", testAnyDeviceTrafficIsLiveness),
     ("the device's beat is traced where it changes, not where it beats",
      testDeviceBeatTransitionsAreTraced),
+    ("the beat trace starts afresh after a config-mode round trip",
+     testTheBeatTraceStartsAfreshAfterAConfigModeRoundTrip),
+    ("a beat outside a session is ignored", testABeatOutsideASessionIsIgnored),
+    ("the beat trace starts afresh after authentication is refused",
+     testTheBeatTraceStartsAfreshAfterAuthenticationIsRefused),
+    ("an unpaired helper traces no beat it cannot get",
+     testAnUnpairedHelperTracesNoBeatItCannotGet),
     ("an announced eviction is acted on at once", testSessionEndIsActedOnImmediately),
     ("a session end outside a session is ignored", testSessionEndOutsideSessionIgnored),
     ("an unpaired helper survives the device saying nothing",
@@ -307,10 +314,13 @@ private func testDeviceBeatTransitionsAreTraced() throws {
     try f.establishSession()
 
     /* The first beat says so, so "the beat never arrived" is distinguishable
-       from "the beat was never worth mentioning". */
+       from "the beat was never worth mentioning". The wording is asserted, not
+       just the subject: `quiet for …` and `resumed after …` both contain
+       "device heartbeat", so a looser check passes on any of the three and
+       would stay green if the first beat printed `resumed after 0.0s` (#98). */
     Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("device heartbeat") },
-               "the first beat of a session was not traced")
+                   .contains { $0.contains("first beat") },
+               "the first beat of a session was not traced as the first")
 
     /* On time, it says nothing. */
     for _ in 0..<5 {
@@ -334,6 +344,119 @@ private func testDeviceBeatTransitionsAreTraced() throws {
     Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
                    .contains { $0.contains("resumed") },
                "the beat coming back was not traced")
+}
+
+/*
+ * The trace is measured inside one session and must not outlive it. A
+ * config-mode round trip is the common path that proves it: the board leaves
+ * under its other identity for minutes, which is `deviceLeft` and not
+ * `dropConnection`, and a beat remembered from before the chord makes both
+ * edges of the next session wrong — a `quiet for 300.0s` about a session one
+ * tick old, and a genuine first beat announcing itself as `resumed` (#98).
+ */
+private func testTheBeatTraceStartsAfreshAfterAConfigModeRoundTrip() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
+
+    /* The chord: config mode, minutes away, then back as itself. */
+    f.send(.deviceAppeared(.configMode))
+    _ = f.advance(SessionEngine.silenceWindow)
+    f.now += 300
+    f.send(.deviceAppeared(.normal))
+    try f.reacquire()
+
+    Check.equal(f.notes(f.advance(0.25)).filter { $0.contains("quiet") }, [],
+                "a quiet spell measured before the chord outlived the session it belonged to")
+    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+                   .contains { $0.contains("first beat") },
+               "the first beat after a config-mode round trip was not traced as the first")
+}
+
+/*
+ * Every other frame type refuses one that arrives outside a session and says
+ * so; the beat did not. A beat still in the read queue when the connection
+ * went announced the first beat of a session that does not exist — and then
+ * swallowed the real one, since the real first beat is only first while
+ * nothing has claimed it (#98).
+ */
+private func testABeatOutsideASessionIsIgnored() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(.transportFailed("link went away"))
+
+    let stale = f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+    Check.that(stale.contains { $0.contains("ignoring") },
+               "a beat outside a session was acted on rather than refused")
+    Check.that(!stale.contains { $0.contains("first beat") },
+               "a beat outside a session announced the first beat of one")
+
+    try f.reacquire()
+    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+                   .contains { $0.contains("first beat") },
+               "the stale beat consumed the new session's first")
+}
+
+/*
+ * The same leak on the pairing path, which the engine reaches without ever
+ * going idle. An `authenticationFailed` ack ends the session while
+ * deliberately keeping the phase — #46 needs the helper live and asking — so
+ * it is the one place where losing a session is not going quiet, and the one
+ * a teardown keyed on the phase steps straight past.
+ *
+ * A beat remembered across it silences the *next* session's first beat
+ * entirely: it is no longer the first, and no quiet spell was noted to make
+ * it a resumption, so it says nothing at all.
+ */
+private func testTheBeatTraceStartsAfreshAfterAuthenticationIsRefused() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
+
+    /* A grant this helper cannot use: the fresh hello carrying it is refused. */
+    let stale = [UInt8](repeating: 0xA5, count: SecretStore.length)
+    f.send(.received(try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: stale))))
+    f.send(try f.ack(.authenticationFailed))
+    Check.equal(f.engine.state, .notPaired, "the refused hello did not leave the helper unpaired")
+
+    /* The chord lands, and this time the device accepts. */
+    let granted = [UInt8](repeating: 0x5A, count: SecretStore.length)
+    f.send(.received(try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: granted))))
+    f.send(try f.ack(.ok))
+    Check.equal(f.engine.state, .connected, "pairing did not establish a session")
+
+    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
+                   .contains { $0.contains("first beat") },
+               "the first beat of the session pairing established was not traced at all")
+}
+
+/*
+ * The quiet note is scoped to a session, exactly as the liveness check three
+ * lines above it is. A helper refused authentication is deliberately live and
+ * the device holds no session for it, so it is sent nothing by design —
+ * tracing the absence of beats that are not supposed to exist is noise in the
+ * log the trace exists to keep readable (#98).
+ *
+ * Reached the way it actually happens: a chord grants a secret, the fresh
+ * hello is refused — the window provisioned somebody else — and no drop ever
+ * intervenes to clear the beat the previous session did see.
+ */
+private func testAnUnpairedHelperTracesNoBeatItCannotGet() throws {
+    let f = Fixture()
+    try f.establishSession()
+    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
+
+    let granted = [UInt8](repeating: 0xA5, count: SecretStore.length)
+    f.send(.received(try FrameCodec.encode(Frame(type: MessageType.pairGrant, payload: granted))))
+    f.send(try f.ack(.authenticationFailed))
+    Check.equal(f.engine.state, .notPaired, "the refused hello did not leave the helper unpaired")
+
+    var notes: [String] = []
+    for _ in 0..<8 { notes += f.notes(f.advance(SessionEngine.heartbeatInterval)) }
+
+    Check.equal(notes.filter { $0.contains("quiet") }, [],
+                "an unpaired helper traced beats the device is designed not to send it")
+    Check.equal(f.engine.state, .notPaired, "the unpaired helper was torn down")
 }
 
 /* An eviction the device knows about is announced, so the helper need not
@@ -791,7 +914,7 @@ private func testRepeatedReconnectionIsNotReportedAsConnected() throws {
 
     /* And it stays said, once. Each cycle's successful hello_ack is exactly
        what flapped the state back to connected, which is the whole defect —
-       and a line per cycle is the log that hid it (#88). */
+       and a line per cycle is the log that hid it (#94). */
     var reported: [HelperState] = []
     var recorded: [String] = []
     for _ in 0..<SessionEngine.reconnectLimit {
