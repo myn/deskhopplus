@@ -73,7 +73,7 @@ type byte, without reading a payload:
 | 0x02 | HELLO_ACK         | d→h | `proto_version:u16` `status:u8` (0=ok, 1=auth_failed, 2=version_incompatible — distinguishable because the remedies differ) `build_type:u8` `channel_count:u8` (effective) `max_chunk:u16` (effective). On a non-ok status the effective fields are zero. |
 | 0x05 | HEARTBEAT         | h→d | empty (id kept from mkroamer; vector ports verbatim) |
 | 0x06 | DEVICE_HEARTBEAT  | d→h | empty. The device's own beat, sent only while a session exists, so its absence is meaningful. Idle-gated — see Liveness. |
-| 0x07 | SESSION_END       | d→h | `reason:u8` (0=unspecified, 1=liveness_timeout, 2=protocol_error). An unknown reason reads as unspecified rather than as an error, so a later device may end a session for a reason this helper predates. |
+| 0x07 | SESSION_END       | d→h | `reason:u8` (0=unspecified, 1=liveness_timeout, 2=protocol_error, 3=unpaired — the configuration holding the secret was wiped). An unknown reason reads as unspecified rather than as an error, so a later device may end a session for a reason this helper predates. |
 | 0x08 | PAIR_REQUEST      | h→d | empty (semantics owned by #46) |
 | 0x09 | PAIR_GRANT        | d→h | `secret:bytes` (length and rotation owned by #46; example vectors use 16 bytes) |
 | 0x20 | PLACE             | d→h | `chain_index:u8` `border_direction:u8` (which side of the output the seam was crossed from) `entry_pos:u16` (0–65535 normalized along the seam segment). Fire-and-forget; no reply path. mkroamer's HANDOFF minus epoch and modifiers — one arbiter needs no epoch, and input rides HID. |

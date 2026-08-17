@@ -102,6 +102,12 @@ typedef enum {
     DH_SESSION_END_UNSPECIFIED = 0,
     DH_SESSION_END_LIVENESS_TIMEOUT = 1,
     DH_SESSION_END_PROTOCOL_ERROR = 2,
+    /* The device no longer holds the secret this session authenticated
+       against: the configuration it lived in was wiped (#75). Diagnostic like
+       the rest — the helper reconnects, is refused, and says so — but it is
+       the one reason a user *caused*, and the only evidence at the desk that
+       the wipe revoked anything at the moment it was pressed. */
+    DH_SESSION_END_UNPAIRED = 3,
 } dh_session_end_reason;
 
 typedef enum {

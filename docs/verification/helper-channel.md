@@ -370,9 +370,21 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       spent — `CURRENT_CONFIG_VERSION` is still 9, so a later flash wipes nothing. Trigger it
       deliberately with the wipe chord, **`Right Shift + F12 + D`**, which **wipes both boards**:
       `wipe_config_hotkey_handler` erases locally and sends `WIPE_CONFIG_MSG` to the peer.
-      **The wipe does not take effect until the device is power-cycled** — see #75; the live
-      session keeps authenticating against the RAM-cached secret. So: wipe, power-cycle,
-      *then* expect **not paired — press the config chord on the device**
+      **From 0.90 the wipe takes effect immediately** (#75 — before it, the secret stayed live
+      in RAM and nothing was revoked until the next power-up). So, with **no power cycle**:
+
+      ```
+      the device ended the session: unpaired            <- the wipe, reason 3
+      state: Not paired — press the config chord on the device
+      ```
+
+      Then, **before pressing anything**, power-cycle the board and confirm it is *still*
+      unpaired — that is what separates a wipe that revoked from one that only looked like it
+      did, and it is the pair of observations #75 was found by, in the order that makes them
+      mean something. Only after that does one chord press return it to `Connected and paired`.
+      **Run this on both boards**: the peer board takes the identical path over
+      `WIPE_CONFIG_MSG` and has never been measured, because the Windows helper does not exist
+      yet (#49)
 
 ## 3. The #66 controls that could reopen #25
 

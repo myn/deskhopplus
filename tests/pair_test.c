@@ -176,6 +176,44 @@ static void test_rotation_makes_a_stolen_pairing_recoverable(void) {
           "the user's own helper was not re-paired");
 }
 
+/*
+ * A configuration wipe (#75). The secret lives in the configuration, so
+ * wiping it must leave this module holding nothing at all — including a
+ * window that was still open, which would otherwise re-grant the very secret
+ * the wipe had just erased.
+ *
+ * What this adds over test_a_fresh_device_authenticates_nobody is the open
+ * window. Re-initing is a memset today, so the rest follows from that test;
+ * a later dh_pair_init that cleared only `provisioned` would still pass it,
+ * and would leave a window standing over a secret that no longer exists.
+ *
+ * It pins the mechanism the firmware's wipe path relies on, not its
+ * sequencing: whether the firmware actually re-inits is a hardware
+ * observation, because nothing host-side can see the device authenticating
+ * against a secret that is no longer in flash.
+ */
+static void test_a_wipe_leaves_the_device_holding_nothing(void) {
+    dh_pair p;
+    dh_pair_init(&p, NULL);
+
+    /* Paired, with the window still open — the wipe chord is reachable a
+       second after the config chord that opened it. */
+    dh_pair_open_window(&p, secret_a, 1000);
+    uint8_t paired[DH_PAIR_SECRET_LEN];
+    CHECK(dh_pair_grant(&p, 1000, paired), "wipe", "the pairing under test never happened");
+
+    /* What the wipe leaves behind: a configuration with no secret in it. */
+    dh_pair_init(&p, NULL);
+
+    CHECK(!dh_pair_authenticate(&p, paired, sizeof paired), "wipe",
+          "a wiped configuration still authenticates the helper it paired");
+    CHECK(!dh_pair_window_open(&p, 1000), "wipe", "the wipe left the pairing window open");
+
+    uint8_t granted[DH_PAIR_SECRET_LEN];
+    CHECK(!dh_pair_grant(&p, 1000, granted), "wipe",
+          "a wiped device handed out the secret it had just erased");
+}
+
 /* A window opened while one is already open re-rotates: holding the chord, or
  * bouncing in and out of config mode, must not leave two live secrets. */
 static void test_reopening_a_window_rotates_again(void) {
@@ -200,6 +238,7 @@ int main(void) {
     test_the_window_opens_for_about_a_minute();
     test_the_window_survives_the_clock_wrapping();
     test_rotation_makes_a_stolen_pairing_recoverable();
+    test_a_wipe_leaves_the_device_holding_nothing();
     test_reopening_a_window_rotates_again();
 
     if (failures) {

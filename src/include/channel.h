@@ -23,6 +23,12 @@ void channel_init(void);
    window, which belongs to the user's chord press rather than to the link. */
 void channel_link_lost(void);
 
+/* The configuration was wiped, taking the secret with it: end the session and
+   forget the pairing rather than go on authenticating against a secret that no
+   longer exists in flash (#75). Callable from either core; the work itself
+   lands on core 0's next tick. */
+void channel_config_wiped(void);
+
 /* One HID OUT report from the channel interface, verbatim. */
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize);
 

@@ -30,6 +30,10 @@ public enum SessionEndReason: UInt8, Equatable {
     case unspecified = 0
     case livenessTimeout = 1
     case protocolError = 2
+    /* The configuration holding the device's secret was wiped, so the pairing
+       this session ran on no longer exists. Same recovery as the rest — the
+       hello that follows is refused, and the helper reports not paired. */
+    case unpaired = 3
 
     public init(wire: UInt8) {
         self = SessionEndReason(rawValue: wire) ?? .unspecified

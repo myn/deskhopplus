@@ -47,6 +47,19 @@ static struct {
      */
     critical_section_t out_lock;
     bool locked;
+
+    /*
+     * A configuration wipe waiting to be applied. Both wipe paths run on
+     * core 1 — the chord arrives through the USB *host* stack
+     * (tuh_hid_report_received_cb → process_keyboard_report), the peer
+     * board's WIPE_CONFIG_MSG through the packet receiver — while helloes are
+     * answered on core 0, through the device stack. So the wipe is recorded
+     * here and applied by channel_task, keeping the session and the pairing
+     * rewritten only on core 0. Doing it inline would race a hello mid-answer
+     * and could leave the session re-established against the secret the wipe
+     * had just erased, which is the very defect this exists to close (#75).
+     */
+    volatile bool config_wiped;
 } channel;
 
 static uint32_t channel_now_ms(void) {
@@ -100,11 +113,27 @@ void channel_init(void) {
 
     dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
 
-    /* The secret survives a restart because it lives in the configuration.
-       A wiped configuration leaves none, and one chord press restores it. */
+    /* The secret survives a restart because it lives in the configuration. A
+       wiped configuration leaves none — here at boot, and on the tick after
+       channel_config_wiped — and one chord press restores it. */
     dh_pair_init(&channel.pair,
                  global_state.config.channel_paired ? global_state.config.channel_secret : NULL);
     channel_reset_link();
+}
+
+/*
+ * The configuration was wiped, and the secret lived in it. Wiping is how a
+ * user revokes a paired machine, so the pairing has to go with the flash
+ * sector rather than staying live in RAM until the next power-up — which is
+ * what it did until #75, leaving the device happily authenticating a helper
+ * against a secret that no longer existed anywhere, with nothing said about
+ * it on any surface.
+ *
+ * Deferred to channel_task rather than done here: both wipe paths reach this
+ * from core 1, and the session is core 0's. See config_wiped.
+ */
+void channel_config_wiped(void) {
+    channel.config_wiped = true;
 }
 
 /*
@@ -395,6 +424,19 @@ void channel_task(device_t *state) {
     (void)state;
 
     const uint32_t now = channel_now_ms();
+
+    /*
+     * A wipe, applied where the session is safe to rewrite. Ahead of the tick
+     * so a session about to end is not beaten at first, and the helper is
+     * told rather than left to its timeout: it is authenticated against a
+     * secret that has just stopped existing, and the sooner it reconnects the
+     * sooner it can say so and ask to be paired again.
+     */
+    if (channel.config_wiped) {
+        channel.config_wiped = false;
+        channel_end_session(DH_SESSION_END_UNPAIRED);
+        dh_pair_init(&channel.pair, NULL);
+    }
 
     /*
      * Whichever the session owes its helper: the beat that fills an idle

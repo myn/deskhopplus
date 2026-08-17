@@ -102,10 +102,19 @@ void screenlock_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     }
 }
 
-/* When pressed, erases stored config in flash and loads defaults on both boards */
-void wipe_config_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
+/* Everything a wipe means on this board: the sector in flash, the copy the
+   firmware runs from, and the pairing secret that was cached out of it (#75).
+   Both wipe paths go through here — the chord below and the peer board's
+   message — so a third one cannot arrive and forget half of it. */
+static void _wipe_local_config(device_t *state) {
     wipe_config();
     load_config(state);
+    channel_config_wiped();
+}
+
+/* When pressed, erases stored config in flash and loads defaults on both boards */
+void wipe_config_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
+    _wipe_local_config(state);
     (void)send_value(ENABLE, WIPE_CONFIG_MSG);
 }
 
@@ -250,8 +259,7 @@ void handle_flash_led_msg(uart_packet_t *packet, device_t *state) {
 
 /* When this message is received, wipe the local flash config */
 void handle_wipe_config_msg(uart_packet_t *packet, device_t *state) {
-    wipe_config();
-    load_config(state);
+    _wipe_local_config(state);
 }
 
 /* Update screensaver state after received message */

@@ -632,6 +632,7 @@ static void test_session_end_matches_the_vectors(const char *path) {
     } cases[] = {
         {"session_end_liveness", DH_SESSION_END_LIVENESS_TIMEOUT},
         {"session_end_protocol_error", DH_SESSION_END_PROTOCOL_ERROR},
+        {"session_end_unpaired", DH_SESSION_END_UNPAIRED},
     };
 
     uint8_t raw[MAX_VECTOR_BYTES];

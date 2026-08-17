@@ -16,6 +16,7 @@ heartbeat                    | 05 00 00 00
 device_heartbeat             | 06 00 00 00
 session_end_liveness         | 07 00 01 00  01
 session_end_protocol_error   | 07 00 01 00  02
+session_end_unpaired         | 07 00 01 00  03
 pair_request                 | 08 00 00 00
 pair_grant_example           | 09 00 10 00  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
 place_chain2_mid             | 20 00 04 00  02  01  00 80
