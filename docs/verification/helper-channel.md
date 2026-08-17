@@ -608,6 +608,39 @@ with board B left plugged in throughout.
       (3) copy to a hand-mounted volume, blocked by the stale-mount ghost. The fourth induced the
       transfer cleanly and the board went to **ROM** instead of ending config mode
 
+### How to run it, with the two traps that spoiled the last attempt
+
+Both boards on **0.92** or later first — `26f4c25` fixed the phantom pull but left the version at
+91, so `b6c589c` had to bump it before the fix could reach a board at all.
+
+1. Board A into config mode by chord. Note the time as `T`
+2. `sudo mount -t msdos /dev/diskN /Volumes/DESKHOP` at ~`T`+10 s — confirm the node, it moves
+3. At `T`+280 s, `dd if=build/deskhop.uf2 of=/Volumes/DESKHOP/part.uf2 bs=512 count=16`
+4. Immediately `sudo umount -f /Volumes/DESKHOP`
+5. Watch `ioreg` for `0x2e8a/0x107c` → `0x1209/0xc000`
+
+The stall lands at `T`+310 s and clears `upgrade_in_progress`, which releases the timeout deferred
+at `src/tasks.c:183`. Expect the exit at ~`T`+310 s; anything up to ~`T`+330 s passes.
+
+**Do not open the config page, at any point in the run.** Every `GET_VAL_MSG` and `SET_VAL_MSG`
+ends in `reset_config_timer` (`src/handlers.c:321`), which sets the deadline to `now +
+CONFIG_MODE_TIMEOUT`. The page reads the peer version over WebHID as a `GET`, so reading it pushes
+the deadline out by a further 300 s and the run measures the wrong clock. There is no way to read
+the peer version without doing this — the WebHID page and the DESKHOP volume are the same
+transport underneath.
+
+**Unmount as soon as the drop is written**, which settles the ghost rather than working around it.
+It is safe: a non-UF2 write returns at the magic check (`src/ramdisk.c:74`) *before*
+`fw_upgrade_progress`, so FAT metadata flushed on unmount cannot reset the stall window. With the
+mount gone, USB identity is trustworthy for the rest of the run.
+
+**A ROM landing is now itself the peer measurement.** All three roads to `recover_to_rom` are
+accounted for in this induction: the `ramdisk.c` end-of-drop checksum needs `blockNo == 1023` and
+these are blocks 0-15; the pull's end-of-transfer checksum cannot run because `source` is `DROP`,
+so `fw_upgrade_may_pull` is false and no response is accepted; which leaves
+`abandon_firmware_upgrade` under `image_dirty && !peer_present` as the only one open. The inference
+that failed below is sound again, because #104's fix closed the road that broke it.
+
 ### The fourth attempt, and the defect it found
 
 The clean run, 2026-08-17. Config entry **15:21:37.4**, volume hand-mounted at t+10.8 s, and at
@@ -669,10 +702,19 @@ to hang past 420 s; neither observation was evidence of a firmware fault.
 
 ### An interrupted pull cannot leave a part-written image running
 
-- [ ] **Not run.** Needs board A older than board B so that A is the receiver.
-      `~/deskhop-0.89.uf2` (version 189, crc `0x2bdc0c83`) was built from the current tree for
-      exactly that and is the only thing the step still needs. Left for a fresh sitting on purpose:
-      it ends with a board in ROM, and starting it tired is how that becomes unplanned
+- [ ] **Not run.** Needs board A older than board B so that A is the receiver. Flash A with
+      `~/deskhop-0.90.uf2` (version 190, crc `0x127e2b82`) against B on 0.92, let the pull run past
+      its first page (~16 ms), then unplug B and leave it unplugged. `peer_fw` expires at 3 s, the
+      stall at 30 s, and A should erase its stage 2 sector and enumerate as `RPI-RP2`. Left for a
+      fresh sitting on purpose: it ends with a board in ROM, and starting it tired is how that
+      becomes unplanned
+
+      **0.90 and 0.92 share a crc, and that is correct.** The version lives only in
+      `.section_metadata`, patched post-build by `misc/crc32.py`; `VERSION_MAJOR` and
+      `VERSION_MINOR` appear nowhere in the C source. So the two boards run byte-identical code
+      differing only in the stamp, and the criterion exercises the shipping firmware. The older
+      `~/deskhop-0.89.uf2` (version 189, crc `0x2bdc0c83`) predates #104's fix and should not be
+      used for this.
 
 ### A board in ROM does not by itself mean anything was destroyed
 
