@@ -17,6 +17,11 @@ the image file's own length, which is the same thing said a third way.
 
 Exits 1 if the page does not fit, 0 otherwise. With no page argument it only
 reports.
+
+DH_SHIPPED_SECTORS overrides the length taken from the file. create.sh needs
+that: it has to know whether the page fits *before* copying it in, and at that
+point the image is still the full 2 MB that mformat laid out. Asking after the
+truncation would be asking after the bytes were already lost.
 """
 
 import os
@@ -41,11 +46,14 @@ def geometry(image):
     root_sectors = (root_entries * 32 + bytes_per_sector - 1) // bytes_per_sector
     data_start = reserved + num_fats * sectors_per_fat + root_sectors
 
+    override = os.environ.get("DH_SHIPPED_SECTORS")
+    shipped = int(override) if override else os.path.getsize(image) // bytes_per_sector
+
     return {
         "bytes_per_sector": bytes_per_sector,
         "cluster_bytes": sectors_per_cluster * bytes_per_sector,
         "data_start": data_start,
-        "shipped_sectors": os.path.getsize(image) // bytes_per_sector,
+        "shipped_sectors": shipped,
     }
 
 
