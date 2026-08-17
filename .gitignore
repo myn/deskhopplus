@@ -13,3 +13,6 @@ tools/windows-checks/deskhopplus-*.log
 tools/windows-checks/deskhopplus-*.json
 
 .DS_Store
+
+# Personal Claude Code settings, not team-wide
+.claude/settings.local.json
