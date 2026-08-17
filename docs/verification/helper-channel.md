@@ -23,9 +23,15 @@ its control, believed for a day, and then retracted.
 `handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
 newer** version, so flashing a build carrying the version already running leaves the second
 board on the old firmware, silently. Confirm the number `./tools/build.sh` prints is ahead of
-what the boards are running before flashing. **Both boards ran 0.91 as of 2026-08-17** — board A by
-`picotool`, board B by peer propagation over the inter-board link, read back in the config UI rather
-than assumed. That is the second time propagation has been observed working end to end.
+what the boards are running before flashing. **Both boards ran 0.92 as of 2026-08-17 evening** —
+board A by `picotool`, board B by peer propagation over the inter-board link, read back in the
+config UI rather than assumed. That is the third time propagation has been observed working end to
+end.
+
+`26f4c25` is the example of what this section is for: it fixed #104 and left `VERSION_MINOR` at 91,
+the number both boards already ran, so the fix could not have reached hardware at all. `b6c589c`
+bumped it. Nothing warns you — [#91](https://github.com/myn/deskhopplus/issues/91) is the proposal
+to make an equal-version CRC mismatch propagate anyway.
 
 **Peer propagation works — measured 2026-08-12.** It had never been observed until then, for the
 mundane reason that the version had never moved between flashes. Flash board A by chord and
