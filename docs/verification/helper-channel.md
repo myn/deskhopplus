@@ -602,10 +602,58 @@ with board B left plugged in throughout.
 
 ### Config mode ends within ~330 s with a stalled transfer in flight
 
-- [ ] **Not run.** Three attempts, none of which had a transfer in flight at t+300 s:
-      (1) copy to `/Volumes/DESKHOP` while it was not mounted, so nothing was written at all;
-      (2) raw write to `/dev/rdisk2`, which returned `ENXIO` partway — see the ROM landing below;
-      (3) copy to a hand-mounted volume, blocked by the stale-mount ghost described earlier
+- [ ] **Cannot pass while the stall recovers to ROM — see below.** Four attempts. The first three
+      never got a transfer in flight at t+300 s: (1) copy to `/Volumes/DESKHOP` while it was not
+      mounted, so nothing was written; (2) raw write to `/dev/rdisk2`, `ENXIO` partway;
+      (3) copy to a hand-mounted volume, blocked by the stale-mount ghost. The fourth induced the
+      transfer cleanly and the board went to **ROM** instead of ending config mode
+
+### The fourth attempt, and why criterion 1 is currently unreachable
+
+The clean run, 2026-08-17. Config entry **15:21:37.4**, volume hand-mounted at t+10.8 s, and at
+**t+280.1 s** an ordinary file write put 16 UF2 blocks — one whole sector of board A's *own*
+running image, identical bytes — onto the mounted volume. Board B was powered and working
+throughout. That is the induction this sheet recommends, performed exactly.
+
+Board A ended in **ROM**. Reading the flash back afterwards (`~/deskhop-pm2.uf2`) showed **16 of
+1024 pages differing, all of them sector 0, all erased** — `recover_to_rom`'s single-sector wipe —
+and every other page byte-identical to what the board had been running. So the drop wrote identical
+bytes and disturbed nothing, and `recover_to_rom` ran.
+
+That path is reachable only from `abandon_firmware_upgrade` under
+`image_dirty && !peer_present` (`src/fw_upgrade.c:32`). The checksum branch in `ramdisk.c` needs
+`blockNo == 1023` and these were blocks 0-15, so it cannot apply. `image_dirty` was certainly set.
+**Therefore `peer_present` was false at the stall, with a healthy peer board attached.**
+
+Three readings bound what that can be:
+
+- Board A reports *Other board FW version: v0.91* in **normal** mode
+- Board A reports it in **config** mode too, so config mode alone does not lose the peer
+- After a `save_config` flash write from the config UI's Save button — one erase plus one program,
+  through `write_flash_page`, the same call the UF2 path uses — it **still** reports v0.91. A
+  single-page flash write therefore does not lose the peer either
+
+So the loss is specific to the UF2 write path, which does one erase plus sixteen programs from
+core0 while `heartbeat_output_task` runs on core1. **The mechanism is not proven** and this sheet
+does not claim one; it is a hypothesis for a debugging sitting, not a measurement.
+
+The consequence is what matters here. While a stall reads its peer as absent,
+`abandon_firmware_upgrade` recovers to ROM where `fw_upgrade.h:107-126` says it should restart —
+restarting is meant to be the repair, and ROM reserved for a peer that has genuinely gone. Criterion
+1 cannot be demonstrated until that holds, because every stall ends the board in ROM rather than in
+a config-mode timeout.
+
+### The instrument lied once: a live mount pins a ghost
+
+Worth more than the result it spoiled. The driver timed the exit by USB identity, and reported
+*still in config mode at t+420 s* when the board had already been in ROM for minutes. The
+hand-mounted volume pinned the departed config-mode device in the IORegistry, so `ioreg` kept
+reporting `0x2e8a/0x107c` for a device that was gone. The tell was board A's LED: dark, with
+keyboard and mouse both dead, which is ROM, not config mode.
+
+**A test that requires a mounted volume cannot also measure config mode by USB identity.** Unmount
+before the board can exit, or measure something else. The same ghost is why an earlier run appeared
+to hang past 420 s; neither observation was evidence of a firmware fault.
 
 ### An interrupted pull cannot leave a part-written image running
 
