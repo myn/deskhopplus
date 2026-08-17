@@ -752,10 +752,46 @@ to hang past 420 s; neither observation was evidence of a firmware fault.
 
 ### An interrupted pull cannot leave a part-written image running
 
-- [ ] **Not run.** Needs board A older than board B so that A is the receiver. Flash A with
-      `~/deskhop-0.90.uf2` (version 190, crc `0x127e2b82`) against B on 0.92, let the pull run past
-      its first page (~16 ms), then unplug B and leave it unplugged. `peer_fw` expires at 3 s, the
-      stall at 30 s, and A should erase its stage 2 sector and enumerate as `RPI-RP2`
+- [x] **Passed 2026-08-17.** Board A flashed with `~/deskhop-0.90.uf2` at 17:29:13 against board B
+      on 0.92, board B unplugged mid-pull, board A in **ROM at 17:29:59** with its first sector
+      erased. Log at `~/deskhop-pull-run-20260817-172856.log`, flash saved to
+      `~/deskhop-rom-20260817-172856.uf2` before recovery
+
+The saved image is the whole result, and it is unusually legible:
+
+| Pages | State | What it is |
+|---|---|---|
+| 0-15 | erased | sector 0 — `recover_to_rom` |
+| 640-648 | written | the pull's last sector, partly refilled |
+| 649-655 | erased | the rest of that sector, never reached |
+| 1008 | version **190** | the metadata page, still the old build's |
+
+Everything else is byte-identical to what A started from. So the pull stopped **mid-sector at page
+648** — 166,144 bytes of 262,144, or 63.4% — and `write_flash_page` had already erased sector 40 to
+write into it. That ragged edge is exactly the *part-written image* the criterion exists to prevent
+from running, and the board wiped its stage 2 sector rather than boot it.
+
+**This is also what rules out the confound.** #104's triage warned that a flash readback cannot
+separate a pull that ran from one that never happened, because one binary serves both boards and a
+*completed* pull rewrites all 1024 pages with identical bytes. That holds only for a completed
+pull. An interrupted one leaves a frontier, and here the frontier is visible twice over: the
+half-erased sector 40, and the metadata page still reading 190 rather than 192, which is proof the
+pull never reached page 1008.
+
+### The unplug moment is not the moment you can press a key
+
+The script timed the landing at **u+18.8 s** from the Return keypress, against a 30 s
+`FW_UPGRADE_STALL_US`. The firmware is not early; the instrument is late. The stall counts from the
+last accepted response, so the last one arrived 30 s before 17:29:59 — at **17:29:29**, some 11 s
+before the keypress at 17:29:40. Board B is on the other machine, so the hand that pulls the cable
+cannot also be on the keyboard.
+
+The pull rate confirms it independently: 166,144 bytes between A coming up at 17:29:15 and the last
+response at 17:29:29 is ~11.9 KB/s, against the ~16 KB/s that 4 kHz × 4 bytes predicts — the right
+order, where the keypress reading would demand a pull that stopped 11 s before the cable moved.
+
+**So treat the script's figure as a lower bound on the interval, not a measurement of it.** The one
+number to trust is the ROM landing time.
 
 ```sh
 sudo ./tools/macos-checks/interrupted_pull_to_rom.sh check   # touches nothing

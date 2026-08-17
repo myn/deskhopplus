@@ -168,15 +168,20 @@ run() {
 
     printf '\n%s\n' "${bold}Unplug board B now, and leave it unplugged.${off}"
     printf '%s\n\n' "Board B is only the sender here — its own image is not touched."
-    read -r -p "Press Return the moment B is out: " _ </dev/tty
+    read -r -p "Press Return once B is out: " _ </dev/tty
     local U; U="$(now)"
-    say "board B unplugged (u=0) — peer goes stale at u+3 s, stall at u+30 s"
+    say "keypress (u=0) — NOT the unplug: board B is on the other machine, so"
+    say "the hand that pulls the cable cannot also be on the keyboard. Measured"
+    say "at 11 s of lag on 2026-08-17. Read u+ as a lower bound on the interval."
 
     # ---- the landing
     while :; do
         local s; s="$(state)" ; local e; e="$(since "$U")"
         if [ "$s" = "rom" ]; then
-            say "${green}${bold}ROM at u+${e} s${off}"
+            # The absolute time is the trustworthy half: the stall counts 30 s
+            # back from here to the last accepted response, which is the real
+            # unplug. u+ carries the operator's lag and is only a lower bound.
+            say "${green}${bold}ROM${off} at $(date '+%H:%M:%S') — u+${e} s, so the last response landed ~$(date -v-30S '+%H:%M:%S')"
             break
         fi
         if [ "$(python3 -c "print(1 if $e > $DEADLINE else 0)")" = "1" ]; then
@@ -198,10 +203,22 @@ run() {
 
     local verdict
     verdict="$(python3 - "$SAVED" <<'PY'
-# Which road to ROM was taken. recover_to_rom erases the first 4096-byte
-# sector and nothing else; reset_usb_boot erases nothing.
+# Two questions of the saved flash, and the second is the one that is easy to
+# lose.
+#
+# Which road to ROM: recover_to_rom erases the first 4096-byte sector and
+# nothing else, reset_usb_boot erases nothing.
+#
+# And whether the pull was really interrupted. A readback cannot see a
+# *completed* pull at all — one binary serves both boards, so it rewrites every
+# page with identical bytes and leaves no trace (#104). An interrupted one is
+# different: write_flash_page erases a whole sector to write into it, so the
+# pages past the frontier are still erased. That ragged edge is the part-written
+# image this criterion exists to catch, and printing where it lies is what makes
+# the run evidence rather than an anecdote.
 import struct, sys
 
+BASE = 0x10000000
 blocks = {}
 with open(sys.argv[1], 'rb') as fh:
     while (b := fh.read(512)):
@@ -211,16 +228,35 @@ with open(sys.argv[1], 'rb') as fh:
         if m0 == 0x0A324655 and m1 == 0x9E5D5157:
             blocks[addr] = b[32:32 + size]
 
-sector0 = b"".join(blocks.get(0x10000000 + i * 256, b"") for i in range(16))
-if not sector0:
-    print("unknown  first sector not present in the saved image")
-elif all(byte == 0xFF for byte in sector0):
-    print("recover_to_rom  first sector erased (all 0xff)")
+erased = sorted((a - BASE) // 256 for a, d in blocks.items() if all(x == 0xFF for x in d))
+runs = []
+for pg in erased:
+    if runs and pg == runs[-1][1] + 1:
+        runs[-1][1] = pg
+    else:
+        runs.append([pg, pg])
+
+sector0 = [r for r in runs if r[0] == 0 and r[1] >= 15]
+if not blocks:
+    print("unknown | saved image unreadable")
+elif sector0:
+    later = [r for r in runs if r[0] > 15]
+    if later:
+        lo, hi = later[0]
+        pulled = lo * 256
+        where = (f"pull stopped mid-sector at page {lo - 1} ({BASE + (lo - 1) * 256:#010x}); "
+                 f"pages {lo}-{hi} still erased; {pulled} of {1024 * 256} bytes "
+                 f"({100 * pulled / (1024 * 256):.1f}%)")
+    else:
+        where = "no frontier past sector 0 — the pull may have completed; check the metadata version"
+    print(f"recover_to_rom | first sector erased (all 0xff) | {where}")
 else:
-    print("reset_usb_boot  first sector intact — the image was NOT wiped")
+    print("reset_usb_boot | first sector intact — the image was NOT wiped |")
 PY
 )"
-    say "evidence: ${bold}${verdict}${off}"
+    IFS='|' read -r road detail frontier <<<"$verdict"
+    say "evidence: ${bold}${road}${off} —${detail}"
+    [ -n "${frontier// /}" ] && say "frontier:${frontier}"
 
     case "$verdict" in
         recover_to_rom*)
