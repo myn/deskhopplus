@@ -23,7 +23,9 @@ its control, believed for a day, and then retracted.
 `handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
 newer** version, so flashing a build carrying the version already running leaves the second
 board on the old firmware, silently. Confirm the number `./tools/build.sh` prints is ahead of
-what the boards are running before flashing. **Both boards ran 0.89 as of 2026-08-13.**
+what the boards are running before flashing. **Both boards ran 0.91 as of 2026-08-17** — board A by
+`picotool`, board B by peer propagation over the inter-board link, read back in the config UI rather
+than assumed. That is the second time propagation has been observed working end to end.
 
 **Peer propagation works — measured 2026-08-12.** It had never been observed until then, for the
 mundane reason that the version had never moved between flashes. Flash board A by chord and
@@ -178,8 +180,20 @@ the `RPI-RP2` drive.
 sudo picotool load -x /path/to/deskhop.uf2      # -x reboots into the new firmware
 ```
 
-Board in BOOTSEL first (hold the on-board button while connecting). This sidesteps both hazards
-above, and it is the only route that worked on 2026-08-11: the `RPI-RP2` volume would not
+**The firmware-upgrade chords, which need no replug and no on-board button** (#88 asked this sheet
+to name them; confirmed working on board A, 2026-08-17):
+
+| Chord | Effect |
+|---|---|
+| `Left Shift + Right Shift + A` | Board A into BOOTSEL |
+| `Left Shift + Right Shift + B` | Board B into BOOTSEL — travels as `FIRMWARE_UPGRADE_MSG`, since the keyboard is on A |
+
+Defined at `src/keyboard.c:97-111`. Board A's is a local `reset_usb_boot`; board B's crosses the
+inter-board link, so B reboots itself on receipt. Prefer these over the button — the board stays
+plugged in, and nothing has to be reseated.
+
+Board in BOOTSEL first (chord above, or hold the on-board button while connecting). This sidesteps
+both hazards above, and it is the only route that worked on 2026-08-11: the `RPI-RP2` volume would not
 automount and `diskutil` hung, because `diskarbitrationd` was wedged — the visible tell being a
 stale root-owned `/Volumes/DESKHOP` mount point left behind by an earlier config-mode exit
 (`sudo rmdir` it). `sudo` is required, and it needs a real terminal: the `!` prefix inside a
@@ -231,6 +245,44 @@ the computer whose helper you want paired, and a secret from one board is refuse
 normal-mode boot, and it can only provision a helper that is connected while it is open. Start
 the helper — ideally as the `LaunchAgent`, so it survives the device's reboot — *before*
 pressing the chord.
+
+**The caps-lock half of every LED indication is dead — do not use it to confirm anything.**
+Measured 2026-08-17: no flash on the wipe chord, and no blink at all through a config-mode
+session, which the user manual explicitly promises. Not a fork defect and not new — upstream
+`b65e8eb` added `led_sync_task`, which runs at 30 Hz right after `led_blinking_task`
+(`src/main.c:56-57`), sees `keyboard_leds_actual != keyboard_leds_desired` and writes the desired
+state straight back (`src/led.c:60-66`). The blink only toggles every 80 ms, so its keyboard-LED
+half is reverted within ~33 ms and is invisible. The **on-board LED still blinks** — sync never
+touches it — so read the board, never the keyboard. This is the same restore-versus-blink fight
+the comment at `src/tasks.c:186-189` already describes one layer down.
+
+**A power cycle can cost the board its USB keyboard.** Observed once, 2026-08-17: board A came
+back from an unplug/replug with the channel healthy and every HID interface present to the Mac,
+but no key reached it. Board A is the USB *host* for the physical keyboard and has to enumerate
+it on boot; that did not take. Unplugging and replugging the keyboard from board A fixed it, with
+the double LED flash that confirms a new peripheral (`README.md:393`). Not `enforce_ports` —
+that defaults to `0` (`src/include/user_config.h:192`). Budget for it before a sitting that leans
+on chords, and do not read a dead chord as a firmware fault until the keyboard has been replugged.
+
+### The hotkey bindings, checked against the defaults
+
+#88 asked for the config UI's hotkey list to be compared against the defaults. **The config UI has
+no hotkey list** — checked 2026-08-17 — so that comparison cannot be made there and the box is
+answered against the **user manual** instead, which does carry a shortcut table.
+
+All ten shortcuts the manual documents match the firmware defaults exactly (`src/keyboard.c:18-111`,
+with `HOTKEY_MODIFIER` / `HOTKEY_TOGGLE` at `src/include/user_config.h:50-51`). **Three real
+bindings are missing from the manual:**
+
+| Chord | Missing from the manual |
+|---|---|
+| `Left Ctrl + Right Shift + J` | Screensaver **jitter** — the manual documents only pong (`S`) and off (`X`) |
+| `Left Shift + Right Shift + A` | Board A into BOOTSEL |
+| `Left Shift + Right Shift + B` | Board B into BOOTSEL |
+
+The manual instead tells you to hold the BOOTSEL button while plugging the cable in, which is the
+slow route and the one that needs the board reseated. Nothing is wrong in the manual; it is
+incomplete, and the two BOOTSEL chords are the ones worth knowing.
 
 ## Recording results
 
@@ -351,14 +403,53 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       untouched, and the window opened on the normal-mode boot — `paired by the device` in the
       log without anyone pressing anything. The timeout firing unaided also re-confirms #90's
       fix, since a stalled board used to hold config mode open indefinitely (measured at 14 min).
-      **Re-run this on 0.91**: the pass above is 0.89 evidence for a path #100 changed — the
-      unmount no longer re-reads the secret — so confirm a paired helper still comes back
-      paired through the config-mode round trip
-- [ ] A bus reset inside the window does **not** cancel it. Press the chord, then unplug and
-      replug the board's USB **within the 60 s**, and confirm the helper is still provisioned by
-      the window it was standing in rather than refused — `paired by the device`, not
-      `Not paired`. **From 0.91 only** (#100): `tud_umount_cb` called `channel_init`, which took
-      the window with it, so before 0.91 this reads as a failure. The window is opened by a
+      **Re-run passed 2026-08-17 on 0.91**, which is what this box needed: the pass above is
+      0.89 evidence for a path #100 changed — the unmount no longer re-reads the secret. The
+      chord was pressed on **entry only**, the exit was unattended, and a window still opened on
+      the normal-mode boot, so `scratch[3]` survived the config-mode reboot on the new code path.
+      The helper reported `Device in config mode` throughout (#73 holds on 0.91) and the board
+      left config mode unaided (#90 holds on 0.91). Sequence in the log:
+
+      ```
+      state: Device in config mode
+      state: Not paired — press the config chord on the device   <- old secret refused
+      paired by the device                                       <- window granted a fresh one
+      state: Connected and paired
+      ```
+
+      **The duration could not be measured**, only bounded: the exit was unattended and the log
+      is consistent with the 300 s timeout counting from the last config-page read, but the
+      helper log carries **no timestamps**, so entry time is unrecoverable. Anything that needs
+      a config-mode duration — #92's first criterion — must be timed at the desk against the USB
+      identity, not reconstructed from this log afterwards
+- [ ] A bus reset inside the window does **not** cancel it — **not run, and not runnable by the
+      method this box used to give.** #100 asked for "unplug and replug the board's USB within
+      the 60 s". **That cannot test it.** Each board is powered only by the computer it plugs
+      into (`README.md:468`) and the two are separated by a digital isolator that carries no
+      power (`README.md:218`), so unplugging board A's USB is a **power cycle, not a bus reset**.
+      On power loss the RP2040's watchdog scratch registers clear and RAM goes with them, so the
+      window dies from the power cut whether the code calls `channel_init` (≤0.89) or
+      `channel_link_lost` (0.91). The method cannot distinguish the defect from the fix.
+
+      **Attempted 2026-08-17 on 0.91 and recorded as inconclusive**, for that reason and for a
+      second one worth keeping: the helper was **already provisioned before the unplug**, because
+      an open window grants within about a second of the helper saying hello. So the bus reset
+      had no open window left to cancel. Any valid run has to keep the window unprovisioned at
+      the moment of the reset.
+
+      A method that would work needs the board to **keep power while losing the host link**, with
+      the helper stopped so nothing is provisioned first:
+
+      1. Stop the helper (`launchctl bootout gui/$(id -u)/com.deskhopplus.helper`).
+      2. Chord round trip, so the window opens on the normal-mode boot with no helper attached.
+      3. Inside the 60 s, drop the host link without cutting board power — board A behind a
+         **self-powered USB hub**, unplugging the hub's upstream cable; or sleep the Mac for a
+         few seconds, which suspends the bus while the port stays powered.
+      4. Start the helper, still inside the 60 s.
+      5. 0.91 grants (`paired by the device`); ≤0.89 refuses (`Not paired`).
+
+      Neither route is confirmed to produce a `tud_umount_cb` without a reboot — establish that
+      first, or the next run is inconclusive for a third reason. The window is opened by a
       deliberate physical gesture and is the only way to provision a helper, so losing one to a
       re-enumeration costs a second chord press with nothing anywhere saying why the first did
       not take
@@ -376,7 +467,7 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       paired by the device                                       <- window grants a new one
       state: Connected and paired
       ```
-- [ ] A configuration wipe leaves the helper unpaired, and one chord press restores it. The
+- [x] A configuration wipe leaves the helper unpaired, and a chord round trip restores it. The
       8 → 9 config version change gave this for free on the *first* boot of 0.80 and that is
       spent — `CURRENT_CONFIG_VERSION` is still 9, so a later flash wipes nothing. Trigger it
       deliberately with the wipe chord, **`Right Shift + F12 + D`**, which **wipes both boards**:
@@ -392,10 +483,30 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       Then, **before pressing anything**, power-cycle the board and confirm it is *still*
       unpaired — that is what separates a wipe that revoked from one that only looked like it
       did, and it is the pair of observations #75 was found by, in the order that makes them
-      mean something. Only after that does one chord press return it to `Connected and paired`.
-      **Run this on both boards**: the peer board takes the identical path over
-      `WIPE_CONFIG_MSG` and has never been measured, because the Windows helper does not exist
-      yet (#49)
+      mean something. Only after that does a chord round trip return it to `Connected and paired`.
+
+      **Passed on board A 2026-08-17, on 0.91, in that order.** All three observations, measured
+      rather than ticked:
+
+      | Step | Helper |
+      |---|---|
+      | Paired and connected | `Connected and paired` |
+      | Wipe chord, **no power cycle** | `the device ended the session: unpaired` → `Not paired — press the config chord on the device` |
+      | Power-cycle, **press nothing** | `Not paired — press the config chord on the device` — *still* unpaired |
+      | Chord round trip | `paired by the device` → `Connected and paired` |
+
+      Compare the 0.81 run this box exists because of, where the wipe changed **nothing at all**
+      and only a power cycle brought the board up unpaired. `SESSION_END` reason 3 decoded at the
+      helper as `unpaired`, so the revoke is legible at the desk rather than inferred.
+
+      **Board B stays unmeasured** — the peer takes the identical path over `WIPE_CONFIG_MSG`
+      through the same `_wipe_local_config`, but there is no Windows helper to observe it (#49).
+
+      **"One chord press" was wrong and is corrected above.** One press only *enters* config
+      mode; `channel_pairing_window_owed` is consumed on the next **normal-mode** boot
+      (`src/setup.c:235`), so the window opens on the way back out. Recovery is a round trip:
+      chord, wait for config mode, chord again. One press plus a 5-minute timeout also works, and
+      is what the earlier runs on this sheet actually did
 
 ## 3. The #66 controls that could reopen #25
 
