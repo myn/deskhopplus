@@ -461,6 +461,24 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       had no open window left to cancel. Any valid run has to keep the window unprovisioned at
       the moment of the reset.
 
+      **Step 0 — settle which link-drop routes keep the board alive, before running anything
+      else.** Config mode is the discriminator, and it is free. `is_config_mode_active` clears the
+      magic as it reads it (`src/setup.c:112-121`), so config mode is one-shot: a board that
+      reboots for *any* reason comes back in **normal** mode, and a board that only loses its host
+      link never re-runs `initial_setup` and comes back **still in config mode**. So chord board A
+      into config mode, apply the candidate drop, and read the identity that returns:
+
+      | Identity after the drop | What it proves |
+      |---|---|
+      | `0x2e8a/0x107c` — config mode | the board kept running and re-enumerated. **The route works**, and `tud_umount_cb` fired |
+      | `0x1209/0xc000` — normal mode | the board rebooted. That route can never test #100 |
+      | nothing returns | the port died with the upstream cable — that hub is no use |
+
+      Non-destructive, no pairing touched, under a minute per candidate. It must finish inside
+      config mode's 300 s, and the keyboard is dead throughout, so anything after the chord has to
+      already be running — lift `state()` out of
+      `tools/macos-checks/config_timeout_with_stall.sh` rather than writing a third copy of it.
+
       A method that would work needs the board to **keep power while losing the host link**, with
       the helper stopped so nothing is provisioned first:
 
