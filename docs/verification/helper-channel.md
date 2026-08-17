@@ -120,7 +120,25 @@ system_profiler SPUSBDataType | grep -A4 "DeskHop Switch" | grep -E "Product ID|
 ### Reading a running version without the DESKHOP volume
 
 The volume may never mount: `diskarbitrationd` wedges, `/dev/disk2` appears, and `diskutil` hangs
-indefinitely and returns nothing. `sudo killall diskarbitrationd` clears it — launchd respawns it.
+indefinitely and returns nothing.
+
+**`sudo killall diskarbitrationd` does not clear it.** Measured 2026-08-17 on Darwin 24.6: the
+daemon is SIP-protected, so the command returns without effect and `/usr/libexec/diskarbitrationd`
+keeps both its pid and its original start time. This sheet asserted the opposite for months and it
+cost a cycle to find out. Check `ps -p <pid> -o lstart` rather than trusting that it respawned.
+
+Mounting the device by hand does work, because `mount_msdos` talks to the kernel and never
+involves that daemon:
+
+```sh
+sudo mount -t msdos /dev/disk2 /Volumes/DESKHOP    # confirm the node first, it moves
+```
+
+**Unmount before the board leaves config mode.** The device disappears on exit but the mount does
+not, and a stale mount pins the departed USB device alive: `ioreg` then reports *two* boards in
+config mode at once, the next config entry lands on `/dev/disk3`, and mounting `/dev/disk2` again
+fails with `Resource busy`. A driver watching USB identity sees the ghost and never observes the
+board return to normal. `sudo umount -f /Volumes/DESKHOP` clears it, as does unplugging the board.
 
 You do not need the volume. The config page drives the board over WebHID, so serving the repo's own
 copy works identically and sidesteps the mount, the wedge, and the hazard of macOS writing
@@ -551,6 +569,89 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
       the Mac stayed usable throughout, but no switching test was run and the Windows side was
       not observed at all — board B was never attached to this machine during the sitting. Do not
       read the Mac's continued operation as covering this box
+
+## 5. The two #90 stall paths ([#92](https://github.com/myn/deskhopplus/issues/92))
+
+Sitting of **2026-08-17**. **Neither of #92's two criteria was met.** Three inductions were
+attempted and all three were defeated on the host side rather than by the firmware. Recorded
+anyway, because the reasons are reusable and one of them makes #92's own instructions wrong.
+
+Time is USB identity sampled with `ioreg -r -c IOUSBHostDevice -l -d 1`, 0.03 s per sample.
+`system_profiler SPUSBDataType` takes seconds and is too coarse to time a 300 s deadline against a
+330 s bound. Board A was used throughout, deliberately: it is the board on the Mac, so a ROM
+landing costs one `picotool load` rather than the cable trip board B would cost (#58).
+
+### #92's stated induction for criterion 1 cannot produce criterion 1
+
+#92 says to unplug the peer board mid-transfer and then watch for the config-mode timeout. That
+cannot work. `fw_upgrade_must_recover` is `image_dirty && !peer_present` (`src/fw_upgrade.c:32`),
+and a pull is past its first page within ~16 ms — so a peer board that has gone sends the stall to
+**ROM**, which is criterion 2. Run as written, #92's two criteria are the same test, and it is the
+destructive one.
+
+Criterion 1 needs `upgrade_in_progress` set at t+300 s **with the peer still heartbeating**. The
+only path that gives that is a partial UF2 drop onto the config-mode disk (`src/ramdisk.c:79`),
+with board B left plugged in throughout.
+
+### The config-mode timeout with nothing in flight
+
+- [x] **301.25 s, measured 2026-08-17.** Entry 13:38:18.2 by chord, exit 13:43:19.5, identity
+      `0x2e8a/0x107c` → `0x1209/0xc000`. This is the *plain* timeout and is a baseline only. It is
+      **not** #92's criterion, which asks for the timeout to fire *despite* a transfer in flight:
+      the `!upgrade_in_progress` guard at `src/tasks.c:183` was never exercised
+
+### Config mode ends within ~330 s with a stalled transfer in flight
+
+- [ ] **Not run.** Three attempts, none of which had a transfer in flight at t+300 s:
+      (1) copy to `/Volumes/DESKHOP` while it was not mounted, so nothing was written at all;
+      (2) raw write to `/dev/rdisk2`, which returned `ENXIO` partway — see the ROM landing below;
+      (3) copy to a hand-mounted volume, blocked by the stale-mount ghost described earlier
+
+### An interrupted pull cannot leave a part-written image running
+
+- [ ] **Not run.** Needs board A older than board B so that A is the receiver.
+      `~/deskhop-0.89.uf2` (version 189, crc `0x2bdc0c83`) was built from the current tree for
+      exactly that and is the only thing the step still needs. Left for a fresh sitting on purpose:
+      it ends with a board in ROM, and starting it tired is how that becomes unplanned
+
+### A board in ROM does not by itself mean anything was destroyed
+
+Board A reached ROM once, at ~14:15, from no deliberate induction. Two paths lead there and they
+mean opposite things:
+
+| Path | Erases? | Reached by |
+|---|---|---|
+| `recover_to_rom` (`src/utils.c:89`) | **yes**, the first sector | dirty image + peer gone, or a bad checksum |
+| `reset_usb_boot` | no, image intact | the `LShift+RShift+A` chord, or `FIRMWARE_UPGRADE_MSG` from the peer |
+
+`sudo picotool save -r 0x10000000 0x10040000 <file>` **before** reflashing settles which. Here the
+first sector read back all `0xff`, so `recover_to_rom` had run. Take that image before recovering:
+a `picotool load` destroys the only evidence there is.
+
+The same read showed sector 1 erased with only pages 16–20 rewritten, which is how the failed raw
+write was shown to have *half* landed — 21 UF2 blocks reached flash before `ENXIO`, leaving the
+board mid-transfer with `image_dirty` set and the host believing the write had failed outright.
+**Writing raw to `/dev/rdiskN` is not a code path any real host takes** and should not be used to
+induce this again.
+
+### A partial UF2 drop must be a multiple of 16 blocks
+
+`write_flash_page` erases a whole 4096-byte sector whenever a write starts one
+(`target_addr & 0xf00`, `src/utils.c:64`). A drop that stops mid-sector leaves the rest of that
+sector erased — a real hole in the running image. Dropping the board's **own** image in a multiple
+of 16 blocks rewrites identical bytes into whole sectors and leaves the image unchanged, which is
+what makes the criterion-1 induction non-destructive. 200 blocks is wrong; 192 is right.
+
+### The keyboard is dead while config mode is active
+
+Observed repeatedly on 2026-08-17 and not recorded anywhere before: with board A in config mode the
+keyboard does not reach the Mac, **so the config chord cannot be used to leave config mode**. Every
+entry therefore costs the full 300 s. Budget for it, and do not read a dead keyboard as a hung
+board — this sheet already warns that the LED is not a mode indicator either.
+
+After the sitting the keyboard did not return until board A was unplugged and replugged, even
+though the board was enumerating normally as `0x1209/0xc000` with its keyboard, mouse and vendor
+HID interfaces all present in `ioreg`. Cause not established.
 
 ## Not in this sitting
 
