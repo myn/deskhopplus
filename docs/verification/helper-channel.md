@@ -755,9 +755,22 @@ to hang past 420 s; neither observation was evidence of a firmware fault.
 - [ ] **Not run.** Needs board A older than board B so that A is the receiver. Flash A with
       `~/deskhop-0.90.uf2` (version 190, crc `0x127e2b82`) against B on 0.92, let the pull run past
       its first page (~16 ms), then unplug B and leave it unplugged. `peer_fw` expires at 3 s, the
-      stall at 30 s, and A should erase its stage 2 sector and enumerate as `RPI-RP2`. Left for a
-      fresh sitting on purpose: it ends with a board in ROM, and starting it tired is how that
-      becomes unplanned
+      stall at 30 s, and A should erase its stage 2 sector and enumerate as `RPI-RP2`
+
+```sh
+sudo ./tools/macos-checks/interrupted_pull_to_rom.sh check   # touches nothing
+sudo ./tools/macos-checks/interrupted_pull_to_rom.sh run     # ends with A in ROM
+```
+
+The script flashes A, waits for the pull, prompts for the unplug, times the landing, and then —
+before anything else — takes the `picotool save` and reads the first sector back to say which of
+the two roads to ROM was taken. That order is the point of it: the evidence has been destroyed by
+a premature `picotool load` once already, and it is the only thing that separates `recover_to_rom`
+from `reset_usb_boot`.
+
+**Board B is only the sender here.** Its own image is never written, so the unplug costs nothing
+but a replug — the cable trip warning in #58 is about flashing B, which this does not do. What
+lands in ROM is board A, on the Mac, and one `picotool load -x build/deskhop.uf2` restores it.
 
       **0.90 and 0.92 share a crc, and that is correct.** The version lives only in
       `.section_metadata`, patched post-build by `misc/crc32.py`; `VERSION_MAJOR` and
