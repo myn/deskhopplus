@@ -602,11 +602,43 @@ with board B left plugged in throughout.
 
 ### Config mode ends within ~330 s with a stalled transfer in flight
 
-- [ ] **Not passed on 2026-08-17; re-run now that #104 is fixed — see below.** Four attempts. The first three
-      never got a transfer in flight at t+300 s: (1) copy to `/Volumes/DESKHOP` while it was not
-      mounted, so nothing was written; (2) raw write to `/dev/rdisk2`, `ENXIO` partway;
-      (3) copy to a hand-mounted volume, blocked by the stale-mount ghost. The fourth induced the
-      transfer cleanly and the board went to **ROM** instead of ending config mode
+- [x] **312.6 s, measured 2026-08-17 on 0.92, fifth attempt.** Config entry **17:11:27.0**, drop of
+      16 blocks written and synced at **t+280.9 s**, exit at **t+312.6 s** by USB identity
+      `0x2e8a/0x107c` → `0x1209/0xc000`. Driven by
+      `tools/macos-checks/config_timeout_with_stall.sh`; log kept at
+      `~/deskhop-stall-run-20260817-171107.log`
+
+Set against the 301.25 s plain timeout measured the same day, config mode was held **11.4 s past
+its own deadline** by the transfer in flight and then released — which is the criterion. The
+`!upgrade_in_progress` guard at `src/tasks.c:183` deferred the reboot, `fw_upgrade_stalled` came
+true 30 s after the last block at t+310.9 s, `abandon_firmware_upgrade` cleared the flag, and the
+board rebooted 1.7 s later. The bound in `fw_upgrade.h` — config mode held for at most
+`CONFIG_MODE_TIMEOUT + FW_UPGRADE_STALL_US` — is now measured rather than argued.
+
+The four earlier attempts all failed host-side, none of them on the firmware: (1) copy to
+`/Volumes/DESKHOP` while it was not mounted, so nothing was written; (2) raw write to
+`/dev/rdisk2`, `ENXIO` partway; (3) copy to a hand-mounted volume, blocked by the stale-mount
+ghost; (4) induced cleanly, but the board went to **ROM** — the phantom pull of #104, fixed in
+`26f4c25`.
+
+### The peer was never lost: `peer_present` was true at the stall
+
+This run settles what #104's triage had to leave open, and it settles it the other way from the
+original reading.
+
+`abandon_firmware_upgrade` recovers to ROM when `image_dirty && !peer_present` (`src/utils.c:109`).
+Sixteen page writes had certainly set `image_dirty`. **The board did not go to ROM, so
+`peer_present` was true** — board B was heartbeating throughout a UF2 drop, at the exact instant
+the old reading claimed it had gone.
+
+So the hypothesis this sheet carried for a day — sixteen flash programs from core0 with interrupts
+disabled, starving `heartbeat_output_task` on core1 past `PEER_FW_STALE_US` — is **disproved**, not
+merely unproven. The UF2 write path does not lose the peer. Every ROM landing on 2026-08-17 is
+accounted for by the phantom pull instead, which is what #104 fixed.
+
+The general lesson is the one that cost the day: the ROM landing was read as evidence about the
+peer check when it was evidence about the pull. Only closing the other roads made the same
+observation mean anything.
 
 ### How to run it, with the two traps that spoiled the last attempt
 
@@ -695,11 +727,11 @@ Three readings still bound the peer question, and they were taken with the phant
   through `write_flash_page`, the same call the UF2 path uses — it **still** reports v0.91. A
   single-page flash write therefore does not lose the peer either
 
-**Whether the peer is lost at all is now unresolved.** It was never measured directly; it was
-inferred from a ROM landing that has another explanation. The old hypothesis — sixteen programs from
-core0 with interrupts off, against `heartbeat_output_task` on core1 — is not supported by the
-traffic arithmetic either. Re-run criterion 1 first and read the peer version straight off the
-config UI at the stall; do not infer it from where the board ends up.
+**Resolved by the fifth attempt above: the peer was never lost.** It was never measured directly
+here; it was inferred from a ROM landing that had another explanation. The clean run on 0.92 did not
+land in ROM with `image_dirty` set, so `peer_present` was true at the stall, and the old hypothesis —
+sixteen programs from core0 with interrupts off, against `heartbeat_output_task` on core1 — is
+disproved rather than merely unsupported.
 
 Criterion 1 was unreachable for a sharper reason than this sheet first recorded: every accepted
 response called `fw_upgrade_progress`, so while a phantom pull advanced, an interrupted drop never
