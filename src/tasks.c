@@ -228,9 +228,15 @@ void process_hid_queue_task(device_t *state) {
         queue_try_remove(&state->hid_queue_out, &packet);
 }
 
-/* Task that handles copying firmware from the other device to ours */
+/* Task that handles copying firmware from the other device to ours.
+
+   Asking whether *the pull* is running, not whether any transfer is: a UF2
+   drop sets the same in-progress flag, and everything below — requesting
+   words, writing pages, taking the checksum — belongs to the pull alone.
+   Reading the flag on its own is what made a drop pull the peer board's image
+   on top of the one the host was writing (#104). */
 void firmware_upgrade_task(device_t *state) {
-    if (!state->fw.upgrade_in_progress)
+    if (!fw_upgrade_may_pull(&state->fw))
         return;
 
     /* Waiting on a word we already asked for. The pull has no acknowledgement
@@ -276,6 +282,7 @@ void firmware_upgrade_task(device_t *state) {
        and have disagreed ever since. */
     if (state->fw.address >= STAGING_IMAGE_SIZE) {
         state->fw.upgrade_in_progress = 0;
+        state->fw.source              = FW_UPGRADE_SOURCE_NONE;
         state->fw.checksum = ~state->fw.checksum;
 
         /* Checksum mismatch, we wipe the stage 2 bootloader and rely on ROM recovery */

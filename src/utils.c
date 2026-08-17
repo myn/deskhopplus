@@ -110,6 +110,7 @@ void abandon_firmware_upgrade(device_t *state) {
         recover_to_rom();
 
     state->fw.upgrade_in_progress = false;
+    state->fw.source              = FW_UPGRADE_SOURCE_NONE;
     state->fw.address             = 0;
 }
 

@@ -602,13 +602,13 @@ with board B left plugged in throughout.
 
 ### Config mode ends within ~330 s with a stalled transfer in flight
 
-- [ ] **Cannot pass while the stall recovers to ROM — see below.** Four attempts. The first three
+- [ ] **Not passed on 2026-08-17; re-run now that #104 is fixed — see below.** Four attempts. The first three
       never got a transfer in flight at t+300 s: (1) copy to `/Volumes/DESKHOP` while it was not
       mounted, so nothing was written; (2) raw write to `/dev/rdisk2`, `ENXIO` partway;
       (3) copy to a hand-mounted volume, blocked by the stale-mount ghost. The fourth induced the
       transfer cleanly and the board went to **ROM** instead of ending config mode
 
-### The fourth attempt, and why criterion 1 is currently unreachable
+### The fourth attempt, and the defect it found
 
 The clean run, 2026-08-17. Config entry **15:21:37.4**, volume hand-mounted at t+10.8 s, and at
 **t+280.1 s** an ordinary file write put 16 UF2 blocks — one whole sector of board A's *own*
@@ -620,12 +620,23 @@ Board A ended in **ROM**. Reading the flash back afterwards (`~/deskhop-pm2.uf2`
 and every other page byte-identical to what the board had been running. So the drop wrote identical
 bytes and disturbed nothing, and `recover_to_rom` ran.
 
-That path is reachable only from `abandon_firmware_upgrade` under
-`image_dirty && !peer_present` (`src/fw_upgrade.c:32`). The checksum branch in `ramdisk.c` needs
-`blockNo == 1023` and these were blocks 0-15, so it cannot apply. `image_dirty` was certainly set.
-**Therefore `peer_present` was false at the stall, with a healthy peer board attached.**
+This sheet first read that as `abandon_firmware_upgrade` under `image_dirty && !peer_present`, and
+concluded that `peer_present` had been false with a healthy peer board attached. **That conclusion
+was wrong, and it is withdrawn.** A third road to `recover_to_rom` was open during the run.
 
-Three readings bound what that can be:
+The drop sets `upgrade_in_progress`, and `firmware_upgrade_task` — the *pull* — took that same flag
+as its cue to start requesting words from the peer board. So the drop started a pull nobody asked
+for. Both transports summed into one checksum field, and the pull's own end-of-transfer compare
+(`src/tasks.c`) then failed and wiped the sector. Full working in
+[#104](https://github.com/myn/deskhopplus/issues/104); fixed by recording which transport is
+delivering the image, so a drop can no longer make this board pull.
+
+**The flash readback cannot separate the two roads.** One binary serves both boards and the role is
+auto-probed from a pin at boot, so if A and B were on the same build a completed pull rewrote all
+1024 pages with *identical bytes*. "1008 pages byte-identical" is equally consistent with a pull
+that ran and with one that never happened.
+
+Three readings still bound the peer question, and they were taken with the phantom pull present:
 
 - Board A reports *Other board FW version: v0.91* in **normal** mode
 - Board A reports it in **config** mode too, so config mode alone does not lose the peer
@@ -633,15 +644,16 @@ Three readings bound what that can be:
   through `write_flash_page`, the same call the UF2 path uses — it **still** reports v0.91. A
   single-page flash write therefore does not lose the peer either
 
-So the loss is specific to the UF2 write path, which does one erase plus sixteen programs from
-core0 while `heartbeat_output_task` runs on core1. **The mechanism is not proven** and this sheet
-does not claim one; it is a hypothesis for a debugging sitting, not a measurement.
+**Whether the peer is lost at all is now unresolved.** It was never measured directly; it was
+inferred from a ROM landing that has another explanation. The old hypothesis — sixteen programs from
+core0 with interrupts off, against `heartbeat_output_task` on core1 — is not supported by the
+traffic arithmetic either. Re-run criterion 1 first and read the peer version straight off the
+config UI at the stall; do not infer it from where the board ends up.
 
-The consequence is what matters here. While a stall reads its peer as absent,
-`abandon_firmware_upgrade` recovers to ROM where `fw_upgrade.h:107-126` says it should restart —
-restarting is meant to be the repair, and ROM reserved for a peer that has genuinely gone. Criterion
-1 cannot be demonstrated until that holds, because every stall ends the board in ROM rather than in
-a config-mode timeout.
+Criterion 1 was unreachable for a sharper reason than this sheet first recorded: every accepted
+response called `fw_upgrade_progress`, so while a phantom pull advanced, an interrupted drop never
+went quiet and **the stall never fired at all**. With #104 fixed, a drop that stops now reaches the
+stall path in a clean state, which is what the criterion needs.
 
 ### The instrument lied once: a live mount pins a ghost
 

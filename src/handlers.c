@@ -351,6 +351,13 @@ void handle_response_byte_msg(uart_packet_t *packet, device_t *state) {
     uint16_t offset = packet->data[0];
     uint32_t address = packet->data32[0];
 
+    /* A word we never asked for. Nothing below is safe to run then: the
+       mismatch branch would abandon a UF2 drop the host is still writing, or
+       one already abandoned — and abandoning a dirty image with the peer board
+       gone does not return (#104). Silence is the whole response. */
+    if (!fw_upgrade_may_pull(&state->fw))
+        return;
+
     if (address != state->fw.address) {
         /* The pull has lost its place, so it is over. If pages had already
            gone over the running image this hands the board to ROM recovery
@@ -404,6 +411,7 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
        same reason a zeroed one would not do — it would read as quiet since
        boot. */
     state->fw.upgrade_in_progress = true;
+    state->fw.source              = FW_UPGRADE_SOURCE_PULL;
     state->fw.byte_done           = true;
     state->fw.address             = 0;
     state->fw.checksum            = 0xffffffff;

@@ -125,7 +125,9 @@ int main(void) {
        Measured on hardware — moving the cursor during a pull lost responses
        repeatedly, and each loss cost a full stall window and a restart. */
     {
-        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .byte_done = true};
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true,
+                                 .source              = FW_UPGRADE_SOURCE_PULL,
+                                 .byte_done           = true};
         CHECK(!fw_upgrade_request_lost(&fw, SECONDS(100)), "outstanding",
               "nothing owed to us is not a lost request");
 
@@ -151,12 +153,60 @@ int main(void) {
               "no upgrade owes us nothing");
     }
 
+    /* #104. A UF2 drop sets the same in-progress flag the pull runs on and
+       leaves byte_done clear from start to finish — which is precisely the
+       state re-requesting was added to act on. Nothing but the transport tells
+       the two apart, and before it was recorded every one of these asked the
+       peer board for a word, and the peer board answered. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true,
+                                 .source              = FW_UPGRADE_SOURCE_DROP,
+                                 .byte_done           = false};
+        fw_upgrade_progress(&fw, SECONDS(0));
+
+        CHECK(!fw_upgrade_may_pull(&fw), "phantom", "a drop is not a pull");
+
+        /* However long the host leaves it sitting there. */
+        for (uint32_t us = FW_UPGRADE_REREQUEST_US; us <= SECONDS(300);
+             us += FW_UPGRADE_REREQUEST_US)
+            CHECK(!fw_upgrade_request_lost(&fw, us), "phantom",
+                  "a drop never asks the peer board for anything");
+    }
+
+    /* The transport is not enough on its own: the pull may act only while its
+       own transfer is actually running. A cleared flag with the source left
+       behind is what abandoning looks like mid-write. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = false,
+                                 .source              = FW_UPGRADE_SOURCE_PULL,
+                                 .byte_done           = false};
+
+        CHECK(!fw_upgrade_may_pull(&fw), "phantom", "a pull that is over may not act");
+        CHECK(!fw_upgrade_request_lost(&fw, SECONDS(100)), "phantom",
+              "and owes nothing once it is over");
+    }
+
+    /* A drop is still a transfer, though, so the backstop still covers it: the
+       stall is about the transfer going quiet, not about who was sending it.
+       This is the case #92's criterion 1 needs, and it could not be reached
+       while a phantom pull kept the drop looking alive. */
+    {
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true,
+                                 .source              = FW_UPGRADE_SOURCE_DROP};
+        fw_upgrade_progress(&fw, SECONDS(0));
+
+        CHECK(!fw_upgrade_stalled(&fw, SECONDS(29)), "phantom", "a live drop is not stalled");
+        CHECK(fw_upgrade_stalled(&fw, SECONDS(31)), "phantom", "a quiet drop is abandoned too");
+    }
+
     /* The backstop has to survive the retry. Re-requesting is not progress, so
        a board asking into a dead link still reaches the stall window and gets
        abandoned — otherwise the retry would replace the failure it was added
        to make rare. */
     {
-        fw_upgrade_state_t fw = {.upgrade_in_progress = true, .byte_done = false};
+        fw_upgrade_state_t fw = {.upgrade_in_progress = true,
+                                 .source              = FW_UPGRADE_SOURCE_PULL,
+                                 .byte_done           = false};
         fw_upgrade_progress(&fw, SECONDS(0));
         fw.requested_at_us = SECONDS(0);
 

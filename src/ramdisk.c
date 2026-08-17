@@ -77,6 +77,11 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
 
         /* Make sure nobody else touches the flash during this operation, otherwise we get empty pages */
         global_state.fw.upgrade_in_progress = true;
+
+        /* Which is exactly what this says, and what the flag alone could not:
+           the host is writing the image, so the pull must not also be asking
+           the peer board for it (#104). */
+        global_state.fw.source = FW_UPGRADE_SOURCE_DROP;
     }
 
     /* Update checksum continuously as blocks are being received */
