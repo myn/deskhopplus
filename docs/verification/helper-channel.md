@@ -350,7 +350,18 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       **Passed 2026-08-13**: entered by chord, left by the **inactivity timeout** at ~5 min
       untouched, and the window opened on the normal-mode boot — `paired by the device` in the
       log without anyone pressing anything. The timeout firing unaided also re-confirms #90's
-      fix, since a stalled board used to hold config mode open indefinitely (measured at 14 min)
+      fix, since a stalled board used to hold config mode open indefinitely (measured at 14 min).
+      **Re-run this on 0.91**: the pass above is 0.89 evidence for a path #100 changed — the
+      unmount no longer re-reads the secret — so confirm a paired helper still comes back
+      paired through the config-mode round trip
+- [ ] A bus reset inside the window does **not** cancel it. Press the chord, then unplug and
+      replug the board's USB **within the 60 s**, and confirm the helper is still provisioned by
+      the window it was standing in rather than refused — `paired by the device`, not
+      `Not paired`. **From 0.91 only** (#100): `tud_umount_cb` called `channel_init`, which took
+      the window with it, so before 0.91 this reads as a failure. The window is opened by a
+      deliberate physical gesture and is the only way to provision a helper, so losing one to a
+      re-enumeration costs a second chord press with nothing anywhere saying why the first did
+      not take
 - [x] Rotation evicts: pair, press the chord again, confirm the old secret no longer
       authenticates. Keep a copy of the first secret file and restore it over the new one to
       test this — the helper must be refused, and must report **not paired**. **Wait out the

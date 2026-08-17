@@ -106,8 +106,16 @@ void tud_umount_cb(void) {
 
     /* The channel went with it. Config mode reboots the device under a
        different USB identity, so this is also the ordinary path in and out of
-       it — the helper reconnects and says hello again. */
-    channel_init();
+       it — the helper reconnects and says hello again.
+
+       channel_link_lost and not channel_init, which would take an open
+       pairing window with it. That was #100: 5617314 wrote the fix and left
+       it with no caller, so the window kept dying to a bus reset the header
+       already said it survived. Not re-reading the secret here costs nothing
+       — every path that changes it in the running config tells the pairing
+       module itself, and config mode is decided at boot, where channel_init
+       still runs. */
+    channel_link_lost();
 }
 
 #ifdef DH_DEBUG_CDC_FLASH
