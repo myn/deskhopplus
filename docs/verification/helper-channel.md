@@ -613,11 +613,29 @@ with board B left plugged in throughout.
 Both boards on **0.92** or later first — `26f4c25` fixed the phantom pull but left the version at
 91, so `b6c589c` had to bump it before the fix could reach a board at all.
 
+```sh
+sudo ./tools/macos-checks/config_timeout_with_stall.sh check   # touches nothing
+sudo ./tools/macos-checks/config_timeout_with_stall.sh run     # then press the chord
+```
+
+The script waits for config mode, takes `T` from the USB identity, mounts the disk, drops 16 blocks
+at `T`+280 s, unmounts at once, and watches until the board leaves. It exists because this run
+cannot be driven by hand: the config page must never be opened, the keyboard is dead throughout so
+nothing can be typed after the chord, and the unmount has to land immediately. Run it from a real
+terminal — `sudo` has no TTY for its password prompt inside a Claude Code session.
+
+By hand it is:
+
 1. Board A into config mode by chord. Note the time as `T`
 2. `sudo mount -t msdos /dev/diskN /Volumes/DESKHOP` at ~`T`+10 s — confirm the node, it moves
 3. At `T`+280 s, `dd if=build/deskhop.uf2 of=/Volumes/DESKHOP/part.uf2 bs=512 count=16`
 4. Immediately `sudo umount -f /Volumes/DESKHOP`
 5. Watch `ioreg` for `0x2e8a/0x107c` → `0x1209/0xc000`
+
+Those 16 blocks are blocks 0-15 of the running image, `0x10000000`-`0x10000f00` — exactly one
+4096-byte sector. Block 0 starts the sector so `write_flash_page` erases it once, and the following
+fifteen refill it with the bytes that were already there. Block 16 would start erasing sector 1,
+which is why the count must be a multiple of 16 and why 16 is the smallest safe one.
 
 The stall lands at `T`+310 s and clears `upgrade_in_progress`, which releases the timeout deferred
 at `src/tasks.c:183`. Expect the exit at ~`T`+310 s; anything up to ~`T`+330 s passes.
