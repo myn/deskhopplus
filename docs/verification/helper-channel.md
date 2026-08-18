@@ -1020,6 +1020,9 @@ authentication, so the device's own state is untouched. What moves is what the h
 - [x] **The real helper believes it.** The helper had been `Connected and paired` since 15:13:03.
       The first bogus hello landed at 16:46:51 and it flipped to
       `Not paired — press the config chord on the device`.
+- [x] **One frame is enough.** Re-run at 16:51:40 with `--once`: a single hello, and the helper
+      went from `Connected and paired` to `Not paired` again. The repeat mode is for showing the
+      state can be *held*; it is not needed to enter it.
 
 ### The part that was not anticipated: it is sticky
 
@@ -1046,6 +1049,12 @@ device staying silent. It was the probe: `IOHIDReportCallback` passes
 `(context, result, sender, type, reportID, report, length)`, and the probe was reading the **fifth**
 argument as the length. Report ID is 0 on this channel, so every report parsed as zero bytes and
 the probe saw nothing while receiving everything.
+
+A second defect was found reviewing the probe afterwards, and it is the one that made run 2 read as
+a contradiction: **the helper logs a state *change*, not a state.** Run 2 found no `Not paired` line
+and reported `NOT CONFIRMED` — when the truth was that the helper had never left that state since
+run 1, so there was no change for it to log. The probe now reads the helper's state *before* the run,
+refuses to call a miss when it was already there, and says how to restart it.
 
 A run that observes nothing looks exactly like a device that sent nothing. The self-test now in the
 probe guards the other end of the same failure — it checks the hello it is about to send against

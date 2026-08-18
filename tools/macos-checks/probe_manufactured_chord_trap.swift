@@ -37,13 +37,20 @@ var repeating = true
 var logPath = "/tmp/deskhop-helper.log"   // LaunchAgent StandardOutPath
 
 var args = Array(CommandLine.arguments.dropFirst())
+func value(for flag: String) -> String {
+    guard !args.isEmpty else {
+        FileHandle.standardError.write("\(flag) needs a value\n".data(using: .utf8)!)
+        exit(64)
+    }
+    return args.removeFirst()
+}
 while let flag = args.first {
     args.removeFirst()
     switch flag {
-    case "--seconds":  seconds = Double(args.removeFirst()) ?? seconds
-    case "--interval": intervalMs = Double(args.removeFirst()) ?? intervalMs
+    case "--seconds":  seconds = Double(value(for: flag)) ?? seconds
+    case "--interval": intervalMs = Double(value(for: flag)) ?? intervalMs
     case "--once":     repeating = false
-    case "--log":      logPath = args.removeFirst()
+    case "--log":      logPath = value(for: flag)
     default:
         FileHandle.standardError.write("unknown argument: \(flag)\n".data(using: .utf8)!)
         exit(64)
@@ -109,11 +116,27 @@ let helloFrame = encodeHello(token: bogusToken)
 
 var logOffsetAtStart: UInt64 = 0
 var logReadable = false
+var stateBeforeRun = ""
 if let fh = FileHandle(forReadingAtPath: logPath) {
     logOffsetAtStart = fh.seekToEndOfFile()
     fh.closeFile()
     logReadable = true
+    /* The helper logs a state *change*, not a state. So "no Not-paired line
+       appeared" means nothing unless we know what it was showing beforehand —
+       a helper already sitting in Not paired has no change to log, and the run
+       reads as a clean miss. That misread this probe's own second run. */
+    if let text = try? String(contentsOfFile: logPath, encoding: .utf8) {
+        stateBeforeRun = text.split(separator: "\n")
+            .last { $0.contains("state:") }
+            .map { String($0.split(separator: "state:").last ?? "").trimmingCharacters(in: .whitespaces) } ?? ""
+    }
     print("probe: helper log at \(logPath), reading from byte \(logOffsetAtStart)")
+    print("probe: helper state before this run: \(stateBeforeRun.isEmpty ? "unknown" : stateBeforeRun)")
+    if stateBeforeRun.contains("Not paired") {
+        print("probe: WARNING — the helper is ALREADY showing \"Not paired\". It logs changes, not")
+        print("       states, so this run cannot produce a new line and would read as a miss.")
+        print("       Restart the helper first:  launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper")
+    }
 } else {
     print("probe: NOTE — cannot read \(logPath). Step 4 cannot be read out automatically;")
     print("       watch the helper's own output instead, or pass --log PATH.")
@@ -175,7 +198,7 @@ func handle(report: UnsafeMutablePointer<UInt8>, length: Int) {
         guard body + len <= length else { return }
 
         switch type {
-        case MSG_HELLO_ACK where len >= 3:
+        case MSG_HELLO_ACK where len >= 4:
             let status = report[body + 2]
             let build = report[body + 3]
             sawAuthFailedAck = sawAuthFailedAck || status == 1
@@ -263,6 +286,9 @@ if !logReadable {
     print("       to a hello it did not send. ADR-0008 finding 2 holds: a listener can")
     print("       manufacture the state whose documented remedy is the config chord.")
     for line in helperLines where line.contains("Not paired") { print("       | \(line)") }
+} else if stateBeforeRun.contains("Not paired") {
+    print("probe: step 4 UNMEASURABLE — the helper was already showing \"Not paired\" before this run,")
+    print("       so there was no state change for it to log. Restart the helper and re-run.")
 } else if !helperLines.isEmpty {
     print("probe: NOT CONFIRMED, step 4 — the helper logged \(helperLines.count) line(s) and none")
     print("       said \"Not paired\". Say so on #95 and on #108 just as loudly as a confirmation:")
