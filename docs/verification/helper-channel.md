@@ -994,3 +994,73 @@ relay is gated on `dh_session_may_relay`, so an unpaired Windows-side endpoint r
 even if one were written. Tracked separately and blocked on #49;
 [#39](https://github.com/myn/deskhopplus/issues/39) (throughput) is behind the same wall and
 wants the same sitting.
+
+## 6. The manufactured chord trap ([#108](https://github.com/myn/deskhopplus/issues/108))
+
+**Measured 2026-08-18 on 0.94, board A `E6654854577F452F`, by
+`tools/macos-checks/probe_manufactured_chord_trap.swift`. Both boxes passed, and the second one
+passed harder than the ticket asked for.**
+
+This is the consequence of #95 that decided ADR-0008. #95 established that a second
+`kIOHIDOptionsTypeSeizeDevice` open succeeds and receives session traffic. What that buys an
+attacker is this: the answer to *its* hello is delivered to *your* helper, which cannot tell the
+two apart.
+
+```sh
+swift tools/macos-checks/probe_manufactured_chord_trap.swift --seconds 12 --interval 1000
+```
+
+Non-destructive. `answer_hello` does not tear down a session already present when a hello fails
+authentication, so the device's own state is untouched. What moves is what the helper believes.
+
+- [x] **The device answers a listener's bogus hello, and the listener receives that answer.**
+      13 hellos carrying a 16-byte token of zeros, 13 `DH_HELLO_AUTH_FAILED` acks received by a
+      process holding no secret and no permission. A `DEVICE_HEARTBEAT` arrived alongside them,
+      so there was a live session to disturb — a run without one proves nothing here.
+- [x] **The real helper believes it.** The helper had been `Connected and paired` since 15:13:03.
+      The first bogus hello landed at 16:46:51 and it flipped to
+      `Not paired — press the config chord on the device`.
+
+### The part that was not anticipated: it is sticky
+
+The trap does not have to be held. **It has to be sprung once.**
+
+The last bogus hello went out at about 16:47:40. At 16:48:35 — 55 s later, with the probe long
+gone — the helper's last state line was still the `Not paired` from 16:46:51. It had not
+recovered, and it did not recover on its own at all. `launchctl kickstart -k` at 16:49:08 brought
+it back to `Connected and paired` in under a second.
+
+The reason is in `SessionEngine.swift`: on `.authenticationFailed` the helper sets `phase = .live`
+and waits to be paired, which is right when the rejection is real — #46 can only provision a
+helper that stays connected. **It never retries the hello with the secret it is still holding.**
+So when the rejection is manufactured, one burst leaves the machine telling its owner to press the
+chord, indefinitely, until something rebuilds the connection.
+
+That is the whole of #34's 2026-08-10 losing sequence, reached by an unprivileged process with no
+race to win and nothing to steal first.
+
+### A probe bug worth keeping, because it nearly wrote the wrong result
+
+The first run reported `NO HELLO_ACK OBSERVED` — which would have contradicted #95 and read as the
+device staying silent. It was the probe: `IOHIDReportCallback` passes
+`(context, result, sender, type, reportID, report, length)`, and the probe was reading the **fifth**
+argument as the length. Report ID is 0 on this channel, so every report parsed as zero bytes and
+the probe saw nothing while receiving everything.
+
+A run that observes nothing looks exactly like a device that sent nothing. The self-test now in the
+probe guards the other end of the same failure — it checks the hello it is about to send against
+`test-vectors/frames.txt:11` before touching hardware, so a malformed hello cannot be refused for
+the wrong reason and be recorded as "the trap does not exist".
+
+### What this does not measure
+
+The **write** half of #95 — that a listener can push a bulk frame the board relays to the other
+computer without holding any secret — is read out of the code (`src/channel.c:283` gating on
+`dh_session_may_relay`, one flag for the whole board) and is **not** measured here. It needs an
+endpoint on board B to observe arrival, and only the macOS helper exists
+([#49](https://github.com/myn/deskhopplus/issues/49)). It is scheduled under
+[#111](https://github.com/myn/deskhopplus/issues/111).
+
+§1's exclusivity box still records this run sheet's oldest wrong claim — see
+[#99](https://github.com/myn/deskhopplus/issues/99), which now has a settled answer behind it:
+the state that box waits for is being deleted, not repaired.
