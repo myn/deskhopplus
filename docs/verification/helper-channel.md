@@ -1058,8 +1058,11 @@ refuses to call a miss when it was already there, and says how to restart it.
 
 A run that observes nothing looks exactly like a device that sent nothing. The self-test now in the
 probe guards the other end of the same failure — it checks the hello it is about to send against
-`test-vectors/frames.txt:11` before touching hardware, so a malformed hello cannot be refused for
-the wrong reason and be recorded as "the trap does not exist".
+the v1 `hello_mac` golden vector before touching hardware, so a malformed hello cannot be refused
+for the wrong reason and be recorded as "the trap does not exist". That vector is frozen inside
+the probe now: [#109](https://github.com/myn/deskhopplus/issues/109) rewrote
+`test-vectors/frames.txt` for protocol v2, and the boards on the desk still speak v1 until
+[#111](https://github.com/myn/deskhopplus/issues/111) lands.
 
 ### What this does not measure
 

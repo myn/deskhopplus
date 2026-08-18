@@ -29,10 +29,13 @@ add_executable(txq_test txq_test.c)
 target_include_directories(txq_test PRIVATE ${CORE})
 add_test(NAME txq_test COMMAND txq_test)
 
+# No DH_TEST_VECTORS here: dh_session.c still speaks protocol v1, while
+# ${VECTORS} was rewritten for v2 by #109. The v1 frames it must produce are
+# frozen inside session_test.c until #110 moves the codec. See that file's
+# header comment.
 add_executable(session_test session_test.c ${CORE}/dh_session.c ${CORE}/dh_pair.c
                ${CORE}/dh_frame.c)
 target_include_directories(session_test PRIVATE ${CORE})
-target_compile_definitions(session_test PRIVATE DH_TEST_VECTORS="${VECTORS}")
 add_test(NAME session_test COMMAND session_test)
 add_executable(pair_test pair_test.c ${CORE}/dh_pair.c)
 target_include_directories(pair_test PRIVATE ${CORE})

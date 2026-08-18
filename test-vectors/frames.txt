@@ -4,28 +4,52 @@
 # re-encode it to the identical bytes. Any protocol change updates docs/protocol.md,
 # this file, and the core in the same change.
 #
-# Five vectors are ported byte-identical (names included) from mkroamer's
-# test-vectors/frames.txt, where the message survived the re-cast unchanged:
-# heartbeat, clip_offer_text2, clip_request_1, clip_done_2, clip_cancel_2.
+# GENERATED. Do not hand-edit: run `python3 tools/gen-frame-vectors.py > test-vectors/frames.txt`.
+# The tags and seals below are real, computed from the fixed test key material published
+# in that script. A hand-written tag would make this file agree with nothing.
+#
+# Protocol v2 (ADR-0008, #109). Every frame outside types 0x08-0x0F carries the
+# 24-byte authentication prefix — an 8-byte counter and a 16-byte HMAC-SHA256 tag —
+# between the 4-byte header and the body. mkroamer's five byte-identical vectors did
+# not survive that: the names are kept, the bytes are not, because the frames now
+# carry a tag mkroamer's protocol had no field for.
+#
+# Directions and counters, so a verifier knows which key to try:
+#   hello_mac                  k_hello, counter 0
+#   helper to device (k_h2b)   heartbeat 0, pos_response 1, seal_offer 2, seal_accept 3,
+#                              seal_stale 4, and the clipboard messages 5 through 11
+#   device to helper (k_b2h)   hello_ack 0, device_heartbeat 1, session_end 2/3/4,
+#                              listener_alert 5, place 6, pos_query 7
+#   pair_* and hello_refused_* carry no prefix and no counter at all
+#
+# The bulk vectors are all in the helper-to-device direction. Which way a relayed
+# message travels is not a property of its bytes — the tag is rewritten at each hop —
+# so one direction is enough to gate the layout.
 
-hello_mac                    | 01 00 17 00  01 00  01  00  01  00 04  ef be ad de ef be ad de ef be ad de ef be ad de
-hello_ack_ok                 | 02 00 07 00  01 00  00  00  01  00 04
-hello_ack_auth_failed        | 02 00 07 00  01 00  01  00  00  00 00
-hello_ack_version_mismatch   | 02 00 07 00  01 00  02  00  00  00 00
-heartbeat                    | 05 00 00 00
-device_heartbeat             | 06 00 00 00
-session_end_liveness         | 07 00 01 00  01
-session_end_protocol_error   | 07 00 01 00  02
-session_end_unpaired         | 07 00 01 00  03
-pair_request                 | 08 00 00 00
-pair_grant_example           | 09 00 10 00  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-place_chain2_mid             | 20 00 04 00  02  01  00 80
-pos_query                    | 21 00 00 00
-pos_response_chain1          | 22 00 05 00  01  00 40  00 c0
-clip_offer_text2             | 30 00 0f 00  01 00 00 00  00  02 00 00 00 00 00 00 00  00 00
-clip_request_1               | 31 00 04 00  01 00 00 00
-clip_chunk_hi                | 32 00 0e 00  02 00 00 00  00 00 00 00  ac 2a 93 d8  68 69
-clip_done_2                  | 33 00 04 00  02 00 00 00
-clip_cancel_2                | 34 00 04 00  02 00 00 00
-clip_retransmit_seq5         | 35 00 08 00  02 00 00 00  05 00 00 00
-clip_credit_8                | 36 00 06 00  02 00 00 00  08 00
+hello_mac                    | 01 00 3f 00 00 00 00 00 00 00 00 00 19 86 c3 f8 fd 48 86 7e eb 00 82 a8 4b ce 54 e9 02 00 01 00 01 00 04 0d f0 fe ca ef be ad de ca 5f 30 15 4a 8f 7c 61 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+hello_ack_ok                 | 02 00 36 00 00 00 00 00 00 00 00 00 25 48 a1 b1 81 ba 76 5e c7 4d 4f 68 04 9c 90 71 0d f0 fe ca ef be ad de 02 00 00 01 00 04 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+heartbeat                    | 05 00 18 00 00 00 00 00 00 00 00 00 27 16 96 9c e0 28 51 ef ab 46 6e 40 24 8b e1 81
+device_heartbeat             | 06 00 18 00 01 00 00 00 00 00 00 00 da 4c 18 18 29 fa 74 4f 99 61 11 71 63 3a 68 6a
+session_end_liveness         | 07 00 19 00 02 00 00 00 00 00 00 00 61 23 e5 ba 39 fc 7d d0 97 45 a8 39 7c ac 3a 20 01
+session_end_protocol_error   | 07 00 19 00 03 00 00 00 00 00 00 00 4d 9c 94 81 c5 2d c7 c8 46 08 d0 80 2a c0 3c 78 02
+session_end_unpaired         | 07 00 19 00 04 00 00 00 00 00 00 00 0e 7d 4d 8a 37 80 f3 62 f7 64 4f 67 ee cc 1a 3f 03
+listener_alert               | 03 00 20 00 05 00 00 00 00 00 00 00 09 87 32 90 7d 53 b9 82 73 f4 8f 54 47 65 55 d7 10 27 00 00 04 00 00 00
+pair_request                 | 08 00 48 00 0d f0 fe ca ef be ad de 51 5c 3d 6e b9 e3 96 b9 04 d3 fe ca 7f 54 fd cd 0c c1 e9 97 bf 37 5d ca 51 5a d0 a6 c3 b4 03 5f 45 36 be 3a 50 f3 18 fb f9 a5 47 59 02 a2 21 50 2b ef 0d 57 e0 8c 53 b2 cc 0a 56 f1 7d 9f 93 54
+pair_grant                   | 09 00 48 00 0d f0 fe ca ef be ad de 1f 14 01 46 bf b1 b2 51 f8 4f 4d db e0 d4 cd cf d7 7a fd 98 4a 95 20 e3 57 94 02 1f 83 12 bb 9e ec 99 5a 08 b1 fa 77 04 df 3d cc 0b 50 a9 66 52 63 fb 77 11 f9 5f 9f 8a 44 9c 50 96 e4 7c 89 2b
+pair_refused_no_window       | 0a 00 09 00 0d f0 fe ca ef be ad de 00
+pair_refused_registered      | 0a 00 09 00 0d f0 fe ca ef be ad de 01
+hello_refused_version        | 0b 00 0b 00 0d f0 fe ca ef be ad de 02 00 02
+hello_refused_unpaired       | 0b 00 0b 00 0d f0 fe ca ef be ad de 02 00 03
+place_chain2_mid             | 20 00 1c 00 06 00 00 00 00 00 00 00 30 30 c0 bd 86 87 9b 0a 1c a6 f7 79 aa 7d 7f 00 02 01 00 80
+pos_query                    | 21 00 18 00 07 00 00 00 00 00 00 00 fc 04 f0 b6 2b b8 85 c7 6e b6 3f da 47 54 8c cf
+pos_response_chain1          | 22 00 1d 00 01 00 00 00 00 00 00 00 f2 ef 33 e4 dc b0 b9 f8 0f 9f d3 10 89 fd f4 60 01 00 40 00 c0
+seal_offer                   | 37 00 6c 00 02 00 00 00 00 00 00 00 b6 57 47 20 2c 9e 50 ae dc 35 12 9c 13 1a 43 6c 44 33 22 11 20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f 26 1e fb d3 55 0c f0 68 ef 01 3e d7 36 6b a3 2f 5d 6f e5 57 b4 b2 ab ce 8a de 58 cb a1 68 a5 5e 17 88 a0 b2 9a 56 a6 ab ec 40 84 c0 c9 6b d3 dc bc a6 b5 07 f3 5d be a9 e9 85 70 84 79 d8 bd c9
+seal_accept                  | 38 00 6c 00 03 00 00 00 00 00 00 00 ae 8d 2a fd 0c 41 cc 66 1e ae 29 14 46 8a 7c 2b 44 33 22 11 30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f bd 57 14 b9 c2 04 00 41 1f 1e 51 db ff 63 64 7f 05 d1 d7 0b 55 fc 20 0c 6c ad 10 c2 f4 61 4d c1 e5 04 85 62 f7 31 f5 45 73 c0 42 24 d9 73 a9 16 a5 9f 52 6a 82 68 07 6f c1 cf a9 2a 5f 14 3f 19
+seal_stale                   | 39 00 1c 00 04 00 00 00 00 00 00 00 ac 85 5a 53 4b ca 63 9d 47 b2 ab cc 62 83 08 d2 44 33 22 11
+clip_offer_text2             | 30 00 43 00 05 00 00 00 00 00 00 00 11 2c 51 0b b8 80 86 6e 33 ed ba 32 b9 83 8e f6 01 00 00 00 44 33 22 11 00 00 00 00 00 00 00 00 cb 67 4c f1 60 6f 27 71 75 d9 b5 52 f4 0f 6a 8f 6f 7d fc 9e 34 69 4c 32 22 ae f8
+clip_request_1               | 31 00 1c 00 06 00 00 00 00 00 00 00 03 a1 9d b3 42 ae ff 7e f7 55 cd 17 33 a3 24 fb 01 00 00 00
+clip_chunk_hi                | 32 00 42 00 07 00 00 00 00 00 00 00 43 31 87 42 ac 00 eb 2d f4 75 4b 21 c5 ed 62 1e 02 00 00 00 00 00 00 00 44 33 22 11 01 00 00 00 00 00 00 00 19 4f 84 8c 2d 39 00 5d f1 04 d8 66 6b e8 fb 49 29 0e 7d 75 79 2d
+clip_done_2                  | 33 00 1c 00 08 00 00 00 00 00 00 00 8a 93 d8 c8 c7 45 56 85 61 bf bf 28 b9 ec fa 2e 02 00 00 00
+clip_cancel_2                | 34 00 1c 00 09 00 00 00 00 00 00 00 59 0a 29 4a bc 94 d0 38 20 17 48 e6 a1 d6 19 89 02 00 00 00
+clip_retransmit_seq5         | 35 00 20 00 0a 00 00 00 00 00 00 00 bb db 88 c3 e2 57 f9 9d 9e 97 78 de fe 70 10 78 02 00 00 00 05 00 00 00
+clip_credit_8                | 36 00 1e 00 0b 00 00 00 00 00 00 00 a6 92 04 d2 82 04 e6 ad 2e 72 47 de 48 dd 68 89 02 00 00 00 08 00

@@ -2,15 +2,20 @@
  * Session-layer tests for the shared core (#45): the hello / hello_ack
  * codecs and the device's liveness state.
  *
- * The golden vectors are the gate here too — the hello vectors are the
- * negotiated fields' definition, and the device's answer to hello_mac must
- * be hello_ack_ok byte for byte.
+ * These frames were the golden vectors' business until #109 rewrote
+ * test-vectors/frames.txt for protocol v2 (ADR-0008). dh_session.c still
+ * speaks v1 — #110 and #111 are what move it — so the v1 frames it must
+ * produce are frozen below rather than read from a file that now describes a
+ * different protocol. They are frozen, not copied: nothing new is written
+ * against v1, so the two cannot drift.
+ *
+ * WHEN #110 LANDS: delete the frozen table, point these tests back at
+ * test-vectors/frames.txt, and this comment goes with it.
  *
  * Style follows frame_test.c: an assertion macro, a main, a printed failure
  * line, a non-zero exit — no framework.
  */
 
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -41,57 +46,45 @@ static int failures = 0;
 
 #define MAX_VECTOR_BYTES DH_FRAME_MAX_SIZE
 
-static int hex_nibble(int c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
+/* The v1 frames this layer must still produce, frozen at the commit that
+ * rewrote test-vectors/frames.txt for v2 (#109). See the file header. */
+static const struct {
+    const char *name;
+    const uint8_t bytes[32];
+    size_t len;
+} v1_frames[] = {
+    {"hello_mac",
+     {0x01, 0x00, 0x17, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04, 0xef, 0xbe, 0xad,
+      0xde, 0xef, 0xbe, 0xad, 0xde, 0xef, 0xbe, 0xad, 0xde, 0xef, 0xbe, 0xad, 0xde},
+     27},
+    {"hello_ack_ok", {0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04}, 11},
+    {"hello_ack_auth_failed",
+     {0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00}, 11},
+    {"hello_ack_version_mismatch",
+     {0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00}, 11},
+    {"device_heartbeat", {0x06, 0x00, 0x00, 0x00}, 4},
+    {"session_end_liveness", {0x07, 0x00, 0x01, 0x00, 0x01}, 5},
+    {"session_end_protocol_error", {0x07, 0x00, 0x01, 0x00, 0x02}, 5},
+    {"session_end_unpaired", {0x07, 0x00, 0x01, 0x00, 0x03}, 5},
+};
 
-/* Load one named vector from test-vectors/frames.txt. Returns its length,
- * or 0 when the name is absent — which is itself a failure at every call
- * site, since the vectors define what this layer must produce. */
-static size_t load_vector(const char *path, const char *want, uint8_t *out, size_t cap) {
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    char line[16384];
-    size_t len = 0;
-    while (fgets(line, sizeof line, f)) {
-        char *p = line;
-        while (*p == ' ' || *p == '\t') p++;
-        if (*p == '\0' || *p == '\n' || *p == '#') continue;
-        char *bar = strchr(p, '|');
-        if (!bar) continue;
-        char name[64];
-        size_t name_len = 0;
-        for (char *q = p; q < bar && name_len + 1 < sizeof name; q++)
-            if (!isspace((unsigned char)*q)) name[name_len++] = *q;
-        name[name_len] = '\0';
-        if (strcmp(name, want) != 0) continue;
-
-        int hi = -1;
-        for (char *q = bar + 1; *q; q++) {
-            if (isspace((unsigned char)*q)) continue;
-            int nib = hex_nibble((unsigned char)*q);
-            if (nib < 0) break;
-            if (hi < 0) {
-                hi = nib;
-            } else {
-                if (len >= cap) break;
-                out[len++] = (uint8_t)((hi << 4) | nib);
-                hi = -1;
-            }
-        }
-        break;
+/* One frozen frame by name. Returns its length, or 0 when the name is absent
+ * — which is itself a failure at every call site, since these frames define
+ * what this layer must produce. */
+static size_t load_vector(const char *want, uint8_t *out, size_t cap) {
+    for (size_t i = 0; i < sizeof v1_frames / sizeof v1_frames[0]; i++) {
+        if (strcmp(v1_frames[i].name, want) != 0) continue;
+        if (v1_frames[i].len > cap) return 0;
+        memcpy(out, v1_frames[i].bytes, v1_frames[i].len);
+        return v1_frames[i].len;
     }
-    fclose(f);
-    return len;
+    return 0;
 }
 
 /* Decode a vector's frame and hand back its payload view. */
-static bool vector_payload(const char *path, const char *name, uint8_t *raw, size_t raw_cap,
+static bool vector_payload(const char *name, uint8_t *raw, size_t raw_cap,
                            dh_frame_view *out) {
-    size_t len = load_vector(path, name, raw, raw_cap);
+    size_t len = load_vector(name, raw, raw_cap);
     if (len == 0) return false;
     size_t consumed = 0;
     return dh_frame_decode(raw, len, out, &consumed) == DH_FRAME_OK && consumed == len;
@@ -151,11 +144,11 @@ static bool is_session_end(const uint8_t *buf, size_t len, uint8_t reason) {
            v.hdr.type == DH_MSG_SESSION_END && v.hdr.len == 1 && v.payload[0] == reason;
 }
 
-static void test_hello_codec_matches_vectors(const char *path) {
+static void test_hello_codec_matches_the_frozen_v1_frames(void) {
     uint8_t raw[MAX_VECTOR_BYTES];
     dh_frame_view v;
 
-    CHECK(vector_payload(path, "hello_mac", raw, sizeof raw, &v), "hello_mac", "vector missing");
+    CHECK(vector_payload("hello_mac", raw, sizeof raw, &v), "hello_mac", "vector missing");
     dh_hello h;
     CHECK(dh_hello_decode(v.payload, v.hdr.len, &h), "hello_mac", "decode failed");
     CHECK(h.proto_version == DH_PROTO_VERSION, "hello_mac", "wrong protocol version");
@@ -170,7 +163,7 @@ static void test_hello_codec_matches_vectors(const char *path) {
     size_t enc_len = 0;
     CHECK(dh_hello_encode(&h, enc, sizeof enc, &enc_len) == DH_FRAME_OK, "hello_mac",
           "re-encode failed");
-    size_t raw_len = load_vector(path, "hello_mac", raw, sizeof raw);
+    size_t raw_len = load_vector("hello_mac", raw, sizeof raw);
     CHECK(enc_len == raw_len && memcmp(enc, raw, raw_len) == 0, "hello_mac",
           "re-encode mismatch");
 
@@ -185,7 +178,7 @@ static void test_hello_codec_matches_vectors(const char *path) {
         {"hello_ack_version_mismatch", DH_HELLO_VERSION_INCOMPATIBLE, 0, 0},
     };
     for (size_t i = 0; i < sizeof acks / sizeof acks[0]; i++) {
-        CHECK(vector_payload(path, acks[i].name, raw, sizeof raw, &v), acks[i].name,
+        CHECK(vector_payload(acks[i].name, raw, sizeof raw, &v), acks[i].name,
               "vector missing");
         dh_hello_ack a;
         CHECK(dh_hello_ack_decode(v.payload, v.hdr.len, &a), acks[i].name, "decode failed");
@@ -195,7 +188,7 @@ static void test_hello_codec_matches_vectors(const char *path) {
 
         CHECK(dh_hello_ack_encode(&a, enc, sizeof enc, &enc_len) == DH_FRAME_OK, acks[i].name,
               "re-encode failed");
-        raw_len = load_vector(path, acks[i].name, raw, sizeof raw);
+        raw_len = load_vector(acks[i].name, raw, sizeof raw);
         CHECK(enc_len == raw_len && memcmp(enc, raw, raw_len) == 0, acks[i].name,
               "re-encode mismatch");
     }
@@ -223,13 +216,13 @@ static void test_malformed_payloads_rejected(void) {
 }
 
 /* The device's answer to the golden hello is the golden ack, byte for byte. */
-static void test_device_answers_the_golden_hello(const char *path) {
+static void test_device_answers_the_golden_hello(void) {
     uint8_t hello[MAX_VECTOR_BYTES];
-    const size_t hello_len = load_vector(path, "hello_mac", hello, sizeof hello);
+    const size_t hello_len = load_vector("hello_mac", hello, sizeof hello);
     CHECK(hello_len > 0, "session", "hello_mac vector missing");
 
     uint8_t want[MAX_VECTOR_BYTES];
-    const size_t want_len = load_vector(path, "hello_ack_ok", want, sizeof want);
+    const size_t want_len = load_vector("hello_ack_ok", want, sizeof want);
     CHECK(want_len > 0, "session", "hello_ack_ok vector missing");
 
     dh_session s;
@@ -581,6 +574,62 @@ static void test_any_frame_from_the_helper_is_liveness(void) {
 }
 
 /*
+ * A v2 type this build does not implement is not a sign of life.
+ *
+ * #109 put DH_MSG_LISTENER_ALERT, DH_MSG_PAIR_REFUSED and DH_MSG_HELLO_REFUSED
+ * in the registry, so dh_frame decodes them — and before the guard in
+ * dh_session_on_frame they fell through to the default having already
+ * refreshed the deadline. On macOS the endpoint is shared (#95), so that would
+ * hand anything writing into it a way to hold a live session open with a frame
+ * nothing acts on. The rule above — any frame is liveness — rests on the frame
+ * being one this layer can act on.
+ *
+ * Delete with the v1 guard, in #111.
+ */
+static void test_a_v2_type_this_build_cannot_act_on_is_not_liveness(void) {
+    dh_session s;
+    dh_session_init(&s, DH_BUILD_RELEASE);
+    reset_pairing();
+
+    uint8_t hello[MAX_VECTOR_BYTES];
+    uint8_t reply[MAX_VECTOR_BYTES];
+    uint32_t now = 500000;
+    const size_t len = encode_hello(DH_OS_MAC, DH_PROTO_VERSION, 1, 1024, test_secret,
+                                    sizeof test_secret, hello, sizeof hello);
+    CHECK(feed(&s, hello, len, now, reply, sizeof reply) > 0, "v2 type", "no answer to hello");
+    const uint32_t established = s.last_seen_ms;
+
+    static const uint8_t types[] = {DH_MSG_LISTENER_ALERT, DH_MSG_PAIR_REFUSED,
+                                    DH_MSG_HELLO_REFUSED};
+    for (size_t i = 0; i < sizeof types / sizeof types[0]; i++) {
+        uint8_t frame[DH_FRAME_HEADER_SIZE];
+        size_t frame_len = 0;
+        CHECK(dh_frame_encode(types[i], 0, NULL, 0, frame, sizeof frame, &frame_len) ==
+                  DH_FRAME_OK,
+              "v2 type", "a registered type would not encode");
+
+        now += DH_SESSION_HEARTBEAT_MS;
+        dh_frame_view v;
+        size_t consumed = 0;
+        CHECK(dh_frame_decode(frame, frame_len, &v, &consumed) == DH_FRAME_OK, "v2 type",
+              "a registered type would not decode");
+
+        size_t out_len = 0;
+        CHECK(dh_session_on_frame(&s, &test_pair, &v, now, reply, sizeof reply, &out_len) !=
+                  DH_FRAME_OK,
+              "v2 type", "a type this build cannot act on was accepted");
+        CHECK(out_len == 0, "v2 type", "an unimplemented type drew a reply");
+        CHECK(s.last_seen_ms == established, "v2 type",
+              "an unimplemented type refreshed the liveness deadline");
+    }
+
+    /* And the session it could not refresh still times out on schedule. */
+    CHECK(is_session_end(reply, tick(&s, established + DH_SESSION_ABSENT_MS, reply, sizeof reply),
+                         DH_SESSION_END_LIVENESS_TIMEOUT),
+          "v2 type", "the session was held open after all");
+}
+
+/*
  * An eviction the device knows about is announced rather than left to the
  * helper's timeout. It is an optimisation over that timeout and never a
  * substitute — a device that reboots announces nothing — so the only thing
@@ -625,7 +674,7 @@ static void test_an_eviction_the_device_knows_about_is_announced(void) {
 }
 
 /* The announcement is the wire format's, not this build's idea of it. */
-static void test_session_end_matches_the_vectors(const char *path) {
+static void test_session_end_matches_the_frozen_v1_frames(void) {
     static const struct {
         const char *name;
         uint8_t reason;
@@ -639,7 +688,7 @@ static void test_session_end_matches_the_vectors(const char *path) {
     uint8_t reply[MAX_VECTOR_BYTES];
 
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
-        const size_t want = load_vector(path, cases[i].name, raw, sizeof raw);
+        const size_t want = load_vector(cases[i].name, raw, sizeof raw);
         CHECK(want > 0, cases[i].name, "vector missing");
 
         dh_session s;
@@ -660,7 +709,7 @@ static void test_session_end_matches_the_vectors(const char *path) {
     }
 
     /* The device's own beat, likewise. */
-    const size_t want = load_vector(path, "device_heartbeat", raw, sizeof raw);
+    const size_t want = load_vector("device_heartbeat", raw, sizeof raw);
     CHECK(want > 0, "device_heartbeat", "vector missing");
 
     dh_session s;
@@ -814,12 +863,13 @@ static void test_a_development_build_needs_no_secret(void) {
 }
 
 int main(int argc, char **argv) {
-    const char *path = argc > 1 ? argv[1] : DH_TEST_VECTORS;
+    (void)argc;
+    (void)argv;
     reset_pairing();
 
-    test_hello_codec_matches_vectors(path);
+    test_hello_codec_matches_the_frozen_v1_frames();
     test_malformed_payloads_rejected();
-    test_device_answers_the_golden_hello(path);
+    test_device_answers_the_golden_hello();
     test_negotiation_clamps_to_what_the_device_has();
     test_version_mismatch_is_distinct_and_has_no_session();
     test_a_mismatched_hello_does_not_end_a_live_session();
@@ -829,8 +879,9 @@ int main(int argc, char **argv) {
     test_liveness_survives_the_clock_wrapping();
     test_the_device_beats_only_into_an_idle_direction();
     test_any_frame_from_the_helper_is_liveness();
+    test_a_v2_type_this_build_cannot_act_on_is_not_liveness();
     test_an_eviction_the_device_knows_about_is_announced();
-    test_session_end_matches_the_vectors(path);
+    test_session_end_matches_the_frozen_v1_frames();
     test_other_bands_are_not_this_layers_business();
     test_a_malformed_hello_is_not_a_session();
     test_an_unpaired_helper_is_refused_and_told_which_remedy();

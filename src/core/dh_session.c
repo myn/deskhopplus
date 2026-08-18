@@ -169,6 +169,29 @@ dh_frame_result dh_session_on_frame(dh_session *s, dh_pair *pair, const dh_frame
                                     size_t *out_len) {
     *out_len = 0;
 
+    /*
+     * The v2 session-band types this layer does not implement. #109 added them
+     * to the registry in dh_frame.h — which is where the wire format is
+     * defined, so dh_frame decodes them now — but this file still speaks v1
+     * (#110, #111). Without this they would fall through to the default below
+     * having already refreshed liveness, which would let anything writing into
+     * the shared endpoint hold a session alive with a frame nothing acts on.
+     * That is the opposite of what v2 is for.
+     *
+     * Refused before the liveness note, deliberately: a frame this build
+     * cannot act on is not evidence that the helper is alive.
+     *
+     * Delete this with the rest of v1, in #111.
+     */
+    switch (f->hdr.type) {
+        case DH_MSG_LISTENER_ALERT:
+        case DH_MSG_PAIR_REFUSED:
+        case DH_MSG_HELLO_REFUSED:
+            return DH_FRAME_ERR_UNKNOWN_TYPE;
+        default:
+            break;
+    }
+
     /* Arriving at all is the proof. The frame does not have to be one this
        layer acts on, or even one addressed to it — a helper that is writing
        is a helper that is alive. Bulk never reaches here, so the transport

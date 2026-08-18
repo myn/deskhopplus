@@ -52,10 +52,37 @@ the secret. A session can be gone while the connection and the link are both per
 that gap is the whole reason these are three words and not one.
 _Avoid_: connection, link, pairing (pairing is what authorises a session, not the session itself)
 
+**Registration**:
+The board's record of exactly one helper public key, written during a pairing window and
+cleared by a config wipe. Pairing is the gesture, a session is what the registration lets a
+helper negotiate, and the registration is the durable fact in between — a board can hold one
+while no helper is attached at all.
+_Avoid_: pairing (the gesture), enrolment, trust store
+
+**Correlation value**:
+The fresh random value a helper puts in a hello or a pairing request, which the board echoes in
+its answer. A helper acts only on an answer carrying its own. It is what stops one client's
+refusal being read by another as its own, which is how a listener manufactured the chord trap
+(#108).
+_Avoid_: nonce (a nonce feeds key derivation here and is a different field), token, request id
+
 **Opaque relay**:
 The firmware's role on the channel: it parses frame headers only — never payloads — and forwards
 fragments between the USB and inter-board links. Clipboard format changes never touch firmware.
 _Avoid_: proxy, gateway
+
+**Tag**:
+The 16-byte authenticator on every frame of one hop, with a monotonic counter beside it. It is
+hop-local: a board verifies the tag its helper wrote and writes a fresh one toward the far
+helper. A tag says who wrote this frame **on this hop**, which is the question a shared endpoint
+made unanswerable.
+_Avoid_: signature, MAC, checksum, CRC (the CRC32 is fidelity, not authentication)
+
+**Seal**:
+The encryption of a bulk payload between the two **helpers**, end to end. Neither board holds a
+key that opens it, so the opaque relay becomes a property rather than a discipline. Placement is
+authenticated but never sealed.
+_Avoid_: encryption (unqualified), envelope, wrapping
 
 **Fidelity**:
 The clipboard channel's binding content guarantee: the wire payload is byte-identical end to end

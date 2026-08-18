@@ -69,6 +69,18 @@ jobs:
         cmake --build tests/build
         ctest --test-dir tests/build --output-on-failure
 
+    # The vector file is generated, and nothing else notices if it is not. A
+    # hand-forged tag would otherwise pass the whole pipeline green, which is
+    # the one failure the generator exists to prevent. Same shape as the
+    # config-artifact check below: the script a developer runs is the one that
+    # gates the build.
+    - name: Golden vectors match their generator
+      shell: bash
+      run: |
+        python3 tools/gen-frame-vectors.py --self-test
+        python3 tools/gen-frame-vectors.py > /tmp/frames.txt
+        diff -u test-vectors/frames.txt /tmp/frames.txt
+
     - name: Build firmware
       shell: bash
       run: |

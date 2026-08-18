@@ -20,18 +20,21 @@
 /*
  * The message registry, banded per docs/protocol.md — the single list the
  * enum and the known-type check are both generated from.
- *   session   0x01-0x1F
+ *   session   0x01-0x1F  (0x08-0x0F is the unauthenticated sub-band)
  *   placement 0x20-0x2F
  *   bulk      0x30-0x3F
  */
 #define DH_MSG_TYPE_LIST(X)          \
     X(DH_MSG_HELLO, 0x01)            \
     X(DH_MSG_HELLO_ACK, 0x02)        \
+    X(DH_MSG_LISTENER_ALERT, 0x03)   \
     X(DH_MSG_HEARTBEAT, 0x05)        \
     X(DH_MSG_DEVICE_HEARTBEAT, 0x06) \
     X(DH_MSG_SESSION_END, 0x07)      \
     X(DH_MSG_PAIR_REQUEST, 0x08)     \
-    X(DH_MSG_PAIR_GRANT, 0x09)      \
+    X(DH_MSG_PAIR_GRANT, 0x09)       \
+    X(DH_MSG_PAIR_REFUSED, 0x0A)     \
+    X(DH_MSG_HELLO_REFUSED, 0x0B)    \
     X(DH_MSG_PLACE, 0x20)            \
     X(DH_MSG_POS_QUERY, 0x21)        \
     X(DH_MSG_POS_RESPONSE, 0x22)     \
@@ -41,7 +44,10 @@
     X(DH_MSG_CLIP_DONE, 0x33)        \
     X(DH_MSG_CLIP_CANCEL, 0x34)      \
     X(DH_MSG_CLIP_RETRANSMIT, 0x35)  \
-    X(DH_MSG_CLIP_CREDIT, 0x36)
+    X(DH_MSG_CLIP_CREDIT, 0x36)      \
+    X(DH_MSG_SEAL_OFFER, 0x37)       \
+    X(DH_MSG_SEAL_ACCEPT, 0x38)      \
+    X(DH_MSG_SEAL_STALE, 0x39)
 
 enum dh_msg_type {
 #define DH_MSG_ENUM_ENTRY(name, value) name = value,
@@ -50,6 +56,43 @@ enum dh_msg_type {
 };
 
 #define DH_MSG_BULK_BASE 0x30u
+
+/*
+ * The authentication prefix (ADR-0008, docs/protocol.md v2): a monotonic
+ * counter and a 16-byte tag, sitting between the 4-byte header and the body.
+ * It is inside `len`, so this file's codec is unchanged by it — a frame is
+ * still a header and a payload, and the relay still parses headers only.
+ * Verifying the tag is dh_auth's job (#110), not this codec's.
+ */
+#define DH_FRAME_COUNTER_SIZE 8u
+#define DH_FRAME_TAG_SIZE 16u
+#define DH_FRAME_AUTH_PREFIX_SIZE (DH_FRAME_COUNTER_SIZE + DH_FRAME_TAG_SIZE)
+
+/*
+ * The unauthenticated sub-band, 0x08-0x0F: pairing, and the two refusals a
+ * board sends when it has no key to tag with. Whether a frame carries the
+ * prefix must be decidable from the type byte alone, before any payload is
+ * read — which is why a refused hello is its own type rather than a status
+ * inside DH_MSG_HELLO_ACK.
+ */
+#define DH_MSG_UNAUTH_FIRST 0x08u
+#define DH_MSG_UNAUTH_LAST 0x0Fu
+
+/*
+ * Whether a frame of this type carries the authentication prefix.
+ *
+ * PRECONDITION: type is in the registry. This is a range test and nothing
+ * more, so it answers true for DH_FRAME_PAD, for the gaps in the registry,
+ * and for any byte at all outside 0x08-0x0F — "not a pairing message" is not
+ * "is a message". Every decode path reaches this only after
+ * dh_frame_header_parse has rejected unknown types, and a caller that reaches
+ * it any other way must call dh_msg_type_known first. Folding that check in
+ * here would put a switch on the relay's hot path for a case the decoder has
+ * already excluded.
+ */
+static inline bool dh_msg_is_authenticated(uint8_t type) {
+    return type < DH_MSG_UNAUTH_FIRST || type > DH_MSG_UNAUTH_LAST;
+}
 
 /*
  * Inter-frame padding. The registry starts at 0x01, so 0x00 is not a message

@@ -101,8 +101,30 @@ func testMalformedInputIsRejected() throws {
                 "the reader did not recover after being reset")
 }
 
+/*
+ * The four frames below were golden vectors until #109 rewrote
+ * test-vectors/frames.txt for protocol v2 (ADR-0008). The core's hello codec
+ * still speaks v1 — #110 and #112 are what move it — so the v1 bytes are
+ * frozen here rather than read from a file describing a different protocol.
+ * Frozen, not copied: nothing new is written against v1, so they cannot drift.
+ *
+ * WHEN #110 LANDS: delete these and point the two tests below back at
+ * GoldenVectors.named(...).
+ */
+enum FrozenV1 {
+    static let helloMac: [UInt8] = [
+        0x01, 0x00, 0x17, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,
+        0xEF, 0xBE, 0xAD, 0xDE, 0xEF, 0xBE, 0xAD, 0xDE,
+        0xEF, 0xBE, 0xAD, 0xDE, 0xEF, 0xBE, 0xAD, 0xDE,
+    ]
+    static let helloAckOK: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04]
+    static let helloAckAuthFailed: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+    static let helloAckVersionMismatch: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00]
+}
+
 func testHelloCarriesVersionAndPlatform() throws {
-    let vector = try GoldenVectors.named("hello_mac")
+    let vector = FrozenV1.helloMac
     let (frame, _) = try FrameCodec.decode(vector)
     Check.equal(frame.type, MessageType.hello, "hello_mac is not a hello")
 
@@ -118,14 +140,13 @@ func testHelloCarriesVersionAndPlatform() throws {
 }
 
 func testHelloAckStatusesAreDistinguishable() throws {
-    let cases: [(String, HelloStatus, UInt8, UInt16)] = [
-        ("hello_ack_ok", .ok, 1, 1024),
-        ("hello_ack_auth_failed", .authenticationFailed, 0, 0),
-        ("hello_ack_version_mismatch", .versionIncompatible, 0, 0),
+    let cases: [(String, [UInt8], HelloStatus, UInt8, UInt16)] = [
+        ("hello_ack_ok", FrozenV1.helloAckOK, .ok, 1, 1024),
+        ("hello_ack_auth_failed", FrozenV1.helloAckAuthFailed, .authenticationFailed, 0, 0),
+        ("hello_ack_version_mismatch", FrozenV1.helloAckVersionMismatch, .versionIncompatible, 0, 0),
     ]
 
-    for (name, status, channels, chunk) in cases {
-        let vector = try GoldenVectors.named(name)
+    for (name, vector, status, channels, chunk) in cases {
         let (frame, _) = try FrameCodec.decode(vector)
         let ack = try HelloAck.decode(payload: frame.payload)
 

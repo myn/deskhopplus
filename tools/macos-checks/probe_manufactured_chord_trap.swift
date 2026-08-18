@@ -81,9 +81,16 @@ func encodeHello(token: [UInt8]) -> [UInt8] {
     return [MSG_HELLO, 0x00, UInt8(len & 0xff), UInt8(len >> 8)] + payload
 }
 
-// test-vectors/frames.txt:11 `hello_mac`. If this ever stops matching, the
-// probe is speaking a protocol the device no longer speaks, and a run that
-// found nothing would mean nothing.
+// The v1 `hello_mac` golden vector, frozen here. It left
+// test-vectors/frames.txt when #109 rewrote that file for protocol v2, but the
+// shipped firmware still speaks v1 (#111 is what moves it), so this is still
+// the hello the board on the desk expects. If this ever stops matching what
+// the board speaks, the probe is speaking a protocol the device does not, and
+// a run that found nothing would mean nothing.
+//
+// WHEN #111 LANDS: this probe measures a trap v2 closes — a hello that does
+// not authenticate gets no answer at all. Re-point it at the v2 vectors and it
+// should find nothing, which is then the result worth recording.
 let goldenHelloMac: [UInt8] = [
     0x01, 0x00, 0x17, 0x00,
     0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,
@@ -97,14 +104,14 @@ func hex(_ b: ArraySlice<UInt8>) -> String {
 
 let deadbeef: [UInt8] = Array(repeating: [0xef, 0xbe, 0xad, 0xde], count: 4).flatMap { $0 }
 guard encodeHello(token: deadbeef) == goldenHelloMac else {
-    print("probe: SELF-TEST FAILED — this probe's hello does not match test-vectors/frames.txt:11")
+    print("probe: SELF-TEST FAILED — this probe's hello does not match the frozen v1 hello_mac")
     print("       built:  \(hex(encodeHello(token: deadbeef)[...]))")
     print("       golden: \(hex(goldenHelloMac[...]))")
     print("       Refusing to run: a malformed hello would be refused for the wrong reason,")
     print("       and the result would look like the trap does not exist.")
     exit(3)
 }
-print("probe: self-test ok — hello matches test-vectors/frames.txt:11")
+print("probe: self-test ok — hello matches the frozen v1 hello_mac")
 
 /* A token the device cannot have issued. Well-formed at 16 bytes, so it is
    rejected on the comparison rather than on the length — the path a real

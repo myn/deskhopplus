@@ -21,8 +21,14 @@
  * copies the secret verbatim into the hello payload and dh_pair_authenticate
  * compares those bytes. Nothing is derived, challenged or hashed. That is
  * sound only while the channel is exclusive, which on macOS it is not — see
- * the correction in dh_pair.h and #95. Anything that replaces this scheme
- * changes both encoders, both decoders and test-vectors/frames.txt together.
+ * the correction in dh_pair.h and #95.
+ *
+ * Its replacement is specified: docs/protocol.md v2 (ADR-0008, written by
+ * #109) puts a key pair on each side, an authentication tag on every frame,
+ * and the correlation value that closes #108. This file still speaks v1 —
+ * #110 brings the primitives and #111 the board — so the v1 frames these
+ * codecs must produce are frozen inside tests/session_test.c, because
+ * test-vectors/frames.txt now describes v2.
  *
  * Pure C11, no I/O, no platform dependencies. Wire format: docs/protocol.md;
  * test-vectors/frames.txt is the gate.
@@ -39,6 +45,11 @@
 #include "dh_pair.h"
 #include "dh_xfer.h"
 
+/*
+ * Still 1, deliberately, while docs/protocol.md specifies 2. A board that
+ * announced version 2 while speaking v1 would be worse than one announcing
+ * the version it actually speaks; this moves with the code, in #110 and #111.
+ */
 #define DH_PROTO_VERSION 1u
 
 /*
