@@ -20,7 +20,7 @@ jobs:
         sudo apt-get install -y \
           gcc-arm-none-eabi \
           libnewlib-arm-none-eabi \
-          dosfstools
+          mtools
 
     - name: Checkout
       uses: actions/checkout@v4
@@ -34,6 +34,21 @@ jobs:
       shell: bash
       working-directory: disk
       run: ./create.sh
+
+    # The committed page and image are what a firmware build actually uses, so
+    # they have to be what the sources produce. Both steps above are
+    # reproducible by construction — the render is deterministic and
+    # SOURCE_DATE_EPOCH pins the volume serial and directory timestamp — so any
+    # difference here means someone changed the config UI without rebuilding,
+    # and the firmware would ship the previous page (#16).
+    - name: Committed page and image match their sources
+      shell: bash
+      run: |
+        if ! git diff --exit-code --stat -- webconfig/config.htm disk/disk.img; then
+          echo "::error::webconfig/config.htm or disk/disk.img is stale."
+          echo "Run 'make' in webconfig/ and './create.sh' in disk/, then commit both."
+          exit 1
+        fi
 
     # Before the firmware, so a logic regression fails fast and reads as a
     # logic failure rather than as a build one. Needs no cross-compiler and
