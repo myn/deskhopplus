@@ -36,6 +36,9 @@ def geometry(image):
     with open(image, "rb") as fh:
         boot = fh.read(SECTOR)
 
+    if len(boot) < SECTOR:
+        sys.exit(f"{image}: shorter than one sector, not a disk image")
+
     bytes_per_sector, sectors_per_cluster = struct.unpack("<HB", boot[11:14])
     reserved, num_fats, root_entries = struct.unpack("<HBH", boot[14:19])
     sectors_per_fat = struct.unpack("<H", boot[22:24])[0]
@@ -43,11 +46,28 @@ def geometry(image):
     if bytes_per_sector == 0 or sectors_per_cluster == 0:
         sys.exit(f"{image}: not a FAT boot sector")
 
+    # FAT32 keeps its FAT size at offset 36 and leaves this field zero, and it
+    # has no fixed-size root directory to account for either. Rather than grow
+    # a second layout, refuse it: the volume is FAT12 by construction, and a
+    # geometry change that silently produced FAT32 would make every number
+    # below far too large — reopening the exact truncation this script exists
+    # to catch.
+    if sectors_per_fat == 0 or root_entries == 0:
+        sys.exit(f"{image}: looks like FAT32; this disk is expected to be FAT12")
+
     root_sectors = (root_entries * 32 + bytes_per_sector - 1) // bytes_per_sector
     data_start = reserved + num_fats * sectors_per_fat + root_sectors
 
     override = os.environ.get("DH_SHIPPED_SECTORS")
-    shipped = int(override) if override else os.path.getsize(image) // bytes_per_sector
+    if override:
+        try:
+            shipped = int(override)
+        except ValueError:
+            sys.exit(f"DH_SHIPPED_SECTORS={override!r} is not a number")
+        if shipped <= 0:
+            sys.exit(f"DH_SHIPPED_SECTORS={override!r} must be positive")
+    else:
+        shipped = os.path.getsize(image) // bytes_per_sector
 
     return {
         "bytes_per_sector": bytes_per_sector,

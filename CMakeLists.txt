@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.6)
 ## Version Configuration.
 ## Define e.g. 0.72 as major 0 and minor 72
 set(VERSION_MAJOR 0)
-set(VERSION_MINOR 93)
+set(VERSION_MINOR 94)
 
 ## Release Type Selection
 option(DH_DEBUG "Build a debug version" OFF)
@@ -124,23 +124,29 @@ set(CONFIG_PAGE "${WEB_DIR}/config.htm")
 set_property(SOURCE ${DISK_ASM} APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp")
 
 # Rendering the page needs jinja2 and python 3.10+ (form.py annotates with
-# `int | None`), which the system python has neither of. `make venv` in
-# webconfig/ builds one. Without it the committed page is used as-is and only
-# the image is rebuilt, so building firmware still needs no python toolchain —
-# only changing the config UI does.
-set(WEB_PYTHON "${WEB_DIR}/venv/bin/python3")
-if(EXISTS ${WEB_PYTHON})
-  file(GLOB CONFIG_UI_SOURCES CONFIGURE_DEPENDS
+# `int | None`). webconfig/Makefile owns that decision — it uses a system
+# interpreter that already qualifies and only builds a venv when none does — so
+# ask it rather than second-guessing it here. `can-render` answers without
+# building anything.
+execute_process(
+  COMMAND make -s can-render
+  WORKING_DIRECTORY ${WEB_DIR}
+  RESULT_VARIABLE CAN_RENDER OUTPUT_QUIET ERROR_QUIET)
+
+# CONFIGURE_DEPENDS re-globs at build time on CMake 3.12+; below that it is
+# inert and a *newly added* template needs a re-configure to be noticed.
+if(CAN_RENDER EQUAL 0)
+  file(GLOB_RECURSE CONFIG_UI_SOURCES CONFIGURE_DEPENDS
        ${WEB_DIR}/templates/* ${WEB_DIR}/form.py ${WEB_DIR}/render.py)
   add_custom_command(
     OUTPUT ${CONFIG_PAGE}
-    COMMAND ${WEB_PYTHON} -B render.py
+    COMMAND make -s render
     WORKING_DIRECTORY ${WEB_DIR}
     DEPENDS ${CONFIG_UI_SOURCES}
     COMMENT "Rendering the config page"
     VERBATIM)
 else()
-  message(STATUS "webconfig: no venv — using the committed config page. "
+  message(STATUS "no jinja2 renderer — using the committed config page. "
                  "Run 'make venv' in webconfig/ to render it from templates.")
 endif()
 
@@ -164,22 +170,42 @@ if(MFORMAT_EXECUTABLE)
     VERBATIM)
   add_custom_target(config_disk DEPENDS ${DISK_BIN})
 else()
-  message(STATUS "no mtools — using the committed config disk image. "
-                 "Install mtools to rebuild it when the config page changes.")
-  add_custom_target(config_disk)
+  # Without mtools the image cannot be rebuilt, but the page rule above still
+  # can — and a custom command nothing depends on never runs. Depending on the
+  # page here keeps the render wired, so editing a template is not silently
+  # ignored; the committed image is then simply older than the page it should
+  # contain, which is what the warning is for and what CI catches.
+  message(WARNING "no mtools: the config disk image cannot be rebuilt here. "
+                  "Editing the config UI will re-render the page but NOT the image, "
+                  "so the firmware keeps the committed one. Install mtools to fix this "
+                  "(then delete CMakeCache.txt, which caches the lookup).")
+  add_custom_target(config_disk DEPENDS ${CONFIG_PAGE})
 endif()
 
 # How close the page is to overflowing the shipped 64 kB, reported on every
 # configure rather than only when the image is rebuilt — the headroom is worth
 # seeing before it is gone, not after.
-execute_process(
-  COMMAND python3 ${DISK_DIR}/capacity.py ${DISK_BIN} ${CONFIG_PAGE}
-  OUTPUT_VARIABLE DISK_USAGE ERROR_VARIABLE DISK_USAGE_ERR
-  RESULT_VARIABLE DISK_USAGE_RC OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT DISK_USAGE_RC EQUAL 0)
-  message(FATAL_ERROR "${DISK_USAGE}${DISK_USAGE_ERR}")
+#
+# Skipped rather than fatal when there is no python3: the firmware build needs
+# one anyway for crc32.py, but this should not be the thing that says so, and
+# an execute_process that cannot launch its child leaves both output variables
+# empty — which used to produce message(FATAL_ERROR "") and an aborted
+# configure with nothing to read.
+find_program(PYTHON3_EXECUTABLE python3)
+if(PYTHON3_EXECUTABLE)
+  execute_process(
+    COMMAND ${PYTHON3_EXECUTABLE} ${DISK_DIR}/capacity.py ${DISK_BIN} ${CONFIG_PAGE}
+    OUTPUT_VARIABLE DISK_USAGE ERROR_VARIABLE DISK_USAGE_ERR
+    RESULT_VARIABLE DISK_USAGE_RC OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT DISK_USAGE_RC EQUAL 0)
+    if(DISK_USAGE OR DISK_USAGE_ERR)
+      message(FATAL_ERROR "${DISK_USAGE}${DISK_USAGE_ERR}")
+    else()
+      message(FATAL_ERROR "capacity.py could not run: ${DISK_USAGE_RC}")
+    endif()
+  endif()
+  message(STATUS "${DISK_USAGE}")
 endif()
-message(STATUS "${DISK_USAGE}")
 
 # disk.S pulls the image in with .incbin, which CMake's dependency scanning
 # cannot see through — so a rebuilt config UI left the firmware untouched and

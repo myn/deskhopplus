@@ -163,7 +163,7 @@ docker-compose -f misc/docker.yml run --rm build_container
 ```
 This ensures reproducible builds.
 
-The disk image is rebuilt for you: `cmake --build` regenerates it whenever the config page changes, and fails the build if the page no longer fits. You'll need **mtools** (for mkfs-free image creation) — no mounting and no root, so it works the same on macOS, Linux and CI. To build it by hand, run ```./create.sh``` in the disk/ folder.
+The disk image is rebuilt for you **if mtools is installed**: `cmake --build` then regenerates it whenever the config page changes, and fails the build if the page no longer fits. mtools needs no mounting and no root, so it works the same on macOS, Linux and CI. Without it the committed image is used as-is and CMake says so — which means a config UI change will not reach the firmware, so install mtools before editing the web config (and delete `CMakeCache.txt`, which caches the lookup). To build the image by hand, run ```./create.sh``` in the disk/ folder.
 
 ## Using a pre-built image
 

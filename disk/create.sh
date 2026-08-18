@@ -15,9 +15,11 @@
 # serves zeros past ACTUAL_NUMBER_OF_BLOCKS (128). Keep FULL_SECTORS and
 # SHIPPED_SECTORS below in step with those two.
 #
-# Output is byte-reproducible. SOURCE_DATE_EPOCH pins both the volume serial
-# and the directory entry timestamp, which is what lets CI regenerate the image
-# and compare it against the committed copy.
+# Output is byte-reproducible across machines, which is what lets CI regenerate
+# the image and compare it against the committed copy. Three things have to be
+# pinned for that: `-N 0` fixes the volume serial, SOURCE_DATE_EPOCH fixes the
+# directory entry timestamp, and the OEM field is overwritten below because
+# mformat stamps its own version into it.
 
 set -euo pipefail
 
@@ -57,6 +59,14 @@ FULL_SECTORS=4096       # what the boot sector claims, and ramdisk.c reports
 SHIPPED_SECTORS=128     # what is actually kept, and what ramdisk.c serves
 SECTOR=512
 LABEL=DESKHOP
+HEADS=2
+SECTORS_PER_TRACK=16
+ROOT_SECTORS=32         # mtools -r is in SECTORS, not entries: 32 -> 512 slots,
+                        # which is what mkdosfs's default produced and what the
+                        # image being replaced had. A quarter of the shipped
+                        # disk goes to a directory holding one file; reclaiming
+                        # it would change the geometry, so it is left alone here.
+CYLINDERS=$(( FULL_SECTORS / (HEADS * SECTORS_PER_TRACK) ))
 
 # 2020-01-01T00:00:00Z. Any fixed value works; this one is only memorable.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1577836800}"
@@ -72,7 +82,15 @@ trap 'rm -f "$work"' EXIT
 
 dd if=/dev/zero of="$work" bs="$SECTOR" count="$FULL_SECTORS" status=none
 
-mformat -t 128 -h 2 -s 16 -r 32 -c 4 -m 248 -v "$LABEL" -N 0 -i "$work" ::
+mformat -t "$CYLINDERS" -h "$HEADS" -s "$SECTORS_PER_TRACK" -r "$ROOT_SECTORS" \
+        -c 4 -m 248 -v "$LABEL" -N 0 -i "$work" ::
+
+# mformat stamps its own version into the OEM field — the image built here read
+# "MTOO4049" for mtools 4.0.49. That makes the bytes a property of whichever
+# mtools built them, so CI (a different version) would regenerate a different
+# image and report the committed one stale on every run. Overwrite it with a
+# fixed string; nothing reads this field, it is informational.
+printf 'DESKHOP ' | dd of="$work" bs=1 seek=3 count=8 conv=notrunc status=none
 
 # Before the copy, not after. The overflowing clusters would land past the
 # shipped end, where the firmware answers with zeros — so writing first and

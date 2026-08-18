@@ -28,8 +28,12 @@ def write_file(payload, filename=OUTPUT_FILENAME):
 
 
 def encode_file(payload):
-    # Compress using raw DEFLATE
-    compressed_data = zlib.compress(payload.encode('utf-8'))[2:-4]
+    # Compress using raw DEFLATE. The level is pinned rather than left to
+    # Z_DEFAULT_COMPRESSION so the output does not move if that default ever
+    # changes: CI compares the rendered page against the committed one, and a
+    # shift here would read as a stale page nobody touched. 6 is the current
+    # default, so pinning it changes no bytes today.
+    compressed_data = zlib.compress(payload.encode('utf-8'), 6)[2:-4]
 
     # Encode to base64
     base64_compressed_data = base64.b64encode(compressed_data).decode('utf-8')
