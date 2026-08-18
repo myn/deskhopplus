@@ -162,13 +162,19 @@ Since [#89](https://github.com/myn/deskhopplus/issues/89) that page reports **bo
 board FW version* and *Other board FW version*, the latter reading `not detected` when no heartbeat
 has arrived. That is how propagation was confirmed rather than inferred.
 
-**Regenerating the page** needs `/usr/local/bin/python3.13` and a jinja2 venv — the system python is
-3.9 and fails on `int | None`. On macOS the image is patched with mtools rather than
-`disk/create.sh`, which wants Linux mount and sudo:
+**Regenerating the page** needs jinja2 and python 3.10+ — the system python is 3.9 and fails on
+`int | None`. `make venv` in `webconfig/` builds a suitable one, and from #16 the build drives the
+whole chain itself:
 
 ```sh
-cd disk && mcopy -o -i disk.img ../webconfig/config.htm ::/config.htm
+cd webconfig && make venv    # once, if you are changing the config UI
+cmake --build build          # renders the page, rebuilds the image, rebuilds the firmware
 ```
+
+Both `webconfig/config.htm` and `disk/disk.img` stay committed, so building firmware needs no python
+at all — only changing the UI does. `disk/create.sh` builds the image by hand and is mtools-only
+now, with no mount and no sudo; the hand-patch this sheet used to recommend
+(`mcopy -o -i disk.img ...`) is no longer needed and will now be caught by CI as a stale image.
 
 ### Which flashes reset the configuration, and which do not
 

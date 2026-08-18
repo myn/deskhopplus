@@ -163,7 +163,7 @@ docker-compose -f misc/docker.yml run --rm build_container
 ```
 This ensures reproducible builds.
 
-To rebuild the disk, check disk/ folder and run ```./create.sh```, tweak to your system if needed. You'll need **dosfstools** (to provide mkdosfs),
+The disk image is rebuilt for you: `cmake --build` regenerates it whenever the config page changes, and fails the build if the page no longer fits. You'll need **mtools** (for mkfs-free image creation) — no mounting and no root, so it works the same on macOS, Linux and CI. To build it by hand, run ```./create.sh``` in the disk/ folder.
 
 ## Using a pre-built image
 
