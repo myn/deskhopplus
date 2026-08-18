@@ -116,7 +116,20 @@ understands either arrangement — but then anything that clears `.build/` (`./t
 holding a deleted file. `./tools/build.sh clean` warns when your plist points there; the others do
 not, and the next build reports it either way.
 
-Log output goes to `/tmp/deskhop-helper.log`. To stop it:
+Log output goes to `/tmp/deskhop-helper.log`, one line per event, prefixed with the wall clock and
+the time since the helper started (#103):
+
+```
+2026-08-18 13:59:31.525  +0.0s         deskhop-helper: deskhop helper started; waiting for the channel
+2026-08-18 13:59:32.531  +1.0s         deskhop-helper: device heartbeat: first beat of the session
+```
+
+Both, because neither is enough alone: the wall clock is what you cross-reference against anything
+outside the process, and the `+` column is awake time, which no clock correction can move. They
+diverge across a sleep, and that divergence is how you spot one. The format is pinned by
+`LogStampTests.swift`.
+
+To stop it:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.deskhopplus.helper

@@ -10,7 +10,15 @@ final class HelperRuntime {
     private let secrets = SecretStore()
     private lazy var engine = SessionEngine(secret: secrets.load())
     private let transport = ChannelTransport()
-    private let started = ProcessInfo.processInfo.systemUptime
+
+    /*
+     * Process-wide rather than per-instance, so the engine's clock and the
+     * log's elapsed column are the same number: a duration read off the log is
+     * the duration the engine saw, with no correspondence to establish. Set on
+     * first use, which is inside `run()` and microseconds into the process.
+     */
+    private static let started = ProcessInfo.processInfo.systemUptime
+    private static let stamp = LogStamp()
 
     /// The engine's tick — fine enough that a heartbeat is never late by much.
     private static let tickInterval: TimeInterval = 0.25
@@ -19,9 +27,21 @@ final class HelperRuntime {
      * Monotonic, deliberately. `Date()` is not: a backwards clock correction
      * of more than a couple of seconds — routine on a laptop coming out of
      * sleep — would stall the heartbeat past the device's three-second
-     * timeout and kill a healthy session.
+     * timeout and kill a healthy session. The log prints this beside the wall
+     * clock rather than instead of it (#103); LogStamp says why both.
      */
-    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime - started }
+    private static var elapsed: TimeInterval {
+        /* The origin is read *first*, deliberately. `started` is a lazy static,
+           so the very first reading initialises it — and had this been written
+           as one subtraction, Swift would evaluate the left operand before
+           triggering that initialisation, making the first log line of every
+           run a negative elapsed. It did, and the first real run showed it. */
+        let origin = started
+        return ProcessInfo.processInfo.systemUptime - origin
+    }
+
+    /// The engine's clock, and the same origin the log's elapsed column counts from.
+    private var now: TimeInterval { Self.elapsed }
 
     func run() {
         transport.log = { message in Self.note(message) }
@@ -79,7 +99,10 @@ final class HelperRuntime {
         }
     }
 
+    /* Stamped with both clocks — see LogStamp for why a log with neither cost
+       two sittings a duration each (#103). */
     private static func note(_ message: String) {
-        FileHandle.standardError.write(Data("deskhop-helper: \(message)\n".utf8))
+        let line = stamp.line(message, wall: Date(), elapsed: elapsed)
+        FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 }

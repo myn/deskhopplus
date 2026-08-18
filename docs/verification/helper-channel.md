@@ -385,6 +385,32 @@ The helper's log is the surface until the menu-bar item exists (#54): `/tmp/desk
 under launchd, or stderr when run in the foreground. Every state change prints as
 `deskhop-helper: state: <message>` — the same sentence the menu bar will carry.
 
+**Every line carries two clocks** since #103, so a duration in an acceptance criterion is now
+answerable from the log after the sitting instead of only at the desk:
+
+```
+2026-08-18 13:59:31.525  +0.0s         deskhop-helper: deskhop helper started; waiting for the channel
+2026-08-18 13:59:32.531  +1.0s         deskhop-helper: device heartbeat: first beat of the session
+```
+
+The wall clock is what cross-references against `system_profiler`, a USB identity flip, or a time
+written in a ticket. The `+` column counts **awake time since the helper started** — no clock
+correction can move it, which is why the helper has never timed a session off the wall clock.
+
+Read a duration off the `+` column, not by subtracting wall clocks. The two answer different
+questions, and the difference is the whole point:
+
+**When the two disagree across a pair of lines, the Mac slept.** That is worth knowing rather than
+inferring: a quiet stretch in the log is a sleeping machine or a device that went silent, and those
+are opposite conclusions. Before #103 the log could not tell them apart, and reading its file mtime
+against a later baseline once manufactured a 2.5-minute config-mode reading that contradicted a
+300 s timeout which was in fact working.
+
+One consequence worth holding onto: a device-side timeout measured across a sleep will look **early**
+on the `+` column, because the board kept counting and the column did not. That is not a defect in
+the board. Take the wall clock for anything the device timed, and the `+` column for anything the
+helper timed.
+
 ---
 
 ## 1. The session (#45)

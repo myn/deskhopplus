@@ -59,7 +59,7 @@ enum Check {
     }
 }
 
-let suites: [(String, () throws -> Void)] = bindingTests + sessionEngineTests
+let suites: [(String, () throws -> Void)] = bindingTests + sessionEngineTests + logStampTests
 
 for (name, body) in suites {
     do {
