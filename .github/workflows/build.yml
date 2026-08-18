@@ -58,24 +58,41 @@ jobs:
     # check bytes the build then overwrites, and whatever the firmware actually
     # embedded would go unchecked.
     #
-    # Everything upstream is reproducible by construction: `-N 0` pins the
-    # volume serial, SOURCE_DATE_EPOCH the directory timestamp, create.sh
-    # overwrites the OEM field mformat stamps its own version into, and
-    # render.py pins the deflate level. So a difference here means someone
-    # changed the config UI without rebuilding, and the firmware would ship the
-    # previous page (#16).
-    #
-    # If this ever fails on a commit that plainly did not touch the config UI,
-    # suspect the one input still not pinned: zlib itself. A runner linking a
-    # different zlib (or zlib-ng) can deflate the same HTML to different bytes.
+    # What is checked is the *page*, and that the committed image contains it —
+    # not that the image is byte-identical. Raw bytes were tried and cannot
+    # work: mformat writes version-dependent content into the boot sector, and
+    # this runner (4.0.43) is not the version a developer has. Overwriting the
+    # OEM field was not enough on its own, so rather than chase fields, the gate
+    # asks the question that actually matters — does the shipped image carry the
+    # current page? — which no mtools version can answer differently.
     - name: Committed page and image match their sources
       shell: bash
       run: |
-        if ! git diff --exit-code --stat -- webconfig/config.htm disk/disk.img; then
-          echo "::error::webconfig/config.htm or disk/disk.img is stale."
-          echo "Run 'make' in webconfig/ and './create.sh' in disk/, then commit both."
+        if ! git diff --exit-code --stat -- webconfig/config.htm webconfig/config-unpacked.htm; then
+          echo "::error::The committed config page is not what the templates render."
+          echo "Run 'make' in webconfig/ and commit the result."
           exit 1
         fi
+
+        git show HEAD:disk/disk.img > /tmp/committed.img
+        mcopy -n -i /tmp/committed.img ::/config.htm /tmp/in-image.htm
+        if ! cmp -s /tmp/in-image.htm webconfig/config.htm; then
+          echo "::error::disk/disk.img does not contain the committed config page."
+          echo "Run './create.sh' in disk/ and commit the image."
+          exit 1
+        fi
+        echo "committed image carries the current page ($(wc -c < /tmp/in-image.htm) bytes)"
+
+    # Not a failure — the image legitimately differs byte-for-byte between
+    # mtools versions. Recorded so that if we ever want reproducible bytes
+    # again, the fields to normalise are named rather than guessed at.
+    - name: Note where this runner's image differs
+      if: always()
+      shell: bash
+      run: |
+        mformat --version | head -1
+        git show HEAD:disk/disk.img > /tmp/committed.img
+        python3 disk/imgdiff.py /tmp/committed.img disk/disk.img
 
     - name: Publish artifacts
       uses: actions/upload-artifact@v4
