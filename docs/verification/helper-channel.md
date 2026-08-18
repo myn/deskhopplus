@@ -49,9 +49,14 @@ Note that a version bump alone does not change the checksum: the version lives i
 code at different numbers share a checksum, and that is correct — see the ROM-recovery section
 below, where 0.90 and 0.92 do exactly this.
 
-**Both boards ran 0.92 as of 2026-08-17 evening** — board A by `picotool`, board B by peer
-propagation over the inter-board link, read back in the config UI rather than assumed. That is
-the third time propagation has been observed working end to end.
+**Both boards ran 0.94 as of 2026-08-18** — board A by `picotool` at 13:04, board B by peer
+propagation over the inter-board link, both read back in the config UI rather than assumed. That
+is the fourth time propagation has been observed working end to end, and the first where the
+*checksum* was read back as well as the version: `0xc26fdcc0` on the page, the same number
+`./tools/build.sh` printed for the image that was flashed.
+
+The pull took **under twelve minutes** wall clock, measured as flash-to-readable rather than to
+completion — the read is what bounds it, so the transfer itself finished somewhere inside that.
 
 `26f4c25` is what this section used to exist for: it fixed #104 and left `VERSION_MINOR` at 91,
 the number both boards already ran, so the fix could not have reached hardware at all. `b6c589c`
@@ -194,6 +199,10 @@ later, the checksum the page shows should equal the `crc` that `./tools/build.sh
 image the board is running, and comparing them is now a stronger propagation check than the
 version, because it distinguishes builds the version cannot. **Ignore the field on 0.92 and
 earlier** — including a reading taken from board B before it has pulled.
+
+**Confirmed on hardware 2026-08-18.** Board A on 0.94 read `Running FW checksum: c26fdcc0`,
+matching the build exactly. That is the first reading of this field that has ever meant anything,
+and it is what makes the checksum usable as the propagation check described above.
 
 **Regenerating the page** needs jinja2 and python 3.10+ — the system python is 3.9 and fails on
 `int | None`. `make venv` in `webconfig/` builds a suitable one, and from #16 the build drives the
