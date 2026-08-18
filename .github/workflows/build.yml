@@ -12,17 +12,28 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # This job runs in about two minutes. The cap is here because installing the
+    # ARM toolchain is the one step that has hung outright (run #30, 14 minutes
+    # and still going), and an unbounded hang costs far more than a fast failure.
+    timeout-minutes: 15
     steps:
 
+    # No apt-get update. The runner's package lists already resolve everything
+    # here, and refreshing them re-fetches a dozen third-party indexes — azure-cli,
+    # microsoft prod, google chrome — that this build has no use for. Adding it
+    # was pure cost.
+    #
+    # No python3-venv either: webconfig/Makefile prefers a system interpreter that
+    # already has jinja2, and this runner has one, so the render takes 0s and
+    # never builds a venv. If a future runner does need one, the render step says
+    # so plainly rather than failing obscurely.
     - name: Install build deps
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
+        sudo apt-get install -y --no-install-recommends \
           gcc-arm-none-eabi \
           libnewlib-arm-none-eabi \
-          mtools \
-          python3-venv
+          mtools
 
     - name: Checkout
       uses: actions/checkout@v4
