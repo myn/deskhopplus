@@ -18,20 +18,44 @@ its control, believed for a day, and then retracted.
 
 ## Before you touch a board
 
-### The version must move, or only one board changes
+### The version no longer has to move — except in three cases
 
-`handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
-newer** version, so flashing a build carrying the version already running leaves the second
-board on the old firmware, silently. Confirm the number `./tools/build.sh` prints is ahead of
-what the boards are running before flashing. **Both boards ran 0.92 as of 2026-08-17 evening** —
-board A by `picotool`, board B by peer propagation over the inter-board link, read back in the
-config UI rather than assumed. That is the third time propagation has been observed working end to
-end.
+Since [#91](https://github.com/myn/deskhopplus/issues/91) the heartbeat carries the running
+image's **checksum** as well as its version, and board B pulls when the version is newer *or*
+when the version is equal and the checksums differ. So an ordinary rebuild propagates on its
+own: flash board A, board B follows, no `VERSION_MINOR` bump.
 
-`26f4c25` is the example of what this section is for: it fixed #104 and left `VERSION_MINOR` at 91,
+The warning this section replaces still applies in three cases, and they are the ones to check
+before flashing:
+
+1. **Putting an older image on the pair.** A lower version is never pulled, whatever its
+   checksum, so a deliberate downgrade still needs the number moved above what is running.
+2. **Moving board A.** The tiebreaker is one-directional — `board_role == OUTPUT_B`, so A leads
+   and B follows. Nothing propagates *to* A at equal version. A is flashed directly anyway, so
+   this costs nothing in the normal loop.
+3. **Rescuing board B — flash board A instead.** At equal version B's own image is no longer
+   safe from A: flash B by hand and it pulls A's image back over the top on the next heartbeat,
+   silently. So when B is wrong, **the fix is to flash A and let B follow** — which costs no
+   cable trip at all, where flashing B costs one and then undoes itself. This inverts the old
+   instinct and is the one behaviour change here that can waste a sitting.
+
+A peer board on firmware **older than 0.94** sends no checksum at all — bytes 4-7 of its
+heartbeat still carry `active_output`, so it reads as 0 or 1 and looks like a mismatch. Nothing
+guards that, deliberately: board B converges on board A's image, which is what the feature does.
+It is reachable by bisecting — flashing a pre-#91 build to A without moving the version.
+
+Note that a version bump alone does not change the checksum: the version lives in
+`.section_metadata`, which `misc/crc32.py` excludes from what it sums. Two builds of identical
+code at different numbers share a checksum, and that is correct — see the ROM-recovery section
+below, where 0.90 and 0.92 do exactly this.
+
+**Both boards ran 0.92 as of 2026-08-17 evening** — board A by `picotool`, board B by peer
+propagation over the inter-board link, read back in the config UI rather than assumed. That is
+the third time propagation has been observed working end to end.
+
+`26f4c25` is what this section used to exist for: it fixed #104 and left `VERSION_MINOR` at 91,
 the number both boards already ran, so the fix could not have reached hardware at all. `b6c589c`
-bumped it. Nothing warns you — [#91](https://github.com/myn/deskhopplus/issues/91) is the proposal
-to make an equal-version CRC mismatch propagate anyway.
+bumped it by hand. Under #91 it would have propagated as it was.
 
 **Peer propagation works — measured 2026-08-12.** It had never been observed until then, for the
 mundane reason that the version had never moved between flashes. Flash board A by chord and
@@ -161,6 +185,15 @@ static and needs no re-serving.
 Since [#89](https://github.com/myn/deskhopplus/issues/89) that page reports **both** versions: *This
 board FW version* and *Other board FW version*, the latter reading `not detected` when no heartbeat
 has arrived. That is how propagation was confirmed rather than inferred.
+
+**The firmware checksum on that page is only trustworthy from 0.94 on.** `firmware_metadata_t` was
+laid out by the compiler with two bytes of padding after `version`, while `misc/crc32.py` writes
+the section with none — so the field read four bytes from the wrong offset and reported a number
+that was never the firmware CRC. Fixed with #91, which needed the field to be right. On 0.94 and
+later, the checksum the page shows should equal the `crc` that `./tools/build.sh` prints for the
+image the board is running, and comparing them is now a stronger propagation check than the
+version, because it distinguishes builds the version cannot. **Ignore the field on 0.92 and
+earlier** — including a reading taken from board B before it has pulled.
 
 **Regenerating the page** needs jinja2 and python 3.10+ — the system python is 3.9 and fails on
 `int | None`. `make venv` in `webconfig/` builds a suitable one, and from #16 the build drives the
@@ -864,6 +897,12 @@ write was shown to have *half* landed — 21 UF2 blocks reached flash before `EN
 board mid-transfer with `image_dirty` set and the host believing the write had failed outright.
 **Writing raw to `/dev/rdiskN` is not a code path any real host takes** and should not be used to
 induce this again.
+
+**Recovering board B: flash board A.** Since #91 a hand flash of B does not stick while A is
+running a different image at the same version — B pulls A's back over it on the next heartbeat,
+silently. Flashing A instead fixes both, costs no cable trip, and is now the shorter road even
+when it is B that is broken. Flash B directly only to break the pair apart deliberately, and
+expect to flash A straight after.
 
 ### A partial UF2 drop must be a multiple of 16 blocks
 

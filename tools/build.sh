@@ -13,9 +13,10 @@
 # actually deployed, because both artifacts have a way of appearing to build
 # fine while changing nothing:
 #
-#   Firmware -- a peer board pulls only from a *strictly newer* version, so a
-#   build carrying the version already running leaves the second board on the
-#   old firmware, silently and with no error anywhere. See
+#   Firmware -- board B pulls from board A on a strictly newer version, or on
+#   an equal version carrying a different image (#91). So a rebuild reaches
+#   both boards without a version bump, but a *downgrade* still needs the
+#   number to move, and board A never follows B at all. See
 #   docs/verification/vendor-hid-interface.md.
 #
 #   Helper -- launchd holds the binary it started with, so a rebuild is not a
@@ -167,9 +168,10 @@ print(f"{version}  (v{version // 1000}.{version % 1000 - 100}, crc {crc:#010x})"
 PY
 )"
         printf '  version   %s\n' "$v"
-        printf '\n  A board upgrades its peer only from a %sstrictly newer%s version.\n' "$bold" "$off"
-        printf '  If this number is not above what the boards run, bump VERSION_MINOR\n'
-        printf '  in CMakeLists.txt — otherwise only the board you flash changes.\n'
+        printf '\n  Board B follows board A on a newer version, or on the %ssame%s version\n' "$bold" "$off"
+        printf '  carrying a different image (#91) — so a rebuild propagates as it is.\n'
+        printf '  Bump VERSION_MINOR in CMakeLists.txt to flash something %solder%s onto\n' "$bold" "$off"
+        printf '  the pair, and to move board A, which never follows B.\n'
     fi
 }
 

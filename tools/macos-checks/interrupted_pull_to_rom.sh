@@ -121,9 +121,10 @@ preflight() {
         fi
     done
 
-    # A board pulls only from a strictly newer peer, so an OLD that is not
-    # actually older leaves board A sitting there and the criterion untested —
-    # the same silent nothing that #91 is about.
+    # Board A is the one pulling here, and A never follows its peer at equal
+    # version — the #91 tiebreaker is one-directional, B follows A. So this
+    # check still needs OLD to be genuinely older than NEW: an OLD that is not
+    # leaves board A sitting there and the criterion untested.
     if [ -n "$ov" ] && [ -n "$nv" ] && [ "$ov" -ge "$nv" ]; then
         printf '%s\n' "${red}$(basename "$OLD") is not older than $(basename "$NEW") — A would never pull${off}"; ok=1
     fi

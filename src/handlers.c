@@ -388,18 +388,29 @@ void handle_response_byte_msg(uart_packet_t *packet, device_t *state) {
 
 /* Process a request to read a firmware package from flash */
 void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
-    uint16_t other_running_version = packet->data16[0];
+    /* The slots are named and asserted in packet.h, shared with
+       heartbeat_output_task, which is what writes them. */
+    fw_image_id_t peers = {
+        .version  = packet->data16[HEARTBEAT_VERSION_SLOT16],
+        .checksum = packet->data32[HEARTBEAT_CHECKSUM_SLOT32],
+    };
+    fw_image_id_t ours = {
+        .version  = state->_running_fw.version,
+        .checksum = state->_running_fw.checksum,
+    };
 
     /* Remember it, so this board can be asked what its peer is running (#89).
        Recorded before the upgrade check below returns, since a heartbeat that
        arrives mid-upgrade is still proof the peer is there. */
-    peer_fw_record(&state->peer_fw, other_running_version, time_us_64());
+    peer_fw_record(&state->peer_fw, peers.version, time_us_64());
 
-    if (state->fw.upgrade_in_progress)
-        return;
-
-    /* If the other board isn't running a newer version, we are done */
-    if (other_running_version <= state->_running_fw.version)
+    /* Newer peer board, or the same version carrying a different image — the
+       second being what kills the version tax on the dev loop (#91). Board B
+       follows board A and never the other way round, so two boards that
+       disagree at one version cannot both start pulling; fw_upgrade.h has the
+       whole rule. Asking unconditionally is safe: a transfer already running
+       answers no. */
+    if (!fw_upgrade_should_pull(&state->fw, ours, peers, state->board_role == OUTPUT_B))
         return;
 
     /* It is? Ok, kick off the firmware upgrade.

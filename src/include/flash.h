@@ -10,6 +10,7 @@
  */
 
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <hardware/flash.h>
 
@@ -17,11 +18,33 @@
  *  Firmware Metadata
  *==============================================================================*/
 
+/*
+ * Packed, because this struct is not what the compiler lays out — it is what
+ * `misc/crc32.py` writes into `.section_metadata` post-build, and that is ten
+ * bytes with no padding: magic, version, checksum, `struct.pack('<IHI', ...)`.
+ *
+ * Unpacked, the compiler puts two bytes of padding after `version` and reads
+ * `checksum` from offset 8, where the file has only the top half of it and
+ * then whatever follows the section. `_running_fw.checksum` was therefore
+ * never the firmware CRC, and config field 79 reported that. Nothing caught
+ * it because `magic` and `version` sit at the same offset either way, and
+ * they are what everything else reads.
+ *
+ * Found while putting the checksum on the heartbeat (#91), where a field that
+ * is quietly wrong stops board B ever pulling correctly.
+ */
 typedef struct {
     uint32_t magic;
     uint16_t version;
     uint32_t checksum;
-} firmware_metadata_t;
+} __attribute__((packed)) firmware_metadata_t;
+
+/* The layout is a wire format shared with misc/crc32.py and read back by
+   tools/build.sh. Neither can see this header, so assert what they assume. */
+_Static_assert(sizeof(firmware_metadata_t) == 10,
+               "firmware_metadata_t must match misc/crc32.py's <IHI: 10 bytes, no padding");
+_Static_assert(offsetof(firmware_metadata_t, checksum) == 6,
+               "firmware_metadata_t: checksum follows version immediately (see misc/crc32.py)");
 
 extern firmware_metadata_t _firmware_metadata;
 #define FIRMWARE_METADATA_MAGIC   0xf00d

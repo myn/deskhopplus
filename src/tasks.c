@@ -198,13 +198,28 @@ void heartbeat_output_task(device_t *state) {
         reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
 #endif
 
+    /* The running image's identity, version *and* checksum, so the peer board
+       can tell a rebuild apart from a rebuild at a new number (#91).
+       handle_heartbeat_msg is the only reader; the two must be read together.
+
+       The checksum takes bytes 4-7, where `active_output` used to sit, and
+       `active_output` moves down a slot. That repack costs nothing here:
+       nothing has ever read `active_output` off a heartbeat — OUTPUT_SELECT_MSG
+       is what keeps the boards in sync — and this is the only handler the
+       message has. It is sent all the same, because a field that has always
+       been on the wire is not worth removing to save two bytes of a packet
+       that is going out anyway.
+
+       The slots are named in packet.h, and asserted there, so this and
+       handle_heartbeat_msg cannot drift apart. */
     uart_packet_t packet = {
         .type = HEARTBEAT_MSG,
         .data16 = {
-            [0] = state->_running_fw.version,
-            [2] = state->active_output,
+            [HEARTBEAT_VERSION_SLOT16] = state->_running_fw.version,
+            [HEARTBEAT_OUTPUT_SLOT16]  = state->active_output,
         },
     };
+    packet.data32[HEARTBEAT_CHECKSUM_SLOT32] = state->_running_fw.checksum;
 
     (void)queue_uart_packet(&packet, state);
 }

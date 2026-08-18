@@ -58,3 +58,29 @@
     };
     uint8_t checksum; // Checksum, a simple XOR-based one
 } __attribute__((packed)) uart_packet_t;
+
+/*==============================================================================
+ *  Heartbeat Payload Layout
+ *==============================================================================*/
+
+/*
+ * Where the heartbeat's three fields sit in the payload, named once because
+ * they are written in tasks.c and read in handlers.c (#91).
+ *
+ * Prose held these two in agreement for one commit and that is one too many:
+ * a writer and a reader that disagree here do not produce a wrong number on a
+ * config page, they produce a checksum mismatch that was never real, and a
+ * board reflashes its peer over it. The checksum moved into bytes 4-7 where
+ * `active_output` used to sit, so the drift this guards against has already
+ * happened once.
+ */
+#define HEARTBEAT_VERSION_SLOT16  0 /* data16[0] — the sender's firmware version  */
+#define HEARTBEAT_OUTPUT_SLOT16   1 /* data16[1] — the sender's active output     */
+#define HEARTBEAT_CHECKSUM_SLOT32 1 /* data32[1] — the sender's firmware CRC32    */
+
+_Static_assert(HEARTBEAT_CHECKSUM_SLOT32 * sizeof(uint32_t)
+                   >= (HEARTBEAT_OUTPUT_SLOT16 + 1) * sizeof(uint16_t),
+               "heartbeat: the checksum must not overlap the version or active output");
+
+_Static_assert((HEARTBEAT_CHECKSUM_SLOT32 + 1) * sizeof(uint32_t) <= PACKET_DATA_LENGTH,
+               "heartbeat: the checksum must fit inside the payload");

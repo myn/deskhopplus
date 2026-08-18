@@ -110,25 +110,23 @@ before anything else is built on the channel.
 - [ ] The web config page loads and reads values
 - [ ] Firmware upgrade through config mode still works
 
-## Bump the version, or only one board changes
+## Confirm both boards moved, whether or not the version did
 
-`handle_heartbeat_msg` pulls firmware from the peer only when the peer reports a **strictly
-newer** version:
+Since [#91](https://github.com/myn/deskhopplus/issues/91) the heartbeat carries the running
+image's checksum beside its version, and `handle_heartbeat_msg` asks
+`fw_upgrade_should_pull`: board B pulls from a **newer** peer board, or from one at the
+**same version with a different image**. A descriptor change therefore propagates without a
+`VERSION_MINOR` bump, because changed code means a changed checksum.
 
-```c
-if (other_running_version <= state->_running_fw.version)
-    return;
-```
+That removes the failure this section was written for, but not the check. Measured on
+2026-08-10, before the change: the macOS side had the channel interface and the Windows side
+did not, purely because the version had not moved. A split pair presents different USB
+descriptors to the two computers and is the thing to rule out.
 
-So flashing a build that carries the same version as the board already running leaves the
-second board on the old firmware, silently and with no error anywhere — the pair ends up
-split, presenting different USB descriptors to the two computers. Measured on 2026-08-10: the
-macOS side had the channel interface and the Windows side did not, purely because the version
-had not moved.
-
-**Any descriptor or protocol change must bump `VERSION_MINOR` in `CMakeLists.txt` before
-flashing.** Verify propagation by confirming both computers see the new interface, not just
-the one whose board was flashed directly.
+**Still verify propagation by confirming both computers see the new interface**, not just the
+one whose board was flashed directly. Two cases still need the number moved: putting an
+*older* image on the pair, and moving board **A**, which never follows B — see
+`docs/verification/helper-channel.md`.
 
 ## Do not flash from macOS if it can be avoided
 

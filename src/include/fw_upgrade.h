@@ -165,3 +165,89 @@ bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us);
  * `peer_present` is peer_fw.h's question: a heartbeat inside PEER_FW_STALE_US.
  */
 bool fw_upgrade_must_recover(const fw_upgrade_state_t *fw, bool peer_present);
+
+/*
+ * The identity of a running image, as a heartbeat carries it (#91).
+ *
+ * Two fields because neither alone answers "is the peer board running
+ * something other than what I am running". The version alone cannot tell two
+ * builds apart that were flashed at the same number, which is every build in
+ * a dev loop. The checksum alone cannot order them, and ordering is what the
+ * upgrade path is for.
+ *
+ * The checksum is `_firmware_metadata.checksum`, stamped post-build by
+ * `misc/crc32.py` over the image *minus its last sector* — so the metadata
+ * page holding the version is outside what is summed. Two builds of identical
+ * code at different version numbers therefore share a checksum, and that is
+ * correct: the version tells those apart.
+ */
+typedef struct {
+    uint16_t version;
+    uint32_t checksum;
+} fw_image_id_t;
+
+/*
+ * Should this board pull the peer board's image?
+ *
+ * Two ways to answer yes, and they exist for different reasons.
+ *
+ * The *newer* peer board is the upgrade path: propagating a release from the
+ * one board a host can flash to the one it cannot. Unchanged here.
+ *
+ * The *equal version, different image* case is the dev loop (#91). Before
+ * this, a pull started only on a strictly newer version, so testing anything
+ * that touched propagation cost a `VERSION_MINOR` bump per iteration — and
+ * forgetting one produced a silent no-op that looked exactly like a broken
+ * link. One evening of #90's hardware testing burned seven version numbers,
+ * two of them purely to tell apart builds flashed at the same number.
+ *
+ * `follows_at_equal_version` is the caller's board role, and it is what keeps
+ * that second case one-directional. Without it two boards at one version with
+ * different images would each start pulling the other, and each would end up
+ * writing the image the other was about to abandon. The firmware picks
+ * `BOARD_ROLE == OUTPUT_B`, so board A leads and board B follows, matching
+ * the workflow where A is the board a host can flash directly.
+ *
+ * **What this costs, stated plainly: at equal version the following board's
+ * own image is not safe from its peer.** Two cases reach that, and neither is
+ * hypothetical.
+ *
+ * *A board B flashed by hand.* B reaches ROM recovery, the user makes the
+ * cable trip to the other machine (#58) and flashes it directly — and then B
+ * pulls board A's image straight back over it, silently, on the next
+ * heartbeat. Under the strictly-newer rule that hand flash persisted. The
+ * consequence is accepted because the remedy is *cheaper* than the disease:
+ * **flash board A, not board B.** A is the picotool-reachable board, B
+ * follows it, and a rescue that starts at A costs no cable trip at all. That
+ * inverts the old instinct, so the run sheet says it where a user in trouble
+ * will read it.
+ *
+ * *A peer board on firmware older than this change*, which sends no checksum:
+ * bytes 4-7 of its heartbeat still carry `active_output`, so it reads here as
+ * 0 or 1 and looks like a mismatch. A bisect that flashes a pre-#91 build to
+ * board A at an unchanged version produces this. There is deliberately no
+ * guard, because a `!= 0` test would not catch it either — `active_output ==
+ * OUTPUT_B` reads as checksum 1 — and the outcome is the same convergence on
+ * A's image that the paragraph above accepts.
+ *
+ * Both are the feature working, not failing: the boards converge on whatever
+ * board A is running. The hazard is only that it is silent, which is why it
+ * is written down in three places rather than one.
+ *
+ * **This is not dev-only, and that was decided rather than defaulted.** #91
+ * asked whether the equal-version case should hide behind `DH_DEBUG` or a
+ * config flag, because it bypasses the strictly-newer rule that stops a board
+ * clobbering a deliberately different image on its peer.
+ * docs/adr/0007-inter-board-link-is-trusted-for-firmware.md answers no: a gate
+ * would not close that exposure — a compromised board simply claims a higher
+ * version and uses the path above — and board B's host blocks USB writes, so
+ * the pull is how B receives firmware at all. Read that ADR before adding a
+ * gate here.
+ *
+ * False whenever a transfer is already running, by either transport, so the
+ * caller may ask unconditionally.
+ */
+bool fw_upgrade_should_pull(const fw_upgrade_state_t *fw,
+                            fw_image_id_t ours,
+                            fw_image_id_t peers,
+                            bool follows_at_equal_version);

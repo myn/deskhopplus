@@ -275,6 +275,130 @@ int main(void) {
     CHECK(FW_UPGRADE_STALL_US < 0xFFFFFFFFu / 2, "range",
           "the window stays well inside half the wrap");
 
+    /* ---- Whether to start a pull at all (#91) ---------------------------- */
+
+    /* The two boards agree on everything. This is the steady state, asked
+       once a second forever, and it must stay quiet in either role. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t same = {.version = 92, .checksum = 0xdeadbeef};
+
+        CHECK(!fw_upgrade_should_pull(&fw, same, same, true), "steady",
+              "identical images do not pull, following");
+        CHECK(!fw_upgrade_should_pull(&fw, same, same, false), "steady",
+              "identical images do not pull, leading");
+    }
+
+    /* Byte-identical images stay quiet at any version, which is the guarantee
+       that stops the new path turning into a permanent pull loop. */
+    {
+        fw_upgrade_state_t fw = {0};
+
+        for (uint16_t v = 1; v < 500; v += 7) {
+            fw_image_id_t id = {.version = v, .checksum = 0x2bdc0c83};
+            CHECK(!fw_upgrade_should_pull(&fw, id, id, true), "any version",
+                  "byte-identical images never pull");
+        }
+    }
+
+    /* The upgrade path, unchanged: a strictly newer peer board is pulled from
+       in either role, and the checksum has no say in it. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours  = {.version = 91, .checksum = 0x11111111};
+        fw_image_id_t newer = {.version = 92, .checksum = 0x22222222};
+
+        CHECK(fw_upgrade_should_pull(&fw, ours, newer, true), "newer",
+              "a newer peer board is pulled from, following");
+        CHECK(fw_upgrade_should_pull(&fw, ours, newer, false), "newer",
+              "a newer peer board is pulled from, leading");
+    }
+
+    /* Including one whose checksum field means nothing — a peer board on
+       firmware from before this change puts `active_output` in those bytes.
+       The version path never consults the checksum, so the rollout does not
+       need both boards changed at once. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours  = {.version = 91, .checksum = 0x11111111};
+        fw_image_id_t newer = {.version = 92, .checksum = 0};
+
+        CHECK(fw_upgrade_should_pull(&fw, ours, newer, true), "old peer",
+              "a newer peer board that reports no checksum is still pulled from");
+    }
+
+    /* An older peer board is never pulled from. A different checksum does not
+       make an older image worth having — that would be a downgrade, and on
+       board B a downgrade costs a cable trip to undo. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours  = {.version = 92, .checksum = 0x11111111};
+        fw_image_id_t older = {.version = 91, .checksum = 0x22222222};
+
+        CHECK(!fw_upgrade_should_pull(&fw, ours, older, true), "older",
+              "an older peer board is not pulled from, following");
+        CHECK(!fw_upgrade_should_pull(&fw, ours, older, false), "older",
+              "an older peer board is not pulled from, leading");
+    }
+
+    /* The dev loop this exists for: same version, different code. The
+       following board pulls, and no version bump was needed to say so. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours  = {.version = 92, .checksum = 0x11111111};
+        fw_image_id_t peers = {.version = 92, .checksum = 0x22222222};
+
+        CHECK(fw_upgrade_should_pull(&fw, ours, peers, true), "dev loop",
+              "equal version and a different image pulls, following");
+    }
+
+    /* And the leading board does not, or the two would pull from each other
+       at once and each would write what the other was abandoning. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours  = {.version = 92, .checksum = 0x11111111};
+        fw_image_id_t peers = {.version = 92, .checksum = 0x22222222};
+
+        CHECK(!fw_upgrade_should_pull(&fw, ours, peers, false), "one way",
+              "the leading board never follows its peer at equal version");
+    }
+
+    /* A peer board on firmware older than this change sends no checksum:
+       bytes 4-7 of its heartbeat still carry `active_output`, so it reads
+       here as 0 or 1. That is not guarded, and this pins the consequence
+       rather than leaving it to be discovered — the following board converges
+       on its peer's image, which is what the feature does. A `!= 0` guard
+       would not have helped: active output B reads as checksum 1.
+       fw_upgrade.h has the cost and the remedy. */
+    {
+        fw_upgrade_state_t fw = {0};
+        fw_image_id_t ours = {.version = 92, .checksum = 0x11111111};
+
+        for (uint32_t stale = 0; stale <= 1; stale++) {
+            fw_image_id_t peers = {.version = 92, .checksum = stale};
+            CHECK(fw_upgrade_should_pull(&fw, ours, peers, true), "old peer, equal version",
+                  "an unguarded stale checksum field pulls, as documented");
+        }
+    }
+
+    /* Nothing starts a second transfer on top of one already running, by
+       either transport. A drop is the one that matters: the host is writing
+       flash, and a pull starting underneath it is #104. */
+    {
+        fw_image_id_t ours  = {.version = 92, .checksum = 0x11111111};
+        fw_image_id_t peers = {.version = 99, .checksum = 0x22222222};
+
+        fw_upgrade_state_t pulling = {.upgrade_in_progress = true,
+                                      .source = FW_UPGRADE_SOURCE_PULL};
+        fw_upgrade_state_t dropping = {.upgrade_in_progress = true,
+                                       .source = FW_UPGRADE_SOURCE_DROP};
+
+        CHECK(!fw_upgrade_should_pull(&pulling, ours, peers, true), "in flight",
+              "a pull already running is not restarted");
+        CHECK(!fw_upgrade_should_pull(&dropping, ours, peers, true), "in flight",
+              "a UF2 drop is not interrupted by a pull");
+    }
+
     if (failures == 0)
         printf("fw_upgrade_test: all checks passed\n");
 

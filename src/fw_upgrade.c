@@ -40,3 +40,25 @@ bool fw_upgrade_request_lost(const fw_upgrade_state_t *fw, uint32_t now_us) {
 bool fw_upgrade_must_recover(const fw_upgrade_state_t *fw, bool peer_present) {
     return fw->image_dirty && !peer_present;
 }
+
+bool fw_upgrade_should_pull(const fw_upgrade_state_t *fw,
+                            fw_image_id_t ours,
+                            fw_image_id_t peers,
+                            bool follows_at_equal_version) {
+    /* Either transport, not just the pull: a UF2 drop is the host writing
+       flash, and a pull starting underneath it is two writers on one image
+       (#104). */
+    if (fw->upgrade_in_progress)
+        return false;
+
+    /* The upgrade path, unchanged. */
+    if (peers.version > ours.version)
+        return true;
+
+    if (peers.version < ours.version)
+        return false;
+
+    /* Equal version, and only the following board acts — see fw_upgrade.h for
+       why the direction is what makes this safe. */
+    return follows_at_equal_version && peers.checksum != ours.checksum;
+}
