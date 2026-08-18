@@ -27,6 +27,10 @@ STATUS_ = [
     FormField(78, "This board FW version", None, {}, "uint16", elem="fw_version"),
     FormField(84, "Other board FW version", None, {}, "uint16", elem="peer_fw_version"),
     FormField(79, "Running FW checksum", None, {}, "uint32", elem="hex_info"),
+    # 85 against 79 is the propagation check that survives #91: at equal
+    # versions the checksums are the only thing that differs, so 84 alone
+    # cannot tell a synced pair from an unsynced one.
+    FormField(85, "Other board FW checksum", None, {}, "uint32", elem="peer_fw_checksum"),
     FormField(83, "Build", None, {}, "uint8", elem="dev_build"),
 ]
 

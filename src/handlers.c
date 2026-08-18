@@ -400,9 +400,11 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
     };
 
     /* Remember it, so this board can be asked what its peer is running (#89).
-       Recorded before the upgrade check below returns, since a heartbeat that
-       arrives mid-upgrade is still proof the peer is there. */
-    peer_fw_record(&state->peer_fw, peers.version, time_us_64());
+       The checksum comes along because at equal version it is the only thing
+       that distinguishes two builds (#91). Recorded before the upgrade check
+       below returns, since a heartbeat that arrives mid-upgrade is still proof
+       the peer is there. */
+    peer_fw_record(&state->peer_fw, peers.version, peers.checksum, time_us_64());
 
     /* Newer peer board, or the same version carrying a different image — the
        second being what kills the version tax on the dev loop (#91). Board B

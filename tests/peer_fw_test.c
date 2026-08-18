@@ -1,9 +1,11 @@
 /*
  * The peer board's firmware version, as tracked from its heartbeats (#89).
  *
- * Three ways to be wrong, all invisible from the board itself: reporting a
- * version for a peer that has gone, forgetting one that is still there, and
- * rendering "never heard from" as though it were a version.
+ * Four ways to be wrong, all invisible from the board itself: reporting a
+ * version for a peer that has gone, forgetting one that is still there,
+ * rendering "never heard from" as though it were a version, and -- since #91
+ * put two builds at one version number -- calling two different images a
+ * match because their versions agree.
  *
  * Split out of handlers.c for the same reason config_store.c was split out of
  * the flash path (#74): the arithmetic is pure, and behind a UART handler
@@ -29,6 +31,12 @@ static int failures = 0;
 
 #define SECONDS(n) ((uint64_t)(n) * 1000000ull)
 
+/* Two image checksums. Only their difference matters -- these stand in for
+   two builds carrying the same version number, which is the case #91 created
+   and the reason this struct holds a checksum at all. */
+#define CRC_A 0xc26fdcc0u
+#define CRC_B 0x5a5a1234u
+
 int main(void) {
     /* An unplugged peer and a peer on the same build must not look alike. */
     {
@@ -43,7 +51,7 @@ int main(void) {
 
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 182, SECONDS(10));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(10));
         CHECK(peer.version == 182, "heard", "a heartbeat makes it known");
     }
 
@@ -51,7 +59,7 @@ int main(void) {
        beats plus one of grace. */
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 182, SECONDS(10));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(10));
 
         peer_fw_expire(&peer, SECONDS(10) + PEER_FW_STALE_US - 1);
         CHECK(peer.version == 182, "window", "still known one tick short");
@@ -65,11 +73,11 @@ int main(void) {
        expire on the strength of the first beat alone. */
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 182, SECONDS(0));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(0));
 
         for (int second = 1; second <= 10; second++) {
             peer_fw_expire(&peer, SECONDS(second));
-            peer_fw_record(&peer, 182, SECONDS(second));
+            peer_fw_record(&peer, 182, CRC_A, SECONDS(second));
         }
 
         peer_fw_expire(&peer, SECONDS(10));
@@ -80,7 +88,7 @@ int main(void) {
        both boards on the same build?" with a confident lie. */
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 182, SECONDS(0));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(0));
 
         peer_fw_expire(&peer, SECONDS(2));
         CHECK(peer.version == 182, "quiet", "two seconds is not yet gone");
@@ -93,16 +101,39 @@ int main(void) {
        old rather than being ignored as a duplicate. */
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 181, SECONDS(0));
-        peer_fw_record(&peer, 182, SECONDS(1));
+        peer_fw_record(&peer, 181, CRC_A, SECONDS(0));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(1));
         CHECK(peer.version == 182, "upgraded", "the newer version replaces it");
+    }
+
+    /* The case the version cannot describe, and the whole reason the checksum
+       is tracked: since #91 two boards can hold *different images at the same
+       version*. A tracker that kept only the version would report a match. */
+    {
+        peer_fw_t peer = {0};
+        peer_fw_record(&peer, 194, CRC_A, SECONDS(0));
+
+        peer_fw_record(&peer, 194, CRC_B, SECONDS(1));
+        CHECK(peer.version == 194, "same version", "the version is unchanged");
+        CHECK(peer.checksum == CRC_B, "same version", "the new image replaces it");
+    }
+
+    /* A checksum outliving the version it belongs to would be worse than no
+       checksum: it would name a build for a peer that is no longer there. */
+    {
+        peer_fw_t peer = {0};
+        peer_fw_record(&peer, 194, CRC_A, SECONDS(0));
+
+        peer_fw_expire(&peer, SECONDS(4));
+        CHECK(peer.version == PEER_FW_UNKNOWN, "expiry", "the version is forgotten");
+        CHECK(peer.checksum == 0, "expiry", "and the checksum goes with it");
     }
 
     /* A timestamp behind the one recorded is not elapsed time. Unsigned
        subtraction would read it as centuries and forget a peer that is there. */
     {
         peer_fw_t peer = {0};
-        peer_fw_record(&peer, 182, SECONDS(100));
+        peer_fw_record(&peer, 182, CRC_A, SECONDS(100));
 
         peer_fw_expire(&peer, SECONDS(1));
         CHECK(peer.version == 182, "backwards", "a past timestamp expires nothing");

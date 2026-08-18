@@ -163,6 +163,13 @@ function updateElement(key, event) {
     if (element.hasAttribute('data-peer-fw-ver'))
       setValue(element, value ? formatVersion(value) : 'not detected');
 
+    /* The other board's image checksum. Compare it with the running checksum
+       above to tell a synced pair from an unsynced one -- since #91 the two
+       versions can agree while the images do not. Zero is an absence here for
+       the same reason as the version, and the firmware clears both together. */
+    if (element.hasAttribute('data-peer-fw-crc'))
+      setValue(element, value ? parseInt(value).toString(16) : 'not detected');
+
     if (element.hasAttribute('data-dev-build')) {
       setValue(element, value ? 'development — channel authentication is disabled' : 'release');
       if (value) {

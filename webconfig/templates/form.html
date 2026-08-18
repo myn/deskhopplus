@@ -24,6 +24,10 @@
     {{ label(item, class='') }}
     {{ input(item) }} data-peer-fw-ver readonly />
 
+  {% elif item.get("elem") == "peer_fw_checksum" %}
+    {{ label(item, add=':') }}
+    {{ input(item, class='content api') }} data-peer-fw-crc readonly />
+
   {% elif item.get("elem") == "dev_build" %}
     {{ label(item, class='') }}
     {{ input(item) }} data-dev-build readonly />

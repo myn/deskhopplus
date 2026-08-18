@@ -5,8 +5,9 @@
 
 #include "peer_fw.h"
 
-void peer_fw_record(peer_fw_t *peer, uint16_t version, uint64_t now_us) {
+void peer_fw_record(peer_fw_t *peer, uint16_t version, uint32_t checksum, uint64_t now_us) {
     peer->version     = version;
+    peer->checksum    = checksum;
     peer->heard_at_us = now_us;
 }
 
@@ -20,6 +21,8 @@ void peer_fw_expire(peer_fw_t *peer, uint64_t now_us) {
     if (now_us <= peer->heard_at_us)
         return;
 
-    if (now_us - peer->heard_at_us >= PEER_FW_STALE_US)
-        peer->version = PEER_FW_UNKNOWN;
+    if (now_us - peer->heard_at_us >= PEER_FW_STALE_US) {
+        peer->version  = PEER_FW_UNKNOWN;
+        peer->checksum = 0;
+    }
 }

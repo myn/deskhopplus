@@ -64,8 +64,14 @@ const field_map_t api_field_map[] = {
     { 79, true,  UINT32, 4, offsetof(device_t, _running_fw.checksum) },
 
     /* What the *other* board reports running, or 0 when none has been heard
-       from (#89). Read-only like the local version above it. */
+       from (#89). Read-only like the local version above it.
+
+       The checksum is what makes propagation checkable at all since #91: two
+       boards can hold different images at the same version, so 84 alone can
+       report a match that is not one. 85 against 79 is the comparison that
+       does not lie. */
     { 84, true,  UINT16, 2, offsetof(device_t, peer_fw.version) },
+    { 85, true,  UINT32, 4, offsetof(device_t, peer_fw.checksum) },
 
     { 80, true,  UINT8,  1, offsetof(device_t, keyboard_connected) },
     { 81, true,  UINT8,  1, offsetof(device_t, switch_lock) },

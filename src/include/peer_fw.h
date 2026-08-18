@@ -49,14 +49,32 @@
 
 typedef struct {
     uint16_t version;     // PEER_FW_UNKNOWN when nothing has been heard
-    uint64_t heard_at_us; // When the version above arrived
+    uint32_t checksum;    // Its running image's CRC32, 0 alongside UNKNOWN
+    uint64_t heard_at_us; // When the two above arrived
 } peer_fw_t;
 
-/* A heartbeat arrived carrying the peer's version. Replaces whatever was
-   held — a peer that upgrades under us reports its new version, and that is
-   the answer, not a duplicate to ignore. */
-void peer_fw_record(peer_fw_t *peer, uint16_t version, uint64_t now_us);
+/*
+ * A heartbeat arrived carrying the peer's version and image checksum. Replaces
+ * whatever was held — a peer that upgrades under us reports its new build, and
+ * that is the answer, not a duplicate to ignore.
+ *
+ * The checksum is here for the case the version cannot describe. Since #91 two
+ * boards can differ at the *same* version, which is the whole point of that
+ * feature — and it is exactly then that `version` answers "is my peer on a
+ * different build?" with a confident yes-they-match. The heartbeat has carried
+ * the checksum since #91; this only stops discarding it.
+ *
+ * Zero is not a sentinel for the checksum the way PEER_FW_UNKNOWN is for the
+ * version — a real image could hash to it, with probability 2^-32. It is
+ * cleared to zero on expiry and displayed as an absence, so that one image in
+ * four billion would read as "not detected" while its version read correctly.
+ * Cosmetic, and confined to the config UI: nothing in the upgrade path reads
+ * this field, which keeps the display's rounding error out of the pull
+ * decision. `handle_heartbeat_msg` compares the wire value directly.
+ */
+void peer_fw_record(peer_fw_t *peer, uint16_t version, uint32_t checksum, uint64_t now_us);
 
-/* Forget a peer that has gone quiet. Called periodically; does nothing while
+/* Forget a peer that has gone quiet — both facts, so a stale checksum cannot
+   outlive the version it belongs to. Called periodically; does nothing while
    heartbeats keep arriving, since each one refreshes the timestamp. */
 void peer_fw_expire(peer_fw_t *peer, uint64_t now_us);
