@@ -25,6 +25,13 @@ image's **checksum** as well as its version, and board B pulls when the version 
 when the version is equal and the checksums differ. So an ordinary rebuild propagates on its
 own: flash board A, board B follows, no `VERSION_MINOR` bump.
 
+**Measured on hardware 2026-08-18, and this had never been done before.** Both boards sat on
+0.94 / `c26fdcc0`. `a84c8e4` was built with `VERSION_MINOR` deliberately untouched, moving the
+image to `a26ca1f5`, and flashed to board A alone at 13:27. Fourteen minutes later board A's
+config page read *Other board FW version* **v0.94** and *Other board FW checksum* **a26ca1f5** —
+the version never moved, and board B followed anyway. That is the whole of #91 doing the thing it
+was written for.
+
 The warning this section replaces still applies in three cases, and they are the ones to check
 before flashing:
 
@@ -49,11 +56,12 @@ Note that a version bump alone does not change the checksum: the version lives i
 code at different numbers share a checksum, and that is correct — see the ROM-recovery section
 below, where 0.90 and 0.92 do exactly this.
 
-**Both boards ran 0.94 as of 2026-08-18** — board A by `picotool` at 13:04, board B by peer
-propagation over the inter-board link, both read back in the config UI rather than assumed. That
-is the fourth time propagation has been observed working end to end, and the first where the
-*checksum* was read back as well as the version: `0xc26fdcc0` on the page, the same number
-`./tools/build.sh` printed for the image that was flashed.
+**Both boards ran 0.94 / `a26ca1f5` as of 2026-08-18** — board A by `picotool`, board B by peer
+propagation over the inter-board link, both read back in the config UI rather than assumed. Two
+propagations that afternoon: `c26fdcc0` at 13:04 across a version boundary (0.92 → 0.94), then
+`a26ca1f5` at 13:27 **at an equal version**, which is the one that had never been done. That
+makes five observed end to end, and the first two where the checksum was read back as well as the
+version.
 
 The pull took **under twelve minutes** wall clock, measured as flash-to-readable rather than to
 completion — the read is what bounds it, so the transfer itself finished somewhere inside that.
@@ -190,6 +198,18 @@ static and needs no re-serving.
 Since [#89](https://github.com/myn/deskhopplus/issues/89) that page reports **both** versions: *This
 board FW version* and *Other board FW version*, the latter reading `not detected` when no heartbeat
 has arrived. That is how propagation was confirmed rather than inferred.
+
+**Read the checksums, not the versions.** `a84c8e4` added *Other board FW checksum* (field 85)
+beside them, because since #91 the versions can agree while the images do not — which is the
+normal case in a dev loop, not a corner. The check that means something is:
+
+| Compare | Reads |
+| --- | --- |
+| *Running FW checksum* vs *Other board FW checksum* | equal → the pair is synced. Different → board B has not pulled yet |
+
+Both versions matching tells you nothing on its own once an equal-version flash is in play. The
+peer checksum reads `not detected` under the same conditions as the peer version, and the firmware
+clears the two together so a checksum can never name a build for a board that has gone.
 
 **The firmware checksum on that page is only trustworthy from 0.94 on.** `firmware_metadata_t` was
 laid out by the compiler with two bytes of padding after `version`, while `misc/crc32.py` writes
