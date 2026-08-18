@@ -147,15 +147,27 @@ endif()
 # The chain the firmware actually depends on: templates -> config.htm ->
 # disk.img -> disk.S. Only the last link used to exist, so editing the config
 # UI and rebuilding produced firmware carrying the previous page (#16).
-add_custom_command(
-  OUTPUT ${DISK_BIN}
-  COMMAND ./create.sh
-  WORKING_DIRECTORY ${DISK_DIR}
-  DEPENDS ${CONFIG_PAGE} ${DISK_DIR}/create.sh ${DISK_DIR}/capacity.py
-  COMMENT "Building the config disk image"
-  VERBATIM)
-
-add_custom_target(config_disk DEPENDS ${DISK_BIN})
+#
+# Wired only when mtools is present. The image is committed, so someone
+# building firmware without it still gets a correct build from the checked-in
+# copy rather than a missing-mformat failure — the point of keeping it in the
+# repo. CI has mtools and regenerates both artifacts, so a stale commit is
+# caught there rather than by everyone downstream.
+find_program(MFORMAT_EXECUTABLE mformat)
+if(MFORMAT_EXECUTABLE)
+  add_custom_command(
+    OUTPUT ${DISK_BIN}
+    COMMAND ./create.sh
+    WORKING_DIRECTORY ${DISK_DIR}
+    DEPENDS ${CONFIG_PAGE} ${DISK_DIR}/create.sh ${DISK_DIR}/capacity.py
+    COMMENT "Building the config disk image"
+    VERBATIM)
+  add_custom_target(config_disk DEPENDS ${DISK_BIN})
+else()
+  message(STATUS "no mtools — using the committed config disk image. "
+                 "Install mtools to rebuild it when the config page changes.")
+  add_custom_target(config_disk)
+endif()
 
 # How close the page is to overflowing the shipped 64 kB, reported on every
 # configure rather than only when the image is rebuilt — the headroom is worth
