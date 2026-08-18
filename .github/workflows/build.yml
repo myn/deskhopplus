@@ -80,34 +80,12 @@ jobs:
     # check bytes the build then overwrites, and whatever the firmware actually
     # embedded would go unchecked.
     #
-    # What is checked is the *page*, and that the committed image contains it —
-    # not that the image is byte-identical. Raw bytes were tried and cannot
-    # work: mformat writes version-dependent content into the boot sector, and
-    # this runner (4.0.43) is not the version a developer has. Overwriting the
-    # OEM field was not enough on its own, so rather than chase fields, the gate
-    # asks the question that actually matters — does the shipped image carry the
-    # current page? — which no mtools version can answer differently.
+    # The check lives in a script so the one a developer can run is the one that
+    # gates the build, rather than an approximation of it kept in step by hand.
     - name: Committed page and image match their sources
       shell: bash
-      run: |
-        if ! git diff --exit-code --stat -- webconfig/config.htm webconfig/config-unpacked.htm; then
-          echo "::error::The committed config page is not what the templates render."
-          echo "Run 'make' in webconfig/ and commit the result."
-          exit 1
-        fi
+      run: ./tools/check-config-artifacts.sh
 
-        git show HEAD:disk/disk.img > /tmp/committed.img
-        mcopy -n -i /tmp/committed.img ::/config.htm /tmp/in-image.htm
-        if ! cmp -s /tmp/in-image.htm webconfig/config.htm; then
-          echo "::error::disk/disk.img does not contain the committed config page."
-          echo "Run './create.sh' in disk/ and commit the image."
-          exit 1
-        fi
-        echo "committed image carries the current page ($(wc -c < /tmp/in-image.htm) bytes)"
-
-    # Not a failure — the image legitimately differs byte-for-byte between
-    # mtools versions. Recorded so that if we ever want reproducible bytes
-    # again, the fields to normalise are named rather than guessed at.
     - name: Note where this runner's image differs
       if: always()
       continue-on-error: true
