@@ -23,12 +23,16 @@ jobs:
     # microsoft prod, google chrome — that this build has no use for. Adding it
     # was pure cost.
     #
-    # g++ is named explicitly rather than left to come in as a recommend of
-    # gcc-arm-none-eabi. It is genuinely required — the project declares CXX and
-    # the SDK compiles pico_standard_link/new_delete.cpp — and misc/Dockerfile
-    # has always installed it by name. --no-install-recommends was tried here
-    # and broke the build with "fatal error: cstdlib: No such file or
-    # directory".
+    # Do NOT add --no-install-recommends here. The C++ standard library for
+    # arm-none-eabi arrives as a *recommend* of the packages below, and the
+    # build needs it: the project declares CXX and the SDK compiles
+    # pico_standard_link/new_delete.cpp. Run #33 tried the flag and failed with
+    # "fatal error: cstdlib: No such file or directory".
+    #
+    # Naming a C++ package explicitly instead is a trap: there is no
+    # g++-arm-none-eabi on Ubuntu (run #34 died on "Unable to locate package"),
+    # because the compiler is in gcc-arm-none-eabi and only the library is
+    # packaged separately. This list is the one that has always worked.
     #
     # No python3-venv either: webconfig/Makefile prefers a system interpreter that
     # already has jinja2, and this runner has one, so the render takes 0s and
@@ -39,7 +43,6 @@ jobs:
       run: |
         sudo apt-get install -y \
           gcc-arm-none-eabi \
-          g++-arm-none-eabi \
           libnewlib-arm-none-eabi \
           mtools
 
@@ -107,8 +110,11 @@ jobs:
     # again, the fields to normalise are named rather than guessed at.
     - name: Note where this runner's image differs
       if: always()
+      continue-on-error: true
       shell: bash
       run: |
+        command -v mformat >/dev/null || { echo "no mtools — nothing to compare"; exit 0; }
+        [ -f disk/disk.img ] || { echo "no image built — nothing to compare"; exit 0; }
         mformat --version | head -1
         git show HEAD:disk/disk.img > /tmp/committed.img
         python3 disk/imgdiff.py /tmp/committed.img disk/disk.img
