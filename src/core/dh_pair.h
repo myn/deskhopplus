@@ -47,6 +47,12 @@
  * Windows is unaffected: hidclass.sys refuses the second open, so there is no
  * listener and both properties hold as written. Do not delete this note when
  * the posture is fixed — replace it with what replaced the bearer token.
+ *
+ * DECIDED, 2026-08-18: ADR-0008. The bearer token is replaced by a key pair
+ * per side, a per-frame authentication tag, and a clipboard payload sealed
+ * between the two helpers — so nothing secret crosses, at pairing or after.
+ * The code here is unchanged until #111 lands; this note stands until then
+ * and is what #111 replaces.
  * ---------------------------------------------------------------------------
  *
  * Pure C11: no I/O, no clock, no entropy source. Fresh secrets are handed in

@@ -166,6 +166,13 @@ on real boards, and both came back as the decision assumed. Evidence is on #25 a
 > nothing. The *"Exclusivity is first-come on HID exactly as it is on CDC"* claim below therefore
 > holds on Windows, where it was measured directly, and **not** on macOS. #34's exclusive-ownership
 > property does not survive on macOS as this ADR assumed.
+>
+> **Answered by [ADR-0008](0008-channel-identity-and-sealed-clipboard.md), 2026-08-18.** The lost
+> property is not recovered — nothing at the IOKit level refuses a second client for a vendor
+> collection. It is replaced at the protocol layer: a key pair per side, a per-frame authentication
+> tag, and a clipboard payload sealed between the two helpers. This ADR's transport choice is
+> unaffected; what changes is that exclusivity was never load-bearing enough to rest a security
+> property on, and this ADR should not be read as offering one.
 
 1. **`tools/windows-checks/Confirm-HidExclusivity.ps1 -Check A,E` against our own vendor
    collection** — `zero-access UP=0xFF00 U=0x0020 'DeskHop Channel' -> FAILED (err=32)`. Twice, on
