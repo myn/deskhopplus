@@ -50,20 +50,6 @@ extern firmware_metadata_t _firmware_metadata;
 #define FIRMWARE_METADATA_MAGIC   0xf00d
 
 /*==============================================================================
- *  Firmware Transfer Packet
- *==============================================================================*/
-
-typedef struct {
-    uint8_t cmd;          // Byte 0 = command
-    uint16_t page_number; // Bytes 1-2 = page number
-    union {
-        uint8_t offset;   // Byte 3 = offset
-        uint8_t checksum; // In write packets, it's checksum
-    };
-    uint8_t data[4]; // Bytes 4-7 = data
-} fw_packet_t;
-
-/*==============================================================================
  *  Flash Memory Layout
  *==============================================================================*/
 
