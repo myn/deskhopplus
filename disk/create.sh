@@ -21,10 +21,35 @@
 
 set -euo pipefail
 
+page="${1:-}"
+image="${2:-}"
+
+# Absolute before the cd below, so a relative path given on the command line
+# still means what the caller meant rather than something inside disk/.
+absolute() {
+    local dir
+    dir="$(cd "$(dirname "$1")" 2>/dev/null && pwd)" || dir=""
+
+    # A path whose directory does not exist is left alone, so the "no config
+    # page at ..." message below names what the caller actually typed.
+    if [ -n "$dir" ]; then
+        printf '%s/%s\n' "$dir" "$(basename "$1")"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+if [ -n "$page" ]; then
+    page="$(absolute "$page")"
+fi
+if [ -n "$image" ]; then
+    image="$(absolute "$image")"
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-page="${1:-../webconfig/config.htm}"
-image="${2:-disk.img}"
+page="${page:-../webconfig/config.htm}"
+image="${image:-disk.img}"
 
 # Geometry, read back out of the image this replaces (`minfo -i disk.img ::`)
 # so the volume the host sees does not change shape.
@@ -42,7 +67,7 @@ command -v mformat >/dev/null || die "no mformat. brew install mtools, or apt-ge
 command -v mcopy   >/dev/null || die "no mcopy. brew install mtools, or apt-get install mtools"
 [ -f "$page" ] || die "no config page at $page — run 'make' in webconfig/ first"
 
-work="$(mktemp -t deskhop-disk)"
+work="$(mktemp "${TMPDIR:-/tmp}/deskhop-disk.XXXXXX")"
 trap 'rm -f "$work"' EXIT
 
 dd if=/dev/zero of="$work" bs="$SECTOR" count="$FULL_SECTORS" status=none
