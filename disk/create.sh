@@ -90,6 +90,12 @@ mformat -t "$CYLINDERS" -h "$HEADS" -s "$SECTORS_PER_TRACK" -r "$ROOT_SECTORS" \
 # mtools built them, so CI (a different version) would regenerate a different
 # image and report the committed one stale on every run. Overwrite it with a
 # fixed string; nothing reads this field, it is informational.
+#
+# It was the only version-carrying part: the rest of the boot sector is the
+# label, the FAT12 type string and a 43-byte "not bootable" stub with no
+# version in it. If the CI freshness gate ever fails on a commit that did not
+# touch the config UI, that stub and zlib (see render.py) are the two inputs
+# still not pinned — check them before assuming the page is stale.
 printf 'DESKHOP ' | dd of="$work" bs=1 seek=3 count=8 conv=notrunc status=none
 
 # Before the copy, not after. The overflowing clusters would land past the
