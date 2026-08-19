@@ -96,7 +96,12 @@ bool dh_auth_counter_ok(const dh_auth_counter *c, uint64_t counter) {
 }
 
 bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *out) {
-    if (payload_len < DH_FRAME_AUTH_PREFIX_SIZE)
+    /* The counter, not the whole prefix. docs/protocol.md puts the counter
+       first precisely so a board can reject a replay after reading 12 bytes —
+       4 of header and these 8 — without buffering a payload it is going to
+       throw away. Requiring all 24 would make that read impossible and quietly
+       cost the optimisation the layout exists for. */
+    if (payload_len < DH_FRAME_COUNTER_SIZE)
         return false;
 
     uint64_t counter = 0;
@@ -109,6 +114,11 @@ bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *
 dh_auth_result dh_auth_open(const uint8_t key[DH_SESSION_KEY_SIZE], const dh_frame_header *hdr,
                             const uint8_t *payload, dh_auth_counter *counter,
                             const uint8_t **body, size_t *body_len) {
+    /* The tag is what needs the whole prefix; the counter alone needs 8 bytes.
+       So the length is checked here rather than inferred from the peek. */
+    if (hdr->len < DH_FRAME_AUTH_PREFIX_SIZE)
+        return DH_AUTH_ERR_SHORT;
+
     uint64_t seen = 0;
     if (!dh_auth_peek_counter(payload, hdr->len, &seen))
         return DH_AUTH_ERR_SHORT;

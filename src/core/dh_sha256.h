@@ -60,8 +60,9 @@ void dh_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data, siz
  * HKDF-SHA256, extract and expand in one call — nothing in this protocol
  * derives twice from one PRK, so there is no reason to expose the halves.
  *
- * out_len must be at most 255 * 32; every key here is 32 bytes. A NULL salt
- * or info means zero length, which is what RFC 5869 case 3 uses.
+ * out_len must be at most DH_HKDF_MAX_OUTPUT — the expand counter is one
+ * byte — and a larger request writes nothing at all. Every key here is 32
+ * bytes. A NULL salt or info means zero length, which is RFC 5869 case 3.
  */
 #define DH_HKDF_MAX_OUTPUT (255u * DH_SHA256_DIGEST_SIZE)
 

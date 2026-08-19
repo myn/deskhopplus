@@ -152,6 +152,12 @@ static void check_bytes(const uint8_t *got, const uint8_t *want, size_t len, con
 /* ----------------------------------------------------------- the primitives */
 
 static void test_primitives(const struct vector *v, size_t n) {
+    /* Looked up once. find() reports a missing vector and returns NULL, so
+       reaching through it inside the loop would turn a missing name into a
+       crash instead of the failure line it is written to print. */
+    const struct vector *helper = find(v, n, "p256_pub_helper");
+    const uint8_t *a_private_key = helper ? helper->f[0] : NULL;
+
     size_t seen = 0;
     for (size_t i = 0; i < n; i++) {
         const struct vector *t = &v[i];
@@ -182,8 +188,7 @@ static void test_primitives(const struct vector *v, size_t n) {
             seen++;
 
         } else if (starts_with(t->name, "hkdf_")) {
-            uint8_t okm[128];
-            CHECK(t->len[3] <= sizeof okm, t->name, "okm larger than this test's buffer");
+            uint8_t okm[MAX_FIELD_BYTES]; /* the most a field can hold, so it fits */
             dh_hkdf_sha256(t->f[0], t->len[0], t->len[1] ? t->f[1] : NULL, t->len[1],
                            t->len[2] ? t->f[2] : NULL, t->len[2], okm, t->len[3]);
             check_bytes(okm, t->f[3], t->len[3], t->name, "okm");
@@ -206,8 +211,9 @@ static void test_primitives(const struct vector *v, size_t n) {
             uint8_t shared[DH_P256_SHARED_SIZE];
             CHECK(!dh_p256_public_valid(t->f[0]), t->name, "accepted as a public key");
             /* And the ECDH must not be reachable around the check. */
-            CHECK(!dh_p256_ecdh(find(v, n, "p256_pub_helper")->f[0], t->f[0], shared), t->name,
-                  "ecdh ran against an invalid peer key");
+            if (a_private_key)
+                CHECK(!dh_p256_ecdh(a_private_key, t->f[0], shared), t->name,
+                      "ecdh ran against an invalid peer key");
             seen++;
 
         } else if (starts_with(t->name, "p256_reject_priv_")) {
@@ -348,7 +354,7 @@ static void test_rejection(const uint8_t k_hello[DH_SESSION_KEY_SIZE],
     dh_auth_counter state;
 
     /* A body byte changed: the tag covers it. */
-    uint8_t tampered[256];
+    uint8_t tampered[MAX_FIELD_BYTES]; /* bounded by the loader, not by today's hello */
     memcpy(tampered, view.payload, view.hdr.len);
     tampered[DH_FRAME_AUTH_PREFIX_SIZE] ^= 1u;
     dh_auth_counter_init(&state);
@@ -388,6 +394,28 @@ static void test_rejection(const uint8_t k_hello[DH_SESSION_KEY_SIZE],
     CHECK(dh_auth_open(k_hello, &view.hdr, view.payload, &state, &body, &body_len)
               == DH_AUTH_ERR_COUNTER,
           "hello_mac", "a replay is accepted");
+}
+
+/* The counter is readable from 8 payload bytes, which is what makes
+   docs/protocol.md's "reject a replay after reading 12 bytes" possible. */
+static void test_peek_needs_only_the_counter(void) {
+    const uint8_t prefix[DH_FRAME_COUNTER_SIZE] = {7, 0, 0, 0, 0, 0, 0, 0};
+    uint64_t counter = 0;
+    CHECK(dh_auth_peek_counter(prefix, sizeof prefix, &counter), "peek",
+          "8 bytes is not enough to read the counter");
+    CHECK(counter == 7, "peek", "wrong counter read");
+    CHECK(!dh_auth_peek_counter(prefix, sizeof prefix - 1u, &counter), "peek",
+          "read a counter out of 7 bytes");
+}
+
+/* Past 255 expand blocks the one-byte counter would wrap and the output would
+   stop being HKDF. Writing nothing is the defined answer. */
+static void test_hkdf_output_limit(void) {
+    uint8_t out[64];
+    memset(out, 0xA5, sizeof out);
+    dh_hkdf_sha256((const uint8_t *)"k", 1, NULL, 0, NULL, 0, out, DH_HKDF_MAX_OUTPUT + 1u);
+    for (size_t i = 0; i < sizeof out; i++)
+        CHECK(out[i] == 0xA5, "hkdf", "an over-long request wrote something");
 }
 
 static void test_counter(void) {
@@ -451,11 +479,16 @@ static void test_constant_time_compare(void) {
  * descriptor invisible.
  */
 static void test_no_entropy_source(void) {
+    /* Before any call into dh_p256, which would clear the pointer itself and
+       make this pass whether or not a default was ever linked in. Ordered
+       this way, it is the null-at-start-up claim being tested. */
+    CHECK(uECC_get_rng() == NULL, "entropy", "micro-ecc linked in a default RNG");
+
     uint8_t pub[DH_P256_PUBLIC_SIZE];
     uint8_t priv[DH_P256_PRIVATE_SIZE];
     memset(priv, 0x11, sizeof priv);
     dh_p256_public_from_private(priv, pub);
-    CHECK(uECC_get_rng() == NULL, "entropy", "micro-ecc holds an RNG — this core has none");
+    CHECK(uECC_get_rng() == NULL, "entropy", "a dh_p256 call left an RNG installed");
 }
 
 int main(int argc, char **argv) {
@@ -469,6 +502,7 @@ int main(int argc, char **argv) {
     CHECK(np > 30, primitives_path, "far fewer primitive vectors than expected");
     CHECK(nf > 20, frames_path, "far fewer frame vectors than expected");
 
+    test_no_entropy_source(); /* first: any dh_p256 call would clear the pointer */
     test_primitives(primitives, np);
 
     const struct vector *material = find(primitives, np, "session_material");
@@ -485,8 +519,9 @@ int main(int argc, char **argv) {
     }
 
     test_counter();
+    test_peek_needs_only_the_counter();
+    test_hkdf_output_limit();
     test_constant_time_compare();
-    test_no_entropy_source();
 
     if (failures) {
         printf("%d failure(s)\n", failures);

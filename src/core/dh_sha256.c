@@ -201,6 +201,13 @@ void dh_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data, siz
 
 void dh_hkdf_sha256(const uint8_t *ikm, size_t ikm_len, const uint8_t *salt, size_t salt_len,
                     const uint8_t *info, size_t info_len, uint8_t *out, size_t out_len) {
+    /* The expand counter is one byte, so past 255 blocks it would wrap and
+       start repeating output that no longer matches RFC 5869. Nothing here
+       asks for more than 32 bytes; an out-of-contract call writes nothing
+       rather than something plausible and wrong. */
+    if (out_len > DH_HKDF_MAX_OUTPUT)
+        return;
+
     /* Extract. RFC 5869: the salt is the HMAC key and the input keying
        material is the message, which reads backwards and is correct. */
     uint8_t prk[DH_SHA256_DIGEST_SIZE];

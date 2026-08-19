@@ -124,7 +124,8 @@ dh_auth_result dh_auth_open(const uint8_t key[DH_SESSION_KEY_SIZE], const dh_fra
                             const uint8_t **body, size_t *body_len);
 
 /* The counter a received frame carries, before anything about it is trusted.
-   Returns false when the payload is too short to hold a prefix. */
+   Needs the 8 counter bytes and no more, which is what lets a board call it
+   12 bytes into a frame; false below that. */
 bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *out);
 
 /*
