@@ -42,8 +42,9 @@
 
 /*
  * The priority band holds one frame. Session, placement and pairing frames are
- * small — the largest the device emits is a pairing grant — and rare enough
- * that two in flight at once has never been reachable.
+ * small — the largest the board emits is a 76-byte pairing grant
+ * (DH_SESSION_REPLY_MAX) — and rare enough that two in flight at once has
+ * never been reachable.
  */
 #define DH_OUTQ_PRIORITY_MAX 128u
 
@@ -53,8 +54,16 @@
  * would cost four times the RAM to hold traffic that never arrives in bursts
  * (ADR-0005):
  *
- *   CLIP_CHUNK  4 + 12 (id, seq, crc32)       + 1024 (DH_XFER_CHUNK_SIZE) = 1040
- *   CLIP_OFFER  4 + 15 (id, kind, total, len) + 1024 (DH_XFER_META_MAX)   = 1043
+ *   CLIP_CHUNK  4 + 24 + 12 (id, seq, crc32)       + 1024 (DH_XFER_CHUNK_SIZE) = 1064
+ *   CLIP_OFFER  4 + 24 + 15 (id, kind, total, len) + 1024 (DH_XFER_META_MAX)   = 1067
+ *
+ * The 24 is v2's authentication prefix (#111): it sits inside the frame's
+ * length, so every frame this band holds on the helper-facing side grew by it.
+ * Missing that would not have failed loudly — an over-long bulk frame is
+ * refused as retryable rather than rejected — it would simply have stopped
+ * anything queueing *behind* the frame in flight, which is the whole reason
+ * this band exists. Frames crossing the inter-board link carry no prefix, so
+ * they are 24 bytes smaller and comfortably inside the same bound.
  *
  * The offer matters as much as the chunk and is the one that sets this bound.
  * A chunk lost here is re-requested end to end, but there is no retransmit for
@@ -63,10 +72,14 @@
  * carrying more metadata than DH_XFER_META_MAX is cancelled by the receiver on
  * arrival, so beyond this bound there is no frame worth reserving space for.
  *
+ * The seal moves this again — docs/protocol.md puts a sealed chunk at 1092 —
+ * but the transfer core does not produce one yet, and a bound stated for
+ * traffic the tree cannot emit would be a guess rather than a measurement.
+ *
  * outq_test.c pins both figures against the transfer machine's own constants,
  * so the firmware need not include it to state its own buffer size.
  */
-#define DH_OUTQ_STAGE_MAX 1044u
+#define DH_OUTQ_STAGE_MAX 1068u
 
 /* Frames queued behind the one in flight. */
 #define DH_OUTQ_DEPTH 2u

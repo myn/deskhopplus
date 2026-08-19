@@ -30,13 +30,16 @@ add_executable(txq_test txq_test.c)
 target_include_directories(txq_test PRIVATE ${CORE})
 add_test(NAME txq_test COMMAND txq_test)
 
-# No DH_TEST_VECTORS here: dh_session.c still speaks protocol v1, while
-# ${VECTORS} was rewritten for v2 by #109. The v1 frames it must produce are
-# frozen inside session_test.c until #110 moves the codec. See that file's
-# header comment.
+# The session layer speaks v2 (#111), so it is gated by ${VECTORS} again — and
+# by ${PRIMITIVE_VECTORS}, which carry the published session key material the
+# tags in those frames were computed under. Without the keys the frames could
+# only be re-encoded; with them the board's own answers are checked byte for
+# byte against what an independent implementation produced.
 add_executable(session_test session_test.c ${CORE}/dh_session.c ${CORE}/dh_pair.c
-               ${CORE}/dh_frame.c)
+               ${CORE}/dh_frame.c ${CORE}/dh_auth.c ${CORE}/dh_sha256.c ${CORE}/dh_p256.c)
 target_include_directories(session_test PRIVATE ${CORE})
+target_compile_definitions(session_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
+                           DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
 add_test(NAME session_test COMMAND session_test)
 # The four primitives the board runs, and the frame tag built on them (#110).
 # dh_p256.c is the only file that compiles micro-ecc: it sets the curve
@@ -48,8 +51,13 @@ target_compile_definitions(auth_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
                            DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
 add_test(NAME auth_test COMMAND auth_test)
 
-add_executable(pair_test pair_test.c ${CORE}/dh_pair.c)
+# The board's identity and its one registration (#111). Needs the curve: a
+# registration is what one ECDH produced, so there is nothing here to test
+# without it.
+add_executable(pair_test pair_test.c ${CORE}/dh_pair.c ${CORE}/dh_p256.c ${CORE}/dh_sha256.c
+               ${CORE}/dh_auth.c ${CORE}/dh_frame.c)
 target_include_directories(pair_test PRIVATE ${CORE})
+target_compile_definitions(pair_test PRIVATE DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
 add_test(NAME pair_test COMMAND pair_test)
 
 add_executable(relay_test relay_test.c ${CORE}/dh_relay.c ${CORE}/dh_outq.c ${CORE}/dh_frame.c)
@@ -90,3 +98,18 @@ add_test(NAME peer_fw_test COMMAND peer_fw_test)
 add_executable(fw_upgrade_test fw_upgrade_test.c ${FW}/fw_upgrade.c)
 target_include_directories(fw_upgrade_test PRIVATE ${FW}/include)
 add_test(NAME fw_upgrade_test COMMAND fw_upgrade_test)
+
+# The board's stored identity (#111). Firmware domain, pure arithmetic, split
+# out for the reason #74 paid for — with more at stake, because the key this
+# validates cannot be regenerated without unpairing every helper.
+add_executable(identity_test identity_test.c ${FW}/identity_store.c ${CORE}/dh_crc32.c)
+target_include_directories(identity_test PRIVATE ${CORE} ${FW}/include)
+add_test(NAME identity_test COMMAND identity_test)
+
+# Which flash ranges each writer touches, and which of them must never reach
+# the identity sector (#111). The failure this gates is the one that would hand
+# two boards a single identity, so it is checked as arithmetic a test can run
+# rather than left to the linker script alone.
+add_executable(flash_layout_test flash_layout_test.c)
+target_include_directories(flash_layout_test PRIVATE ${CORE} ${FW}/include)
+add_test(NAME flash_layout_test COMMAND flash_layout_test)

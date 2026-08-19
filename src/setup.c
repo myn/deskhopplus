@@ -227,13 +227,16 @@ void initial_setup(device_t *state) {
 #endif
 
     /* No helper has said hello yet, and the session carries the build type
-       every hello_ack reports */
-    channel_init();
+       every hello_ack reports. This is also where the board reads — or, on
+       first boot, generates — its own key pair, which is why it sits before
+       the scheduler starts: generating one is a ~134 ms stall (#110), and
+       there are no 2000 Hz queues here to stall. */
+    channel_init(state);
 
     /* A config chord before the last reboot owes a pairing window. Config
        mode has no channel, so it is honoured here, on the way back. */
     if (!state->config_mode_active && channel_pairing_window_owed())
-        channel_open_pairing_window(state);
+        channel_open_pairing_window();
 
     /* Detect which board we're running on */
     state->board_role = board_autoprobe();

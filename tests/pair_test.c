@@ -1,15 +1,23 @@
 /*
- * Pairing tests for the shared core (#46): the window, rotation, and the
- * authentication that everything else on the channel is gated on.
+ * The board's identity and its one registration (#111, ADR-0008).
  *
- * These assert a security control, so they are written against the attack
- * rather than against the API: can a secret be obtained outside a window,
- * does rotating actually evict, and is a stolen pairing recoverable.
+ * What this file is really testing is the property that replaced the bearer
+ * token: **only public halves cross**. A registration is what one ECDH
+ * produced from the board's private key and the helper's public one, and the
+ * helper computes the same value from the other two halves — so the check that
+ * matters is that both ends reach the same 32 bytes without either private key
+ * ever appearing on the wire. That number is not this repository's to invent,
+ * so it is read out of test-vectors/primitives.txt, where an independent
+ * implementation put it (#109, #110).
+ *
+ * The rest is the window: single-shot, a minute long, wrap-safe, and — unlike
+ * v1's — not something a chord press spends when nobody pairs against it.
  *
  * Style follows frame_test.c: an assertion macro, a main, a printed failure
  * line, a non-zero exit — no framework.
  */
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -25,221 +33,320 @@ static int failures = 0;
         }                                                                       \
     } while (0)
 
-static const uint8_t secret_a[DH_PAIR_SECRET_LEN] = {
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-};
-static const uint8_t secret_b[DH_PAIR_SECRET_LEN] = {
-    0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87,
-    0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d, 0x1e, 0x0f,
-};
+/* ------------------------------------------------------------------ loading */
 
-static void test_a_fresh_device_authenticates_nobody(void) {
-    dh_pair p;
-    dh_pair_init(&p, NULL);
+#define MAX_FIELDS 8
+#define MAX_FIELD_BYTES 64
 
-    CHECK(!dh_pair_authenticate(&p, secret_a, sizeof secret_a), "fresh",
-          "a device with no secret authenticated a helper");
+/* The published pairing material: helper private, board private, the two
+   nonces, then the shared secret and the three session keys. Only the first
+   two and the fifth are used here; the keys are auth_test's business. */
+static uint8_t field[MAX_FIELDS][MAX_FIELD_BYTES];
+static size_t field_len[MAX_FIELDS];
 
-    /* And it hands nothing out until a chord has been pressed. */
-    uint8_t granted[DH_PAIR_SECRET_LEN];
-    CHECK(!dh_pair_grant(&p, 1000, granted), "fresh", "granted a secret with no window open");
+static int hex_nibble(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
 }
 
-static void test_a_stored_secret_survives_a_restart(void) {
-    /* What the firmware does at boot: read the secret back from flash. */
-    dh_pair p;
-    dh_pair_init(&p, secret_a);
-
-    CHECK(dh_pair_authenticate(&p, secret_a, sizeof secret_a), "restart",
-          "a stored secret did not authenticate its helper");
-    CHECK(!dh_pair_authenticate(&p, secret_b, sizeof secret_b), "restart",
-          "the wrong secret authenticated");
-}
-
-static void test_a_wrong_token_is_refused_however_close(void) {
-    dh_pair p;
-    dh_pair_init(&p, secret_a);
-
-    /* One byte out, at each end and in the middle. A near miss is a miss. */
-    for (size_t i = 0; i < DH_PAIR_SECRET_LEN; i++) {
-        uint8_t almost[DH_PAIR_SECRET_LEN];
-        memcpy(almost, secret_a, sizeof almost);
-        almost[i] ^= 0x01;
-        CHECK(!dh_pair_authenticate(&p, almost, sizeof almost), "near-miss",
-              "a secret differing by one bit authenticated");
+/* `session_material | <hex> | <hex> ...` out of primitives.txt. One line, so
+   this is deliberately smaller than auth_test's general loader. */
+static bool load_session_material(const char *path) {
+    FILE *file = fopen(path, "r");
+    if (!file) {
+        printf("FAIL cannot open %s\n", path);
+        return false;
     }
 
-    /* Length is part of it: a prefix of the secret is not the secret. */
-    CHECK(!dh_pair_authenticate(&p, secret_a, DH_PAIR_SECRET_LEN - 1), "near-miss",
-          "a truncated secret authenticated");
-    CHECK(!dh_pair_authenticate(&p, secret_a, DH_PAIR_SECRET_LEN + 1), "near-miss",
-          "an over-long secret authenticated");
-    CHECK(!dh_pair_authenticate(&p, NULL, DH_PAIR_SECRET_LEN), "near-miss",
-          "a null token authenticated");
+    char line[8192];
+    bool found = false;
+    while (!found && fgets(line, sizeof line, file)) {
+        if (strncmp(line, "session_material", 16) != 0) continue;
+        char *bar = strchr(line, '|');
+        if (!bar) break;
+
+        size_t fields = 0;
+        for (char *q = bar; *q && fields < MAX_FIELDS;) {
+            const size_t idx = fields++;
+            field_len[idx] = 0;
+            int hi = -1;
+            for (q++; *q && *q != '|'; q++) {
+                if (isspace((unsigned char)*q)) continue;
+                const int nib = hex_nibble((unsigned char)*q);
+                if (nib < 0 || field_len[idx] >= MAX_FIELD_BYTES) goto done;
+                if (hi < 0) {
+                    hi = nib;
+                } else {
+                    field[idx][field_len[idx]++] = (uint8_t)((hi << 4) | nib);
+                    hi = -1;
+                }
+            }
+        }
+        found = fields >= 5;
+    }
+done:
+    fclose(file);
+    if (!found) printf("FAIL session_material missing or short in %s\n", path);
+    return found;
 }
 
-static void test_the_window_opens_for_about_a_minute(void) {
+#define HELPER_PRIVATE field[0]
+#define BOARD_PRIVATE field[1]
+#define PUBLISHED_SHARED field[4]
+
+static uint8_t helper_public[DH_P256_PUBLIC_SIZE];
+
+/* A board holding the published identity, and nothing else. */
+static void a_board(dh_pair *p) {
+    dh_pair_init(p);
+    CHECK(dh_pair_set_identity(p, BOARD_PRIVATE), "setup", "the published board key was refused");
+}
+
+/* -------------------------------------------------------------------- tests */
+
+static void test_a_fresh_board_has_neither_identity_nor_registration(void) {
     dh_pair p;
-    dh_pair_init(&p, NULL);
+    dh_pair_init(&p);
 
-    const uint32_t pressed = 500000;
-    dh_pair_open_window(&p, secret_a, pressed);
+    CHECK(!dh_pair_has_identity(&p), "fresh", "a board had an identity before flash was read");
+    CHECK(dh_pair_public_key(&p) == NULL, "fresh",
+          "a board with no identity handed out a public key");
+    CHECK(!dh_pair_registered(&p), "fresh", "a board was registered before anything paired");
+    CHECK(dh_pair_shared_secret(&p) == NULL, "fresh",
+          "a board with no registration handed out a shared secret");
 
-    CHECK(dh_pair_window_open(&p, pressed), "window", "the window did not open");
-    CHECK(dh_pair_window_open(&p, pressed + DH_PAIR_WINDOW_MS - 1), "window",
-          "the window closed early");
-    CHECK(!dh_pair_window_open(&p, pressed + DH_PAIR_WINDOW_MS), "window",
-          "the window did not close on time");
-
-    /* A helper connecting during the window is provisioned; one connecting
-       after it is not. Nothing about that depends on the user. */
-    uint8_t granted[DH_PAIR_SECRET_LEN];
-    CHECK(dh_pair_grant(&p, pressed + 1000, granted), "window", "no secret inside the window");
-    CHECK(memcmp(granted, secret_a, sizeof granted) == 0, "window", "granted the wrong secret");
-
-    dh_pair_tick(&p, pressed + DH_PAIR_WINDOW_MS);
-    memset(granted, 0, sizeof granted);
-    CHECK(!dh_pair_grant(&p, pressed + DH_PAIR_WINDOW_MS, granted), "window",
-          "a secret was handed out after the window closed");
-
-    /* Refused means nothing written, not a zeroed secret handed over. */
-    uint8_t zeroes[DH_PAIR_SECRET_LEN] = {0};
-    CHECK(memcmp(granted, zeroes, sizeof granted) == 0, "window",
-          "a refused grant wrote to the caller's buffer");
-
-    /* The pairing it made still works: closing the window is not a wipe. */
-    CHECK(dh_pair_authenticate(&p, secret_a, sizeof secret_a), "window",
-          "closing the window unpaired the helper it provisioned");
+    /* And it cannot pair, even inside a window: there is no private half to
+       agree with. This is only reachable before first boot's generation. */
+    dh_pair_open_window(&p, 1000);
+    CHECK(dh_pair_register(&p, 1000, helper_public) == DH_PAIR_ERR_NO_IDENTITY, "fresh",
+          "a board with no identity completed a pairing");
 }
 
+/*
+ * The property the whole design rests on: the board reaches the same 32 bytes
+ * the helper does, from the two public halves and its own private one, and the
+ * value matches what an independent implementation published.
+ */
+static void test_pairing_reaches_the_published_shared_secret(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 5000);
+
+    CHECK(dh_pair_register(&p, 5000, helper_public) == DH_PAIR_OK, "ecdh",
+          "a pairing inside an open window was refused");
+    CHECK(dh_pair_registered(&p), "ecdh", "a completed pairing left the board unregistered");
+
+    const uint8_t *shared = dh_pair_shared_secret(&p);
+    CHECK(shared != NULL, "ecdh", "a registered board has no shared secret");
+    CHECK(shared != NULL && field_len[4] == DH_P256_SHARED_SIZE &&
+              memcmp(shared, PUBLISHED_SHARED, DH_P256_SHARED_SIZE) == 0,
+          "ecdh", "the board's shared secret is not the published one");
+
+    /* The key id names the helper's key without carrying it. */
+    uint8_t expected[DH_KEY_ID_SIZE];
+    dh_p256_key_id(helper_public, expected);
+    CHECK(dh_pair_is_registered_key(&p, expected), "ecdh",
+          "the registered key id is not the helper key that paired");
+
+    uint8_t someone_else[DH_KEY_ID_SIZE];
+    memcpy(someone_else, expected, sizeof someone_else);
+    someone_else[0] ^= 1u;
+    CHECK(!dh_pair_is_registered_key(&p, someone_else), "ecdh",
+          "a different key id was taken for the registered one");
+}
+
+/*
+ * The window is single-shot: the first registration closes it. A listener can
+ * no longer be provisioned silently *alongside* the helper — if it wins the
+ * race it is registered and the helper is not, and the helper is told which of
+ * those happened.
+ */
+static void test_the_first_registration_closes_the_window(void) {
+    dh_pair p;
+    a_board(&p);
+
+    CHECK(dh_pair_register(&p, 1000, helper_public) == DH_PAIR_ERR_NO_WINDOW, "single shot",
+          "a pairing outside any window was granted");
+
+    dh_pair_open_window(&p, 2000);
+    CHECK(dh_pair_window_open(&p, 2000), "single shot", "a fresh window was not open");
+    CHECK(dh_pair_register(&p, 2000, helper_public) == DH_PAIR_OK, "single shot",
+          "the first registration was refused");
+    CHECK(!dh_pair_window_open(&p, 2000), "single shot",
+          "the window stayed open after a registration");
+
+    /* The second asker is told *why*, and it is not the same answer as
+       arriving with no window at all: the user pressed the chord, and
+       something took the window they opened. */
+    CHECK(dh_pair_register(&p, 2001, helper_public) == DH_PAIR_ERR_ALREADY_REGISTERED,
+          "single shot", "a second registration was not told the window had been claimed");
+}
+
+/* Split out of the test above, because the clock has to advance through
+   dh_pair_tick the way the firmware advances it. */
+static void test_a_claimed_window_stops_being_claimed_after_its_minute(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 2000);
+    CHECK(dh_pair_register(&p, 2000, helper_public) == DH_PAIR_OK, "claimed", "no registration");
+
+    dh_pair_tick(&p, 2000 + DH_PAIR_WINDOW_MS - 1u);
+    CHECK(dh_pair_register(&p, 2000 + DH_PAIR_WINDOW_MS - 1u, helper_public) ==
+              DH_PAIR_ERR_ALREADY_REGISTERED,
+          "claimed", "the claim expired before the minute did");
+
+    dh_pair_tick(&p, 2000 + DH_PAIR_WINDOW_MS);
+    CHECK(dh_pair_register(&p, 2000 + DH_PAIR_WINDOW_MS, helper_public) == DH_PAIR_ERR_NO_WINDOW,
+          "claimed", "the claim outlived the window it belonged to");
+}
+
+/*
+ * v1 rotated the device secret on every chord press, because a leaked bearer
+ * token stayed valid until the configuration was wiped — and ADR-0008 recorded
+ * that where the channel is not exclusive, rotating re-issued the pairing to
+ * whatever was listening. Nothing secret crosses now, so a press nobody pairs
+ * against costs the user nothing.
+ */
+static void test_a_window_nobody_uses_leaves_the_registration_alone(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 1000);
+    CHECK(dh_pair_register(&p, 1000, helper_public) == DH_PAIR_OK, "unused window", "no pairing");
+
+    uint8_t was[DH_P256_SHARED_SIZE];
+    memcpy(was, dh_pair_shared_secret(&p), sizeof was);
+
+    /* A second chord press, and the minute runs out with nobody asking. */
+    dh_pair_open_window(&p, 100000);
+    CHECK(dh_pair_registered(&p), "unused window", "opening a window unpaired the board");
+    dh_pair_tick(&p, 100000 + DH_PAIR_WINDOW_MS);
+    CHECK(!dh_pair_window_open(&p, 100000 + DH_PAIR_WINDOW_MS), "unused window",
+          "the window never closed");
+
+    CHECK(dh_pair_registered(&p), "unused window", "an unused window unpaired the board");
+    CHECK(memcmp(dh_pair_shared_secret(&p), was, sizeof was) == 0, "unused window",
+          "an unused window changed the shared secret");
+}
+
+/* Re-pairing replaces the registration — one board serves one computer, so
+   there is exactly one, and that is what makes a stolen pairing recoverable. */
+static void test_re_pairing_replaces_the_registration(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 1000);
+    CHECK(dh_pair_register(&p, 1000, helper_public) == DH_PAIR_OK, "re-pair", "no first pairing");
+
+    uint8_t other_private[DH_P256_PRIVATE_SIZE];
+    uint8_t other_public[DH_P256_PUBLIC_SIZE];
+    memcpy(other_private, HELPER_PRIVATE, sizeof other_private);
+    other_private[31] ^= 0x0Fu;
+    CHECK(dh_p256_public_from_private(other_private, other_public), "re-pair",
+          "the second key would not derive");
+
+    uint8_t first[DH_P256_SHARED_SIZE];
+    memcpy(first, dh_pair_shared_secret(&p), sizeof first);
+
+    dh_pair_open_window(&p, 50000);
+    CHECK(dh_pair_register(&p, 50000, other_public) == DH_PAIR_OK, "re-pair",
+          "a second pairing in a fresh window was refused");
+    CHECK(memcmp(dh_pair_shared_secret(&p), first, sizeof first) != 0, "re-pair",
+          "re-pairing left the previous shared secret in place");
+
+    uint8_t previous_id[DH_KEY_ID_SIZE];
+    dh_p256_key_id(helper_public, previous_id);
+    CHECK(!dh_pair_is_registered_key(&p, previous_id), "re-pair",
+          "the board still recognises the helper it replaced");
+}
+
+/*
+ * A pairing request is hostile input: anything attached to the channel can
+ * send one. A key that is not a point on the curve is refused, and — this is
+ * the part worth pinning — it does **not** burn the window the user opened.
+ */
+static void test_a_bad_key_is_refused_without_spending_the_window(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 1000);
+
+    uint8_t not_a_point[DH_P256_PUBLIC_SIZE];
+    memset(not_a_point, 0xAA, sizeof not_a_point);
+    CHECK(dh_pair_register(&p, 1000, not_a_point) == DH_PAIR_ERR_BAD_KEY, "bad key",
+          "a point off the curve was registered");
+    CHECK(!dh_pair_registered(&p), "bad key", "a refused key still left a registration");
+    CHECK(dh_pair_window_open(&p, 1000), "bad key",
+          "a garbage request closed the window the user opened");
+
+    /* The real helper, arriving second, still gets its pairing. */
+    CHECK(dh_pair_register(&p, 1001, helper_public) == DH_PAIR_OK, "bad key",
+          "the window was unusable after a garbage request");
+}
+
+/*
+ * A wipe unpairs and nothing more. If it took the identity too, every wipe
+ * would make every helper report "this board changed" — a false alarm on a
+ * routine action (#75, ADR-0008).
+ */
+static void test_a_wipe_unpairs_and_leaves_the_identity(void) {
+    dh_pair p;
+    a_board(&p);
+    dh_pair_open_window(&p, 1000);
+    CHECK(dh_pair_register(&p, 1000, helper_public) == DH_PAIR_OK, "wipe", "no pairing");
+
+    uint8_t was_public[DH_P256_PUBLIC_SIZE];
+    memcpy(was_public, dh_pair_public_key(&p), sizeof was_public);
+
+    dh_pair_clear_registration(&p);
+
+    CHECK(!dh_pair_registered(&p), "wipe", "a wipe left the board paired");
+    CHECK(dh_pair_shared_secret(&p) == NULL, "wipe", "a wipe left the shared secret readable");
+    CHECK(dh_pair_has_identity(&p), "wipe", "a wipe took the board's identity");
+    CHECK(memcmp(dh_pair_public_key(&p), was_public, sizeof was_public) == 0, "wipe",
+          "a wipe changed who this board is");
+
+    /* And a chord press after the wipe pairs it again, which is the whole
+       recovery: one keystroke. */
+    dh_pair_open_window(&p, 2000);
+    CHECK(dh_pair_register(&p, 2000, helper_public) == DH_PAIR_OK, "wipe",
+          "a wiped board could not be re-paired");
+}
+
+/* A wrapping millisecond counter is arithmetic, not a window that never
+   closes — nor one that closes the moment it opens. */
 static void test_the_window_survives_the_clock_wrapping(void) {
     dh_pair p;
-    dh_pair_init(&p, NULL);
+    a_board(&p);
 
-    const uint32_t before_wrap = UINT32_MAX - (DH_PAIR_WINDOW_MS / 2);
-    dh_pair_open_window(&p, secret_a, before_wrap);
+    const uint32_t before_wrap = UINT32_MAX - (DH_PAIR_WINDOW_MS / 2u);
+    dh_pair_open_window(&p, before_wrap);
 
-    const uint32_t after_wrap = before_wrap + (DH_PAIR_WINDOW_MS / 2) + 1000; /* wraps */
+    const uint32_t after_wrap = before_wrap + (DH_PAIR_WINDOW_MS / 2u) + 1000u; /* wraps */
     CHECK(dh_pair_window_open(&p, after_wrap), "wrap", "the window closed across the wrap");
+
+    dh_pair_tick(&p, before_wrap + DH_PAIR_WINDOW_MS);
     CHECK(!dh_pair_window_open(&p, before_wrap + DH_PAIR_WINDOW_MS), "wrap",
           "the window never closed across the wrap");
 }
 
-/*
- * The decision this ticket carries: every window rotates the secret, so a
- * pairing that leaked is revocable by the same one-keystroke gesture that
- * created it. Walked through as the attack it exists for.
- */
-static void test_rotation_makes_a_stolen_pairing_recoverable(void) {
-    dh_pair p;
-    dh_pair_init(&p, NULL);
+int main(int argc, char **argv) {
+    const char *path = argc > 1 ? argv[1] : DH_PRIMITIVE_VECTORS;
+    if (!load_session_material(path)) return 1;
 
-    /* Monday: the user pairs their helper. */
-    dh_pair_open_window(&p, secret_a, 1000);
-    uint8_t helper_secret[DH_PAIR_SECRET_LEN];
-    CHECK(dh_pair_grant(&p, 1000, helper_secret), "rotation", "the first pairing failed");
-    CHECK(dh_pair_authenticate(&p, helper_secret, sizeof helper_secret), "rotation",
-          "the paired helper was not authenticated");
+    if (!dh_p256_public_from_private(HELPER_PRIVATE, helper_public)) {
+        printf("FAIL the published helper key would not derive\n");
+        return 1;
+    }
 
-    /* Tuesday: a process that won the exclusivity race is connected when the
-       user presses the chord, and is provisioned. This is the attack #34
-       accepts as a residual risk, not one this control prevents. */
-    const uint32_t tuesday = 1000 + 86400000u;
-    dh_pair_open_window(&p, secret_b, tuesday);
-    uint8_t stolen[DH_PAIR_SECRET_LEN];
-    CHECK(dh_pair_grant(&p, tuesday, stolen), "rotation", "the window did not provision");
-    CHECK(dh_pair_authenticate(&p, stolen, sizeof stolen), "rotation",
-          "the stolen secret does not work — the scenario is wrong");
-
-    /* That press already evicted the user's own helper: rotation is what
-       makes the eviction, and the recovery, the same gesture. */
-    CHECK(!dh_pair_authenticate(&p, helper_secret, sizeof helper_secret), "rotation",
-          "the previous pairing survived a rotation");
-
-    /* Wednesday: the user works out what happened, stops the process, and
-       presses the chord once with only their own helper connected. */
-    const uint32_t wednesday = tuesday + 86400000u;
-    const uint8_t secret_c[DH_PAIR_SECRET_LEN] = {
-        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-        0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
-    };
-    dh_pair_open_window(&p, secret_c, wednesday);
-    uint8_t repaired[DH_PAIR_SECRET_LEN];
-    CHECK(dh_pair_grant(&p, wednesday, repaired), "rotation", "re-pairing failed");
-
-    /* The theft is revoked, and it cost one keystroke rather than a
-       configuration wipe. */
-    CHECK(!dh_pair_authenticate(&p, stolen, sizeof stolen), "rotation",
-          "a stolen pairing survived the recovery press — rotation is not working");
-    CHECK(dh_pair_authenticate(&p, repaired, sizeof repaired), "rotation",
-          "the user's own helper was not re-paired");
-}
-
-/*
- * A configuration wipe (#75). The secret lives in the configuration, so
- * wiping it must leave this module holding nothing at all — including a
- * window that was still open, which would otherwise re-grant the very secret
- * the wipe had just erased.
- *
- * What this adds over test_a_fresh_device_authenticates_nobody is the open
- * window. Re-initing is a memset today, so the rest follows from that test;
- * a later dh_pair_init that cleared only `provisioned` would still pass it,
- * and would leave a window standing over a secret that no longer exists.
- *
- * It pins the mechanism the firmware's wipe path relies on, not its
- * sequencing: whether the firmware actually re-inits is a hardware
- * observation, because nothing host-side can see the device authenticating
- * against a secret that is no longer in flash.
- */
-static void test_a_wipe_leaves_the_device_holding_nothing(void) {
-    dh_pair p;
-    dh_pair_init(&p, NULL);
-
-    /* Paired, with the window still open — the wipe chord is reachable a
-       second after the config chord that opened it. */
-    dh_pair_open_window(&p, secret_a, 1000);
-    uint8_t paired[DH_PAIR_SECRET_LEN];
-    CHECK(dh_pair_grant(&p, 1000, paired), "wipe", "the pairing under test never happened");
-
-    /* What the wipe leaves behind: a configuration with no secret in it. */
-    dh_pair_init(&p, NULL);
-
-    CHECK(!dh_pair_authenticate(&p, paired, sizeof paired), "wipe",
-          "a wiped configuration still authenticates the helper it paired");
-    CHECK(!dh_pair_window_open(&p, 1000), "wipe", "the wipe left the pairing window open");
-
-    uint8_t granted[DH_PAIR_SECRET_LEN];
-    CHECK(!dh_pair_grant(&p, 1000, granted), "wipe",
-          "a wiped device handed out the secret it had just erased");
-}
-
-/* A window opened while one is already open re-rotates: holding the chord, or
- * bouncing in and out of config mode, must not leave two live secrets. */
-static void test_reopening_a_window_rotates_again(void) {
-    dh_pair p;
-    dh_pair_init(&p, NULL);
-
-    dh_pair_open_window(&p, secret_a, 1000);
-    dh_pair_open_window(&p, secret_b, 2000);
-
-    CHECK(!dh_pair_authenticate(&p, secret_a, sizeof secret_a), "reopen",
-          "the first secret of two overlapping windows still authenticates");
-    CHECK(dh_pair_authenticate(&p, secret_b, sizeof secret_b), "reopen",
-          "the second secret does not authenticate");
-    CHECK(dh_pair_window_open(&p, 2000 + DH_PAIR_WINDOW_MS - 1), "reopen",
-          "reopening did not extend the window");
-}
-
-int main(void) {
-    test_a_fresh_device_authenticates_nobody();
-    test_a_stored_secret_survives_a_restart();
-    test_a_wrong_token_is_refused_however_close();
-    test_the_window_opens_for_about_a_minute();
+    test_a_fresh_board_has_neither_identity_nor_registration();
+    test_pairing_reaches_the_published_shared_secret();
+    test_the_first_registration_closes_the_window();
+    test_a_claimed_window_stops_being_claimed_after_its_minute();
+    test_a_window_nobody_uses_leaves_the_registration_alone();
+    test_re_pairing_replaces_the_registration();
+    test_a_bad_key_is_refused_without_spending_the_window();
+    test_a_wipe_unpairs_and_leaves_the_identity();
     test_the_window_survives_the_clock_wrapping();
-    test_rotation_makes_a_stolen_pairing_recoverable();
-    test_a_wipe_leaves_the_device_holding_nothing();
-    test_reopening_a_window_rotates_again();
 
     if (failures) {
         printf("%d pairing check(s) failed\n", failures);

@@ -34,6 +34,15 @@ __TOTAL_IMAGE_LENGTH = 256k;
 
 __CONFIG_STORAGE_LEN = 4k;
 
+/* The board's own identity: its P-256 private key, generated on first boot (#111).
+   Its own sector, beside the configuration and part of neither it nor the image,
+   so it survives a config wipe, a firmware update, and the peer propagation that
+   copies one board's image onto the other (#91). An identity inside the image
+   would give both boards the same identity. src/include/flash_layout.h mirrors
+   these numbers and tests/flash_layout_test.c gates them; the ASSERTs below are
+   what stop the two drifting. */
+__IDENTITY_STORAGE_LEN = 4k;
+
 MEMORY
 {
     FLASH(rx) : ORIGIN = 0x10000000, LENGTH = __FLASH_LEN
@@ -41,6 +50,7 @@ MEMORY
     FW_METADATA(rw) : ORIGIN = 0x10000000 + (__TOTAL_IMAGE_LENGTH - __METADATA_LEN), LENGTH = __METADATA_LEN
     FW_STAGING(rw) : ORIGIN = 0x10000000 + __TOTAL_IMAGE_LENGTH, LENGTH = __TOTAL_IMAGE_LENGTH
 
+    FLASH_IDENTITY(rw) : ORIGIN = 0x10000000 + (2048k - __CONFIG_STORAGE_LEN - __IDENTITY_STORAGE_LEN), LENGTH = __IDENTITY_STORAGE_LEN
     FLASH_CONFIG(rw) : ORIGIN = 0x10000000 + (2048k - __CONFIG_STORAGE_LEN), LENGTH = __CONFIG_STORAGE_LEN
     RAM(rwx) : ORIGIN =  0x20000000, LENGTH = 256k
     SCRATCH_X(rwx) : ORIGIN = 0x20040000, LENGTH = 4k
@@ -262,10 +272,27 @@ SECTIONS
         ___ROM_AT = .;
     } > FW_METADATA
 
+    /* Identity flash section (4k in size, immediately before the config) */
+    .section_identity (NOLOAD) : {
+        ADDR_IDENTITY = .;
+    } > FLASH_IDENTITY
+
     /* Configuration flash section (4k in size, end of flash) */   
     .section_config (NOLOAD) : {
         ADDR_CONFIG = .;
     } > FLASH_CONFIG
+
+    /* The identity is the one region whose address a test cannot see, because
+       it is a linker symbol. These tie it to the arithmetic in
+       src/include/flash_layout.h, which tests/flash_layout_test.c does gate —
+       so a region moved here fails the link rather than silently landing
+       somewhere a firmware update would erase. */
+    ASSERT(ADDR_IDENTITY == 0x10000000 + (2048k - 8k),
+        "ERROR: the identity sector moved; src/include/flash_layout.h says 2048k - 8k")
+    ASSERT(ADDR_IDENTITY + __IDENTITY_STORAGE_LEN <= ADDR_CONFIG,
+        "ERROR: the identity sector overlaps the configuration")
+    ASSERT(ADDR_IDENTITY >= ORIGIN(FW_STAGING) + LENGTH(FW_STAGING),
+        "ERROR: the identity sector is inside the range a firmware upgrade writes")
 
     /* .stack*_dummy section doesn't contains any symbols. It is only
      * used for linker to calculate size of stack sections, and assign

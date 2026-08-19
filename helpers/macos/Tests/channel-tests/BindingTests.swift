@@ -103,17 +103,19 @@ func testMalformedInputIsRejected() throws {
 
 /*
  * The four frames below were golden vectors until #109 rewrote
- * test-vectors/frames.txt for protocol v2 (ADR-0008). The core's hello codec
- * still speaks v1 — #111 is what moves it — so the v1 bytes are frozen here
- * rather than read from a file describing a different protocol. Frozen, not
- * copied: nothing new is written against v1, so they cannot drift.
+ * test-vectors/frames.txt for protocol v2 (ADR-0008). Frozen here rather than
+ * read from a file describing a different protocol; frozen, not copied,
+ * because nothing new is written against v1 and so the two cannot drift.
  *
- * (#110 landed the v2 primitives underneath the codec — P-256, HKDF and the
- * frame tag — without moving it, so that the board keeps announcing the
- * version it actually speaks.)
+ * #111 moved the **board** to v2 and left this helper on v1, against the
+ * parked codecs in src/core/dh_session_v1.h. A v1 helper cannot pair with a v2
+ * board, which is ADR-0008's own sequencing rather than a defect: old pairings
+ * do not migrate, because a migration path would have to accept the bearer
+ * token, which is the thing being removed.
  *
- * WHEN #111 LANDS: delete these and point the two tests below back at
- * GoldenVectors.named(...).
+ * WHEN #112 LANDS: this helper gets a Secure Enclave identity and the v2
+ * handshake. Delete these frames, delete src/core/dh_session_v1.[ch], and
+ * point the two tests below back at GoldenVectors.named(...).
  */
 enum FrozenV1 {
     static let helloMac: [UInt8] = [

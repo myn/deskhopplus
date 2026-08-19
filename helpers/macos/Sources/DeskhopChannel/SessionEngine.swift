@@ -432,7 +432,7 @@ public final class SessionEngine {
              */
             forgetSession()
             return [.note("device speaks protocol version \(ack.protocolVersion), "
-                          + "this helper speaks \(DH_PROTO_VERSION)")]
+                          + "this helper speaks \(DH_PROTO_VERSION_V1)")]
                 + emit(.versionIncompatible)
         }
     }

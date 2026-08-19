@@ -171,6 +171,7 @@ enum screensaver_mode_e {
 
 extern const config_t default_config;
 extern const config_t ADDR_CONFIG[];
+extern const uint8_t ADDR_IDENTITY[];
 extern const uint8_t ADDR_FW_METADATA[];
 extern const uint8_t ADDR_FW_RUNNING[];
 extern const uint8_t ADDR_FW_STAGING[];

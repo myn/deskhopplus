@@ -16,7 +16,7 @@
 #include <stdint.h>
 
 #include "constants.h" /* NUM_SCREENS */
-#include "dh_pair.h"   /* DH_PAIR_SECRET_LEN */
+#include "dh_p256.h"   /* DH_P256_SHARED_SIZE, DH_KEY_ID_SIZE */
 #include "screen.h"    /* output_t */
 
 /* What marks these bytes as a configuration at all. An erased sector reads as
@@ -36,8 +36,13 @@
  *      configuration is not read as a newer one — it falls back to defaults,
  *      which is also how a device with no secret ends up needing one chord
  *      press.
+ *  10: the bearer secret became a registration — the paired helper's key id
+ *      and the shared secret one ECDH produced (#111, ADR-0008). The bump
+ *      costs every board its pairing, and that is not a side effect: v2 does
+ *      not migrate a v1 pairing, because a migration path would have to accept
+ *      the bearer token, which is the thing being removed. One chord press.
  */
-#define CURRENT_CONFIG_VERSION 9
+#define CURRENT_CONFIG_VERSION 10
 
 typedef struct {
     uint32_t magic_header;
@@ -56,14 +61,23 @@ typedef struct {
     output_t output[NUM_SCREENS];
 
     /*
-     * The device-held pairing secret (#46). Deliberately *not* in
-     * api_field_map: config is only ever exposed field by field, so a secret
-     * kept out of that map is unreadable through the API and never syncs to
-     * the peer board — which is what keeps a rotation on this board from
-     * evicting the other computer's helper. Wiped with the rest of the
-     * configuration, so one chord press restores pairing afterwards.
+     * The registration: the one helper key this board has paired with (#111).
+     * `channel_helper_key_id` names that key without carrying it, and
+     * `channel_shared_secret` is what the single pairing-time ECDH produced —
+     * every session key is derived from it, and it never crosses the wire.
+     *
+     * Deliberately *not* in api_field_map: config is only ever exposed field
+     * by field, so material kept out of that map is unreadable through the API
+     * and never syncs to the peer board — which is what keeps a re-pairing on
+     * this board from evicting the other computer's helper.
+     *
+     * Wiped with the rest of the configuration, because wiping is how a user
+     * unpairs. The board's *identity* is not here: it lives in its own flash
+     * sector (flash_layout.h) precisely so that a wipe unpairs without
+     * changing who this board is.
      */
-    uint8_t channel_secret[DH_PAIR_SECRET_LEN];
+    uint8_t channel_helper_key_id[DH_KEY_ID_SIZE];
+    uint8_t channel_shared_secret[DH_P256_SHARED_SIZE];
     uint8_t channel_paired;
 
     /* Named, not left to the compiler: _reserved needs 4-byte alignment, so

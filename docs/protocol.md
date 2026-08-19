@@ -14,18 +14,23 @@ board will act on.
 **Old pairings do not migrate.** A migration path would have to accept the old bearer token,
 which is the thing being removed. Recovery is one chord press, by design.
 
-> **Sequencing.** This document is the specification; the tree implements the primitives but not
-> yet the exchange. `DH_PROTO_VERSION` in `src/core/dh_session.h` is still `1` and `dh_session.c`
-> still speaks v1, deliberately: a board that announced version 2 while speaking v1 would be worse
-> than one that announces the version it actually speaks. The constant moves to `2` with the codec,
-> in [#111](https://github.com/myn/deskhopplus/issues/111) (board) and
-> [#112](https://github.com/myn/deskhopplus/issues/112) (macOS helper).
-> [#110](https://github.com/myn/deskhopplus/issues/110) landed underneath both of them — P-256,
-> HKDF, the frame tag and the counter, in `src/core/dh_p256.c`, `src/core/dh_sha256.c` and
-> `src/core/dh_auth.c` — without touching the codec, which is why the version constant did not
-> move with it. `#109` ships the spec first because #111 and
-> [#84](https://github.com/myn/deskhopplus/issues/84) are both written from it — that is what
-> [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
+> **Sequencing.** The **board speaks this document** as of
+> [#111](https://github.com/myn/deskhopplus/issues/111): `DH_PROTO_VERSION` in
+> `src/core/dh_session.h` is `2`, and it moved with `dh_session.c` rather than with this file,
+> because a board that announced version 2 while speaking v1 would be worse than one that
+> announces the version it actually speaks.
+> [#110](https://github.com/myn/deskhopplus/issues/110) landed the primitives underneath —
+> P-256, HKDF, the frame tag and the counter, in `src/core/dh_p256.c`, `src/core/dh_sha256.c`
+> and `src/core/dh_auth.c` — without touching the codec, which is why the constant did not move
+> with it either.
+>
+> **The macOS helper is still on v1** until [#112](https://github.com/myn/deskhopplus/issues/112)
+> gives it a Secure Enclave identity, and Windows until
+> [#84](https://github.com/myn/deskhopplus/issues/84). Until then a v1 helper cannot pair with a
+> v2 board, which is this document's own rule rather than a defect — old pairings do not migrate.
+> The v1 hello codecs the helper still binds to are parked in `src/core/dh_session_v1.h`, which
+> #112 deletes. `#109` shipped this spec first because #111 and #84 are both written from it —
+> that is what [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
 
 ## Assumptions
 
@@ -534,13 +539,16 @@ a comment reading *"The largest reply this path can produce is a 20-byte pair gr
 
 `dh_frame_encode` returns `DH_FRAME_ERR_BUFFER` rather than truncating, and `src/channel.c:325`
 queues only on `DH_FRAME_OK` — so a v2 board built on today's buffer would simply never answer a
-pairing request, with no error anywhere. **#111 must raise this buffer to at least 80 bytes.**
+pairing request, with no error anywhere.
 
-The buffer's size is not arbitrary and the reasoning behind it survives: it is report-sized
-because this runs on core 0's main stack inside a USB callback, a 2 KB stack inside a 4 KB
-`SCRATCH_Y` next to core 1's. What that comment argues against is a **frame-sized** buffer —
-`DH_FRAME_MAX_SIZE` is 4100 and would overrun both stacks. 80 bytes does not, and the comment's
-claim about the largest reply must be corrected rather than deleted.
+**Done in #111.** The buffer is `DH_SESSION_REPLY_MAX`, stated in `src/core/dh_session.h` as the
+largest frame the session layer can emit, so the size follows the protocol rather than being
+restated in the firmware. The reasoning behind the old size survived and the claim about the
+largest reply did not: it is small because this path runs on core 0's stack — 2 KB, inside a 4 KB
+`SCRATCH_Y` next to core 1's — and what that argues against is a **frame-sized** buffer, since
+`DH_FRAME_MAX_SIZE` is 4100 and would overrun both. 76 bytes does not. The one place a whole frame
+genuinely has to be assembled is the relayed frame the board re-tags for its own helper, and that
+buffer is static for exactly this reason.
 
 ## Liveness
 

@@ -47,3 +47,19 @@ void reset_config_timer(device_t *);
 void save_config(device_t *);
 bool validate_packet(uart_packet_t *);
 void wipe_config(void);
+
+/*==============================================================================
+ *  The board's identity (#111)
+ *  Its own flash sector, beside the configuration and part of neither it nor
+ *  the running image — so a config wipe, a firmware update and a peer
+ *  propagation all leave it alone. See src/include/flash_layout.h.
+ *==============================================================================*/
+
+/* Read the stored private key back. False when the sector holds nothing this
+   firmware can use, which is a board that has never booted, or one whose
+   record was disturbed — either way the caller draws a fresh key. */
+bool load_identity(uint8_t private_key[DH_P256_PRIVATE_SIZE]);
+
+/* Write one. Erases and rewrites the identity sector, which is why it is
+   called once, at boot, and never again for the life of the board. */
+void save_identity(device_t *, const uint8_t private_key[DH_P256_PRIVATE_SIZE]);

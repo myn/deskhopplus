@@ -455,9 +455,14 @@ static void test_the_preamble_is_owed_once_per_frame(void) {
  * retransmit behind it and costs the whole transfer.
  */
 static void test_a_queued_slot_holds_the_largest_viable_bulk_frame(void) {
-    const size_t chunk_frame = DH_FRAME_HEADER_SIZE + 12u /* id, seq, crc32 */
+    /* The authentication prefix is inside the frame's length (#111), so it is
+       part of what a slot has to hold — the omission would not fail loudly,
+       it would quietly stop anything queueing behind the frame in flight. */
+    const size_t chunk_frame = DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE
+                               + 12u /* id, seq, crc32 */
                                + DH_XFER_CHUNK_SIZE;
-    const size_t offer_frame = DH_FRAME_HEADER_SIZE + 15u /* id, kind, total, meta_len */
+    const size_t offer_frame = DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE
+                               + 15u /* id, kind, total, meta_len */
                                + DH_XFER_META_MAX;
 
     CHECK(DH_OUTQ_STAGE_MAX >= chunk_frame, "sizing",

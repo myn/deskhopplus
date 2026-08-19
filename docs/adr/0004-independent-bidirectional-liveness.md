@@ -68,8 +68,16 @@ This is the part that will look wrong at a glance, since #68 itself rejected "tr
 traffic as liveness" on its face. That rejection was correct **in the helper→device direction**,
 where placement is fire-and-forget and may not happen for hours, so absence proves nothing. The
 inverse proposition is what is used here: the *presence* of a device→helper frame proves the device
-is alive and holds an authenticated session, because every such frame has already passed
-`dh_session_may_relay` or come from the session layer itself.
+is alive and holds an authenticated session, because every such frame either came from the session
+layer itself or is one the device authenticated to this helper before emitting it.
+
+(That last clause was `dh_session_may_relay` — one flag for the whole board — until
+[ADR-0008](0008-channel-identity-and-sealed-clipboard.md) replaced it with a tag on every frame
+(#111). The property this argument rests on is unchanged and is now stronger: a device→helper frame
+carries a tag under the session key, so it could only have come from the device holding it. The
+helper→device direction changed in the same way, and there it is a fix rather than a restatement —
+under v1 the deadline measured "*something* is writing", which on a shared endpoint (#95) let a
+second writer hold the device's view of the helper alive after the real helper had stopped.)
 
 The forcing constraint is `channel_queue_frame`: **one frame slot**, shared by relayed bulk, and a
 refusal is silent loss with no retransmit beneath it (#69). A once-per-second beat competing with a

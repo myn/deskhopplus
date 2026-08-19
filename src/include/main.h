@@ -25,6 +25,8 @@
 #include "structs.h"
 #include "config.h"
 #include "config_store.h"
+#include "flash_layout.h"
+#include "identity_store.h"
 
 #include "pio_usb.h"
 #include "tusb.h"

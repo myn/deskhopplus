@@ -72,6 +72,23 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
     if (uf2->magicStart0 != UF2_MAGIC_START0 || uf2->magicStart1 != UF2_MAGIC_START1 || uf2->magicEnd != UF2_MAGIC_END)
         return (int32_t)bufsize;
 
+    /* The block number is the host's, and until #111 nothing bounded it —
+       MAX_BLOCK_NO was computed and then used only to spot the last block.
+       Unchecked it is an absolute page address into flash: a UF2 naming block
+       0x1F80 writes 2048k-8k, which is the board's identity sector, and
+       write_flash_page erases a sector before programming it. One oversized or
+       malformed image would therefore destroy the identity and unpair every
+       helper registered against it — the identity is placed outside the image
+       precisely so that a firmware update cannot do that, and this is what
+       makes the placement true rather than merely intended
+       (src/include/flash_layout.h, tests/flash_layout_test.c).
+
+       Refused rather than clamped: a block past the image means the image is
+       not the one this board takes, and half-writing it is what
+       abandon_firmware_upgrade exists to recover from (#90). */
+    if (uf2->blockNo > MAX_BLOCK_NO)
+        return -1;
+
     if (uf2->blockNo == 0) {
         global_state.fw.checksum = 0xffffffff;
 

@@ -143,6 +143,47 @@ void save_config(device_t *state) {
     write_flash_page((uint32_t)ADDR_CONFIG - XIP_BASE, state->page_buffer);
 }
 
+/* ================================================== *
+ * The board's identity (#111)
+ *
+ * Its own sector, and everything about that placement is defensive: a config
+ * wipe erases ADDR_CONFIG, a firmware update and a peer propagation write the
+ * running image from address 0, and neither range reaches here
+ * (src/include/flash_layout.h asserts it, tests/flash_layout_test.c gates it).
+ * An identity inside the image would give both boards the same identity, which
+ * is precisely what the propagation path in #91 would produce.
+ * ================================================== */
+
+bool load_identity(uint8_t private_key[DH_P256_PRIVATE_SIZE]) {
+    identity_t stored;
+
+    /* Copied out before it is judged, exactly as load_config does: the flash
+       is memory-mapped and read-only, and the checksum has to be computed over
+       a struct this firmware laid out rather than over whatever the sector
+       happens to alias. */
+    memcpy(&stored, ADDR_IDENTITY, sizeof stored);
+
+    if (!identity_is_valid(&stored))
+        return false;
+
+    memcpy(private_key, stored.private_key, DH_P256_PRIVATE_SIZE);
+    return true;
+}
+
+void save_identity(device_t *state, const uint8_t private_key[DH_P256_PRIVATE_SIZE]) {
+    identity_t fresh = {
+        .magic_header = IDENTITY_MAGIC_HEADER,
+        .version = CURRENT_IDENTITY_VERSION,
+    };
+    memcpy(fresh.private_key, private_key, DH_P256_PRIVATE_SIZE);
+    identity_seal(&fresh);
+
+    memcpy(state->page_buffer, &fresh, sizeof fresh);
+    memset(state->page_buffer + sizeof fresh, 0, FLASH_PAGE_SIZE - sizeof fresh);
+
+    write_flash_page((uint32_t)ADDR_IDENTITY - XIP_BASE, state->page_buffer);
+}
+
 void reset_config_timer(device_t *state) {
     /* Once this is reached, we leave the config mode */
     state->config_mode_timer = time_us_64() + CONFIG_MODE_TIMEOUT;

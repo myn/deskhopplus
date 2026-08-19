@@ -82,15 +82,20 @@ func encodeHello(token: [UInt8]) -> [UInt8] {
 }
 
 // The v1 `hello_mac` golden vector, frozen here. It left
-// test-vectors/frames.txt when #109 rewrote that file for protocol v2, but the
-// shipped firmware still speaks v1 (#111 is what moves it), so this is still
-// the hello the board on the desk expects. If this ever stops matching what
-// the board speaks, the probe is speaking a protocol the device does not, and
-// a run that found nothing would mean nothing.
+// test-vectors/frames.txt when #109 rewrote that file for protocol v2.
 //
-// WHEN #111 LANDS: this probe measures a trap v2 closes — a hello that does
-// not authenticate gets no answer at all. Re-point it at the v2 vectors and it
-// should find nothing, which is then the result worth recording.
+// #111 MOVED THE BOARD TO V2, SO THIS PROBE NO LONGER MEASURES ANYTHING ON A
+// BOARD RUNNING CURRENT FIRMWARE. A v2 board reads this as a hello carrying a
+// version it does not implement and answers HELLO_REFUSED(version_incompatible)
+// — not the DH_HELLO_AUTH_FAILED the trap needs — and a v2 hello that fails its
+// tag draws no answer at all, which is the fix. Kept as it is because it is the
+// record of what was measured on hardware on 2026-08-18 (#108), and rerunning
+// it against a v1 board is still how that measurement is reproduced.
+//
+// Re-pointing it at the v2 vectors belongs with the helper that speaks them
+// (#112): it should then find nothing, and *that* is the result worth
+// recording. A run against a v2 board before then reports "not confirmed" for
+// the wrong reason, so read the version in the answer before believing it.
 let goldenHelloMac: [UInt8] = [
     0x01, 0x00, 0x17, 0x00,
     0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,

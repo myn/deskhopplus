@@ -111,10 +111,11 @@ void tud_umount_cb(void) {
        channel_link_lost and not channel_init, which would take an open
        pairing window with it. That was #100: 5617314 wrote the fix and left
        it with no caller, so the window kept dying to a bus reset the header
-       already said it survived. Not re-reading the secret here costs nothing
-       — every path that changes it in the running config tells the pairing
-       module itself, and config mode is decided at boot, where channel_init
-       still runs. */
+       already said it survived. Not re-reading flash here costs nothing —
+       every path that changes the registration in the running config tells the
+       pairing module itself, and the board's identity is drawn once for its
+       whole life. Config mode is decided at boot, where channel_init still
+       runs. */
     channel_link_lost();
 }
 

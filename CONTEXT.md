@@ -46,10 +46,13 @@ _Avoid_: intruder, second client, second helper, eavesdropper, attacker
 
 **Session**:
 The negotiated state established by the hello exchange: the agreed protocol version, channel count
-and chunk size, plus the authentication that makes the peer one anything may be relayed for. It
-ends when either end times the other out, on a protocol error, or when the pairing chord rotates
-the secret. A session can be gone while the connection and the link are both perfectly healthy —
-that gap is the whole reason these are three words and not one.
+and chunk size, plus the **session keys** every frame after it is authenticated under. It ends when
+either end times the other out, on a protocol error, or when a config wipe clears the registration
+it was negotiated against. A session can be gone while the connection and the link are both
+perfectly healthy — that gap is the whole reason these are three words and not one.
+
+Holding one is not what authorises a frame. Authorisation is **per frame**, on the tag: a board with
+a live session still drops a frame that does not carry one.
 _Avoid_: connection, link, pairing (pairing is what authorises a session, not the session itself)
 
 **Registration**:

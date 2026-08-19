@@ -1,9 +1,20 @@
 import DHCore
 
 /*
- * The session messages, bound to the shared core's codecs (dh_session.h) —
- * the same ones the firmware answers with, so the negotiated fields cannot
- * drift between the two ends.
+ * The session messages, bound to the shared core's **v1** codecs
+ * (dh_session_v1.h).
+ *
+ * The board moved to v2 in #111: a key pair on each side, an authentication
+ * tag on every frame, and the correlation value that closes #108. This helper
+ * has not, and cannot until it has a Secure Enclave identity to pair with —
+ * which is #112. So it goes on speaking v1, out of a header parked for exactly
+ * that purpose, and **cannot pair with a v2 board in the meantime**.
+ *
+ * That gap is ADR-0008's, not an oversight: old pairings do not migrate,
+ * because a migration path would have to accept the bearer token, which is the
+ * thing being removed. Recovery is one chord press, after #112.
+ *
+ * DELETE THIS FILE'S v1 SHAPE IN #112, along with src/core/dh_session_v1.[ch].
  */
 
 public enum HelloStatus: UInt8, Equatable {
@@ -51,7 +62,7 @@ public struct Hello: Equatable {
     /* What this helper is: macOS, this protocol version, asking for the
        channel count and chunk size it was built against. The device replies
        with the effective values. */
-    public init(protocolVersion: UInt16 = UInt16(DH_PROTO_VERSION),
+    public init(protocolVersion: UInt16 = UInt16(DH_PROTO_VERSION_V1),
                 os: UInt8 = UInt8(DH_OS_MAC.rawValue),
                 buildType: BuildType = .release,
                 channelCount: UInt8 = ChannelIdentity.requestedChannelCount,
@@ -71,15 +82,15 @@ public struct Hello: Equatable {
         let capacity = out.count
         var written = 0
         let rc = token.withUnsafeBufferPointer { token -> dh_frame_result in
-            var hello = dh_hello(proto_version: protocolVersion,
-                                 os: os,
-                                 build_type: buildType.rawValue,
-                                 channel_count: channelCount,
-                                 max_chunk: maxChunk,
-                                 token: token.baseAddress,
-                                 token_len: UInt16(token.count))
+            var hello = dh_hello_v1(proto_version: protocolVersion,
+                                    os: os,
+                                    build_type: buildType.rawValue,
+                                    channel_count: channelCount,
+                                    max_chunk: maxChunk,
+                                    token: token.baseAddress,
+                                    token_len: UInt16(token.count))
             return out.withUnsafeMutableBufferPointer { buffer in
-                dh_hello_encode(&hello, buffer.baseAddress, capacity, &written)
+                dh_hello_v1_encode(&hello, buffer.baseAddress, capacity, &written)
             }
         }
         guard rc == DH_FRAME_OK else { throw ChannelError.from(rc) }
@@ -89,10 +100,10 @@ public struct Hello: Equatable {
     /* The decoded token points into `payload`, whose pointer is only
        guaranteed for the length of the closure — so it is copied inside it. */
     public static func decode(payload: [UInt8]) throws -> Hello {
-        var hello = dh_hello()
+        var hello = dh_hello_v1()
         var decoded: Hello?
         payload.withUnsafeBufferPointer { buffer in
-            guard dh_hello_decode(buffer.baseAddress, buffer.count, &hello) else { return }
+            guard dh_hello_v1_decode(buffer.baseAddress, buffer.count, &hello) else { return }
             decoded = Hello(protocolVersion: hello.proto_version,
                             os: hello.os,
                             buildType: BuildType(rawValue: hello.build_type) ?? .release,
@@ -125,9 +136,9 @@ public struct HelloAck: Equatable {
     }
 
     public static func decode(payload: [UInt8]) throws -> HelloAck {
-        var ack = dh_hello_ack()
+        var ack = dh_hello_ack_v1()
         let ok = payload.withUnsafeBufferPointer { buffer in
-            dh_hello_ack_decode(buffer.baseAddress, buffer.count, &ack)
+            dh_hello_ack_v1_decode(buffer.baseAddress, buffer.count, &ack)
         }
         guard ok, let status = HelloStatus(rawValue: ack.status) else {
             throw ChannelError.malformedPayload
@@ -143,13 +154,13 @@ public struct HelloAck: Equatable {
         var out = [UInt8](repeating: 0, count: FrameCodec.maxSize)
         let capacity = out.count
         var written = 0
-        var ack = dh_hello_ack(proto_version: protocolVersion,
-                               status: status.rawValue,
-                               build_type: buildType.rawValue,
-                               channel_count: channelCount,
-                               max_chunk: maxChunk)
+        var ack = dh_hello_ack_v1(proto_version: protocolVersion,
+                                  status: status.rawValue,
+                                  build_type: buildType.rawValue,
+                                  channel_count: channelCount,
+                                  max_chunk: maxChunk)
         let rc = out.withUnsafeMutableBufferPointer { buffer in
-            dh_hello_ack_encode(&ack, buffer.baseAddress, capacity, &written)
+            dh_hello_ack_v1_encode(&ack, buffer.baseAddress, capacity, &written)
         }
         guard rc == DH_FRAME_OK else { throw ChannelError.from(rc) }
         return Array(out.prefix(written))

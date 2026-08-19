@@ -40,6 +40,12 @@ typedef enum {
     DH_AUTH_ERR_TAG = -2,     /* the tag did not verify: not acted on, not relayed */
     DH_AUTH_ERR_COUNTER = -3, /* not strictly greater than the highest accepted */
     DH_AUTH_ERR_BUFFER = -4,  /* output buffer too small */
+    /* There was no key to check against. Never returned by this file, which
+       always has one — it is here because this enum is the vocabulary for what
+       happened to a frame's authentication, and "nothing could be checked" is
+       one of the answers a caller has to be able to give without calling it a
+       failed tag. */
+    DH_AUTH_ERR_NO_KEY = -5,
 } dh_auth_result;
 
 /*
@@ -131,7 +137,7 @@ bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *
 /*
  * Constant time in len. An early return would leak how much of a guessed tag
  * was right, one byte at a time, to a process that can retry as fast as it
- * likes — the same reasoning dh_pair_authenticate carries, and the reason
+ * likes — the same reasoning dh_pair_is_registered_key carries, and the reason
  * this is not memcmp.
  */
 bool dh_auth_bytes_equal(const uint8_t *a, const uint8_t *b, size_t len);

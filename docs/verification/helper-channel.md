@@ -1061,17 +1061,29 @@ probe guards the other end of the same failure — it checks the hello it is abo
 the v1 `hello_mac` golden vector before touching hardware, so a malformed hello cannot be refused
 for the wrong reason and be recorded as "the trap does not exist". That vector is frozen inside
 the probe now: [#109](https://github.com/myn/deskhopplus/issues/109) rewrote
-`test-vectors/frames.txt` for protocol v2, and the boards on the desk still speak v1 until
-[#111](https://github.com/myn/deskhopplus/issues/111) lands.
+`test-vectors/frames.txt` for protocol v2, and the boards on the desk spoke v1 when this was run.
+[#111](https://github.com/myn/deskhopplus/issues/111) has since moved the board to v2, so the
+probe no longer reaches this trap on current firmware — a v2 board answers that hello
+`HELLO_REFUSED(version_incompatible)`, and a v2 hello that fails its tag draws no answer at all.
+Re-pointing the probe belongs with the helper that speaks v2
+([#112](https://github.com/myn/deskhopplus/issues/112)); read the version in the answer before
+believing a "not confirmed" from it in the meantime.
 
 ### What this does not measure
 
 The **write** half of #95 — that a listener can push a bulk frame the board relays to the other
-computer without holding any secret — is read out of the code (`src/channel.c:283` gating on
+computer without holding any secret — was read out of the code (`src/channel.c:283` gating on
 `dh_session_may_relay`, one flag for the whole board) and is **not** measured here. It needs an
 endpoint on board B to observe arrival, and only the macOS helper exists
-([#49](https://github.com/myn/deskhopplus/issues/49)). It is scheduled under
-[#111](https://github.com/myn/deskhopplus/issues/111).
+([#49](https://github.com/myn/deskhopplus/issues/49)).
+
+[#111](https://github.com/myn/deskhopplus/issues/111) has since closed it in code: relay is
+authorised per frame on the tag, and `session_test` fails on the v1 behaviour. It is still
+unmeasured on hardware, and the same missing endpoint is why —
+[#70](https://github.com/myn/deskhopplus/issues/70) and
+[#71](https://github.com/myn/deskhopplus/issues/71) are where that sitting goes, after
+[#112](https://github.com/myn/deskhopplus/issues/112) gives the helper a v2 side to speak it
+with.
 
 §1's exclusivity box still records this run sheet's oldest wrong claim — see
 [#99](https://github.com/myn/deskhopplus/issues/99), which now has a settled answer behind it:
