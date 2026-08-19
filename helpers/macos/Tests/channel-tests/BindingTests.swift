@@ -104,11 +104,15 @@ func testMalformedInputIsRejected() throws {
 /*
  * The four frames below were golden vectors until #109 rewrote
  * test-vectors/frames.txt for protocol v2 (ADR-0008). The core's hello codec
- * still speaks v1 — #110 and #112 are what move it — so the v1 bytes are
- * frozen here rather than read from a file describing a different protocol.
- * Frozen, not copied: nothing new is written against v1, so they cannot drift.
+ * still speaks v1 — #111 is what moves it — so the v1 bytes are frozen here
+ * rather than read from a file describing a different protocol. Frozen, not
+ * copied: nothing new is written against v1, so they cannot drift.
  *
- * WHEN #110 LANDS: delete these and point the two tests below back at
+ * (#110 landed the v2 primitives underneath the codec — P-256, HKDF and the
+ * frame tag — without moving it, so that the board keeps announcing the
+ * version it actually speaks.)
+ *
+ * WHEN #111 LANDS: delete these and point the two tests below back at
  * GoldenVectors.named(...).
  */
 enum FrozenV1 {

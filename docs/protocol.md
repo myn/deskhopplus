@@ -14,15 +14,18 @@ board will act on.
 **Old pairings do not migrate.** A migration path would have to accept the old bearer token,
 which is the thing being removed. Recovery is one chord press, by design.
 
-> **Sequencing.** This document is the specification; the tree does not implement it yet.
-> `DH_PROTO_VERSION` in `src/core/dh_session.h` is still `1` and `dh_session.c` still speaks v1,
-> deliberately: a board that announced version 2 while speaking v1 would be worse than one that
-> announces the version it actually speaks. The constant moves to `2` with the code, in
-> [#110](https://github.com/myn/deskhopplus/issues/110) (core primitives),
-> [#111](https://github.com/myn/deskhopplus/issues/111) (board) and
-> [#112](https://github.com/myn/deskhopplus/issues/112) (macOS helper). `#109` ships the spec
-> first because #111 and [#84](https://github.com/myn/deskhopplus/issues/84) are both written
-> from it — that is what [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
+> **Sequencing.** This document is the specification; the tree implements the primitives but not
+> yet the exchange. `DH_PROTO_VERSION` in `src/core/dh_session.h` is still `1` and `dh_session.c`
+> still speaks v1, deliberately: a board that announced version 2 while speaking v1 would be worse
+> than one that announces the version it actually speaks. The constant moves to `2` with the codec,
+> in [#111](https://github.com/myn/deskhopplus/issues/111) (board) and
+> [#112](https://github.com/myn/deskhopplus/issues/112) (macOS helper).
+> [#110](https://github.com/myn/deskhopplus/issues/110) landed underneath both of them — P-256,
+> HKDF, the frame tag and the counter, in `src/core/dh_p256.c`, `src/core/dh_sha256.c` and
+> `src/core/dh_auth.c` — without touching the codec, which is why the version constant did not
+> move with it. `#109` ships the spec first because #111 and
+> [#84](https://github.com/myn/deskhopplus/issues/84) are both written from it — that is what
+> [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
 
 ## Assumptions
 
@@ -645,10 +648,19 @@ board's.
 binding of it) must decode each vector and re-encode it byte-identically. Any protocol change
 updates this document, the vectors, and the core in the same change.
 
+`test-vectors/primitives.txt` is the same gate one layer down (#110): SHA-256, HMAC-SHA256,
+HKDF-SHA256 and P-256 ECDH, each on its own, so a core that computes a hash wrongly fails on a
+line naming that hash rather than on every frame at once. The vectors named for an RFC or a FIPS
+publication are those documents' published answers — FIPS 180-4, RFC 4231, RFC 5869 and
+RFC 6979 — so the arithmetic is gated by numbers this project did not compute for itself. It
+also carries the session key material, which is what lets `auth_test` verify and rebuild every
+tag in `frames.txt` rather than only re-encoding its bytes.
+
 The v2 vectors are **generated**, not written:
 
 ```sh
-python3 tools/gen-frame-vectors.py > test-vectors/frames.txt
+python3 tools/gen-frame-vectors.py              > test-vectors/frames.txt
+python3 tools/gen-frame-vectors.py --primitives > test-vectors/primitives.txt
 ```
 
 Every tag and every seal in that file is real, computed from the fixed test key material the

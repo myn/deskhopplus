@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Regenerate test-vectors/frames.txt from docs/protocol.md's v2 layouts.
+"""Regenerate the golden vectors from docs/protocol.md's v2 layouts.
 
-    python3 tools/gen-frame-vectors.py > test-vectors/frames.txt
+    python3 tools/gen-frame-vectors.py              > test-vectors/frames.txt
+    python3 tools/gen-frame-vectors.py --primitives > test-vectors/primitives.txt
+
+The second file is the same generator one layer down: the four primitives the
+board runs (#110), each gated on its own rather than only through a frame.
+Both come from this one script because they must agree, and two scripts would
+be two implementations of the same arithmetic.
 
 Why this exists, and why it is Python with no imports outside the standard
 library: the vector file is the cross-implementation gate, and v2 puts a real
@@ -407,6 +413,196 @@ def emit():
 
 
 # --------------------------------------------------------------------------
+# The primitive vectors (#110).
+#
+# frames.txt gates the wire. This gates the four things underneath it, one
+# layer down, so that a core which computes SHA-256 wrongly fails on a line
+# that says "sha256" rather than on twenty-eight frames at once.
+#
+# Every vector below whose name carries an RFC or FIPS number is that
+# document's published answer, copied in and checked in self_test(). The rest
+# are this generator's own, and are the material frames.txt was built from.
+# --------------------------------------------------------------------------
+
+# FIPS 180-4, appendix B. The 'a' runs are the padding boundaries: 55 is the
+# last length that still fits its padding in one block, 56 is the first that
+# does not, and 119/120 are the same boundary one block later.
+SHA256_KATS = [
+    ("sha256_fips_empty", b""),
+    ("sha256_fips_abc", b"abc"),
+    ("sha256_fips_two_block", b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+    ("sha256_pad_55", b"a" * 55),
+    ("sha256_pad_56", b"a" * 56),
+    ("sha256_pad_64", b"a" * 64),
+    ("sha256_pad_119", b"a" * 119),
+    ("sha256_pad_120", b"a" * 120),
+]
+
+# RFC 4231. Case 5 is the truncation case, which this protocol needs because
+# the frame tag is HMAC-SHA256 truncated to 16 bytes; cases 6 and 7 are the
+# over-long key, which is hashed rather than padded.
+HMAC_KATS = [
+    ("hmac_rfc4231_1", b"\x0b" * 20, b"Hi There"),
+    ("hmac_rfc4231_2", b"Jefe", b"what do ya want for nothing?"),
+    ("hmac_rfc4231_3", b"\xaa" * 20, b"\xdd" * 50),
+    ("hmac_rfc4231_4", bytes(range(1, 26)), b"\xcd" * 50),
+    ("hmac_rfc4231_5", b"\x0c" * 20, b"Test With Truncation"),
+    ("hmac_rfc4231_6", b"\xaa" * 131,
+     b"Test Using Larger Than Block-Size Key - Hash Key First"),
+    ("hmac_rfc4231_7", b"\xaa" * 131,
+     b"This is a test using a larger than block-size key and a larger "
+     b"than block-size data. The key needs to be hashed before being used"
+     b" by the HMAC algorithm."),
+]
+
+# RFC 5869. Case 2 is the only one whose output needs more than one expand
+# round (82 bytes), and case 3 has an empty salt and empty info.
+HKDF_KATS = [
+    ("hkdf_rfc5869_1", b"\x0b" * 22, bytes(range(0x00, 0x0D)), bytes(range(0xF0, 0xFA)), 42),
+    ("hkdf_rfc5869_2", bytes(range(0x00, 0x50)), bytes(range(0x60, 0xB0)),
+     bytes(range(0xB0, 0x100)), 82),
+    ("hkdf_rfc5869_3", b"\x0b" * 22, b"", b"", 42),
+]
+
+# The three info strings the protocol actually uses, over this generator's own
+# material, so a core that derives a session key from the wrong salt or the
+# wrong info string fails here and not on a frame tag.
+HKDF_PROTOCOL_INFOS = [
+    ("hkdf_hello", b"deskhopplus/2 hello"),
+    ("hkdf_h2b", b"deskhopplus/2 h2b"),
+    ("hkdf_b2h", b"deskhopplus/2 b2h"),
+    ("hkdf_seal", b"deskhopplus/2 seal"),
+]
+
+# RFC 6979 A.2.5's P-256 key pair — a published pair from outside this
+# project, so the curve arithmetic is gated by something this repository did
+# not compute itself.
+RFC6979_PRIV = bytes.fromhex(
+    "C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721")
+RFC6979_PUB = bytes.fromhex(
+    "60FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB6"
+    "7903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299")
+
+
+def build_primitives():
+    """(name, [field, ...]) pairs; every field is raw bytes, printed as hex."""
+    v = []
+
+    for name, msg in SHA256_KATS:
+        v.append((name, [msg, hashlib.sha256(msg).digest()]))
+
+    for name, key, msg in HMAC_KATS:
+        v.append((name, [key, msg, hmac.new(key, msg, hashlib.sha256).digest()]))
+
+    for name, ikm, salt, info, length in HKDF_KATS:
+        v.append((name, [ikm, salt, info, hkdf(ikm, salt, info, length)]))
+
+    for name, info in HKDF_PROTOCOL_INFOS:
+        salt = HELPER_NONCE if info.endswith(b"hello") else HELPER_NONCE + BOARD_NONCE
+        ikm = SHARED
+        if info.endswith(b"seal"):
+            salt = SEAL_OFFER_NONCE + SEAL_ACCEPT_NONCE
+            ikm = ecdh(SEAL_OFFER_PRIV, SEAL_ACCEPT_PUB)
+        v.append((name, [ikm, salt, info, hkdf(ikm, salt, info)]))
+
+    # Private key in, public key out. Deterministic: this core generates a key
+    # from entropy the caller hands it, and has no entropy source of its own.
+    for name, priv in [
+        ("p256_pub_rfc6979", RFC6979_PRIV),
+        ("p256_pub_helper", HELPER_PRIV),
+        ("p256_pub_board", BOARD_PRIV),
+        ("p256_pub_seal_offer", SEAL_OFFER_PRIV),
+        ("p256_pub_seal_accept", SEAL_ACCEPT_PRIV),
+    ]:
+        v.append((name, [priv, public_key(priv)]))
+
+    # Both directions of each agreement, because "the two sides compute the
+    # same secret" is the property pairing rests on and a one-sided vector
+    # cannot express it.
+    for name, priv, peer in [
+        ("p256_ecdh_helper_to_board", HELPER_PRIV, BOARD_PUB),
+        ("p256_ecdh_board_to_helper", BOARD_PRIV, HELPER_PUB),
+        ("p256_ecdh_seal_offer", SEAL_OFFER_PRIV, SEAL_ACCEPT_PUB),
+        ("p256_ecdh_seal_accept", SEAL_ACCEPT_PRIV, SEAL_OFFER_PUB),
+    ]:
+        v.append((name, [priv, peer, ecdh(priv, peer)]))
+
+    # Must be refused. A public key arrives from the wire, so "is this a point
+    # on P-256" is a decision the core makes about hostile input, not an
+    # assertion about its own material.
+    v.append(("p256_reject_pub_zero", [bytes(64)]))
+    v.append(("p256_reject_pub_off_curve", [BOARD_PUB[:63] + bytes([BOARD_PUB[63] ^ 1])]))
+    v.append(("p256_reject_pub_x_is_p", [P.to_bytes(32, "big") + BOARD_PUB[32:]]))
+    # And these are not scalars in [1, n-1], which is the range a private key
+    # must land in — the caller hands in 32 raw bytes and draws again on false.
+    v.append(("p256_reject_priv_zero", [bytes(32)]))
+    v.append(("p256_reject_priv_n", [N.to_bytes(32, "big")]))
+    v.append(("p256_reject_priv_max", [b"\xff" * 32]))
+
+    for name, pub in [("keyid_helper", HELPER_PUB), ("keyid_board", BOARD_PUB)]:
+        v.append((name, [pub, hashlib.sha256(pub).digest()[:8]]))
+
+    # One line carrying everything a session's keys are made of, in the order
+    # docs/protocol.md derives them. It is what lets the C suite verify every
+    # tag in frames.txt rather than only re-encoding its bytes.
+    v.append(("session_material", [
+        HELPER_PRIV, BOARD_PRIV, HELPER_NONCE, BOARD_NONCE,
+        SHARED, K_HELLO, K_H2B, K_B2H,
+    ]))
+
+    return v
+
+
+PRIMITIVES_HEADER = """\
+# deskhopplus golden primitive vectors — the gate on what the frame tags are made of.
+# Format: <name> | <field> | <field> ... — hex bytes, spaces ignored, a field may be empty.
+# The field list depends on the name's prefix, and is written above each section below.
+#
+# GENERATED. Do not hand-edit: run
+#   python3 tools/gen-frame-vectors.py --primitives > test-vectors/primitives.txt
+#
+# test-vectors/frames.txt gates the wire. This file gates the four primitives underneath
+# it (#110, ADR-0008) one layer down, so a core that computes SHA-256 wrongly fails on a
+# line that says so rather than on twenty-eight frames at once. The board runs exactly
+# these four: SHA-256, HMAC-SHA256, HKDF-SHA256 and P-256 ECDH. There is no AEAD here —
+# the clipboard seal is AES-256-GCM and runs helper to helper, never on the firmware.
+#
+# Every vector named for an RFC or a FIPS publication is that document's own published
+# answer, so the curve and the hashes are gated by something this repository did not
+# compute for itself. The rest are the generator's fixed test material — published,
+# obviously fake, and the same bytes frames.txt was built from.
+"""
+
+PRIMITIVE_SECTIONS = [
+    ("sha256_", "# sha256      | message | digest"),
+    ("hmac_", "# hmac_sha256 | key | message | mac"),
+    ("hkdf_", "# hkdf_sha256 | ikm | salt | info | okm   (the output length is the okm's)"),
+    ("p256_pub_", "# p256_pub    | private | public (X || Y, big-endian)"),
+    ("p256_ecdh_", "# p256_ecdh   | private | peer public | shared secret (the X coordinate)"),
+    ("p256_reject_", "# p256_reject | the value, which every one of these must refuse"),
+    ("keyid_", "# keyid       | public | SHA-256(public)[0..8]"),
+    ("session_", "# session     | helper private | board private | helper nonce | board nonce |\n"
+                 "#             | shared secret | k_hello | k_h2b | k_b2h"),
+]
+
+
+def emit_primitives():
+    lines = [PRIMITIVES_HEADER]
+    remaining = build_primitives()
+    for prefix, caption in PRIMITIVE_SECTIONS:
+        lines.append(caption)
+        for name, fields in remaining:
+            if name.startswith(prefix):
+                lines.append(
+                    f"{name:<28} | " + " | ".join(" ".join(f"{b:02x}" for b in f) for f in fields)
+                )
+        remaining = [(n, f) for n, f in remaining if not n.startswith(prefix)]
+        lines.append("")
+    assert not remaining, f"vectors in no section: {[n for n, _ in remaining]}"
+    return "\n".join(lines[:-1]) + "\n"
+
+
+# --------------------------------------------------------------------------
 # Known-answer checks. A generator that cannot fail is not a check.
 # --------------------------------------------------------------------------
 
@@ -473,6 +669,55 @@ def self_test():
         "HKDF-SHA256 RFC 5869 case 1",
     )
 
+    # The primitive vectors' published answers (#110). These are the numbers
+    # printed in FIPS 180-4, RFC 4231, RFC 5869 and RFC 6979 — the point of
+    # copying them in is that this generator agrees with documents nobody here
+    # wrote, so the C core is gated by more than a second opinion of our own.
+    for name, expected in [
+        ("sha256_fips_empty",
+         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+        ("sha256_fips_abc",
+         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+        ("sha256_fips_two_block",
+         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+    ]:
+        msg = dict((n, m) for n, m in SHA256_KATS)[name]
+        check(hashlib.sha256(msg).hexdigest() == expected, f"FIPS 180-4 {name}")
+
+    rfc4231 = [
+        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+        "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
+        "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b",
+        "a3b6167473100ee06e0c796c2955552bfa6f7c0a6a8aef8b93f860aab0cd20c5",
+        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+        "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2",
+    ]
+    for (name, key, msg), expected in zip(HMAC_KATS, rfc4231):
+        got = hmac.new(key, msg, hashlib.sha256).hexdigest()
+        check(got == expected, f"RFC 4231 {name}")
+
+    rfc5869 = [
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
+        "34007208d5b887185865",
+        "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c"
+        "59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71"
+        "cc30c58179ec3e87c14c01d5c1f3434f1d87",
+        "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
+        "9d201395faa4b61a96c8",
+    ]
+    for (name, ikm, salt, info, length), expected in zip(HKDF_KATS, rfc5869):
+        check(hkdf(ikm, salt, info, length).hex() == expected, f"RFC 5869 {name}")
+
+    # RFC 6979 A.2.5: a P-256 key pair computed by somebody else. This is also
+    # an ECDH known answer, the peer public key being the base point.
+    check(public_key(RFC6979_PRIV) == RFC6979_PUB, "RFC 6979 A.2.5 P-256 key pair")
+
+    # The rejects have to actually be rejectable, or they gate nothing.
+    check(not on_curve((int.from_bytes(BOARD_PUB[:32], "big"),
+                        int.from_bytes(BOARD_PUB[32:], "big") ^ 1)),
+          "off-curve reject vector is off the curve")
+
     print("self-test ok" if ok else "self-test FAILED", file=sys.stderr)
     return 0 if ok else 1
 
@@ -482,4 +727,4 @@ if __name__ == "__main__":
         sys.exit(self_test())
     if self_test() != 0:
         sys.exit(1)
-    sys.stdout.write(emit())
+    sys.stdout.write(emit_primitives() if "--primitives" in sys.argv else emit())

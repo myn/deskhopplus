@@ -4,12 +4,18 @@
  *
  * These frames were the golden vectors' business until #109 rewrote
  * test-vectors/frames.txt for protocol v2 (ADR-0008). dh_session.c still
- * speaks v1 — #110 and #111 are what move it — so the v1 frames it must
- * produce are frozen below rather than read from a file that now describes a
- * different protocol. They are frozen, not copied: nothing new is written
- * against v1, so the two cannot drift.
+ * speaks v1 — #111 is what moves it — so the v1 frames it must produce are
+ * frozen below rather than read from a file that now describes a different
+ * protocol. They are frozen, not copied: nothing new is written against v1,
+ * so the two cannot drift.
  *
- * WHEN #110 LANDS: delete the frozen table, point these tests back at
+ * (#110 landed the v2 primitives and the tags built on them — auth_test
+ * gates those against frames.txt — but deliberately did not touch this
+ * codec: a board announcing v2 while speaking v1 is worse than one
+ * announcing the version it actually speaks. DH_PROTO_VERSION moves with
+ * dh_session.c, not before it.)
+ *
+ * WHEN #111 LANDS: delete the frozen table, point these tests back at
  * test-vectors/frames.txt, and this comment goes with it.
  *
  * Style follows frame_test.c: an assertion macro, a main, a printed failure

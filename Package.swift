@@ -19,10 +19,18 @@ let package = Package(
     name: "deskhopplus",
     platforms: [.macOS(.v13)],
     targets: [
-        /* The shared C core, compiled as-is: frame codec, session, transfer. */
+        /* The shared C core, compiled as-is: frame codec, session, transfer,
+           and the primitives ADR-0008 needs.
+
+           micro-ecc is excluded from the glob deliberately. src/core/dh_p256.c
+           includes uECC.c itself, so that the curve configuration is set in one
+           place for all three of this core's toolchains; letting SwiftPM also
+           compile uECC.c on its own would be a second, unconfigured copy of
+           every symbol in it. */
         .target(
             name: "DHCore",
             path: "src/core",
+            exclude: ["micro-ecc"],
             publicHeadersPath: "."
         ),
         /* The binding and the session logic — no IOKit, so it is all testable

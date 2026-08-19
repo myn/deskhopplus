@@ -80,6 +80,9 @@ set(COMMON_SOURCES
   ${SRC_DIR}/core/dh_relay.c
   ${SRC_DIR}/core/dh_outq.c
   ${SRC_DIR}/core/dh_pair.c
+  ${SRC_DIR}/core/dh_sha256.c
+  ${SRC_DIR}/core/dh_p256.c
+  ${SRC_DIR}/core/dh_auth.c
   ${SRC_DIR}/core/dh_crc32.c
   ${SRC_DIR}/core/dh_clip.c
   ${SRC_DIR}/core/dh_xfer.c

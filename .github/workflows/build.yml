@@ -80,6 +80,8 @@ jobs:
         python3 tools/gen-frame-vectors.py --self-test
         python3 tools/gen-frame-vectors.py > /tmp/frames.txt
         diff -u test-vectors/frames.txt /tmp/frames.txt
+        python3 tools/gen-frame-vectors.py --primitives > /tmp/primitives.txt
+        diff -u test-vectors/primitives.txt /tmp/primitives.txt
 
     - name: Build firmware
       shell: bash

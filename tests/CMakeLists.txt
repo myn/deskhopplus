@@ -17,6 +17,7 @@ add_compile_options(-Wall -Wextra -pedantic)
 
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../src/core)
 set(VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/frames.txt)
+set(PRIMITIVE_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/primitives.txt)
 
 enable_testing()
 
@@ -37,6 +38,16 @@ add_executable(session_test session_test.c ${CORE}/dh_session.c ${CORE}/dh_pair.
                ${CORE}/dh_frame.c)
 target_include_directories(session_test PRIVATE ${CORE})
 add_test(NAME session_test COMMAND session_test)
+# The four primitives the board runs, and the frame tag built on them (#110).
+# dh_p256.c is the only file that compiles micro-ecc: it sets the curve
+# configuration in one place, for all three of this core's toolchains.
+add_executable(auth_test auth_test.c ${CORE}/dh_auth.c ${CORE}/dh_sha256.c ${CORE}/dh_p256.c
+               ${CORE}/dh_frame.c)
+target_include_directories(auth_test PRIVATE ${CORE})
+target_compile_definitions(auth_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
+                           DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
+add_test(NAME auth_test COMMAND auth_test)
+
 add_executable(pair_test pair_test.c ${CORE}/dh_pair.c)
 target_include_directories(pair_test PRIVATE ${CORE})
 add_test(NAME pair_test COMMAND pair_test)
