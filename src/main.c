@@ -31,6 +31,9 @@ int main(void) {
         [4] = {.exec = &process_hid_queue_task,   .frequency = _HZ(1000)},   // | Check if there are any packets to send over vendor link
         [5] = {.exec = &process_uart_tx_task,     .frequency = _TOP()},      // | Check if there are any packets to send over UART
         [6] = {.exec = &channel_task,             .frequency = _HZ(1000)},   // | Answer the helper on the channel and time out a silent one
+#ifdef DH_BENCH_ECDH
+        [7] = {.exec = &bench_ecdh_task,          .frequency = _HZ(100)},    // | MEASURE-ONLY BUILD: time a P-256 ECDH and type the answer (#110)
+#endif
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core0);
 
@@ -57,7 +60,9 @@ void core1_main() {
         [3] = {.exec = &led_sync_task,           .frequency = _HZ(30)},      // | Sync LED state if needed
         [4] = {.exec = &screensaver_task,        .frequency = _HZ(120)},     // | Handle "screensaver" movements
         [5] = {.exec = &firmware_upgrade_task,   .frequency = _HZ(4000)},    // | Send firmware to the other board if needed
+#ifndef DH_BENCH_ECDH
         [6] = {.exec = &heartbeat_output_task,   .frequency = _HZ(1)},       // | Output periodic heartbeats
+#endif                                                                       // | (silenced in the measure-only build -- see below)
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core1);
 
@@ -69,4 +74,17 @@ void core1_main() {
             task_scheduler(device, &tasks_core1[i]);
     }
 }
+/*
+ * Why the measure-only build (#110) has no heartbeat.
+ *
+ * The heartbeat is what carries this board's firmware version and checksum to
+ * its peer, and handle_heartbeat_msg on the far side pulls the image whenever
+ * it differs -- on a strictly newer version, or on an *equal* version carrying
+ * a different image (#91). The measuring image is exactly that: same version,
+ * different bytes. Left announcing, it would propagate itself onto the peer
+ * board, and getting the real firmware back onto board B costs a cable trip.
+ *
+ * So it stays quiet. The peer simply does not learn what this board is
+ * running, for as long as the measurement takes.
+ */
 /* =======  End of Main Program Loops  ======= */

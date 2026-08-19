@@ -83,6 +83,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/core/dh_sha256.c
   ${SRC_DIR}/core/dh_p256.c
   ${SRC_DIR}/core/dh_auth.c
+  ${SRC_DIR}/bench_ecdh.c   # empty unless DH_BENCH_ECDH is on
   ${SRC_DIR}/core/dh_crc32.c
   ${SRC_DIR}/core/dh_clip.c
   ${SRC_DIR}/core/dh_xfer.c
@@ -245,6 +246,20 @@ target_include_directories(${binary} PUBLIC ${COMMON_INCLUDES})
 target_link_libraries(${binary} PUBLIC ${COMMON_LINK_LIBRARIES})
 
 ## Configure Pico Library
+# A measure-only image (#110): times a P-256 ECDH on the real chip and types
+# the answer, because ADR-0008's 80-200 ms estimate is unmeasured and #111 is
+# designed around it. Off by default and never shipped -- the image types into
+# whatever has focus and does nothing else useful.
+#
+#   cmake -S . -B build-bench -DDH_BENCH_ECDH=ON && cmake --build build-bench
+#
+# See tools/board-checks/README.md.
+option(DH_BENCH_ECDH "Build the measure-only ECDH timing image, not the product" OFF)
+if(DH_BENCH_ECDH)
+  target_compile_definitions(${binary} PRIVATE DH_BENCH_ECDH=1)
+  message(WARNING "DH_BENCH_ECDH is ON: this image measures and types, it is not the firmware")
+endif()
+
 pico_enable_stdio_usb(${binary} 0)
 pico_enable_stdio_uart(${binary} 0)
 pico_set_linker_script(${binary} ${CMAKE_SOURCE_DIR}/misc/memory_map.ld)

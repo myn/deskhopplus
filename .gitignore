@@ -16,3 +16,6 @@ tools/windows-checks/deskhopplus-*.json
 
 # Personal Claude Code settings, not team-wide
 .claude/settings.local.json
+
+# The measure-only ECDH image (#110, tools/board-checks/README.md)
+build-bench/
