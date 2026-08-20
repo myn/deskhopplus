@@ -27,6 +27,15 @@ public enum HelperState: Equatable {
     case deviceInConfigMode
     case deviceAbsent
     case versionIncompatible
+    case listenerDetected
+    /*
+     * The board granted a pairing under a different identity key from the one
+     * this helper had pinned. That is a board wiped past its identity sector,
+     * re-flashed, or swapped for another — and the one case where the chord
+     * must *not* be offered, because pressing it is precisely how a swapped
+     * board would be accepted (#112).
+     */
+    case boardIdentityChanged
 
     public var message: String? {
         switch self {
@@ -40,6 +49,10 @@ public enum HelperState: Equatable {
         case .deviceAbsent: return "Device not connected"
         case .versionIncompatible:
             return "Helper version does not match the device — file transfers are refused"
+        case .listenerDetected:
+            return "Listener detected — another process is probing the channel"
+        case .boardIdentityChanged:
+            return "Device identity changed — if you re-flashed it, remove the pinned board key"
         }
     }
 
@@ -56,6 +69,16 @@ public enum HelperState: Equatable {
      * agreeing with `SessionEngine.canSendBulk`, the seam #52 consumes.
      * Reporting how often it is rebuilt changes what the user is told, not
      * what the session may carry.
+     *
+     * `listenerDetected` is the same reading again. The session is negotiated
+     * and authenticated; what the board detected is somebody *writing* frames
+     * it refused, which the tag already keeps out of this session. Refusing
+     * bulk here would disagree with `canSendBulk` and give #52 two answers.
+     * What a listener can still do is *read* a payload in clear — and the
+     * remedy for that is sealing it (#113), not withholding it on a signal
+     * that a passive listener never trips.
      */
-    public var allowsBulkTransfers: Bool { self == .connected || self == .reconnectingRepeatedly }
+    public var allowsBulkTransfers: Bool {
+        self == .connected || self == .reconnectingRepeatedly || self == .listenerDetected
+    }
 }

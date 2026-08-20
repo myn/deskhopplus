@@ -1,5 +1,6 @@
 import DeskhopChannel
 import Foundation
+import Security
 
 /*
  * The loop: transport events into the session engine, engine outputs back out
@@ -8,20 +9,44 @@ import Foundation
  */
 final class HelperRuntime {
     private let secrets = SecretStore()
-    private lazy var engine = SessionEngine(secret: secrets.load())
+    private let engine: SessionEngine
     private let transport = ChannelTransport()
 
-    /*
-     * Process-wide rather than per-instance, so the engine's clock and the
-     * log's elapsed column are the same number: a duration read off the log is
-     * the duration the engine saw, with no correspondence to establish. Set on
-     * first use, which is inside `run()` and microseconds into the process.
-     */
+    init() {
+        /*
+         * A blob that will not decode is regenerated inside `loadIdentity`, so
+         * reaching this is the machine having no Secure Enclave to generate a
+         * key in at all — an Intel Mac without a T2. That is a hard
+         * requirement of ADR-0008 rather than a fault to recover from, so it
+         * names itself and stops instead of retrying something that cannot
+         * work. launchd will restart it; the log line says why each time.
+         */
+        let identity: EnclaveIdentity
+        do {
+            identity = try secrets.loadIdentity()
+        } catch {
+            Self.note("no Secure Enclave identity, and one could not be created: \(error). "
+                      + "This helper requires a Mac with a Secure Enclave.")
+            exit(EXIT_FAILURE)
+        }
+        let boardKey = secrets.loadBoardKey()
+
+        engine = SessionEngine(
+            identity: identity, boardPublicKey: boardKey,
+            entropy: { count in
+                var bytes = [UInt8](repeating: 0, count: count)
+                guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
+                    fatalError("SecRandomCopyBytes failed")
+                }
+                return bytes
+            })
+    }
+
     private static let started = ProcessInfo.processInfo.systemUptime
     private static let stamp = LogStamp()
 
     /// The engine's tick — fine enough that a heartbeat is never late by much.
-    private static let tickInterval: TimeInterval = 0.25
+    static let tickInterval: TimeInterval = 0.25
 
     /*
      * Monotonic, deliberately. `Date()` is not: a backwards clock correction
@@ -64,11 +89,9 @@ final class HelperRuntime {
 
     private func apply(_ output: SessionOutput) {
         switch output {
-        case .storeSecret(let secret):
-            /* The only local state the helper keeps; everything else is the
-               device's. See SecretStore for why this is a file. */
-            if !secrets.save(secret) {
-                Self.note("paired, but the secret could not be stored — pairing "
+        case .storeBoardKey(let key):
+            if !secrets.saveBoardKey(key) {
+                Self.note("paired, but the board key could not be stored — pairing "
                           + "will not survive a restart")
             }
 
@@ -82,8 +105,6 @@ final class HelperRuntime {
             transport.send(bytes)
 
         case .state(let state):
-            /* Until the menu-bar item exists (#54), the log is the surface —
-               and it is the same sentence the menu bar will carry. */
             Self.note("state: \(state.message ?? "(nothing to report)")")
 
         case .retry(let after):
@@ -99,8 +120,6 @@ final class HelperRuntime {
         }
     }
 
-    /* Stamped with both clocks — see LogStamp for why a log with neither cost
-       two sittings a duration each (#103). */
     private static func note(_ message: String) {
         let line = stamp.line(message, wall: Date(), elapsed: elapsed)
         FileHandle.standardError.write(Data((line + "\n").utf8))

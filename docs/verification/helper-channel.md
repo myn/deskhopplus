@@ -1042,6 +1042,14 @@ chord, indefinitely, until something rebuilds the connection.
 That is the whole of #34's 2026-08-10 losing sequence, reached by an unprivileged process with no
 race to win and nothing to steal first.
 
+> **Closed by [#112](https://github.com/myn/deskhopplus/issues/112).** The reading above stands as
+> what the hardware did on v1, and the names in it (`.authenticationFailed`, the held secret) no
+> longer exist. Under v2 the helper puts a fresh random correlation value in every hello and acts
+> only on a refusal that echoes it, so a refusal manufactured by a bystander's bogus hello is
+> dropped with a note and never reaches the state machine. The helper still parks in *Not paired*
+> and asks rather than retrying the hello — but it now gets there only when the board genuinely has
+> no registration for its key, which is the case where parking is the right answer.
+
 ### A probe bug worth keeping, because it nearly wrote the wrong result
 
 The first run reported `NO HELLO_ACK OBSERVED` — which would have contradicted #95 and read as the

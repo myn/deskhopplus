@@ -1,4 +1,5 @@
 import DeskhopChannel
+import DHCore
 
 /*
  * The binding's gate: every golden vector decodes through the shared C core
@@ -12,8 +13,8 @@ let bindingTests: [(String, () throws -> Void)] = [
     ("the stream reader recovers every vector", testStreamReaderRecoversEveryVector),
     ("report padding is written and skipped", testReportPaddingIsWrittenAndSkipped),
     ("malformed input is rejected", testMalformedInputIsRejected),
-    ("hello carries version and platform", testHelloCarriesVersionAndPlatform),
-    ("hello_ack statuses are distinguishable", testHelloAckStatusesAreDistinguishable),
+    ("a hello round-trips through its body codec", testHelloRoundTrips),
+    ("pairing and refusal messages round-trip", testPairingMessagesRoundTrip),
     ("the hello this helper sends is well formed", testTheHelloThisHelperSendsIsWellFormed),
 ]
 
@@ -29,8 +30,6 @@ func testEveryGoldenVectorRoundTrips() throws {
     }
 }
 
-/* Frame boundaries never align with report boundaries, so the stream reader —
-   not one-shot decode — is what the transport actually uses. */
 func testStreamReaderRecoversEveryVector() throws {
     let vectors = try GoldenVectors.load()
     let wire = vectors.flatMap(\.bytes)
@@ -53,8 +52,6 @@ func testStreamReaderRecoversEveryVector() throws {
     }
 }
 
-/* A report is a fixed 64 bytes with no length of its own; the tail is padding,
-   and the reader must skip it without mistaking payload zeroes for it. */
 func testReportPaddingIsWrittenAndSkipped() throws {
     let frames = [Frame(type: MessageType.heartbeat),
                   try FrameCodec.decode(GoldenVectors.named("clip_offer_text2")).frame]
@@ -69,13 +66,11 @@ func testReportPaddingIsWrittenAndSkipped() throws {
     for report in reports { recovered += try stream.push(report) }
     Check.equal(recovered, frames, "packed frames did not survive the carrier")
 
-    /* An all-padding report is idle traffic: no frames, no error. */
     let idle = [UInt8](repeating: 0, count: ChannelIdentity.reportSize)
     Check.equal(try stream.push(idle), [], "an idle report produced frames")
 }
 
 func testMalformedInputIsRejected() throws {
-    /* Length 4097, one over the maximum. */
     let oversize: [UInt8] = [MessageType.heartbeat, 0x00, 0x01, 0x10]
     Check.throwsError(.oversize, "a 4097-byte length was accepted") {
         try FrameCodec.decode(oversize)
@@ -91,8 +86,6 @@ func testMalformedInputIsRejected() throws {
         try FrameCodec.decode(truncated)
     }
 
-    /* A protocol error resets the reader, and the caller drops the connection
-       rather than resynchronising on garbage. */
     let stream = FrameStream()
     Check.throwsError(.unknownType, "the reader accepted an unknown type") {
         try stream.push(unknown)
@@ -101,78 +94,84 @@ func testMalformedInputIsRejected() throws {
                 "the reader did not recover after being reset")
 }
 
-/*
- * The four frames below were golden vectors until #109 rewrote
- * test-vectors/frames.txt for protocol v2 (ADR-0008). Frozen here rather than
- * read from a file describing a different protocol; frozen, not copied,
- * because nothing new is written against v1 and so the two cannot drift.
- *
- * #111 moved the **board** to v2 and left this helper on v1, against the
- * parked codecs in src/core/dh_session_v1.h. A v1 helper cannot pair with a v2
- * board, which is ADR-0008's own sequencing rather than a defect: old pairings
- * do not migrate, because a migration path would have to accept the bearer
- * token, which is the thing being removed.
- *
- * WHEN #112 LANDS: this helper gets a Secure Enclave identity and the v2
- * handshake. Delete these frames, delete src/core/dh_session_v1.[ch], and
- * point the two tests below back at GoldenVectors.named(...).
- */
-enum FrozenV1 {
-    static let helloMac: [UInt8] = [
-        0x01, 0x00, 0x17, 0x00,
-        0x01, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,
-        0xEF, 0xBE, 0xAD, 0xDE, 0xEF, 0xBE, 0xAD, 0xDE,
-        0xEF, 0xBE, 0xAD, 0xDE, 0xEF, 0xBE, 0xAD, 0xDE,
-    ]
-    static let helloAckOK: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04]
-    static let helloAckAuthFailed: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
-    static let helloAckVersionMismatch: [UInt8] = [0x02, 0x00, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00]
+/* v2: a hello carries the key id, nonce, and correlation — and is authenticated
+   under k_hello. This round-trips encode → auth_open → decode → re-encode. */
+func testHelloRoundTrips() throws {
+    let helper = try SoftwareIdentity(privateKey: [UInt8](0x01...0x20))
+    let board = try SoftwareIdentity(privateKey: [UInt8](0x21...0x40))
+    let nonce = [UInt8](0x00...0x0F)
+    let correlation: UInt64 = 0xDEADBEEFCAFE0DF0
+
+    let kHello = try helper.deriveHelloKey(boardPublicKey: board.publicKey, helperNonce: nonce)
+
+    let hello = Hello(correlation: correlation, helperKeyId: helper.keyId, helperNonce: nonce)
+    let bytes = try hello.encoded(key: kHello)
+
+    let (frame, consumed) = try FrameCodec.decode(bytes)
+    Check.equal(consumed, bytes.count, "the hello is not a complete frame")
+    Check.equal(frame.type, MessageType.hello, "wrong type")
+
+    var counter = dh_auth_counter()
+    dh_auth_counter_init(&counter)
+    let body = try AuthFrame.open(frame: frame, key: kHello, counter: &counter)
+
+    let decoded = try Hello.decode(body: body)
+    Check.equal(decoded.protocolVersion, UInt16(DH_PROTO_VERSION), "wrong version")
+    Check.equal(decoded.os, 1, "wrong OS")
+    Check.equal(decoded.correlation, correlation, "wrong correlation")
+    Check.equal(decoded.helperKeyId, helper.keyId, "wrong key id")
+    Check.equal(decoded.helperNonce, nonce, "wrong nonce")
 }
 
-func testHelloCarriesVersionAndPlatform() throws {
-    let vector = FrozenV1.helloMac
-    let (frame, _) = try FrameCodec.decode(vector)
-    Check.equal(frame.type, MessageType.hello, "hello_mac is not a hello")
+func testPairingMessagesRoundTrip() throws {
+    let correlation: UInt64 = 0x1234567890ABCDEF
+    let pubKey = [UInt8](repeating: 0x42, count: Int(DH_P256_PUBLIC_SIZE))
 
-    let hello = try Hello.decode(payload: frame.payload)
-    Check.equal(hello.protocolVersion, 1, "wrong protocol version")
-    Check.equal(hello.os, 1, "the mac hello does not say mac")
-    Check.equal(hello.buildType, .release, "wrong build type")
-    Check.equal(hello.channelCount, 1, "wrong requested channel count")
-    Check.equal(hello.maxChunk, 1024, "wrong requested chunk size")
-    Check.equal(hello.token.count, 16, "wrong token length")
+    let request = PairRequest(correlation: correlation, helperPublicKey: pubKey)
+    let reqBytes = try request.encoded()
+    let reqDecoded = try PairRequest.decode(payload: FrameCodec.decode(reqBytes).frame.payload)
+    Check.equal(reqDecoded.correlation, correlation, "pair_request correlation")
+    Check.equal(reqDecoded.helperPublicKey, pubKey, "pair_request public key")
 
-    Check.equal(try hello.encoded(), vector, "hello re-encode is not byte-identical")
+    let grant = PairGrant(correlation: correlation, boardPublicKey: pubKey)
+    let grantBytes = try grant.encoded()
+    let grantDecoded = try PairGrant.decode(payload: FrameCodec.decode(grantBytes).frame.payload)
+    Check.equal(grantDecoded.correlation, correlation, "pair_grant correlation")
+    Check.equal(grantDecoded.boardPublicKey, pubKey, "pair_grant public key")
+
+    let refused = PairRefused(correlation: correlation, reason: .noWindow)
+    let refBytes = try refused.encoded()
+    let refDecoded = try PairRefused.decode(payload: FrameCodec.decode(refBytes).frame.payload)
+    Check.equal(refDecoded.correlation, correlation, "pair_refused correlation")
+    Check.equal(refDecoded.reason, .noWindow, "pair_refused reason")
+
+    let hRefused = HelloRefused(correlation: correlation, protocolVersion: 2, status: .unpaired)
+    let hRefBytes = try hRefused.encoded()
+    let hRefDecoded = try HelloRefused.decode(payload: FrameCodec.decode(hRefBytes).frame.payload)
+    Check.equal(hRefDecoded.correlation, correlation, "hello_refused correlation")
+    Check.equal(hRefDecoded.status, .unpaired, "hello_refused status")
 }
 
-func testHelloAckStatusesAreDistinguishable() throws {
-    let cases: [(String, [UInt8], HelloStatus, UInt8, UInt16)] = [
-        ("hello_ack_ok", FrozenV1.helloAckOK, .ok, 1, 1024),
-        ("hello_ack_auth_failed", FrozenV1.helloAckAuthFailed, .authenticationFailed, 0, 0),
-        ("hello_ack_version_mismatch", FrozenV1.helloAckVersionMismatch, .versionIncompatible, 0, 0),
-    ]
-
-    for (name, vector, status, channels, chunk) in cases {
-        let (frame, _) = try FrameCodec.decode(vector)
-        let ack = try HelloAck.decode(payload: frame.payload)
-
-        Check.equal(ack.status, status, "\(name): wrong status")
-        Check.equal(ack.channelCount, channels, "\(name): wrong effective channel count")
-        Check.equal(ack.maxChunk, chunk, "\(name): wrong effective chunk size")
-        Check.equal(try ack.encoded(), vector, "\(name): re-encode is not byte-identical")
-    }
-}
-
-/* This helper asks for what it was built against, and the device's answer is
-   what the session runs with — the two are not assumed equal. */
 func testTheHelloThisHelperSendsIsWellFormed() throws {
-    let bytes = try Hello().encoded()
+    let helper = try SoftwareIdentity(privateKey: [UInt8](0x01...0x20))
+    let board = try SoftwareIdentity(privateKey: [UInt8](0x21...0x40))
+    let nonce = [UInt8](repeating: 0xAA, count: Int(DH_NONCE_SIZE))
+
+    let kHello = try helper.deriveHelloKey(boardPublicKey: board.publicKey, helperNonce: nonce)
+    let bytes = try Hello(helperKeyId: helper.keyId, helperNonce: nonce)
+        .encoded(key: kHello)
+
     let (frame, consumed) = try FrameCodec.decode(bytes)
     Check.equal(consumed, bytes.count, "the hello is not a whole frame")
     Check.equal(frame.type, MessageType.hello, "the hello is not a hello")
 
-    let hello = try Hello.decode(payload: frame.payload)
+    var counter = dh_auth_counter()
+    dh_auth_counter_init(&counter)
+    let body = try AuthFrame.open(frame: frame, key: kHello, counter: &counter)
+    let hello = try Hello.decode(body: body)
+
     Check.equal(hello.os, 1, "the macOS helper must identify as macOS")
     Check.equal(hello.channelCount, ChannelIdentity.requestedChannelCount, "wrong channel count")
     Check.equal(hello.maxChunk, ChannelIdentity.requestedMaxChunk, "wrong chunk size")
+    Check.equal(hello.protocolVersion, UInt16(DH_PROTO_VERSION), "wrong protocol version")
 }

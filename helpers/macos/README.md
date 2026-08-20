@@ -52,9 +52,10 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
    reported as a refusal if any one is refused. Partial acquisition is worse than outright
    failure: a second process holding one channel would silently receive part of every bulk
    transfer while both sides looked healthy ([ADR-0002](../../docs/adr/0002-parallel-hid-channels.md)).
-3. **Says hello**, carrying protocol version, platform, build type, and the channel count and
-   chunk size it asks for. The device answers with the *effective* values, and the session runs on
-   those.
+3. **Says hello**, carrying protocol version, platform, build type, the channel count and chunk
+   size it asks for, the id of its own key, a fresh nonce, and a fresh correlation value. The
+   frame is authenticated under a key derived from ECDH against the pinned board key. The device
+   answers with the *effective* values, and the session runs on those.
 4. **Beats** at the interval the shared core defines, which is the same number the firmware
    measures its "absent after a couple of missed intervals" against.
 5. **Reconnects by itself**, with an exponential backoff capped at a few seconds — and says so
@@ -73,12 +74,14 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 | config mode | Device in config mode | no |
 | absent | Device not connected | no |
 | version mismatch | Helper version does not match the device — file transfers are refused | no |
+| listener detected | Listener detected — another process is probing the channel | no |
+| board identity changed | Device identity changed — if you re-flashed it, remove the pinned board key | **no** |
 
 **A refused open must never prompt the chord.** The program holding the channel is exactly what a
 chord press would provision during the pairing window
 ([#34](https://github.com/myn/deskhopplus/issues/34)), so "another program holds the channel" and
 "not paired" are different states with different remedies, and they are reliably distinguishable:
-the open was refused, versus the open succeeded and authentication failed.
+the open was refused, versus the open succeeded and the board refused the hello.
 
 Nothing is shown during a brief disappearance. Entering config mode reboots the device under a
 different USB identity for up to five minutes and then reboots back — that is normal operation,
@@ -96,6 +99,69 @@ second before it comes due, so that helper would otherwise say nothing at all �
 rate never overrides is a state with its own remedy; a held channel, an unpaired helper or a
 version mismatch each keeps its place. The session it reports on is otherwise ordinary, and carries
 what any other session carries.
+
+## Identity and pairing
+
+The helper holds a **P-256 key pair in the Secure Enclave**
+([ADR-0008](../../docs/adr/0008-channel-identity-and-sealed-clipboard.md),
+[#112](https://github.com/myn/deskhopplus/issues/112)). The private half is generated inside the
+enclave and never leaves it; the helper asks the enclave to perform key agreement and gets a
+shared secret back. There are **no secret bytes at rest**. What is on disk is an enclave key
+*handle*, which is useless on any other machine, and the board's 64-byte public key, which is
+public by definition.
+
+Pairing is a chord press. The helper sends a `PAIR_REQUEST` carrying its public key and a fresh
+random correlation value; the board, only inside a pairing window the user opened, answers with a
+`PAIR_GRANT` carrying its own public key and **echoing that correlation value**. The helper pins
+what it is sent and immediately says hello under it.
+
+Every frame outside the pairing band carries a 16-byte HMAC-SHA256 tag and a monotonic counter,
+under per-direction keys derived from the shared secret and both nonces. A frame whose tag does
+not verify is dropped in silence, and — this is the fix for
+[#95](https://github.com/myn/deskhopplus/issues/95) — **does not count as the device being
+alive**. A bystander writing at the endpoint can no longer keep a dead session looking healthy.
+
+The correlation value is what closes [#108](https://github.com/myn/deskhopplus/issues/108): a
+manufactured `PAIR_GRANT` or `HELLO_ACK` cannot guess the random value in the request it claims
+to answer, so a helper never acts on a reply to a question it did not ask.
+
+Old pairings do not migrate. A v1 helper cannot pair with a v2 board, and the first run of this
+version deletes the v1 `secret` file. Recovery is one chord press.
+
+**A board whose key has changed is not silently accepted.** If a chord press produces a grant
+carrying a different identity key from the one this helper had pinned, the helper refuses it and
+says so. That is a board wiped past its identity sector, re-flashed, or swapped for another one.
+The chord is deliberately *not* offered as the remedy, because pressing it is the act that would
+accept the new board.
+
+Nothing on the channel can make the helper drop that pin — not even the board saying it has
+forgotten this helper, which leaves the pin exactly where it was. A control a restart clears is
+not a control. If you re-flashed the board yourself, say so where a bystander on the channel
+cannot reach:
+
+```sh
+rm ~/Library/Application\ Support/deskhopplus/board_key
+launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper
+```
+
+### What this does not protect against
+
+Two limits, stated plainly, because a security note that only lists wins is not a security note.
+
+1. **Malware running as you can use the key while it runs.** The enclave protects the key from
+   being *copied* — off the disk, out of a backup, onto another machine. It does not protect it
+   from being *used* by code running as your user on this machine, because that code can ask the
+   enclave for key agreement exactly as the helper does. The property this buys is that a stolen
+   disk or a stolen backup yields nothing; it is not a defence against a compromised account.
+   Requiring a biometric prompt per operation would change that and is not something a background
+   agent can do on every frame.
+
+2. **A passive listener is undetectable.** The board counts frames it *refused* and raises
+   `LISTENER_ALERT` when too many arrive in a window — so it detects something probing the
+   channel, which is an active listener. A process that only opens a channel and reads is silent
+   by construction: it writes nothing to refuse, and nothing in the protocol can distinguish it
+   from a channel nobody has opened. The exclusive-seize rule is what actually keeps a reader off
+   the channel, and it is enforced by the OS, not by this document.
 
 ## Installing the agent
 

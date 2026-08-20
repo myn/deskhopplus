@@ -8,6 +8,11 @@ import Foundation
  * the user is shown, and reconnection with a capped backoff — is decided here
  * and therefore tested on a laptop with no device attached.
  *
+ * v2 (#112, ADR-0008): the bearer token is gone. Every hello and every reply
+ * echoes a correlation value that ties an answer to its question, every
+ * session-band frame is tagged under a per-session key, and the helper holds
+ * a Secure Enclave identity rather than a 16-byte secret.
+ *
  * The transport (HIDChannelSet) does what it is told and reports what it sees.
  */
 
@@ -36,9 +41,11 @@ public enum SessionInput: Equatable {
 }
 
 public enum SessionOutput: Equatable {
-    /* A secret the device just granted. Storing it is the transport's job;
-       the engine only decides that it is worth keeping. */
-    case storeSecret([UInt8])
+    /* The board's public key, from a PAIR_GRANT this helper asked for.
+       Storing it is the runtime's job; the engine only decides it is worth
+       keeping — and, per `boardPublicKey`, never emits a second one for a
+       board whose key has changed. */
+    case storeBoardKey([UInt8])
     case openChannels
     case closeChannels
     case send([UInt8])
@@ -48,7 +55,6 @@ public enum SessionOutput: Equatable {
     case note(String)
 }
 
-/* The effective parameters the device replied with — not what was asked for. */
 public struct Negotiated: Equatable {
     public let channelCount: UInt8
     public let maxChunk: UInt16
@@ -56,53 +62,13 @@ public struct Negotiated: Equatable {
 }
 
 public final class SessionEngine {
-    /*
-     * A helper beats at the interval the shared core defines, so liveness is
-     * measured against the same number at both ends. The beat only fills a
-     * direction that has carried nothing for a full interval — traffic is the
-     * measurement, and the beat exists so that silence is unambiguous
-     * (ADR-0004).
-     */
     public static let heartbeatInterval = TimeInterval(DH_SESSION_HEARTBEAT_MS) / 1000
-
-    /*
-     * How long the *device* may say nothing at all before this helper
-     * concludes the session is gone. The device applies the same deadline to
-     * this helper, from the same constant, so neither end is more patient
-     * than the other.
-     *
-     * Deliberately not called a silence window: `silenceWindow` below is a
-     * different quantity for a different purpose, and conflating a 3-second
-     * protocol deadline with a 5-second cosmetic one is how this gets broken.
-     */
     public static let deviceBeatTimeout = TimeInterval(DH_SESSION_ABSENT_MS) / 1000
-
-    /*
-     * How long the device may be gone before the user is told anything. A
-     * config-mode round trip, an ordinary re-enumeration and a session
-     * reconnecting all look like this at first, and none is worth a
-     * notification.
-     */
     public static let silenceWindow: TimeInterval = 5
-
-    /* A device that takes the hello and says nothing is not a working
-       session; give up and re-acquire rather than sit on a half-open one. */
     public static let helloTimeout: TimeInterval = 2
-
-    /*
-     * How often the connection may be rebuilt before that is worth reporting
-     * in its own right. Every individual cycle passes the silence window
-     * above — the connection is back long before it closes — so without a
-     * rate nothing is left to notice a helper reconnecting once a second
-     * (#94), which is the shape a wire-format mismatch takes.
-     *
-     * Both numbers are a judgement call, unlike the absence of any threshold.
-     * One reconnection is the ordinary recovery, and a re-enumeration, a
-     * config-mode round trip and a laptop waking up each cost one; four
-     * inside half a minute is not a link doing its job.
-     */
     public static let reconnectWindow: TimeInterval = 30
     public static let reconnectLimit = 4
+    public static let pairingRetryInterval: TimeInterval = 2
 
     private enum Phase {
         case idle
@@ -110,80 +76,65 @@ public final class SessionEngine {
         case live
     }
 
+    private let identity: HelperIdentity
+    private let entropy: (Int) -> [UInt8]
+
     private var phase: Phase = .idle
     private var backoff = Backoff()
     private var stream = FrameStream()
     private var helloSentAt: TimeInterval = 0
-    /* When this helper last had something to say, and when the device last
-       did. The beat fills the gaps in the first; the second is the detector. */
     private var lastSentAt: TimeInterval = 0
     private var lastDeviceFrameAt: TimeInterval = 0
-    /*
-     * The device's own beat, tracked apart from lastDeviceFrameAt because
-     * ADR-0004 gates it on an idle direction: through a transfer, frames keep
-     * arriving while beats correctly stop, so the two quantities diverge and
-     * only this one answers "is the beat running". nil until the first beat
-     * of a session. Diagnostic — nothing decides on it.
-     */
     private var lastDeviceBeatAt: TimeInterval?
     private var deviceBeatQuietNoted = false
     private var holdingChannels = false
-    /* When the connection was last lost, oldest first and never more than
-       reconnectLimit of them — only the reconnectLimit-th most recent decides
-       anything, so the rest are not worth keeping. */
     private var recentDrops: [TimeInterval] = []
-    /* A state the user will be told about once the silence window passes. */
     private var deferredState: (state: HelperState, at: TimeInterval)?
-    /* The token every hello carries. nil until the device grants one. */
-    private var secret: [UInt8]?
     private var pairingRequestedAt: TimeInterval?
-    /* A helper that starts before the device is attached — the ordinary case
-       at login — reports the absence on the same delay as one that loses it. */
     private var startedAt: TimeInterval?
-    /* Under any identity, config mode included — see handle(_:at:). */
     private var everSawDevice = false
+
+    /*
+     * The board's identity key, pinned at pairing. It is deliberately **not**
+     * dropped when the board says it does not know us: it is the only record
+     * of which board this helper trusts, and a control that a restart clears
+     * is not a control. A stale pin costs nothing — the board checks its
+     * registration before it checks the tag, so the hello is still refused
+     * with `unpaired` — and keeping it is what lets a grant carrying a
+     * *different* key be recognised as a different board (#112).
+     *
+     * Only the user clears it, by removing the file. See the README.
+     */
+    private var boardPublicKey: [UInt8]?
+
+    /// When the board's last listener alert stops meaning anything. See
+    /// `listenerAlertReceived`.
+    private var listenerAlertUntil: TimeInterval?
+
+    // v2 session crypto — per session, cleared by forgetCryptoState()
+    private var helperNonce: [UInt8]?
+    private var helloCorrelation: UInt64 = 0
+    private var pairCorrelation: UInt64 = 0
+    private var kH2B: [UInt8]?
+    private var kB2H: [UInt8]?
+    private var txCounter: UInt64 = 0
+    private var rxCounter = dh_auth_counter()
 
     public private(set) var state: HelperState = .quiet
     public private(set) var negotiated: Negotiated?
 
-    /*
-     * May bulk be sent? Only a helper that actually holds a session may put
-     * clipboard payloads on it — otherwise it offers content that never
-     * arrives and the paste side waits on a transfer nobody is sending.
-     *
-     * This is the same predicate the liveness detector is scoped to, exposed
-     * once: a helper refused authentication is deliberately `.live` and must
-     * not be mistaken for one with a session. #52 consumes this rather than
-     * inventing its own condition.
-     */
     public var canSendBulk: Bool { phase == .live && negotiated != nil }
 
-    /*
-     * How often an unpaired helper asks to be paired. The window is about a
-     * minute and the user may press the chord at any point in it, so asking
-     * periodically is what makes provisioning silent — the alternative is
-     * telling the user to press the chord *and then* restart the helper.
-     */
-    public static let pairingRetryInterval: TimeInterval = 2
-
-    public init(secret: [UInt8]? = nil) {
-        self.secret = secret
+    public init(identity: HelperIdentity, boardPublicKey: [UInt8]? = nil,
+                entropy: @escaping (Int) -> [UInt8]) {
+        self.identity = identity
+        self.boardPublicKey = boardPublicKey
+        self.entropy = entropy
+        dh_auth_counter_init(&rxCounter)
     }
 
     public func handle(_ input: SessionInput, at now: TimeInterval) -> [SessionOutput] {
         if startedAt == nil { startedAt = now }
-
-        /*
-         * Any identity at all means a device is attached. Config mode is the
-         * same board under a different one (#33), so a helper that has seen
-         * it has seen a device, and the "nothing was ever attached" fallback
-         * in tick() must not fire behind it (#73) — that told the user the
-         * device was not connected for the whole of a config session, which
-         * is exactly the window in which they are looking for reassurance.
-         *
-         * Set here rather than in the per-identity handlers so that a third
-         * identity cannot reintroduce this by forgetting to.
-         */
         if case .deviceAppeared = input { everSawDevice = true }
 
         switch input {
@@ -208,43 +159,23 @@ public final class SessionEngine {
 
     // MARK: - Device presence
 
-    /*
-     * Everything a session leaves behind, in the one place every way out of
-     * one reaches: the device going away, the connection dying underneath us,
-     * an acquisition refused, a version the device will not speak, and a
-     * hello that could not be encoded. Kept together so a sixth cannot
-     * reintroduce the leak by forgetting a field — which is exactly how the
-     * beat trace broke (#98). It survived a dropped connection and not a
-     * config-mode round trip, and the round trip is the common path.
-     *
-     * The frame stream goes with it: a half-frame read from a session that
-     * has ended must never be glued to the front of the next one.
-     *
-     * Deliberately not `holdingChannels`, and not the deferred state. Those
-     * two differ between the callers — one releases handles it may not hold,
-     * another keeps them on purpose, and each names its own reason for the
-     * silence — so folding them in would make this lie about one caller.
-     */
     private func forgetSession() {
         phase = .idle
         negotiated = nil
         stream.reset()
         forgetBeatTrace()
+        forgetCryptoState()
     }
 
-    /*
-     * The beat belongs to a session: the next one's first beat is worth a
-     * line of its own, and a quiet spell does not outlive the session it was
-     * measured in.
-     *
-     * Split out of forgetSession() for the one path that loses a session
-     * without going idle — a helper refused authentication stays live,
-     * beating and asking, because #46 can only provision one that is
-     * connected when the chord lands. A teardown keyed on the phase steps
-     * straight past it, and then the session pairing establishes has its
-     * first beat swallowed: not the first any more, and with no quiet spell
-     * behind it to make it a resumption, it says nothing at all.
-     */
+    private func forgetCryptoState() {
+        kH2B = nil
+        kB2H = nil
+        helperNonce = nil
+        listenerAlertUntil = nil
+        txCounter = 0
+        dh_auth_counter_init(&rxCounter)
+    }
+
     private func forgetBeatTrace() {
         lastDeviceBeatAt = nil
         deviceBeatQuietNoted = false
@@ -253,14 +184,6 @@ public final class SessionEngine {
     private func deviceAppeared() -> [SessionOutput] {
         deferredState = nil
         backoff.reset()
-
-        /*
-         * Clear only a state the device's return has just falsified. A helper
-         * that was showing "connected" when the device blinked keeps showing
-         * it: the whole point of the silence window is that a brief
-         * disappearance produces no visible change at all, and clearing to
-         * nothing here would be a visible change.
-         */
         let stale: [HelperState] = [.deviceAbsent, .deviceInConfigMode, .channelHeld]
         let outputs = stale.contains(state) ? emit(.quiet) : []
         return outputs + [.openChannels]
@@ -269,8 +192,6 @@ public final class SessionEngine {
     private func deviceLeft(for reason: HelperState, at now: TimeInterval) -> [SessionOutput] {
         recordDrop(at: now)
         forgetSession()
-        /* Silence at first: the state is held back until the disappearance
-           has lasted long enough to be worth mentioning. */
         deferredState = (reason, now + Self.silenceWindow)
 
         var outputs: [SessionOutput] = []
@@ -292,10 +213,33 @@ public final class SessionEngine {
         deferredState = nil
 
         do {
-            return [.send(try Hello(token: secret ?? []).encoded())]
+            var outputs: [SessionOutput] = [.send(try buildHello(at: now))]
+
+            /*
+             * A handshake that keeps failing, with the board answering nothing.
+             * The board refuses a hello with `unpaired` only when it holds *no*
+             * registration (`answer_hello`, src/core/dh_session.c); when it
+             * holds one for a different key id it falls through to the tag
+             * check, fails, and stays silent by design. This helper's identity
+             * having changed underneath it — a cleared Application Support, a
+             * home directory restored onto another Mac — lands exactly there,
+             * and never reaches `notPaired`, so the chord could never rescue
+             * it.
+             *
+             * So it asks anyway, once per acquisition, when the rate already
+             * says retrying is not working. The request is untagged and costs
+             * nothing: a board outside a pairing window ignores it.
+             *
+             * This is a workaround in one client. #117 carries the firmware
+             * fix — refusing per key id rather than per board — and owns the
+             * decision to keep or drop this once that lands.
+             */
+            if state == .reconnectingRepeatedly, let ask = pairRequestFrame(at: now) {
+                outputs.append(.note("asking to be paired: the handshake is not completing"))
+                outputs.append(.send(ask))
+            }
+            return outputs
         } catch {
-            /* Encoding a hello cannot fail against a working core; if it ever
-               does, say so rather than sit silently in awaitingAck. */
             forgetSession()
             return [.note("hello could not be encoded: \(error)"),
                     .closeChannels,
@@ -306,23 +250,8 @@ public final class SessionEngine {
     private func acquisitionRefused(acquired: Int, of total: Int) -> [SessionOutput] {
         forgetSession()
         holdingChannels = false
-        /*
-         * We now know something more useful than whatever a preceding drop
-         * deferred. A dropped connection arms "the device is absent" against
-         * the silence window; if the retry then finds the channel taken, the
-         * device is plainly not absent and the remedy is a different one —
-         * letting the stale deferral fire would replace an actionable state
-         * with a misleading one, minutes after the fact.
-         */
         deferredState = nil
 
-        /*
-         * All or nothing (ADR-0002). A partial acquisition is worse than an
-         * outright failure: the other holder would silently receive part of
-         * every transfer while both sides looked healthy. And this state
-         * never prompts the config chord — the program holding the channel is
-         * exactly what the chord would provision (#34).
-         */
         let note = acquired > 0
             ? "released \(acquired) of \(total) channels: a partial acquisition is not a session"
             : "every channel refused"
@@ -336,157 +265,264 @@ public final class SessionEngine {
         do {
             frames = try stream.push(bytes)
         } catch {
-            /* A protocol error means the byte stream is no longer
-               trustworthy: drop the connection and reconnect. */
             return dropConnection(note: "protocol error on the channel: \(error)", at: now)
         }
 
-        /*
-         * Any frame at all proves the device is alive *and* holding a session
-         * for this helper, since it relays nothing and answers nothing for a
-         * peer it has no session with. That is what liveness is measured on;
-         * the device's beat merely fills the silence when there is no other
-         * traffic to read it from (ADR-0004).
-         */
-        if !frames.isEmpty { lastDeviceFrameAt = now }
-
         var outputs: [SessionOutput] = []
         for frame in frames {
-            switch frame.type {
-            case MessageType.helloAck:
-                outputs += helloAck(frame, at: now)
-
-            case MessageType.pairGrant:
-                outputs += pairGranted(frame, at: now)
-
-            case MessageType.sessionEnd:
-                outputs += sessionEnded(frame, at: now)
-
-            case MessageType.deviceHeartbeat:
-                /* Liveness is already recorded above, by virtue of the frame
-                   having arrived at all. What is left is the trace. */
-                outputs += deviceBeat(at: now)
-            default:
-                /* Placement and the bulk band belong to later tickets; a
-                   frame this build does not act on is not an error. */
-                continue
+            let isAuth = frame.type < 0x08 || frame.type > 0x0F
+            if isAuth {
+                outputs += handleAuthenticated(frame, at: now)
+            } else {
+                outputs += handleUnauthenticated(frame, at: now)
             }
         }
         return outputs
     }
 
+    /* Frames that carry an authentication prefix (everything outside 0x08-0x0F).
+       Liveness is only updated when the tag verifies — v2's fix for #95. */
+    private func handleAuthenticated(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+        if frame.type == MessageType.helloAck {
+            return helloAck(frame, at: now)
+        }
+
+        guard let key = kB2H else {
+            return [.note("dropping authenticated frame (type 0x\(String(frame.type, radix: 16)))"
+                          + " with no session key")]
+        }
+
+        let body: [UInt8]
+        do {
+            body = try AuthFrame.open(frame: frame, key: key, counter: &rxCounter)
+        } catch AuthError.badTag {
+            /*
+             * docs/protocol.md, "the helper's side of the same rule": only the
+             * device emits device→helper reports, so a tag that fails here
+             * means the board is not the board this helper paired with, or the
+             * byte stream is corrupt. Either way the connection goes, and
+             * nothing is replied — an answer would reach every attached client.
+             */
+            return dropConnection(note: "a device→helper frame failed its tag", at: now)
+        } catch AuthError.replayedCounter {
+            /*
+             * Not the same case. The tag verified, so this came from the board;
+             * the counter is merely not greater than one already accepted. The
+             * device's outbound path is a bounded queue (ADR-0005) where gaps
+             * are ordinary, so this costs the frame, not the session.
+             */
+            return [.note("dropping frame with a counter already seen")]
+        } catch {
+            return [.note("dropping frame: \(error)")]
+        }
+
+        lastDeviceFrameAt = now
+
+        switch frame.type {
+        case MessageType.sessionEnd:
+            return sessionEnded(body, at: now)
+        case MessageType.deviceHeartbeat:
+            return deviceBeat(at: now)
+        case MessageType.listenerAlert:
+            return listenerAlertReceived(body, at: now)
+        default:
+            return []
+        }
+    }
+
+    /* Frames in the unauthenticated band (0x08-0x0F): pairing, hello refusals.
+       No liveness update — these are not session traffic. */
+    private func handleUnauthenticated(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+        switch frame.type {
+        case MessageType.helloRefused:
+            return helloRefused(frame.payload, at: now)
+        case MessageType.pairGrant:
+            return pairGranted(frame.payload, at: now)
+        case MessageType.pairRefused:
+            return pairRefusedReceived(frame.payload, at: now)
+        default:
+            return []
+        }
+    }
+
+    // MARK: - Hello exchange
+
+    /* HELLO_ACK is special: we peek the board nonce from the payload before we
+       can derive k_b2h and verify the tag. */
     private func helloAck(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
-        guard phase != .idle else {
-            /* An answer to a hello this helper is no longer waiting on — the
-               tail of a session that was already dropped. Acting on it would
-               report a session that does not exist. */
+        guard phase == .awaitingAck else {
             return [.note("ignoring a hello_ack outside a session")]
         }
-        guard let ack = try? HelloAck.decode(payload: frame.payload) else {
-            return dropConnection(note: "hello_ack payload could not be decoded", at: now)
+        guard let boardKey = boardPublicKey else {
+            return dropConnection(note: "received hello_ack but have no board key", at: now)
+        }
+        guard let nonce = helperNonce else {
+            return dropConnection(note: "received hello_ack with no stored nonce", at: now)
+        }
+
+        guard let boardNonce = AuthFrame.peekBoardNonce(payload: frame.payload) else {
+            return dropConnection(note: "hello_ack too short to carry a board nonce", at: now)
+        }
+
+        let keys: (kH2B: [UInt8], kB2H: [UInt8])
+        do {
+            keys = try identity.deriveSessionKeys(
+                boardPublicKey: boardKey, helperNonce: nonce, boardNonce: boardNonce)
+        } catch {
+            return dropConnection(note: "could not derive session keys: \(error)", at: now)
+        }
+
+        var counter = dh_auth_counter()
+        dh_auth_counter_init(&counter)
+        let body: [UInt8]
+        do {
+            body = try AuthFrame.open(frame: frame, key: keys.kB2H, counter: &counter)
+        } catch {
+            return dropConnection(note: "hello_ack tag did not verify: \(error)", at: now)
+        }
+
+        guard let ack = try? HelloAck.decode(body: body) else {
+            return dropConnection(note: "hello_ack body could not be decoded", at: now)
+        }
+        guard ack.correlation == helloCorrelation else {
+            return [.note("ignoring hello_ack with wrong correlation")]
+        }
+
+        self.kH2B = keys.kH2B
+        self.kB2H = keys.kB2H
+        self.rxCounter = counter
+        self.txCounter = 0
+
+        backoff.reset()
+        phase = .live
+        lastDeviceFrameAt = now
+        negotiated = Negotiated(channelCount: ack.channelCount,
+                                maxChunk: ack.maxChunk,
+                                deviceBuild: ack.buildType)
+
+        var outputs: [SessionOutput] = []
+        if ack.buildType == .development {
+            outputs.append(.note("device is a development build: channel authentication "
+                                 + "is compiled out"))
+        }
+
+        guard reconnectingRepeatedly(at: now) else { return outputs + emit(.connected) }
+        return outputs + emitRepeatedReconnection(at: now)
+    }
+
+    private func helloRefused(_ payload: [UInt8], at now: TimeInterval) -> [SessionOutput] {
+        guard phase == .awaitingAck else {
+            return [.note("ignoring a hello_refused outside a session")]
+        }
+        guard let refused = try? HelloRefused.decode(payload: payload) else {
+            return dropConnection(note: "hello_refused could not be decoded", at: now)
+        }
+        guard refused.correlation == helloCorrelation else {
+            return [.note("ignoring hello_refused with wrong correlation")]
         }
 
         backoff.reset()
 
-        switch ack.status {
-        case .ok:
-            phase = .live
-            negotiated = Negotiated(channelCount: ack.channelCount,
-                                    maxChunk: ack.maxChunk,
-                                    deviceBuild: ack.buildType)
-            var outputs: [SessionOutput] = []
-            if ack.buildType == .development {
-                outputs.append(.note("device is a development build: channel authentication "
-                                     + "is compiled out"))
-            }
-
-            /*
-             * The successful reconnection is exactly what used to put
-             * `connected` back on the screen once a second. A helper that has
-             * been rebuilding this connection all along says so instead, and
-             * goes on saying it until the window passes quietly — see tick().
-             */
-            guard reconnectingRepeatedly(at: now) else { return outputs + emit(.connected) }
-            return outputs + emitRepeatedReconnection(at: now)
-
-        case .authenticationFailed:
-            /* The session stays up and asking: the pairing window (#46)
-               provisions a helper that is connected when it opens, and this
-               helper is only connected if it keeps a session alive. */
+        switch refused.status {
+        case .unpaired:
             phase = .live
             negotiated = nil
             pairingRequestedAt = nil
-            /* The session is gone even though the phase is not, so the beat
-               measured in it goes too — see forgetBeatTrace(). */
             forgetBeatTrace()
+            forgetCryptoState()
+            /* The pin stays. See `boardPublicKey`: it is the record of which
+               board this helper trusts, and dropping it here would mean a
+               swapped board is accepted silently after any restart. */
             return emit(.notPaired)
 
         case .versionIncompatible:
-            /*
-             * The device dropped the session on its side, so there is nothing
-             * to keep alive — beating at a peer that will never answer would
-             * only look like a session. The channels stay held so nothing
-             * else takes them, and a firmware or helper update re-enumerates,
-             * which is what starts the next attempt. The channels staying held
-             * is why holdingChannels is not forgetSession()'s business.
-             */
             forgetSession()
-            return [.note("device speaks protocol version \(ack.protocolVersion), "
-                          + "this helper speaks \(DH_PROTO_VERSION_V1)")]
+            return [.note("device speaks protocol version \(refused.protocolVersion), "
+                          + "this helper speaks \(DH_PROTO_VERSION)")]
                 + emit(.versionIncompatible)
         }
     }
 
-    /*
-     * The window provisioned us. Storing the secret and saying hello again is
-     * the whole of pairing — and the state changing to connected is the
-     * confirmation the user was told to expect (#34): a chord press that does
-     * not produce it is the signal that something else may have been
-     * provisioned instead.
-     */
-    private func pairGranted(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+    // MARK: - Pairing
+
+    private func pairGranted(_ payload: [UInt8], at now: TimeInterval) -> [SessionOutput] {
         guard phase != .idle else {
-            /* A grant for a session this helper has already dropped. Acting
-               on it would send a hello down a channel that is closed and then
-               sit in awaitingAck until it timed out, on top of a reconnection
-               already scheduled. */
             return [.note("ignoring a pair grant outside a session")]
         }
-        guard frame.payload.count == SecretStore.length else {
-            return [.note("ignoring a pair grant carrying \(frame.payload.count) bytes")]
+        guard let grant = try? PairGrant.decode(payload: payload) else {
+            return [.note("ignoring a pair grant that could not be decoded")]
+        }
+        guard grant.correlation == pairCorrelation else {
+            return [.note("ignoring pair grant with wrong correlation")]
         }
 
-        secret = frame.payload
-        pairingRequestedAt = nil
-
-        guard let hello = try? Hello(token: frame.payload).encoded() else {
-            return [.note("paired, but the hello could not be encoded")]
+        /*
+         * A different board. The chord was pressed and the grant is genuine —
+         * but it is a genuine grant from something that is not the board this
+         * helper was paired with, and accepting it silently is how a swapped
+         * board inherits the trust of the one it replaced.
+         *
+         * Deliberately not offered the chord: pressing it is the very act
+         * that would accept the new board. The way through is for the user to
+         * remove the pinned key, which says "I re-flashed it" in the one place
+         * a bystander on the channel cannot reach.
+         */
+        if let pinned = boardPublicKey, pinned != grant.boardPublicKey {
+            pairingRequestedAt = nil
+            return [.note("the board granted pairing under a different identity key — "
+                          + "re-flashed, wiped past its identity sector, or swapped")]
+                + emit(.boardIdentityChanged)
         }
-        helloSentAt = now
-        lastSentAt = now
-        phase = .awaitingAck
-        return [.storeSecret(frame.payload), .note("paired by the device"), .send(hello)]
+
+        /*
+         * Held until the key has at least produced a hello. A grant carrying
+         * something that is not a point on the curve must leave the helper as
+         * it found it, not holding a key every later hello fails on.
+         *
+         * It is persisted at that point rather than after the ack, because the
+         * ack is what the *next* hello needs the key to verify: a helper that
+         * waited would have nothing to authenticate the hello it is about to
+         * send after a restart.
+         */
+        let previous = boardPublicKey
+        boardPublicKey = grant.boardPublicKey
+
+        do {
+            let hello = try buildHello(at: now)
+            pairingRequestedAt = nil
+            helloSentAt = now
+            lastSentAt = now
+            phase = .awaitingAck
+            return [.storeBoardKey(grant.boardPublicKey), .note("paired by the device"), .send(hello)]
+        } catch {
+            boardPublicKey = previous
+            return [.note("paired, but the hello could not be encoded: \(error)")]
+        }
     }
 
-    /*
-     * The device's beat, traced at its edges only: the first of a session,
-     * and a return after it had gone quiet. ADR-0004 stops the beat on a
-     * direction that is carrying traffic, so a gap is ordinarily the design
-     * working — but it is also what a stalled device looks like, and the two
-     * are indistinguishable without this. Nothing decides on it; a beat that
-     * never arrives is caught by the liveness deadline in tick().
-     *
-     * Per-beat logging is deliberately not offered. At a beat a second it
-     * buries everything else in the log, which is exactly how a helper
-     * thrashing on an unknown frame type went unnoticed for two days (#94).
-     */
+    private func pairRefusedReceived(_ payload: [UInt8], at now: TimeInterval) -> [SessionOutput] {
+        guard phase != .idle else {
+            return [.note("ignoring a pair refused outside a session")]
+        }
+        guard let refused = try? PairRefused.decode(payload: payload) else {
+            return [.note("ignoring a pair refused that could not be decoded")]
+        }
+        guard refused.correlation == pairCorrelation else {
+            return [.note("ignoring pair refused with wrong correlation")]
+        }
+
+        switch refused.reason {
+        case .noWindow:
+            return [.note("pairing refused: no window open")]
+        case .alreadyRegistered:
+            return [.note("pairing refused: board already has a registration")]
+        }
+    }
+
+    // MARK: - Session traffic
+
     private func deviceBeat(at now: TimeInterval) -> [SessionOutput] {
         guard phase != .idle else {
-            /* A beat already in the read queue when the connection went, like
-               the tail of any other frame type. Acting on it would announce
-               the first beat of a session that does not exist — and then
-               swallow the real one, which is only first while nothing has
-               claimed it. */
             return [.note("ignoring a device heartbeat outside a session")]
         }
         defer { lastDeviceBeatAt = now }
@@ -500,27 +536,33 @@ public final class SessionEngine {
         return [.note(String(format: "device heartbeat resumed after %.1fs", now - last))]
     }
 
-    /*
-     * The device evicted us and said so, rather than leaving it to the
-     * timeout. The reason is a log line and nothing more: every one takes the
-     * same recovery, and an unrecognised one is treated as unspecified so a
-     * later device can end a session for a reason this build predates.
-     *
-     * The backoff is deliberately *not* reset here. An orderly end is still a
-     * reason to reconnect at the current delay — a device ending sessions
-     * repeatedly would otherwise spin this helper in a tight loop, and a
-     * successful hello_ack is the right and only place to declare things
-     * well again.
-     */
-    private func sessionEnded(_ frame: Frame, at now: TimeInterval) -> [SessionOutput] {
+    private func sessionEnded(_ body: [UInt8], at now: TimeInterval) -> [SessionOutput] {
         guard phase != .idle else {
-            /* The tail of a session already dropped. Acting on it would tear
-               down a reconnection that is already in flight. */
             return [.note("ignoring a session end outside a session")]
         }
-        let reason = SessionEndReason(wire: frame.payload.first ?? 0)
+        let reason = SessionEndReason(wire: body.first ?? 0)
         return dropConnection(note: "the device ended the session: \(reason)", at: now)
     }
+
+    private func listenerAlertReceived(_ body: [UInt8],
+                                       at now: TimeInterval) -> [SessionOutput] {
+        guard let alert = try? ListenerAlert.decode(body: body) else {
+            return [.note("listener_alert could not be decoded")]
+        }
+
+        /* The alert is a rate, so it expires like one. The board measured it
+           over a window and says so; if nothing further arrives within another
+           such window, whatever was writing has stopped, and leaving the
+           warning up for the rest of the session would make it a latch rather
+           than a reading — the mistake #94 corrected for reconnections. */
+        listenerAlertUntil = now + TimeInterval(alert.windowMs) / 1000
+
+        return [.note("listener detected: \(alert.refused) refused frames in "
+                       + "\(alert.windowMs)ms")]
+            + emit(.listenerDetected)
+    }
+
+    // MARK: - Tick
 
     private func tick(at now: TimeInterval) -> [SessionOutput] {
         var outputs: [SessionOutput] = []
@@ -529,10 +571,6 @@ public final class SessionEngine {
             deferredState = nil
             outputs += emit(deferred.state)
         } else if !everSawDevice, let startedAt, now - startedAt >= Self.silenceWindow {
-            /* No device has ever been seen, under *either* identity — see
-               where everSawDevice is set. The helper may well have started
-               before the device, since a LaunchAgent runs at login, so this
-               waits out the same window before saying so. */
             outputs += emit(.deviceAbsent)
         }
 
@@ -541,76 +579,52 @@ public final class SessionEngine {
             outputs += dropConnection(note: "no hello_ack within \(Self.helloTimeout)s", at: now)
 
         case .live:
-            /*
-             * The device has gone quiet for longer than it is allowed to.
-             * Scoped to a session rather than to the phase: a helper refused
-             * authentication is deliberately live, beating and asking, and
-             * the device holds no session for it and so sends it nothing —
-             * tearing that down here would break #46's provisioning outright.
-             */
+            /* Liveness — scoped to a session. An unpaired helper (negotiated
+               == nil, phase == .live) has no session to time out. */
             if negotiated != nil, now - lastDeviceFrameAt >= Self.deviceBeatTimeout {
                 return outputs + dropConnection(
                     note: "nothing from the device in \(Self.deviceBeatTimeout)s", at: now)
             }
 
-            /*
-             * The rebuilding has aged out of the window and this connection
-             * held throughout it, so it is a connected one again — the state
-             * reports a rate, and a rate recovers. Only ever from this state:
-             * every other one is a more specific diagnosis that outlives the
-             * window on its own.
-             */
+            /* The repeated reconnection aged out — the link is holding. */
             if state == .reconnectingRepeatedly, negotiated != nil,
                !reconnectingRepeatedly(at: now) {
                 outputs += emit(.connected)
             }
 
-            /*
-             * The beat stopped while the session did not — the device is
-             * still sending, so the check above is satisfied, but the
-             * idle-gated beat has dried up. Expected under a transfer and
-             * suspicious otherwise, which is a distinction only the operator
-             * can make, so it is reported rather than acted on. Once per
-             * quiet spell; deviceBeat() arms it again.
-             *
-             * Scoped to a session, exactly as the check above it is and for
-             * the same reason: a helper refused authentication is deliberately
-             * live, and the device holds no session for it and so sends it
-             * nothing. Tracing the absence of beats that are not supposed to
-             * exist is noise in the log this trace exists to keep readable
-             * (#98).
-             */
+            /* The listener alert aged out — nothing further was refused. */
+            if state == .listenerDetected, negotiated != nil,
+               let until = listenerAlertUntil, now >= until {
+                listenerAlertUntil = nil
+                outputs += emit(.connected)
+            }
+
+            /* The beat stopped while the session did not. Scoped to a session
+               for the same reason liveness is. */
             if negotiated != nil, let last = lastDeviceBeatAt, !deviceBeatQuietNoted,
                now - last >= Self.deviceBeatTimeout {
                 deviceBeatQuietNoted = true
-                outputs.append(.note(String(format: "device heartbeat quiet for %.1fs", now - last)))
+                outputs.append(.note(String(format: "device heartbeat quiet for %.1fs",
+                                            now - last)))
             }
 
-            /*
-             * Beating and asking are independent, not alternatives. An
-             * unpaired helper must keep the session alive *and* keep asking:
-             * the window can only provision a helper that is connected when
-             * the user presses the chord, and it stays connected by beating.
-             *
-             * The beat fills an idle direction only — anything else this
-             * helper sent has already told the device the same thing.
-             */
-            if now - lastSentAt >= Self.heartbeatInterval {
-                if let beat = try? FrameCodec.encode(Frame(type: MessageType.heartbeat)) {
+            /* Heartbeat — fills an idle direction with an authenticated frame.
+               Only possible when we hold session keys. */
+            if let key = kH2B, now - lastSentAt >= Self.heartbeatInterval {
+                if let beat = try? AuthFrame.wrap(type: MessageType.heartbeat,
+                                                  key: key, counter: txCounter) {
+                    txCounter += 1
                     lastSentAt = now
                     outputs.append(.send(beat))
                 }
             }
 
-            /* The device answers with silence outside a window, so this costs
-               one frame every couple of seconds and no state on either side. */
+            /* Pair request — when unpaired, periodically ask. Untagged, no key
+               needed. The board answers with silence outside a pairing window. */
             if state == .notPaired,
-               now - (pairingRequestedAt ?? 0) >= Self.pairingRetryInterval {
-                pairingRequestedAt = now
-                if let request = try? FrameCodec.encode(Frame(type: MessageType.pairRequest)) {
-                    lastSentAt = now
-                    outputs.append(.send(request))
-                }
+               now - (pairingRequestedAt ?? 0) >= Self.pairingRetryInterval,
+               let request = pairRequestFrame(at: now) {
+                outputs.append(.send(request))
             }
 
         default:
@@ -620,29 +634,71 @@ public final class SessionEngine {
         return outputs
     }
 
-    // MARK: - How often the connection is rebuilt
+    /// A fresh PAIR_REQUEST, and the correlation value a grant must echo back
+    /// before this helper will act on it (#108).
+    private func pairRequestFrame(at now: TimeInterval) -> [UInt8]? {
+        pairCorrelation = freshCorrelation()
+        guard let request = try? PairRequest(correlation: pairCorrelation,
+                                             helperPublicKey: identity.publicKey).encoded() else {
+            return nil
+        }
+        pairingRequestedAt = now
+        lastSentAt = now
+        return request
+    }
 
-    /*
-     * Every loss of a connection this helper actually had, whatever took it —
-     * a protocol error, a failed write, the device ending the session, or the
-     * link itself going away. All of them are recovered the same way and all
-     * of them are invisible one at a time, so all of them are counted here.
-     *
-     * The guard is what keeps the count honest: a device that disappears
-     * twice, or a write that fails after the connection is already gone,
-     * loses nothing the second time.
-     *
-     * Call this *before* forgetSession(), which clears the state the guard
-     * reads — reversed, every drop would look like the second one and the
-     * rate would never rise.
-     */
+    // MARK: - Hello builder
+
+    /* One place for the hello encoding — channelsAcquired and pairGranted both
+       need it. Fresh nonce and correlation each time. */
+    private func buildHello(at now: TimeInterval) throws -> [UInt8] {
+        let nonce = entropy(Int(DH_NONCE_SIZE))
+        try checkNonce(nonce)
+        let correlation = freshCorrelation()
+
+        self.helperNonce = nonce
+        self.helloCorrelation = correlation
+
+        let kHello: [UInt8]
+        if let boardKey = boardPublicKey {
+            kHello = try identity.deriveHelloKey(boardPublicKey: boardKey, helperNonce: nonce)
+        } else {
+            /* Unpaired: the board checks registration before the tag, so a
+               dummy key produces a frame the board refuses with
+               HELLO_REFUSED(unpaired) without ever verifying the tag. */
+            kHello = deriveHelloKeyFromSharedSecret(
+                [UInt8](repeating: 0, count: Int(DH_P256_SHARED_SIZE)),
+                helperNonce: nonce)
+        }
+
+        return try Hello(
+            correlation: correlation,
+            helperKeyId: identity.keyId,
+            helperNonce: nonce
+        ).encoded(key: kHello)
+    }
+
+    /* `entropy` is injected, so its result is treated as input rather than
+       trusted: `copyBytes` traps on an over-long source and reads uninitialised
+       bytes on a short one. Assembled a byte at a time instead, which is
+       correct for any length the closure returns. */
+    private func freshCorrelation() -> UInt64 {
+        let bytes = entropy(8)
+        var value: UInt64 = 0
+        for (i, byte) in bytes.prefix(8).enumerated() {
+            value |= UInt64(byte) << (UInt64(i) * 8)
+        }
+        return value
+    }
+
+    // MARK: - Reconnection rate
+
     private func recordDrop(at now: TimeInterval) {
         guard holdingChannels || phase != .idle else { return }
         recentDrops.append(now)
         if recentDrops.count > Self.reconnectLimit { recentDrops.removeFirst() }
     }
 
-    /* Whether the last reconnectLimit drops all fall inside the window. */
     private func reconnectingRepeatedly(at now: TimeInterval) -> Bool {
         guard recentDrops.count >= Self.reconnectLimit, let oldest = recentDrops.first else {
             return false
@@ -650,14 +706,6 @@ public final class SessionEngine {
         return now - oldest <= Self.reconnectWindow
     }
 
-    /*
-     * The rate, said once and with its measurement attached — a line per
-     * cycle is how #94 stayed invisible for two days to begin with.
-     *
-     * "The last N" rather than a total, because that is what is measured:
-     * only the most recent reconnectLimit drops are kept, so a running count
-     * would read the same number however many there had been.
-     */
     private func emitRepeatedReconnection(at now: TimeInterval) -> [SessionOutput] {
         let reported = emit(.reconnectingRepeatedly)
         guard !reported.isEmpty, let oldest = recentDrops.first else { return reported }
@@ -669,30 +717,8 @@ public final class SessionEngine {
         recordDrop(at: now)
         forgetSession()
         holdingChannels = false
-        /*
-         * Held back, exactly as a device that physically disappears is: a
-         * connection that comes back inside the window produces no visible
-         * change at all, and one that does not has become, from the user's
-         * side, a device that is not there. No second vocabulary for a
-         * second kind of gone — and no leaving the menu bar reading
-         * *connected* for a session that ended, which is the whole of #68.
-         */
         deferredState = (.deviceAbsent, now + Self.silenceWindow)
 
-        /*
-         * Reported here as well as on a session coming up, because a
-         * connection that keeps dying may never reach another hello_ack: a
-         * device that takes the hello and says nothing loops on the timeout
-         * above, and the deferral just armed is cleared by the next
-         * acquisition a second before it comes due. A rate read only where a
-         * session establishes would never be read at all in that loop.
-         *
-         * Only where the rate falsifies what is on the screen: `connected`
-         * claims a link that is holding, and `quiet` claims there is nothing
-         * to say. Every other state is a more specific diagnosis with its own
-         * remedy and keeps its place — a channel somebody else holds does not
-         * become this.
-         */
         let falsifiedByTheRate: [HelperState] = [.connected, .quiet]
         let rate = reconnectingRepeatedly(at: now) && falsifiedByTheRate.contains(state)
             ? emitRepeatedReconnection(at: now)
@@ -701,8 +727,6 @@ public final class SessionEngine {
         return [.note(note), .closeChannels] + rate + [.retry(after: backoff.next())]
     }
 
-    /* State is reported on change only — a menu bar item that rewrites itself
-       every tick is noise, and the transport logs on every output. */
     private func emit(_ next: HelperState) -> [SessionOutput] {
         guard next != state else { return [] }
         state = next

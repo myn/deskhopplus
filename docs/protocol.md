@@ -24,13 +24,16 @@ which is the thing being removed. Recovery is one chord press, by design.
 > and `src/core/dh_auth.c` — without touching the codec, which is why the constant did not move
 > with it either.
 >
-> **The macOS helper is still on v1** until [#112](https://github.com/myn/deskhopplus/issues/112)
-> gives it a Secure Enclave identity, and Windows until
-> [#84](https://github.com/myn/deskhopplus/issues/84). Until then a v1 helper cannot pair with a
-> v2 board, which is this document's own rule rather than a defect — old pairings do not migrate.
-> The v1 hello codecs the helper still binds to are parked in `src/core/dh_session_v1.h`, which
-> #112 deletes. `#109` shipped this spec first because #111 and #84 are both written from it —
-> that is what [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
+> **The macOS helper speaks this document** as of
+> [#112](https://github.com/myn/deskhopplus/issues/112): it holds a Secure Enclave identity, pins
+> the board's public key, and authenticates every session-band frame. `src/core/dh_session_v1.[ch]`
+> is deleted — there is one wire format again.
+>
+> **Windows is still on v1** until [#84](https://github.com/myn/deskhopplus/issues/84). A v1
+> helper cannot pair with a v2 board, which is this document's own rule rather than a defect —
+> old pairings do not migrate. `#109` shipped this spec first because #111, #112 and #84 are all
+> written from it — that is what [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2
+> exists to say.
 
 ## Assumptions
 
