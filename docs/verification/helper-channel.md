@@ -421,15 +421,23 @@ swift run deskhop-helper         # foreground, logging to stderr
 
 - [x] Every channel opens with `kIOHIDOptionsTypeSeizeDevice` against the real device, and a
       second process is refused. Start a second `deskhop-helper` while the first holds the
-      channel; the second must report **another program holds the channel** and must **not**
-      prompt the config chord — those are different states with different remedies.
+      channel; the second must report the refusal distinctly and must **not** prompt the config
+      chord.
       **FAILED 2026-08-13 — see [#95](https://github.com/myn/deskhopplus/issues/95).** macOS does
       not refuse the second seize. A second helper reported `holding 1 channel(s) exclusively` and
       `Connected and paired` while the first held a live session and saw no disruption at all;
       `tools/macos-checks/probe_seize_exclusivity.swift` independently got
       `IOHIDDeviceOpen(seize) -> 0x00000000` and then **read ten `DEVICE_HEARTBEAT` frames off the
       seized channel**. The state this box asks for is unreachable on macOS, so the check cannot
-      pass as written. Windows refusal was measured separately and stands
+      pass as written. Windows refusal was measured separately and stands.
+      **This box is unrunnable on macOS as of [#114](https://github.com/myn/deskhopplus/issues/114):**
+      the state it asked for by name — *another program holds the channel* — is deleted, not
+      repaired, so there is no longer a state for the second helper to report. It was previously
+      worded as that state's name; that wording is removed here rather than left pointing at
+      something that does not exist. **The tick is still wrong** and the sheet still has no
+      notation for *run and failed* as distinct from *not run* —
+      [#99](https://github.com/myn/deskhopplus/issues/99) owns both, and this edit deliberately
+      does not do its work
 - [ ] **Partial acquisition fails the session.** *Expected `not run`* — see the note below
 - [x] A config-mode round trip reconnects by itself. Press the chord, watch the helper report
       **device in config mode** distinctly from **device not connected**, leave config mode,
