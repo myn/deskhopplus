@@ -30,21 +30,30 @@
 // them together: a run where the helper says nothing at all proves A only if B
 // shows the helper was listening and could still be moved.
 //
+// They run in sequence, not at once — hellos for the first few seconds, then
+// nothing but heartbeats. A hello the board answers is a queued frame, and a
+// queued frame every beat interval suppresses the device heartbeat and takes the
+// real session down with it (#118). Frames arriving with no session are
+// deliberately not counted towards the alert, so overlapping the two would have
+// question A destroy the session question B needs and B would read "no alert" on
+// a board doing exactly the right thing.
+//
 // Both are read out of the helper's own log as well as off the wire, so the
 // whole measurement is one command: a run sheet step that needs a human
 // watching two things at once is how #75 and #100 both hid.
 //
-// Non-destructive. A hello that fails its tag draws no answer and tears down no
-// session, and a heartbeat that fails its tag is dropped before it touches
-// session state (dh_session.c). What may move is what the *helper* believes.
+// Non-destructive in the sense that matters — nothing is written to flash and no
+// pairing moves. The session may be torn down and rebuilt during the hello
+// phase; that is #118, and it is reported rather than hidden.
 //
 // Usage:
 //   swift probe_manufactured_chord_trap.swift [--seconds N] [--interval MS]
-//                                             [--once] [--log PATH]
+//                                             [--hello-seconds N] [--once]
+//                                             [--log PATH]
 //
-// --seconds must outlast the board's listener window (DH_LISTENER_WINDOW_MS,
-// 10 s) or question B cannot be answered: the alert is raised when the window
-// closes, not when the frames arrive.
+// --seconds must outlast --hello-seconds plus the board's listener window
+// (DH_LISTENER_WINDOW_MS, 10 s) or question B cannot be answered: the alert is
+// raised when the window closes, not when the frames arrive.
 import Foundation
 import IOKit
 import IOKit.hid
@@ -52,6 +61,10 @@ import IOKit.hid
 // MARK: - Arguments
 
 var seconds = 25.0
+/* How long the hellos run before the probe switches to heartbeats. Long enough
+   to move a helper if a manufactured refusal ever could, short enough that the
+   session it suppresses (#118) has the rest of the run to come back. */
+var helloSeconds = 4.0
 var intervalMs = 1000.0
 var repeating = true
 var logPath = "/tmp/deskhop-helper.log"   // LaunchAgent StandardOutPath
@@ -78,6 +91,7 @@ while let flag = args.first {
     case "--seconds":  seconds = Double(value(for: flag)) ?? seconds
     case "--interval": intervalMs = Double(value(for: flag)) ?? intervalMs
     case "--once":     repeating = false
+    case "--hello-seconds": helloSeconds = Double(value(for: flag)) ?? helloSeconds
     case "--log":      logPath = value(for: flag)
     default:
         FileHandle.standardError.write("unknown argument: \(flag)\n".data(using: .utf8)!)
@@ -85,9 +99,10 @@ while let flag = args.first {
     }
 }
 
-if repeating && seconds <= listenerWindowSeconds {
-    print("probe: NOTE — --seconds \(Int(seconds)) does not outlast the board's \(Int(listenerWindowSeconds))s")
-    print("       listener window, so question B will read as 'no alert' whatever the board did.")
+if repeating && seconds <= helloSeconds + listenerWindowSeconds {
+    print("probe: NOTE — --seconds \(Int(seconds)) leaves less than the board's \(Int(listenerWindowSeconds))s window")
+    print("       after the \(Int(helloSeconds))s of hellos, so question B will read as 'no alert'")
+    print("       whatever the board did. Try --seconds \(Int(helloSeconds + listenerWindowSeconds * 2)).")
 }
 
 // MARK: - The wire, by hand
@@ -353,13 +368,44 @@ var beatsSent = 0
     return true
 }
 
-func writeBoth() {
-    if send(helloFrame, what: "HELLO (bad tag)") {
-        hellosSent += 1
-        if hellosSent == 1 {
-            print("probe: -> HELLO carrying a well-formed tag no board's key produces,")
-            print(String(format: "       under correlation %016llx", probeCorrelation))
+/*
+ * The two questions are asked in sequence, not together, and that ordering is
+ * the whole reason this works.
+ *
+ * A hello the board *answers* is a queued frame, and any queued frame refreshes
+ * the idle timer ADR-0004 gates the device heartbeat on. So a hello every
+ * DH_SESSION_HEARTBEAT_MS suppresses the beat, and the real helper tears the
+ * session down after DH_SESSION_ABSENT_MS — which is
+ * [#118](https://github.com/myn/deskhopplus/issues/118), and is worth seeing.
+ * But frames arriving with no session are deliberately not counted towards the
+ * listener alert, so asking both questions at once would have question A quietly
+ * destroy the session question B needs, and B would read "no alert" on a board
+ * that was working correctly.
+ *
+ * So: hellos first, for a few seconds. Then nothing but bad-tag heartbeats,
+ * which draw no reply at all and therefore suppress nothing — the session comes
+ * back, stays up, and the refusals are counted against a live one.
+ */
+let startedAt = Date()
+var phase = "A"
+
+func writeOne() {
+    let elapsed = Date().timeIntervalSince(startedAt)
+    if elapsed < helloSeconds {
+        if send(helloFrame, what: "HELLO (bad tag)") {
+            hellosSent += 1
+            if hellosSent == 1 {
+                print("probe: -> HELLO carrying a well-formed tag no board's key produces,")
+                print(String(format: "       under correlation %016llx", probeCorrelation))
+            }
         }
+        return
+    }
+
+    if phase == "A" {
+        phase = "B"
+        print("probe: — hellos done after \(hellosSent); nothing but bad-tag heartbeats from here,")
+        print("       so the board's own beat is free to run and the session can come back.")
     }
     if send(badTagBeat, what: "HEARTBEAT (bad tag)") {
         beatsSent += 1
@@ -367,12 +413,16 @@ func writeBoth() {
     }
 }
 
-writeBoth()
+writeOne()
 if repeating {
-    print("probe: repeating every \(Int(intervalMs)) ms for \(Int(seconds))s — one rejection may")
-    print("       be corrected by the helper's next hello, and \(listenerThreshold) refused frames")
+    print("probe: repeating every \(Int(intervalMs)) ms for \(Int(seconds))s — hellos for the")
+    print("       first \(Int(helloSeconds))s, then heartbeats. \(listenerThreshold) refused frames")
     print("       inside \(Int(listenerWindowSeconds))s is what the board's alert is measured over.")
-    Timer.scheduledTimer(withTimeInterval: intervalMs / 1000, repeats: true) { _ in writeBoth() }
+    Timer.scheduledTimer(withTimeInterval: intervalMs / 1000, repeats: true) { _ in writeOne() }
+} else {
+    /* --once is question A only: one hello, nothing else. B is a rate and has
+       no single-frame form. */
+    print("probe: --once — one hello, so question B below cannot be answered.")
 }
 
 RunLoop.current.run(until: Date().addingTimeInterval(seconds))
@@ -454,9 +504,10 @@ if let window = alertWindowMs, let refused = alertRefused {
     print("       session. Frames arriving with no session are deliberately not counted")
     print("       (dh_session.c), so this run could not have produced an alert. Pair a helper,")
     print("       let it connect, and re-run.")
-} else if seconds <= listenerWindowSeconds {
-    print("probe: UNMEASURABLE — the run was shorter than the board's window, which closes before")
-    print("       an alert is raised. Re-run with --seconds \(Int(listenerWindowSeconds * 2)).")
+} else if seconds <= helloSeconds + listenerWindowSeconds {
+    print("probe: UNMEASURABLE — the heartbeat phase was shorter than the board's window, which")
+    print("       closes before an alert is raised. Re-run with")
+    print("       --seconds \(Int(helloSeconds + listenerWindowSeconds * 2)).")
 } else {
     print("probe: NO ALERT — \(beatsSent) unauthenticated frames arrived into a live session over")
     print("       \(Int(seconds))s and the board raised nothing. Expected at least one alert per")
@@ -464,6 +515,15 @@ if let window = alertWindowMs, let refused = alertRefused {
 }
 
 if let reason = sawSessionEnd {
-    print("\nprobe: CAUTION — the device ended a session (reason \(reason)) during this run. This")
-    print("       probe is meant to disturb nothing; a teardown means something else moved too.")
+    print("\nprobe: NOTE — the device ended a session (reason \(reason)) during this run.")
+}
+
+/* Expected during the hello phase, and worth naming rather than leaving as an
+   unexplained wobble in the log. */
+let starved = helperLines.filter { $0.contains("nothing from the device in") }
+if !starved.isEmpty {
+    print("\nprobe: #118 observed — the helper lost the session \(starved.count) time(s) on a silent")
+    print("       device. The hellos are the cause: each answer is a queued frame, and a queued")
+    print("       frame every beat interval keeps the device's own beat out of the queue.")
+    for line in starved.prefix(3) { print("       | \(line)") }
 }

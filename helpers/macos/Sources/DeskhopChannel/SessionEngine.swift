@@ -264,12 +264,19 @@ public final class SessionEngine {
      * real reason in the log. A partial acquisition — the ordinary shape when
      * #63's channel nodes arrive one at a time — clears the deferral on the
      * retry that completes, well inside the window.
+     *
+     * The deferral is armed once and **not pushed out by later refusals**. The
+     * backoff caps at 4 s and the window is 5 s, so re-arming it on every retry
+     * would move the deadline further away than the retries are apart and the
+     * report would never come due at all — a device that can never be opened
+     * would say nothing, for ever, which is the failure the deferral is here to
+     * prevent. The clock runs from the first failure.
      */
     private func acquisitionRefused(acquired: Int, of total: Int,
                                     at now: TimeInterval) -> [SessionOutput] {
         forgetSession()
         holdingChannels = false
-        deferredState = (.deviceAbsent, now + Self.silenceWindow)
+        if deferredState == nil { deferredState = (.deviceAbsent, now + Self.silenceWindow) }
 
         let note = acquired > 0
             ? "released \(acquired) of \(total) channels: a partial acquisition is not a session"

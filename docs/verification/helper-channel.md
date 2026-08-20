@@ -1107,10 +1107,20 @@ across a real USB endpoint, with a real second client attached.
 swift tools/macos-checks/probe_manufactured_chord_trap.swift --seconds 25 --interval 1000
 ```
 
-Non-destructive, and needs a paired helper connected — frames arriving with no session are
-deliberately not counted towards the alert, so a run without a live session cannot answer box 2.
-`--seconds` must outlast the board's 10 s listener window or box 2 reads as "no alert" whatever
-the board did.
+Needs a paired helper connected — frames arriving with no session are deliberately not counted
+towards the alert, so a run without a live session cannot answer box 2. `--seconds` must outlast
+`--hello-seconds` plus the board's 10 s listener window, or box 2 reads as "no alert" whatever the
+board did.
+
+The two questions run **in sequence**, and that is not tidiness. A hello the board answers is a
+queued frame, and a queued frame every beat interval suppresses the device heartbeat and takes the
+session down with it — [#118](https://github.com/myn/deskhopplus/issues/118). Frames arriving with
+no session are not counted, so overlapping the phases would have box 1 destroy the session box 2
+needs, and box 2 would read as a firmware fault on a board doing the right thing. Expect the
+helper to lose and rebuild its session during the hello phase; the probe names that as #118 rather
+than leaving it as a wobble in the log.
+
+Nothing is written to flash and no pairing moves.
 
 - [ ] **The trap stays closed.** The probe's hellos carry the probe's own correlation value, so
       every `HELLO_REFUSED` they draw carries it too. Expected: the probe receives those refusals,

@@ -22,6 +22,8 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("a grant carrying an unusable key is not kept", testAGrantWithAnUnusableKeyIsNotKept),
     ("a refused open is reported as an unusable device",
      testARefusedOpenIsReportedAsAnUnusableDevice),
+    ("a refused open that keeps failing is still reported",
+     testARefusedOpenThatKeepsFailingIsStillReported),
     ("a partial acquisition that completes says nothing",
      testAPartialAcquisitionThatCompletesIsSilent),
     ("the heartbeat beats at the interval the device measures", testHeartbeatKeepsBeating),
@@ -486,6 +488,26 @@ private func testARefusedOpenIsReportedAsAnUnusableDevice() throws {
     Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
                 "a device that never opens was never reported at all")
     Check.that(!f.engine.state.promptsConfigChord, "a refused open prompted the chord")
+}
+
+/*
+ * The retry cadence must not push the report out for ever. The backoff caps
+ * *below* the silence window, so a deferral re-armed on every refusal would
+ * never come due — and a device that can never be opened would say nothing at
+ * all, which is the one outcome this deferral exists to prevent.
+ */
+private func testARefusedOpenThatKeepsFailingIsStillReported() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.normal))
+
+    var reported: [HelperState] = []
+    for _ in 0..<10 {
+        f.send(.acquisitionRefused(acquired: 0, of: 1))
+        reported += f.states(f.advance(Backoff().cap))
+    }
+
+    Check.equal(reported, [.deviceAbsent],
+                "a device that never opens was never reported, or was reported over and over")
 }
 
 /* The retry that completes clears the deferral before it comes due — #63's
