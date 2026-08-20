@@ -77,7 +77,30 @@ const field_map_t api_field_map[] = {
     { 81, true,  UINT8,  1, offsetof(device_t, switch_lock) },
     { 82, true,  UINT8,  1, offsetof(device_t, relative_mouse) },
     { 83, true,  UINT8,  1, offsetof(device_t, dev_build) },
+
+    /* Which helper this board is paired with (#114), as the key id its hellos
+       carry — SHA-256 of its public key, first 8 bytes. Until now the answer
+       lived nowhere a user could reach.
+
+       Read-only, and that is what makes it safe to expose: the config page
+       writes a changed field to *both* boards, so a writable registration
+       field would let one board's pairing evict the other computer's helper.
+       handle_api_msgs refuses a SET on a read-only entry.
+
+       Two halves because one field carries at most seven bytes and a key id is
+       eight; the page joins them. The shared secret beside it stays out of the
+       map entirely — it is the one part of the registration that is a secret,
+       and it never leaves the board. */
+    { 86, true,  UINT32, 4, offsetof(device_t, config.channel_helper_key_id) },
+    { 87, true,  UINT32, 4, offsetof(device_t, config.channel_helper_key_id) + 4 },
+    { 88, true,  UINT8,  1, offsetof(device_t, config.channel_paired) },
 };
+
+/* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave
+   its tail unreadable, and the config page would show a truncated value as if
+   it were the whole thing — silently, since nothing else here would change. */
+_Static_assert(DH_KEY_ID_SIZE == 8,
+               "fields 86 and 87 split the helper key id into two 4-byte halves");
 
 const field_map_t* get_field_map_entry(uint32_t index) {
     for (unsigned int i = 0; i < ARRAY_SIZE(api_field_map); i++) {

@@ -66,10 +66,16 @@ typedef struct {
      * `channel_shared_secret` is what the single pairing-time ECDH produced —
      * every session key is derived from it, and it never crosses the wire.
      *
-     * Deliberately *not* in api_field_map: config is only ever exposed field
-     * by field, so material kept out of that map is unreadable through the API
-     * and never syncs to the peer board — which is what keeps a re-pairing on
-     * this board from evicting the other computer's helper.
+     * `channel_shared_secret` is deliberately *not* in api_field_map: config is
+     * only ever exposed field by field, so material kept out of that map is
+     * unreadable through the API and never syncs to the peer board.
+     *
+     * `channel_helper_key_id` is in the map, read-only, as fields 86 and 87 —
+     * it is not a secret (every hello carries it in clear) and the config page
+     * showing it is the only answer anywhere to "what is paired to this board?"
+     * (#114). Read-only is what keeps the property above: the page writes a
+     * changed field to both boards, so a *writable* registration field would
+     * let a re-pairing here evict the other computer's helper.
      *
      * Wiped with the rest of the configuration, because wiping is how a user
      * unpairs. The board's *identity* is not here: it lives in its own flash

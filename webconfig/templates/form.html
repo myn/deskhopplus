@@ -32,6 +32,18 @@
     {{ label(item, class='') }}
     {{ input(item) }} data-dev-build readonly />
 
+  {# The paired helper's key id, in halves. Hidden: only the joined value is
+     worth reading, and it is written into the field below. #}
+  {% elif item.get("elem") == "helper_key_lo" %}
+    {{ input(item, type='hidden') }} data-helper-key-lo readonly />
+
+  {% elif item.get("elem") == "helper_key_hi" %}
+    {{ input(item, type='hidden') }} data-helper-key-hi readonly />
+
+  {% elif item.get("elem") == "helper_paired" %}
+    {{ label(item, add=':') }}
+    {{ input(item, class='content api') }} data-helper-paired readonly />
+
   {% elif item.get("elem") == "label" %}
     {{ label(item, class='') }}
 

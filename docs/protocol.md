@@ -208,8 +208,10 @@ with, or the byte stream is corrupt. Either way the answer is to drop the connec
 reconnect, not to reply.
 
 The helper state this alert drives must never prompt the config chord. That rule is inherited
-verbatim from the `channelHeld` state it replaces
-([#72](https://github.com/myn/deskhopplus/issues/72), ADR-0008).
+verbatim from the `channelHeld` state it replaces, which is now removed
+([#72](https://github.com/myn/deskhopplus/issues/72),
+[#114](https://github.com/myn/deskhopplus/issues/114), ADR-0008). The macOS helper asserts it in
+`HelperState.swift`, under test.
 
 ### The report carrier
 

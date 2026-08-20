@@ -1,12 +1,21 @@
 /*
  * What the user is told, named in words with its remedy (#38).
  *
- * The distinction that carries a security property: `channelHeld` and
- * `notPaired` are different states with different remedies. A refused open
- * must never prompt the config chord, because the program holding the channel
- * is exactly what the chord would provision (#34) — so only `notPaired`
- * prompts it, and it is reachable only when this helper holds every channel
- * itself and the device refused it on authentication.
+ * The distinction that carries a security property: **only `notPaired` prompts
+ * the config chord**, because the chord provisions whatever is attached to the
+ * channel during its window (#34). Two states here are precisely the ones a
+ * chord press would make worse — `listenerDetected`, where something else is
+ * writing to the channel, and `boardIdentityChanged`, where pressing it is the
+ * act that accepts a swapped board — so the rule is asserted by a test rather
+ * than left to a reading of this comment.
+ *
+ * `channelHeld` — *"Another program holds the channel"* — used to carry that
+ * rule and is gone (#72, #114, ADR-0008). It asserted something that can never
+ * be true on macOS: a second `kIOHIDOptionsTypeSeizeDevice` open succeeds,
+ * measured on 2026-08-13, so the open is never refused for the reason the
+ * message named. What replaces it is `listenerDetected`, which is measured
+ * rather than assumed — the board counts frames it could not authenticate and
+ * says so.
  */
 public enum HelperState: Equatable {
     /* Looking, or briefly gone. Nothing is shown to the user: a device that
@@ -23,10 +32,16 @@ public enum HelperState: Equatable {
      */
     case reconnectingRepeatedly
     case notPaired
-    case channelHeld
     case deviceInConfigMode
     case deviceAbsent
     case versionIncompatible
+    /*
+     * Something other than this helper is writing frames the board could not
+     * authenticate, at a rate the board measured and reported (#111). It says
+     * only that: a listener that merely *reads* writes nothing to refuse and
+     * cannot be detected at all, here or anywhere else in the protocol, so
+     * silence here is not a clean channel.
+     */
     case listenerDetected
     /*
      * The board granted a pairing under a different identity key from the one
@@ -44,13 +59,13 @@ public enum HelperState: Equatable {
         case .reconnectingRepeatedly:
             return "Reconnecting repeatedly — check the link, and that the helper is up to date"
         case .notPaired: return "Not paired — press the config chord on the device"
-        case .channelHeld: return "Another program holds the channel — find and stop it"
         case .deviceInConfigMode: return "Device in config mode"
         case .deviceAbsent: return "Device not connected"
         case .versionIncompatible:
             return "Helper version does not match the device — file transfers are refused"
         case .listenerDetected:
-            return "Listener detected — another process is probing the channel"
+            return "Another program is writing to the device channel — find and stop it, "
+                 + "and do not press the config chord while it is running"
         case .boardIdentityChanged:
             return "Device identity changed — if you re-flashed it, remove the pinned board key"
         }

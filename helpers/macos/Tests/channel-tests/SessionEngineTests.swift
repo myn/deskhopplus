@@ -20,8 +20,10 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("an ack that echoes somebody else's question is ignored", testAckWithWrongCorrelationIgnored),
     ("a grant this helper never asked for is ignored", testGrantWithWrongCorrelationIgnored),
     ("a grant carrying an unusable key is not kept", testAGrantWithAnUnusableKeyIsNotKept),
-    ("a partial acquisition never prompts the chord", testPartialAcquisitionNeverPromptsChord),
-    ("a wholly refused acquisition is the same state", testWhollyRefusedAcquisition),
+    ("a refused open is reported as an unusable device",
+     testARefusedOpenIsReportedAsAnUnusableDevice),
+    ("a partial acquisition that completes says nothing",
+     testAPartialAcquisitionThatCompletesIsSilent),
     ("the heartbeat beats at the interval the device measures", testHeartbeatKeepsBeating),
     ("a device that falls silent ends the session", testSilenceFromTheDeviceEndsTheSession),
     ("any authenticated traffic from the device is liveness", testAnyDeviceTrafficIsLiveness),
@@ -41,8 +43,6 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("an unpaired helper survives the device saying nothing",
      testUnpairedHelperSurvivesTheDeviceSayingNothing),
     ("a lost session is reported only if it stays lost", testALostSessionIsReportedOnlyIfItStaysLost),
-    ("a channel holder is not reported as an absent device",
-     testAChannelHolderIsNotReportedAsAnAbsentDevice),
     ("bulk needs a session", testBulkNeedsASession),
     ("an unanswered hello is not left half-open", testUnansweredHello),
     ("a protocol error drops the connection", testProtocolErrorDropsConnection),
@@ -465,30 +465,43 @@ private func testAGrantWithAnUnusableKeyIsNotKept() throws {
                "an unusable grant left the helper unable to pair at all")
 }
 
-// MARK: - Exclusivity
+// MARK: - A refused open
 
-private func testPartialAcquisitionNeverPromptsChord() throws {
+/*
+ * A refused open is not "another program holds the channel" — on macOS a second
+ * seize open succeeds, so nothing else can refuse this one, and the state that
+ * said so is gone (#114, ADR-0008). It is a device this helper cannot use, and
+ * it is reported as one: nothing at first, because a partial acquisition is
+ * ordinary, and an absence if it persists.
+ */
+private func testARefusedOpenIsReportedAsAnUnusableDevice() throws {
     let f = Fixture()
     f.send(.deviceAppeared(.normal))
     let outputs = f.send(.acquisitionRefused(acquired: 1, of: 2))
 
-    Check.equal(f.states(outputs), [.channelHeld],
-                "a partial acquisition was not reported as a held channel")
+    Check.equal(f.states(outputs), [], "a refusal was reported before it had lasted")
     Check.that(outputs.contains(.closeChannels), "a partially acquired set was not released")
-    Check.that(!f.engine.state.promptsConfigChord,
-               "a refused open must never prompt the chord: the chord would provision the "
-               + "program holding the channel")
-    Check.equal(f.engine.state.message, "Another program holds the channel — find and stop it",
-                "the remedy does not name the cause")
-    Check.unequal(f.engine.state, .notPaired, "a refused open was reported as unpaired")
     Check.that(!f.retries(outputs).isEmpty, "a refused acquisition never tries again")
+
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+                "a device that never opens was never reported at all")
+    Check.that(!f.engine.state.promptsConfigChord, "a refused open prompted the chord")
 }
 
-private func testWhollyRefusedAcquisition() throws {
+/* The retry that completes clears the deferral before it comes due — #63's
+   channel nodes arriving one at a time, which is not a fault to report. */
+private func testAPartialAcquisitionThatCompletesIsSilent() throws {
     let f = Fixture()
     f.send(.deviceAppeared(.normal))
-    Check.equal(f.states(f.send(.acquisitionRefused(acquired: 0, of: 1))), [.channelHeld],
-                "a wholly refused acquisition is a different state from a partial one")
+    f.send(.acquisitionRefused(acquired: 1, of: 2))
+    _ = f.advance(SessionEngine.silenceWindow / 2)
+
+    /* Only the acquisition clears the deferral here: `deviceAppeared` would
+       clear it too, and going through it would prove nothing. */
+    try f.reacquire()
+    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [],
+                "a partial acquisition that completed was reported as an absent device")
+    Check.equal(f.engine.state, .connected, "the session that came up was not reported")
 }
 
 // MARK: - Liveness
@@ -609,6 +622,16 @@ private func testListenerAlertIsReported() throws {
                "the measurement behind the alert was not recorded")
     Check.that(!f.engine.state.promptsConfigChord,
                "a listener prompted the chord, which would provision whoever is listening")
+
+    /* The words, not only the flag. This is the state that replaced
+       `channelHeld` (#114), and #38 asks each one for what it is *and* what to
+       do — including the one thing the user must not do here. */
+    let message = f.engine.state.message ?? ""
+    Check.that(message.contains("writing to the device channel"),
+               "the state does not say what was detected")
+    Check.that(message.contains("find and stop it"), "the state names no remedy")
+    Check.that(message.lowercased().contains("do not press the config chord"),
+               "the state does not warn off the chord, which is what would pair the listener")
 
     /* The session is untouched. What the board detected is somebody *writing*
        frames it refused, which the tag already keeps out — so this changes
@@ -885,25 +908,6 @@ private func testALostSessionIsReportedOnlyIfItStaysLost() throws {
     _ = stuck.advance(SessionEngine.deviceBeatTimeout)
     Check.equal(stuck.states(stuck.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
                 "a session lost for good went on reading as connected")
-}
-
-/*
- * A dropped connection defers "the device is absent"; if the reconnection
- * then finds the channel taken, that is a different state with a different
- * remedy, and the stale deferral must not overwrite it five seconds later.
- */
-private func testAChannelHolderIsNotReportedAsAnAbsentDevice() throws {
-    let f = Fixture()
-    try f.establishSession()
-    f.send(.transportFailed("link went away"))
-
-    /* The retry comes back to a channel somebody else now holds. */
-    Check.equal(f.states(f.send(.acquisitionRefused(acquired: 0, of: 1))), [.channelHeld],
-                "a channel holder was not reported")
-
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 2)), [],
-                "a stale absence overwrote the channel holder the user can act on")
-    Check.equal(f.engine.state, .channelHeld, "the actionable state did not survive")
 }
 
 /* Bulk needs a session, and #52 consumes this rather than inventing it. */

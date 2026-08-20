@@ -147,7 +147,7 @@ public final class SessionEngine {
         case .channelsAcquired(let count):
             return channelsAcquired(count: count, at: now)
         case .acquisitionRefused(let acquired, let total):
-            return acquisitionRefused(acquired: acquired, of: total)
+            return acquisitionRefused(acquired: acquired, of: total, at: now)
         case .received(let bytes):
             return received(bytes, at: now)
         case .transportFailed(let reason):
@@ -184,7 +184,7 @@ public final class SessionEngine {
     private func deviceAppeared() -> [SessionOutput] {
         deferredState = nil
         backoff.reset()
-        let stale: [HelperState] = [.deviceAbsent, .deviceInConfigMode, .channelHeld]
+        let stale: [HelperState] = [.deviceAbsent, .deviceInConfigMode]
         let outputs = stale.contains(state) ? emit(.quiet) : []
         return outputs + [.openChannels]
     }
@@ -251,15 +251,30 @@ public final class SessionEngine {
         }
     }
 
-    private func acquisitionRefused(acquired: Int, of total: Int) -> [SessionOutput] {
+    /*
+     * The open failed. Under v1 this reported `channelHeld` — *"Another program
+     * holds the channel — find and stop it"* — which on macOS asserts something
+     * that cannot happen: a second `kIOHIDOptionsTypeSeizeDevice` open succeeds,
+     * measured. The state is gone with the claim (#72, #114, ADR-0008), and no
+     * state replaces it here, because a refused open names no remedy of its own.
+     *
+     * What is left is a device this helper cannot use, reported the way every
+     * other unusable device is: a deferred absence, so a failure that persists
+     * says *"Device not connected"* instead of saying nothing for ever, with the
+     * real reason in the log. A partial acquisition — the ordinary shape when
+     * #63's channel nodes arrive one at a time — clears the deferral on the
+     * retry that completes, well inside the window.
+     */
+    private func acquisitionRefused(acquired: Int, of total: Int,
+                                    at now: TimeInterval) -> [SessionOutput] {
         forgetSession()
         holdingChannels = false
-        deferredState = nil
+        deferredState = (.deviceAbsent, now + Self.silenceWindow)
 
         let note = acquired > 0
             ? "released \(acquired) of \(total) channels: a partial acquisition is not a session"
             : "every channel refused"
-        return [.closeChannels, .note(note)] + emit(.channelHeld) + [.retry(after: backoff.next())]
+        return [.closeChannels, .note(note), .retry(after: backoff.next())]
     }
 
     // MARK: - Traffic

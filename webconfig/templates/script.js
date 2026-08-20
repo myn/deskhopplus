@@ -170,6 +170,13 @@ function updateElement(key, event) {
     if (element.hasAttribute('data-peer-fw-crc'))
       setValue(element, value ? parseInt(value).toString(16) : 'not detected');
 
+    /* The paired helper's key id (#114). It arrives in three pieces and any
+       of them can be the last to land, so the whole line is redrawn each
+       time rather than assuming the map's order. */
+    if (element.hasAttribute('data-helper-paired') || element.hasAttribute('data-helper-key-lo')
+        || element.hasAttribute('data-helper-key-hi'))
+      renderPairedHelper();
+
     if (element.hasAttribute('data-dev-build')) {
       setValue(element, value ? 'development — channel authentication is disabled' : 'release');
       if (value) {
@@ -181,6 +188,40 @@ function updateElement(key, event) {
       }
     }
   }
+}
+
+/* The key id the paired helper's hellos carry, as eight bytes of hex — the
+   same order and spelling the helper writes into its own log, so the two can
+   be compared by eye. Each half arrives as a little-endian u32, so the bytes
+   come out lowest first. */
+function renderPairedHelper() {
+  const shown = document.querySelector('[data-helper-paired]');
+  const lo = document.querySelector('[data-helper-key-lo]');
+  const hi = document.querySelector('[data-helper-key-hi]');
+
+  if (!shown || !lo || !hi)
+    return;
+
+  const paired = shown.getAttribute('fetched-value');
+
+  /* Nothing registered: the halves are zeros and mean nothing, so say so
+     rather than showing sixteen noughts as if they were a key. */
+  if (paired === null || parseInt(paired) === 0) {
+    if (paired !== null)
+      shown.value = 'none — press the config chord to pair a helper';
+    return;
+  }
+
+  if (lo.value === '' || hi.value === '')
+    return;
+
+  const bytes = (word) => {
+    const n = parseInt(word) >>> 0;
+    return [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff]
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  shown.value = bytes(lo.value) + bytes(hi.value);
 }
 
 async function readHandler() {

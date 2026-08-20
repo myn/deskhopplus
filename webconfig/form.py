@@ -32,6 +32,13 @@ STATUS_ = [
     # cannot tell a synced pair from an unsynced one.
     FormField(85, "Other board FW checksum", None, {}, "uint32", elem="peer_fw_checksum"),
     FormField(83, "Build", None, {}, "uint8", elem="dev_build"),
+    # The helper this board is paired with, as the key id its hellos carry
+    # (#114). The flag is the field the user sees; the two halves of the key id
+    # are hidden and the page joins them, because one field carries at most
+    # seven bytes and a key id is eight.
+    FormField(86, "", None, {}, "uint32", elem="helper_key_lo"),
+    FormField(87, "", None, {}, "uint32", elem="helper_key_hi"),
+    FormField(88, "Paired helper", None, {}, "uint8", elem="helper_paired"),
 ]
 
 CONFIG_ = [

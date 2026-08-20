@@ -29,6 +29,15 @@ final class HelperRuntime {
                       + "This helper requires a Mac with a Secure Enclave.")
             exit(EXIT_FAILURE)
         }
+        /*
+         * The key id every hello carries, and the value the board's config page
+         * shows as *Paired helper* (#114) — same byte order, same spelling, so
+         * the two can be compared by eye. Without it the page answers "what is
+         * paired to this board?" with a number nothing else in the system ever
+         * prints.
+         */
+        Self.note("helper key id: " + identity.keyId.map { String(format: "%02x", $0) }.joined())
+
         let boardKey = secrets.loadBoardKey()
 
         engine = SessionEngine(

@@ -1066,16 +1066,14 @@ refuses to call a miss when it was already there, and says how to restart it.
 
 A run that observes nothing looks exactly like a device that sent nothing. The self-test now in the
 probe guards the other end of the same failure — it checks the hello it is about to send against
-the v1 `hello_mac` golden vector before touching hardware, so a malformed hello cannot be refused
-for the wrong reason and be recorded as "the trap does not exist". That vector is frozen inside
-the probe now: [#109](https://github.com/myn/deskhopplus/issues/109) rewrote
-`test-vectors/frames.txt` for protocol v2, and the boards on the desk spoke v1 when this was run.
-[#111](https://github.com/myn/deskhopplus/issues/111) has since moved the board to v2, so the
-probe no longer reaches this trap on current firmware — a v2 board answers that hello
-`HELLO_REFUSED(version_incompatible)`, and a v2 hello that fails its tag draws no answer at all.
-Re-pointing the probe belongs with the helper that speaks v2
-([#112](https://github.com/myn/deskhopplus/issues/112)); read the version in the answer before
-believing a "not confirmed" from it in the meantime.
+the `hello_mac` golden vector before touching hardware, so a malformed hello cannot be refused
+for the wrong reason and be recorded as "the trap does not exist".
+
+**The probe now speaks v2** ([#114](https://github.com/myn/deskhopplus/issues/114)). The v1 run
+recorded above is unrepeatable on current firmware and is kept as the record of what the hardware
+did: [#109](https://github.com/myn/deskhopplus/issues/109) rewrote `test-vectors/frames.txt`, and
+[#111](https://github.com/myn/deskhopplus/issues/111) moved the board to v2, which answers a v1
+hello `HELLO_REFUSED(version_incompatible)`. What the probe asks now is in §6a.
 
 ### What this does not measure
 
@@ -1095,4 +1093,51 @@ with.
 
 §1's exclusivity box still records this run sheet's oldest wrong claim — see
 [#99](https://github.com/myn/deskhopplus/issues/99), which now has a settled answer behind it:
-the state that box waits for is being deleted, not repaired.
+the state that box waits for is **deleted**, not repaired
+([#114](https://github.com/myn/deskhopplus/issues/114)).
+
+## 6a. The trap on v2, and the state that replaced *channel held* ([#114](https://github.com/myn/deskhopplus/issues/114))
+
+**Not yet measured on hardware.** Both boxes below are what the same probe, re-pointed at v2, is
+built to answer. Everything either box asserts is covered off-hardware by `tests/session_test.c`
+and the macOS helper's suite; what a board adds is that the two sides really do behave this way
+across a real USB endpoint, with a real second client attached.
+
+```sh
+swift tools/macos-checks/probe_manufactured_chord_trap.swift --seconds 25 --interval 1000
+```
+
+Non-destructive, and needs a paired helper connected — frames arriving with no session are
+deliberately not counted towards the alert, so a run without a live session cannot answer box 2.
+`--seconds` must outlast the board's 10 s listener window or box 2 reads as "no alert" whatever
+the board did.
+
+- [ ] **The trap stays closed.** The probe's hellos carry the probe's own correlation value, so
+      every `HELLO_REFUSED` they draw carries it too. Expected: the probe receives those refusals,
+      and the real helper's state does not move. This is a *negative* result, which is why the run
+      pairs it with the box below — a helper that was not listening at all would pass it for the
+      wrong reason.
+- [ ] **The listener state is reachable.** Bad-tag heartbeats into the live session, above the
+      board's threshold inside one window, produce `DH_MSG_LISTENER_ALERT` on the wire and
+      *"Another program is writing to the device channel"* in the helper's log. Expected: both.
+
+Two ways this can fail are worth telling apart before recording anything: the board raising no
+alert is a firmware result (#111), and the board raising one the helper says nothing about is a
+helper result (#114). The probe's output distinguishes them, because it reads the alert off the
+wire itself rather than inferring it from the log.
+
+## 6b. The paired helper's key id in the config UI ([#114](https://github.com/myn/deskhopplus/issues/114))
+
+**Not yet measured on hardware.** One minute, board only, no pairing gesture involved.
+
+1. Open the config page and read **Paired helper** in the status block.
+2. Read the helper's own key id from the first line of its log
+   (`helper key id: …`, `/tmp/deskhop-helper.log`).
+
+- [ ] **They are equal**, on a board paired with this Mac's helper.
+- [ ] **A wiped board reads *none***, not sixteen noughts. The config wipe clears the registration,
+      so this is the same chord round trip §2 already runs — read the field before re-pairing.
+
+The field is read-only in the firmware's field map, which matters: the config page writes a
+changed field to *both* boards, so a writable registration field would let a re-pairing on one
+board evict the other computer's helper. Nothing in the page should be able to move it.

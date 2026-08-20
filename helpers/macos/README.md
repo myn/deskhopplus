@@ -70,18 +70,29 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 | connected | Connected and paired | no |
 | reconnecting repeatedly | Reconnecting repeatedly — check the link, and that the helper is up to date | no |
 | not paired | Not paired — press the config chord on the device | **yes** |
-| channel held | Another program holds the channel — find and stop it | **no** |
 | config mode | Device in config mode | no |
 | absent | Device not connected | no |
 | version mismatch | Helper version does not match the device — file transfers are refused | no |
-| listener detected | Listener detected — another process is probing the channel | no |
+| listener detected | Another program is writing to the device channel — find and stop it, and do not press the config chord while it is running | **no** |
 | board identity changed | Device identity changed — if you re-flashed it, remove the pinned board key | **no** |
 
-**A refused open must never prompt the chord.** The program holding the channel is exactly what a
-chord press would provision during the pairing window
-([#34](https://github.com/myn/deskhopplus/issues/34)), so "another program holds the channel" and
-"not paired" are different states with different remedies, and they are reliably distinguishable:
-the open was refused, versus the open succeeded and the board refused the hello.
+**Only "not paired" prompts the chord.** A chord press provisions whatever is attached to the
+channel during the pairing window ([#34](https://github.com/myn/deskhopplus/issues/34)), so the two
+states where something else may be attached — a listener writing, or a board that granted under an
+identity this helper never pinned — are exactly the two where the chord is the wrong move. Both say
+so in their own words, and a test fails if either starts prompting it.
+
+**"Channel held" is gone** ([#72](https://github.com/myn/deskhopplus/issues/72),
+[#114](https://github.com/myn/deskhopplus/issues/114), ADR-0008). It said *"Another program holds
+the channel — find and stop it"*, which on macOS asserts something that never happens: a second
+`kIOHIDOptionsTypeSeizeDevice` open succeeds, measured on 2026-08-13, so the open is not refused
+for the reason that message named. What replaces it is *listener detected*, which is measured
+rather than assumed — the board counts frames it could not authenticate and reports the rate.
+
+An open that does fail anyway — a device unplugged mid-open, or the channel nodes still arriving
+one at a time ([#63](https://github.com/myn/deskhopplus/issues/63)) — is a device this helper
+cannot use. It retries, says nothing at first because a partial acquisition is ordinary, and
+reports *Device not connected* if the failure lasts. The log line carries the real reason.
 
 Nothing is shown during a brief disappearance. Entering config mode reboots the device under a
 different USB identity for up to five minutes and then reboots back — that is normal operation,
@@ -96,7 +107,7 @@ therefore its own state, and it does not flap back to connected on each successf
 It is reported whether or not the handshake ever completes: a device that takes the hello and says
 nothing loops on the timeout, and each re-acquisition clears the deferred *device not connected* a
 second before it comes due, so that helper would otherwise say nothing at all — for ever. What the
-rate never overrides is a state with its own remedy; a held channel, an unpaired helper or a
+rate never overrides is a state with its own remedy; an unpaired helper, a detected listener or a
 version mismatch each keeps its place. The session it reports on is otherwise ordinary, and carries
 what any other session carries.
 
@@ -143,6 +154,25 @@ cannot reach:
 rm ~/Library/Application\ Support/deskhopplus/board_key
 launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper
 ```
+
+### Which helper is the board paired with?
+
+The board's config page answers it, under **Paired helper**
+([#114](https://github.com/myn/deskhopplus/issues/114)): the key id of the one helper it has
+registered — SHA-256 of that helper's public key, first eight bytes — or *none* when the board
+holds no registration. It is read-only there, and the shared secret stored beside it never leaves
+the board at all.
+
+The helper prints its own key id, in the same byte order and spelling, as the first line of every
+run:
+
+```
+helper key id: 4f2a91c7e30b56d8
+```
+
+Equal means this helper is the registered one. Different means the board is paired with something
+else, and a chord press is what moves it — with the usual caution: press it only when nothing you
+did not start is attached to the channel.
 
 ### What this does not protect against
 
