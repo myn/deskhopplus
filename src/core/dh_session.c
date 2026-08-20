@@ -270,6 +270,14 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type) {
  * helper's key id and could not produce its tag. One of those closes the
  * window loudly on its own — the count exists to tell a probing listener from
  * a corrupt report, and this case is neither.
+ *
+ * Since #117 every *hello* that reaches here is `as_registered`, because one
+ * naming any other key id is refused before the tag is checked. So the rate
+ * threshold no longer does any work on the hello path — a single bad-tag hello
+ * already trips the alert — and it earns its keep only on the in-session path
+ * below, where bulk frames fail one at a time and a rate is the whole point.
+ * That is a narrower net than before, deliberately; docs/protocol.md, *What an
+ * unauthenticated frame causes*, says what is given up and why it is worth it.
  */
 static void note_refused(dh_session *s, uint32_t now_ms, bool as_registered) {
     if (!s->window_started) {
@@ -381,11 +389,36 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
         return refuse_hello(hello.correlation, DH_HELLO_REFUSED_VERSION_INCOMPATIBLE, out, out_cap,
                             out_len);
 
-    /* 2. No registration. There is no secret to prove and the honest remedy
-          really is the config chord — which is why this refusal is safe to
-          overhear: a board with no registered key really is unpaired. */
+    /*
+     * 2. No registration **for the key id this hello names**. There is no
+     *    secret to prove and the honest remedy really is the config chord.
+     *
+     *    Per key id, not per board (#117). Asking only "does this board hold
+     *    any registration?" left the case that matters — a board registered to
+     *    *someone else* — falling through to the tag check, where it failed and
+     *    drew silence. Silence takes a helper round the reconnect loop, never
+     *    to `notPaired`, which is the one state that sends a PAIR_REQUEST; so
+     *    the chord had nothing to provision and ADR-0008's "recovery is one
+     *    chord press" did not hold. Ordinary ways in, no attacker: a helper
+     *    identity regenerated (#112), a home directory restored onto a second
+     *    Mac, the board plugged into a different computer.
+     *
+     *    Still safe to overhear, and for the same reason as before — the board
+     *    cannot be provoked into saying anything false. It now says "I do not
+     *    know *this* key" rather than "I know no key", which is a narrower true
+     *    statement about its own registration and nothing about any helper. The
+     *    refusal carries the asker's own correlation value, so the real helper
+     *    discards a listener's, and #108's trap stays closed.
+     *
+     *    The NULL test is redundant — dh_pair_is_registered_key is false on an
+     *    unregistered board too — and kept because this is the gate that
+     *    decides whether there is a secret to derive under. It should read that
+     *    way here, not one file away.
+     */
     const uint8_t *shared_secret = dh_pair_shared_secret(pair);
-    if (shared_secret == NULL && !skips_authentication(s))
+    const bool known_helper =
+        shared_secret != NULL && dh_pair_is_registered_key(pair, hello.helper_key_id);
+    if (!known_helper && !skips_authentication(s))
         return refuse_hello(hello.correlation, DH_HELLO_REFUSED_UNPAIRED, out, out_cap, out_len);
     if (shared_secret == NULL) shared_secret = no_secret;
 
@@ -405,7 +438,11 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
         const uint8_t *body = NULL;
         size_t body_len = 0;
         if (dh_auth_open(k_hello, &f->hdr, f->payload, &counter, &body, &body_len) != DH_AUTH_OK) {
-            note_refused(s, now_ms, dh_pair_is_registered_key(pair, hello.helper_key_id));
+            /* Always the stronger signal now: step 2 refused every hello that
+               names a key id this board did not register, so anything reaching
+               here claimed to be the registered helper and could not produce
+               its tag. */
+            note_refused(s, now_ms, true);
             return DH_FRAME_OK;
         }
     }

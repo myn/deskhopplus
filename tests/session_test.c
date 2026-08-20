@@ -527,6 +527,76 @@ static void test_the_two_refusals_echo_the_callers_correlation(void) {
 }
 
 /*
+ * Registered — but for somebody else. The board says `unpaired`, because per
+ * key id is what the question means (#117).
+ *
+ * "Does this board hold a registration?" and "does it hold one for the key this
+ * hello names?" differ exactly when a helper's identity changed underneath it:
+ * a cleared Application Support, an enclave blob that will not decode on a new
+ * machine (#112), a home directory restored onto a second Mac, or the board
+ * moved to a computer the first one had already registered. Board-wide, all of
+ * those fell through to the tag check, failed it, and drew silence — and
+ * silence takes the helper round the reconnect loop rather than to `notPaired`,
+ * the one state that sends a PAIR_REQUEST. The chord then had nothing to
+ * provision, against ADR-0008's "recovery is one chord press".
+ */
+static void test_a_registration_for_someone_else_is_refused_as_unpaired(void) {
+    const struct vector *hello_v = find("hello_mac");
+    if (!hello_v) return;
+
+    dh_frame_view v;
+    const uint8_t *body = NULL;
+    size_t body_len = 0;
+    if (!decoded_body(hello_v->f[0], hello_v->len[0], &v, &body, &body_len)) return;
+    dh_hello golden;
+    if (!dh_hello_decode(body, body_len, &golden)) return;
+
+    dh_session s;
+    a_paired_board(&s, DH_BUILD_RELEASE);
+
+    /* A second helper, holding neither the registered key nor the secret one
+       ECDH against it produced — so its hello is tagged under a key of its own
+       and could never pass the board's tag check. */
+    dh_hello stranger = golden;
+    stranger.correlation = 0x99AABBCCDDEEFF00ull;
+    for (size_t i = 0; i < DH_KEY_ID_SIZE; i++) stranger.helper_key_id[i] = (uint8_t)(0xA0u + i);
+
+    uint8_t foreign_k_hello[DH_SESSION_KEY_SIZE];
+    for (size_t i = 0; i < sizeof foreign_k_hello; i++) foreign_k_hello[i] = (uint8_t)(0x5Au ^ i);
+
+    uint8_t frame[MAX_BYTES];
+    size_t len = 0;
+    CHECK(dh_hello_encode(&stranger, foreign_k_hello, 0, frame, sizeof frame, &len) == DH_FRAME_OK,
+          "other key", "encode failed");
+
+    uint8_t reply[DH_SESSION_REPLY_MAX];
+    const size_t reply_len = feed(&s, frame, len, 1000, reply, sizeof reply);
+
+    CHECK(decoded_body(reply, reply_len, &v, &body, &body_len), "other key",
+          "a board registered to somebody else drew nothing, so the chord cannot rescue the helper");
+    CHECK(v.hdr.type == DH_MSG_HELLO_REFUSED, "other key", "the reply is not a hello_refused");
+
+    dh_hello_refused refused;
+    CHECK(dh_hello_refused_decode(body, body_len, &refused), "other key", "refusal decode failed");
+    CHECK(refused.status == DH_HELLO_REFUSED_UNPAIRED, "other key",
+          "a board that does not know this key did not say unpaired");
+    CHECK(refused.correlation == stranger.correlation, "other key",
+          "the refusal does not echo the caller's correlation value");
+    CHECK(!s.present, "other key", "an unknown helper was admitted to a session");
+    CHECK(s.last_seen_ms == 0, "other key", "a refused hello refreshed a liveness deadline");
+
+    /* Not a listener signal, for the same reason the board-wide refusal never
+       was one: this is the honest recovery path, and an unpaired helper
+       retrying it must not manufacture an alert about itself. The signal that
+       matters — a hello naming the *registered* key id and failing its tag —
+       is untouched, because only those reach the tag check now. */
+    CHECK(s.refused_in_window == 0, "other key",
+          "an honest unpaired helper was counted towards the listener alert");
+    CHECK(!s.refused_as_registered, "other key",
+          "a hello naming an unregistered key was counted as an impersonation");
+}
+
+/*
  * A v1 hello is answered, and answered with the version refusal.
  *
  * This is the shape the *shipped* macOS helper sends until #112, so it is the
@@ -1356,6 +1426,7 @@ int main(int argc, char **argv) {
     test_the_board_answers_the_golden_hello();
     test_a_hello_that_does_not_authenticate_is_answered_with_silence();
     test_the_two_refusals_echo_the_callers_correlation();
+    test_a_registration_for_someone_else_is_refused_as_unpaired();
     test_a_v1_hello_is_refused_on_the_version_not_answered_with_silence();
     test_negotiation_clamps_to_what_the_board_has();
     test_a_development_build_needs_no_registration();

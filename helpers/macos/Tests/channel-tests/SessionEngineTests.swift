@@ -1414,15 +1414,19 @@ private func testAHandshakeThatNeverCompletesIsReported() throws {
  * The dead end the review of #112 found, and the reason a chord has to reach
  * a helper that is *not* in `notPaired`.
  *
- * `answer_hello` (src/core/dh_session.c) refuses with `unpaired` only when the
- * board holds **no** registration. When it holds one for a different key id —
- * this helper's identity regenerated, a home directory restored onto another
- * Mac — it falls through to the tag check, fails, and stays silent by design.
- * The helper then loops: hello, no answer, timeout, drop, retry, for ever,
- * never reaching `notPaired`, so it never asked to be paired and the chord had
- * nothing to provision. ADR-0008's "recovery is one chord press" did not hold.
+ * Before #117, `answer_hello` (src/core/dh_session.c) refused with `unpaired`
+ * only when the board held **no** registration. When it held one for a
+ * different key id — this helper's identity regenerated, a home directory
+ * restored onto another Mac — it fell through to the tag check, failed, and
+ * stayed silent by design. The helper then looped: hello, no answer, timeout,
+ * drop, retry, for ever, never reaching `notPaired`, so it never asked to be
+ * paired and the chord had nothing to provision. ADR-0008's "recovery is one
+ * chord press" did not hold.
  *
- * The firmware fix is #117; this is the helper making the chord work meanwhile.
+ * #117 refuses per key id, so a board on current firmware answers and this
+ * helper reaches `notPaired` without any of the below. The behaviour under test
+ * is what keeps the chord working against a board that predates that fix —
+ * firmware and helper ship separately, so this helper still meets those.
  */
 private func testAStuckHandshakeStillAsksToBePaired() throws {
     let f = Fixture(paired: true)

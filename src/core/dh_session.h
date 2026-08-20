@@ -29,8 +29,13 @@
  * state was sticky. Answering is acting, so a failed tag is answered with
  * nothing at all. Two refusals *are* still sent — HELLO_REFUSED(unpaired) and
  * PAIR_REFUSED — because neither can be provoked into saying anything false: a
- * board with no registration really is unpaired, and a board with no window
- * really will not pair.
+ * board holding no registration *for the key id a hello names* really is
+ * unpaired as far as that asker is concerned, and a board with no window really
+ * will not pair. That first test is per key id rather than per board (#117), so
+ * that a board registered to *someone else* says so instead of falling silent —
+ * silence never reaches the helper state that asks to be paired, which left the
+ * config chord with nothing to provision. docs/protocol.md weighs the widening
+ * against the "safe to overhear" argument.
  *
  * **Every answer echoes the caller's correlation value.** A listener can still
  * provoke a genuine refusal, but it carries the *listener's* value and the real

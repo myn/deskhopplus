@@ -137,8 +137,9 @@ Three things, in this order, and nothing else:
    board holding a live authenticated session still drops a bulk frame that does not carry a
    good tag, which is the isolation breach #34 exists to prevent and v1 left open.
 2. **It is counted**, in a sliding window, separately from frames that fail for other reasons.
-   A hello naming the registered helper's key id but failing its tag is counted as the stronger
-   signal it is.
+   A hello that fails its tag is always counted as the stronger signal, because it is always a
+   hello naming the registered helper's key id: one naming any other key id was refused at step 2
+   of *The hello exchange* and never reached the tag.
 3. **Above a rate threshold it is reported** to the helper as `DH_MSG_LISTENER_ALERT`, carrying
    the window and the count. A rate says what no single event can — the shape
    [#94](https://github.com/myn/deskhopplus/issues/94) established for `reconnectingRepeatedly`.
@@ -151,9 +152,50 @@ is what closes [#108](https://github.com/myn/deskhopplus/issues/108).
 That is narrower than "never answers an unauthenticated frame", and the difference matters. Two
 refusals *are* sent to frames that were never authenticated — `HELLO_REFUSED(unpaired)` and
 `PAIR_REFUSED` — and both are deliberate. Neither can be provoked into saying anything false: a
-board with no registered key really is unpaired, and a board with no open window really will not
-pair. A **failed** tag is the case that must stay silent, because there the board holds a key,
-the sender does not, and any answer is a statement about a helper that did not ask for it.
+board that did not register **the key id this hello names** really is unpaired as far as that
+asker is concerned, and a board with no open window really will not pair. A **failed** tag is the
+case that must stay silent, because there the board holds *this asker's* key, the sender cannot
+prove it, and any answer is a statement about a helper that did not ask for it.
+
+The `unpaired` refusal is **per key id, not per board** ([#117](https://github.com/myn/deskhopplus/issues/117)),
+and that widening was weighed against this same "safe to overhear" argument before it was made:
+
+- **It cannot say anything false.** "I hold no registration for this key id" is a statement about
+  the board's own registration, exactly as "I hold no registration" was. It says nothing about any
+  helper, and nothing about whether some *other* key is registered beyond the bare fact that this
+  one is not.
+- **It creates one oracle, and that oracle is not reachable.** Refusal-versus-silence does tell an
+  asker whether a given key id is the registered one — a distinction that did not exist before,
+  when both cases drew silence. To use it you must already hold the key id, and a key id is
+  `SHA-256(public key)[0..8]`: 64 bits, so probing for it is a 2^64 search over USB HID. It cannot
+  be read off the wire either. Nothing in *The channel is shared, not exclusive* lets a listener
+  read a **helper→device** frame — that direction is unattributable, meaning a listener can *write*
+  it, not that it can see one — and the helper's key id appears in no device→helper frame at all.
+  A process that can obtain the helper's public key some other way, by reading the helper's own
+  files as the same user, already knows the answer without asking the board.
+- **#108's trap stays closed**, and it rests on the same asymmetry. A listener cannot read the real
+  helper's hello, so it cannot copy that helper's correlation value; the refusal it provokes
+  carries its *own*, and the real helper discards it. This is exactly the argument that already
+  licenses `HELLO_REFUSED(version_incompatible)` — which any client can provoke on any board, with
+  no tag checked — so `unpaired` joining it adds no new reach. Were that asymmetry ever to fail,
+  `version_incompatible` would fall first and the correlation defence would need rebuilding
+  wholesale; this refusal is not what would break it.
+- **It is not counted** towards `DH_MSG_LISTENER_ALERT`, for the reason the board-wide refusal
+  never was: this is the honest recovery path, and a genuinely unpaired helper retrying it must not
+  manufacture an alert about itself.
+
+  That does narrow what the alert sees, and the narrowing is accepted rather than overlooked. A
+  hello naming an unregistered key id used to fail its tag and be counted; it is now refused and is
+  not. What is lost is the detection of a listener sending hellos it *knows* will be refused —
+  which gains that listener nothing, because only a hello naming the registered key id can lead to
+  a session, and those still reach the tag and are still counted, as the stronger signal. The
+  detection that matters is untouched.
+
+What it buys is the case the board-wide test could not see: a board registered to *someone else*.
+That helper now hears `unpaired`, reaches `notPaired`, and sends a `PAIR_REQUEST` — so a chord
+press has something to provision, which is what ADR-0008 promises. Reached with no attacker at all:
+a helper identity regenerated, a home directory restored onto a second Mac, or the board plugged
+into a computer the first one had already registered.
 
 `DH_MSG_LISTENER_ALERT` rides a session, so a board with no session has no one to tell. It keeps
 counting; the alert is sent on the next session that authenticates, carrying the window it was
@@ -306,8 +348,12 @@ which answer is given tells the user which remedy to reach for.
 
 1. **`proto_version` is one the board does not implement** → `HELLO_REFUSED(version_incompatible)`,
    untagged. First, because a board cannot verify a tag under rules it does not know.
-2. **The board holds no registered helper key** → `HELLO_REFUSED(unpaired)`, untagged. There is
-   no secret to prove and the honest remedy really is the config chord.
+2. **The board holds no registration for the `helper_key_id` this hello names** →
+   `HELLO_REFUSED(unpaired)`, untagged. There is no secret to prove and the honest remedy really
+   is the config chord. Per key id, not per board: a board registered to *someone else* is
+   unpaired as far as this asker is concerned, and telling it so is what keeps the chord a remedy
+   ([#117](https://github.com/myn/deskhopplus/issues/117)). See *What an unauthenticated frame
+   causes* for why this stays safe to overhear.
 3. **The tag does not verify** → **nothing at all**. Counted, per *What an unauthenticated frame
    causes*. This is the case that used to be `DH_HELLO_AUTH_FAILED`.
 4. **Otherwise** → `HELLO_ACK`, tagged under `k_b2h`, counter 0.
@@ -325,8 +371,9 @@ little of an unverified frame. Exactly what, and for what, is part of the specif
 - **`proto_version`**, at body offset 0, so a version the board does not implement is refused
   rather than failed on a tag it could not have computed the same way.
 - **`helper_key_id`**, at body offset 15, so the board knows whether the sender claims to be its
-  registered helper — which is what makes the listener count in
-  `DH_MSG_LISTENER_ALERT` mean something rather than counting every stray frame alike.
+  registered helper. That decides two things: whether the hello is refused as `unpaired` at step 2
+  above, and — for the ones that get past it — what the listener count in `DH_MSG_LISTENER_ALERT`
+  means, rather than counting every stray frame alike.
 - **`helper_nonce`**, at body offset 23, because `k_hello` is derived from it. **This read is
   what makes the tag checkable at all** — without it the board has no key to check against.
 

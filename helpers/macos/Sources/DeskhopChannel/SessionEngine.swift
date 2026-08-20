@@ -217,22 +217,26 @@ public final class SessionEngine {
 
             /*
              * A handshake that keeps failing, with the board answering nothing.
-             * The board refuses a hello with `unpaired` only when it holds *no*
-             * registration (`answer_hello`, src/core/dh_session.c); when it
-             * holds one for a different key id it falls through to the tag
-             * check, fails, and stays silent by design. This helper's identity
-             * having changed underneath it — a cleared Application Support, a
-             * home directory restored onto another Mac — lands exactly there,
-             * and never reaches `notPaired`, so the chord could never rescue
-             * it.
              *
-             * So it asks anyway, once per acquisition, when the rate already
-             * says retrying is not working. The request is untagged and costs
-             * nothing: a board outside a pairing window ignores it.
+             * #117 fixed this in the firmware: `answer_hello`
+             * (src/core/dh_session.c) now refuses with `unpaired` per key id
+             * rather than per board, so a board registered to *someone else*
+             * says so and this helper reaches `notPaired` on its own. On a
+             * board running that firmware the ask below never fires, because
+             * the refusal arrives long before the rate says anything.
              *
-             * This is a workaround in one client. #117 carries the firmware
-             * fix — refusing per key id rather than per board — and owns the
-             * decision to keep or drop this once that lands.
+             * **Kept anyway, deliberately.** Firmware and helper ship
+             * separately and a user updates one without the other, so this
+             * helper still meets boards that predate #117 — and on those, the
+             * old behaviour is exactly as it was: the board holds a
+             * registration for a key id that is no longer this helper's, falls
+             * through to the tag check, fails it, and stays silent. Silence
+             * never reaches `notPaired`, so without this the config chord has
+             * nothing to provision and the machine reconnects for ever.
+             *
+             * The cost of keeping it is one untagged frame per acquisition,
+             * and only once the rate already says retrying is not working. A
+             * board outside a pairing window ignores it.
              */
             if state == .reconnectingRepeatedly, let ask = pairRequestFrame(at: now) {
                 outputs.append(.note("asking to be paired: the handshake is not completing"))
