@@ -36,32 +36,15 @@ static void wr_u64(uint8_t *p, uint64_t v) {
 /* ------------------------------------------------------------------ framing */
 
 /*
- * An authenticated frame, built straight into the caller's buffer: the header,
- * then dh_auth_wrap writing the prefix and the body behind it.
- *
- * Not dh_frame_encode over a staged payload, deliberately. That would copy a
- * relayed 1 KB body twice on a chip where the relay is already the hot path,
- * and the second copy would need a payload-sized buffer somewhere to live.
+ * An authenticated frame. The build moved to dh_auth_frame when the helper's
+ * side needed the same thing (#80) — both ends build these, and "a header plus
+ * a wrap" is not a rule worth having two implementations of.
  */
 static dh_frame_result encode_tagged(uint8_t type, uint8_t flags,
                                      const uint8_t key[DH_SESSION_KEY_SIZE], uint64_t counter,
                                      const uint8_t *body, size_t body_len, uint8_t *out,
                                      size_t cap, size_t *out_len) {
-    const size_t payload_len = DH_FRAME_AUTH_PREFIX_SIZE + body_len;
-    if (payload_len > DH_FRAME_MAX_PAYLOAD) return DH_FRAME_ERR_OVERSIZE;
-    if (cap < DH_FRAME_HEADER_SIZE + payload_len) return DH_FRAME_ERR_BUFFER;
-
-    out[0] = type;
-    out[1] = flags;
-    wr_u16(out + 2, (uint16_t)payload_len);
-
-    size_t written = 0;
-    if (dh_auth_wrap(key, type, flags, counter, body, body_len, out + DH_FRAME_HEADER_SIZE,
-                     cap - DH_FRAME_HEADER_SIZE, &written) != DH_AUTH_OK)
-        return DH_FRAME_ERR_BUFFER;
-
-    *out_len = DH_FRAME_HEADER_SIZE + written;
-    return DH_FRAME_OK;
+    return dh_auth_frame(type, flags, key, counter, body, body_len, out, cap, out_len);
 }
 
 /* ------------------------------------------------------------------- codecs */

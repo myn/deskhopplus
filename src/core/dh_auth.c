@@ -84,6 +84,27 @@ dh_auth_result dh_auth_wrap(const uint8_t key[DH_SESSION_KEY_SIZE], uint8_t type
     return DH_AUTH_OK;
 }
 
+dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_SESSION_KEY_SIZE],
+                              uint64_t counter, const uint8_t *body, size_t body_len, uint8_t *out,
+                              size_t cap, size_t *out_len) {
+    const size_t payload_len = DH_FRAME_AUTH_PREFIX_SIZE + body_len;
+    if (payload_len > DH_FRAME_MAX_PAYLOAD) return DH_FRAME_ERR_OVERSIZE;
+    if (cap < DH_FRAME_HEADER_SIZE + payload_len) return DH_FRAME_ERR_BUFFER;
+
+    out[0] = type;
+    out[1] = flags;
+    out[2] = (uint8_t)(payload_len & 0xFFu);
+    out[3] = (uint8_t)(payload_len >> 8u);
+
+    size_t written = 0;
+    if (dh_auth_wrap(key, type, flags, counter, body, body_len, out + DH_FRAME_HEADER_SIZE,
+                     cap - DH_FRAME_HEADER_SIZE, &written) != DH_AUTH_OK)
+        return DH_FRAME_ERR_BUFFER;
+
+    *out_len = DH_FRAME_HEADER_SIZE + written;
+    return DH_FRAME_OK;
+}
+
 void dh_auth_counter_init(dh_auth_counter *c) {
     c->highest = 0;
     c->any = false;

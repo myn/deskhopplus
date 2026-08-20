@@ -91,6 +91,23 @@ dh_auth_result dh_auth_wrap(const uint8_t key[DH_SESSION_KEY_SIZE], uint8_t type
                             size_t out_cap, size_t *out_len);
 
 /*
+ * A complete authenticated frame — the 4-byte header, then dh_auth_wrap
+ * writing the prefix and the body behind it — built straight into the caller's
+ * buffer.
+ *
+ * Not dh_frame_encode over a staged payload, deliberately. That would copy a
+ * relayed 1 KB body twice on a chip where the relay is already the hot path,
+ * and the second copy would need a payload-sized buffer somewhere to live.
+ *
+ * Here rather than in either end's session file because both ends build these,
+ * and "an authenticated frame is a header plus a wrap" is a rule that must not
+ * have two implementations to drift between (#80).
+ */
+dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_SESSION_KEY_SIZE],
+                              uint64_t counter, const uint8_t *body, size_t body_len, uint8_t *out,
+                              size_t cap, size_t *out_len);
+
+/*
  * The highest counter accepted under one key, in one direction.
  *
  * A receiver refuses anything not strictly greater. Refusing anything not

@@ -41,6 +41,18 @@ target_include_directories(session_test PRIVATE ${CORE})
 target_compile_definitions(session_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
                            DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
 add_test(NAME session_test COMMAND session_test)
+# The helper's side of the same session (#80). Gated by both vector files for
+# the same reason session_test.c is — and it drives the real dh_session as its
+# far end, so what it checks is the two ends agreeing rather than this side
+# agreeing with a mock of the other.
+add_executable(helper_test helper_test.c ${CORE}/dh_helper.c ${CORE}/dh_session.c
+               ${CORE}/dh_pair.c ${CORE}/dh_frame.c ${CORE}/dh_auth.c ${CORE}/dh_sha256.c
+               ${CORE}/dh_p256.c)
+target_include_directories(helper_test PRIVATE ${CORE})
+target_compile_definitions(helper_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
+                           DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
+add_test(NAME helper_test COMMAND helper_test)
+
 # The four primitives the board runs, and the frame tag built on them (#110).
 # dh_p256.c is the only file that compiles micro-ecc: it sets the curve
 # configuration in one place, for all three of this core's toolchains.
