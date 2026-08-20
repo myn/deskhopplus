@@ -6,19 +6,23 @@ import Foundation
  * The session seam: events in, actions out. No device, no IOKit, no wall
  * clock — every test states the time it is asking about.
  *
- * v2 (#112, ADR-0008): the fixture now plays a board with a real P-256 key
- * pair, so the frames it feeds the engine are tagged the way the firmware
- * tags them. A test that wants to break authentication has to break it
- * deliberately; nothing here is waved through.
+ * These describe the **helper**, and the decisions behind them belong to the
+ * shared core (`dh_helper`, #80). What each one proves here is that the
+ * binding carries the event down and the answer back with nothing lost —
+ * every number, every frame, every state. The core's own arithmetic is
+ * `tests/helper_test.c`'s subject: the beat trace, the backoff, and the
+ * correlation guards moved there with the machine (#81).
+ *
+ * The fixture plays a board with a real P-256 key pair, so the frames it
+ * feeds in are tagged the way the firmware tags them. A test that wants to
+ * break authentication has to break it deliberately; nothing is waved through.
  */
 
-let sessionEngineTests: [(String, () throws -> Void)] = [
+let helperSessionTests: [(String, () throws -> Void)] = [
     ("the helper introduces itself once it holds every channel", testHelperIntroducesItself),
     ("an acknowledged hello is a connected session", testAcknowledgedHelloIsASession),
     ("an unpaired board and a version mismatch are different states", testFailuresAreDistinct),
     ("a development device is noted", testDevelopmentDeviceIsNoted),
-    ("an ack that echoes somebody else's question is ignored", testAckWithWrongCorrelationIgnored),
-    ("a grant this helper never asked for is ignored", testGrantWithWrongCorrelationIgnored),
     ("a grant carrying an unusable key is not kept", testAGrantWithAnUnusableKeyIsNotKept),
     ("a refused open is reported as an unusable device",
      testARefusedOpenIsReportedAsAnUnusableDevice),
@@ -31,15 +35,6 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
     ("any authenticated traffic from the device is liveness", testAnyDeviceTrafficIsLiveness),
     ("an unauthenticated frame is not liveness", testUnauthenticatedTrafficIsNotLiveness),
     ("a listener the board detected is reported", testListenerAlertIsReported),
-    ("the device's beat is traced where it changes, not where it beats",
-     testDeviceBeatTransitionsAreTraced),
-    ("the beat trace starts afresh after a config-mode round trip",
-     testTheBeatTraceStartsAfreshAfterAConfigModeRoundTrip),
-    ("a beat outside a session is ignored", testABeatOutsideASessionIsIgnored),
-    ("the beat trace starts afresh after a hello is refused",
-     testTheBeatTraceStartsAfreshAfterAHelloIsRefused),
-    ("an unpaired helper traces no beat it cannot get",
-     testAnUnpairedHelperTracesNoBeatItCannotGet),
     ("an announced eviction is acted on at once", testSessionEndIsActedOnImmediately),
     ("a session end outside a session is ignored", testSessionEndOutsideSessionIgnored),
     ("an unpaired helper survives the device saying nothing",
@@ -59,8 +54,6 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
      testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode),
     ("a config-mode round trip reconnects by itself", testConfigModeRoundTrip),
     ("the channels are released when the device goes", testChannelsReleasedOnDeparture),
-    ("reconnection backs off to a capped delay", testBackoffIsCapped),
-    ("a working session resets the backoff", testWorkingSessionResetsBackoff),
     ("a granted board key is pinned and pairs the helper", testPairingRoundTrip),
     ("a pinned board key authenticates the next hello", testPinnedBoardKeyAuthenticatesTheHello),
     ("a board that has forgotten us keeps the pin", testUnpairedRefusalKeepsThePin),
@@ -77,7 +70,22 @@ let sessionEngineTests: [(String, () throws -> Void)] = [
      testAnOccasionalReconnectionIsAnOrdinaryRecovery),
     ("a connection that then holds goes back to connected",
      testAConnectionThatHoldsGoesBackToConnected),
+    ("every state crosses the seam with its words and its policy",
+     testEveryStateCrossesTheSeamIntact),
+    ("a hello that cannot be built is still reported",
+     testAHelloThatCannotBeBuiltIsStillReported),
+    ("a grant nobody asked for is ignored", testAGrantNobodyAskedForIsIgnored),
+    ("bulk goes out under the session's own counter", testBulkGoesOutUnderTheSessionsCounter),
 ]
+
+/// The fixed key pairs the fixtures run on. Fixed so a failure reproduces
+/// exactly; a bad one is a typo in this file, not a case to handle.
+private func keyPair(_ privateKey: ClosedRange<UInt8>) -> TestIdentity {
+    guard let identity = TestIdentity(privateKey: [UInt8](privateKey)) else {
+        preconditionFailure("the fixture's private key is not a valid scalar")
+    }
+    return identity
+}
 
 private enum FixtureError: Error {
     /// The board was asked to answer a hello the helper has not sent yet.
@@ -93,14 +101,14 @@ private func unverifiedBody(_ frame: Frame) -> [UInt8] {
     Array(frame.payload.dropFirst(Int(DH_FRAME_AUTH_PREFIX_SIZE)))
 }
 
-/// One engine, one clock, one board, and the small vocabulary the tests read
+/// One session, one clock, one board, and the small vocabulary the tests read
 /// outputs with.
 private final class Fixture {
-    let helperIdentity: SoftwareIdentity
+    let helperIdentity: TestIdentity
     /// The board's key pair. `boardIdentity.publicKey` is what a PAIR_GRANT
     /// carries and what a paired helper has pinned.
-    let boardIdentity: SoftwareIdentity
-    let engine: SessionEngine
+    let boardIdentity: TestIdentity
+    let session: HelperSession
     var now: TimeInterval = 1000
 
     /* What the helper last put on the wire. The board needs the correlation
@@ -118,8 +126,8 @@ private final class Fixture {
     /// `paired: false` is a helper with nothing pinned — the state it is in on
     /// a first run, or after the board has forgotten it.
     init(paired: Bool = true) {
-        let helper = try! SoftwareIdentity(privateKey: [UInt8](0x01...0x20))
-        let board = try! SoftwareIdentity(privateKey: [UInt8](0x21...0x40))
+        let helper = keyPair(0x01...0x20)
+        let board = keyPair(0x21...0x40)
         helperIdentity = helper
         boardIdentity = board
 
@@ -127,7 +135,7 @@ private final class Fixture {
            share a nonce or a correlation, and a test can still reproduce a
            failure exactly. */
         var tick = 0
-        engine = SessionEngine(
+        session = HelperSession(
             identity: helper,
             boardPublicKey: paired ? board.publicKey : nil,
             entropy: { count in
@@ -139,12 +147,12 @@ private final class Fixture {
 
     @discardableResult
     func send(_ input: SessionInput) -> [SessionOutput] {
-        observe(engine.handle(input, at: now))
+        observe(session.handle(input, at: now))
     }
 
     func advance(_ seconds: TimeInterval) -> [SessionOutput] {
         now += seconds
-        return observe(engine.handle(.tick, at: now))
+        return observe(session.handle(.tick, at: now))
     }
 
     /// Everything the helper sends passes through here, so the board always
@@ -189,9 +197,9 @@ private final class Fixture {
 
     /*
      * The board's HELLO_ACK, encoded and tagged the way the firmware does it.
-     * `deriveSessionKeys` is symmetric — the board runs ECDH against the
-     * *helper's* public key and gets the same shared secret — so the parameter
-     * named `boardPublicKey` carries the helper's key here.
+     * The derivation is symmetric — the board runs ECDH against the *helper's*
+     * public key and reaches the same shared secret — so `peer` is the
+     * helper's key here.
      */
     func ack(channels: UInt8 = 1,
              chunk: UInt16 = 1024,
@@ -201,10 +209,11 @@ private final class Fixture {
         guard let hello = lastHello else { throw FixtureError.noHelloOnTheWire }
 
         let boardNonce = (0..<Int(DH_NONCE_SIZE)).map { UInt8(($0 + Int(now)) & 0xFF) }
-        let keys = try boardIdentity.deriveSessionKeys(
-            boardPublicKey: helperIdentity.publicKey,
-            helperNonce: hello.helperNonce,
-            boardNonce: boardNonce)
+        guard let keys = boardIdentity.sessionKeys(peer: helperIdentity.publicKey,
+                                                   helperNonce: hello.helperNonce,
+                                                   boardNonce: boardNonce) else {
+            throw FixtureError.noSessionKey
+        }
 
         kB2H = keys.kB2H
         kH2B = keys.kH2B
@@ -270,7 +279,7 @@ private final class Fixture {
         try reacquire()
     }
 
-    /// The recovery the engine asks for after a drop: channels back, hello answered.
+    /// The recovery the core asks for after a drop: channels back, hello answered.
     @discardableResult
     func reacquire() throws -> [SessionOutput] {
         send(.channelsAcquired(count: 1))
@@ -325,7 +334,7 @@ private func testHelperIntroducesItself() throws {
     Check.unequal(hello.correlation, 0, "the hello carries no correlation value")
 
     /* Nothing is claimed to the user until the device has answered. */
-    Check.equal(f.engine.state, .quiet, "reported a session before the device answered")
+    Check.equal(f.session.state, .quiet, "reported a session before the device answered")
 }
 
 private func testAcknowledgedHelloIsASession() throws {
@@ -335,8 +344,8 @@ private func testAcknowledgedHelloIsASession() throws {
 
     Check.equal(f.states(f.send(try f.ack(channels: 1, chunk: 512))), [.connected],
                 "an acknowledged hello did not become a connected session")
-    Check.equal(f.engine.negotiated?.channelCount, 1, "channel count not taken from the ack")
-    Check.equal(f.engine.negotiated?.maxChunk, 512,
+    Check.equal(f.session.negotiated?.channelCount, 1, "channel count not taken from the ack")
+    Check.equal(f.session.negotiated?.maxChunk, 512,
                 "the session must run on the effective value, not the requested one")
 }
 
@@ -346,9 +355,9 @@ private func testFailuresAreDistinct() throws {
     unpaired.send(.channelsAcquired(count: 1))
     Check.equal(unpaired.states(unpaired.send(try unpaired.helloRefused(.unpaired))),
                 [.notPaired], "an unpaired board was not reported as unpaired")
-    Check.that(unpaired.engine.state.promptsConfigChord,
+    Check.that(unpaired.session.state.promptsConfigChord,
                "an unpaired helper must be told which keystroke fixes it")
-    Check.that(unpaired.engine.negotiated == nil,
+    Check.that(unpaired.session.negotiated == nil,
                "an unpaired session must not claim negotiated terms")
 
     let mismatched = Fixture()
@@ -357,9 +366,9 @@ private func testFailuresAreDistinct() throws {
     Check.equal(mismatched.states(mismatched.send(
                     try mismatched.helloRefused(.versionIncompatible, version: 3))),
                 [.versionIncompatible], "a version mismatch was not reported as one")
-    Check.unequal(mismatched.engine.state, .notPaired,
+    Check.unequal(mismatched.session.state, .notPaired,
                   "a version mismatch was reported as an unpaired helper")
-    Check.that(!mismatched.engine.state.allowsBulkTransfers,
+    Check.that(!mismatched.session.state.allowsBulkTransfers,
                "a mismatched helper must refuse transfers rather than corrupt a file")
 }
 
@@ -369,78 +378,11 @@ private func testDevelopmentDeviceIsNoted() throws {
     f.send(.channelsAcquired(count: 1))
     let outputs = f.send(try f.ack(build: .development))
 
-    Check.equal(f.engine.negotiated?.deviceBuild, .development, "the build type was not recorded")
+    Check.equal(f.session.negotiated?.deviceBuild, .development, "the build type was not recorded")
     Check.that(!f.notes(outputs).isEmpty, "a development build must identify itself in the log")
 }
 
 // MARK: - Correlation (#108)
-
-/*
- * The trap #108 describes, on the hello path. An attacker who can write to
- * the channel can produce a well-formed ack; what it cannot produce is the
- * random value this helper put in the question it is answering. A helper that
- * acts on any ack it can decode is a helper an unrelated frame can walk into a
- * session with.
- *
- * The tag is *correct* here — the point is that a correct tag on the wrong
- * conversation is still the wrong conversation.
- */
-private func testAckWithWrongCorrelationIgnored() throws {
-    let f = Fixture()
-    f.send(.deviceAppeared(.normal))
-    f.send(.channelsAcquired(count: 1))
-    guard let asked = f.lastHello?.correlation else {
-        Check.that(false, "no hello was sent")
-        return
-    }
-
-    let outputs = f.send(try f.ack(correlation: asked &+ 1))
-    Check.equal(f.states(outputs), [], "an ack answering a different question started a session")
-    Check.unequal(f.engine.state, .connected, "the helper reported a session it never negotiated")
-    Check.that(!f.engine.canSendBulk, "a session built on somebody else's ack would carry bulk")
-    Check.that(f.notes(outputs).contains { $0.contains("correlation") },
-               "the mismatched correlation was not recorded")
-
-    /* And the real answer still works: refusing one ack must not poison the
-       handshake that is still legitimately in flight. */
-    Check.equal(f.states(f.send(try f.ack())), [.connected],
-                "the genuine ack was refused after a forged one had been dropped")
-}
-
-/*
- * The same trap on the pairing path, which is the one #108 was actually
- * opened for: a manufactured PAIR_GRANT arriving without any chord pins an
- * attacker's key as the board's. The correlation value in the helper's own
- * PAIR_REQUEST is the thing the attacker has to guess.
- */
-private func testGrantWithWrongCorrelationIgnored() throws {
-    let f = Fixture(paired: false)
-    f.send(.deviceAppeared(.normal))
-    f.send(.channelsAcquired(count: 1))
-    try f.becomeUnpaired()
-
-    guard let asked = f.lastPairRequest?.correlation else {
-        Check.that(false, "an unpaired helper never asked to be paired")
-        return
-    }
-
-    /* A key that is entirely valid — a real point on the curve, which ECDH
-       would happily accept. The correlation is the only thing wrong with this
-       grant, and it has to be enough on its own. */
-    let attacker = try SoftwareIdentity(privateKey: [UInt8](0x41...0x60))
-    let outputs = f.send(try f.pairGrant(correlation: asked &+ 1, key: attacker.publicKey))
-
-    Check.that(!outputs.contains(where: {
-        if case .storeBoardKey = $0 { return true } else { return false }
-    }), "a key nobody asked for was pinned as the board's")
-    Check.equal(try f.sentFrames(outputs), [],
-                "a manufactured grant restarted the handshake")
-    Check.equal(f.engine.state, .notPaired, "a manufactured grant paired the helper")
-
-    /* The genuine grant, echoing what this helper asked, is acted on. */
-    Check.that(f.send(try f.pairGrant()).contains(.storeBoardKey(f.boardIdentity.publicKey)),
-               "the board's own grant was refused along with the forged one")
-}
 
 /*
  * A grant that echoes the right correlation but carries something that is not
@@ -462,7 +404,7 @@ private func testAGrantWithAnUnusableKeyIsNotKept() throws {
     Check.equal(try f.sentFrames(outputs), [], "an unusable key produced a hello")
 
     /* And the helper recovers: it is still asking, and the next real grant works. */
-    _ = f.advance(SessionEngine.pairingRetryInterval)
+    _ = f.advance(HelperSession.pairingRetryInterval)
     Check.that(f.send(try f.pairGrant()).contains(.storeBoardKey(f.boardIdentity.publicKey)),
                "an unusable grant left the helper unable to pair at all")
 }
@@ -485,9 +427,9 @@ private func testARefusedOpenIsReportedAsAnUnusableDevice() throws {
     Check.that(outputs.contains(.closeChannels), "a partially acquired set was not released")
     Check.that(!f.retries(outputs).isEmpty, "a refused acquisition never tries again")
 
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceAbsent],
                 "a device that never opens was never reported at all")
-    Check.that(!f.engine.state.promptsConfigChord, "a refused open prompted the chord")
+    Check.that(!f.session.state.promptsConfigChord, "a refused open prompted the chord")
 }
 
 /*
@@ -503,7 +445,7 @@ private func testARefusedOpenThatKeepsFailingIsStillReported() throws {
     var reported: [HelperState] = []
     for _ in 0..<10 {
         f.send(.acquisitionRefused(acquired: 0, of: 1))
-        reported += f.states(f.advance(Backoff().cap))
+        reported += f.states(f.advance(HelperSession.backoffCap))
     }
 
     Check.equal(reported, [.deviceAbsent],
@@ -516,14 +458,14 @@ private func testAPartialAcquisitionThatCompletesIsSilent() throws {
     let f = Fixture()
     f.send(.deviceAppeared(.normal))
     f.send(.acquisitionRefused(acquired: 1, of: 2))
-    _ = f.advance(SessionEngine.silenceWindow / 2)
+    _ = f.advance(HelperSession.silenceWindow / 2)
 
     /* Only the acquisition clears the deferral here: `deviceAppeared` would
        clear it too, and going through it would prove nothing. */
     try f.reacquire()
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [],
                 "a partial acquisition that completed was reported as an absent device")
-    Check.equal(f.engine.state, .connected, "the session that came up was not reported")
+    Check.equal(f.session.state, .connected, "the session that came up was not reported")
 }
 
 // MARK: - Liveness
@@ -532,11 +474,11 @@ private func testHeartbeatKeepsBeating() throws {
     let f = Fixture()
     try f.establishSession()
 
-    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval / 2)), [],
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval / 2)), [],
                 "beat before the interval elapsed")
 
     for _ in 0..<5 {
-        let frames = try f.sentFrames(f.advance(SessionEngine.heartbeatInterval))
+        let frames = try f.sentFrames(f.advance(HelperSession.heartbeatInterval))
         Check.equal(frames.map(\.type), [MessageType.heartbeat], "missed a beat")
         guard let beat = frames.first else { return }
 
@@ -552,7 +494,7 @@ private func testHeartbeatKeepsBeating() throws {
         f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
     }
 
-    Check.equal(f.engine.state, .connected, "beating did not keep the session")
+    Check.equal(f.session.state, .connected, "beating did not keep the session")
 }
 
 /*
@@ -565,16 +507,16 @@ private func testSilenceFromTheDeviceEndsTheSession() throws {
     let f = Fixture()
     try f.establishSession()
 
-    Check.equal(f.advance(SessionEngine.deviceBeatTimeout - SessionEngine.heartbeatInterval)
+    Check.equal(f.advance(HelperSession.deviceBeatTimeout - HelperSession.heartbeatInterval)
                     .filter { $0 == .closeChannels },
                 [], "gave up on the device before the timeout")
 
-    let outputs = f.advance(SessionEngine.heartbeatInterval)
+    let outputs = f.advance(HelperSession.heartbeatInterval)
     Check.that(outputs.contains(.closeChannels), "a session the device had dropped was kept")
     Check.that(!f.retries(outputs).isEmpty, "a lost session was not reconnected")
 
     /* And nothing is beaten at afterwards: the session is gone, not stalled. */
-    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval * 3)), [],
                 "kept beating after the session was lost")
 }
 
@@ -589,13 +531,13 @@ private func testAnyDeviceTrafficIsLiveness() throws {
     try f.establishSession()
 
     for _ in 0..<6 {
-        _ = f.advance(SessionEngine.deviceBeatTimeout - SessionEngine.heartbeatInterval)
+        _ = f.advance(HelperSession.deviceBeatTimeout - HelperSession.heartbeatInterval)
         f.send(try f.deviceFrame(0x20, body: [1, 0, 0, 0x80]))
     }
 
-    Check.equal(f.engine.state, .connected,
-                "traffic the engine ignores did not count as the device being alive")
-    Check.that(f.engine.canSendBulk, "a live session refused to carry bulk")
+    Check.equal(f.session.state, .connected,
+                "traffic the machine ignores did not count as the device being alive")
+    Check.that(f.session.canSendBulk, "a live session refused to carry bulk")
 }
 
 /*
@@ -619,13 +561,13 @@ private func testUnauthenticatedTrafficIsNotLiveness() throws {
     Check.equal(try f.sentFrames(outputs), [],
                 "the helper answered a frame whose tag failed — the answer reaches every "
                 + "attached client")
-    Check.that(!f.engine.canSendBulk, "a session torn down by a bad tag would still carry bulk")
+    Check.that(!f.session.canSendBulk, "a session torn down by a bad tag would still carry bulk")
 
     /* And it never counted as the device being alive: there is no session left
        for a liveness clock to be measuring. This is #95's fix — under v1 any
        frame on the channel reset that clock, so a bystander writing rubbish
        kept a dead session reading as healthy indefinitely. */
-    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval * 3)), [],
                 "kept beating after a forged frame dropped the session")
 }
 
@@ -642,13 +584,13 @@ private func testListenerAlertIsReported() throws {
     Check.equal(f.states(outputs), [.listenerDetected], "a detected listener was not reported")
     Check.that(f.notes(outputs).contains { $0.contains("4") && $0.contains("10000") },
                "the measurement behind the alert was not recorded")
-    Check.that(!f.engine.state.promptsConfigChord,
+    Check.that(!f.session.state.promptsConfigChord,
                "a listener prompted the chord, which would provision whoever is listening")
 
     /* The words, not only the flag. This is the state that replaced
        `channelHeld` (#114), and #38 asks each one for what it is *and* what to
        do — including the one thing the user must not do here. */
-    let message = f.engine.state.message ?? ""
+    let message = f.session.state.message ?? ""
     Check.that(message.contains("writing to the device channel"),
                "the state does not say what was detected")
     Check.that(message.contains("find and stop it"), "the state names no remedy")
@@ -659,8 +601,8 @@ private func testListenerAlertIsReported() throws {
        frames it refused, which the tag already keeps out — so this changes
        what the user is told, not what the session may carry, and the two
        seams #52 reads must not disagree. */
-    Check.that(f.engine.canSendBulk, "a reported listener revoked a session that is still good")
-    Check.equal(f.engine.state.allowsBulkTransfers, f.engine.canSendBulk,
+    Check.that(f.session.canSendBulk, "a reported listener revoked a session that is still good")
+    Check.equal(f.session.state.allowsBulkTransfers, f.session.canSendBulk,
                 "allowsBulkTransfers and canSendBulk gave #52 opposite answers")
 
     /* And it expires like the rate it is. The board measured it over a window
@@ -669,174 +611,11 @@ private func testListenerAlertIsReported() throws {
        make it a latch — the mistake #94 corrected for reconnections. */
     var reported: [HelperState] = []
     for _ in 0..<12 {
-        reported += f.states(f.advance(SessionEngine.heartbeatInterval))
+        reported += f.states(f.advance(HelperSession.heartbeatInterval))
         f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
     }
     Check.equal(reported, [.connected],
                 "the listener warning never cleared, though nothing further was refused")
-}
-
-/*
- * ADR-0004 gates the device's beat on an idle direction, so beats stopping
- * during a transfer is the design working — and it looks identical in a log
- * to a device that has stalled. #88 has to tell those apart on hardware, and
- * the helper had no surface for it at all: the beat arrived and was dropped
- * on the floor.
- *
- * Traced at the edges rather than per beat. A line per arrival would be a
- * line a second, which is precisely the log that hid a live defect for two
- * days during this sitting.
- */
-private func testDeviceBeatTransitionsAreTraced() throws {
-    let f = Fixture()
-    try f.establishSession()
-
-    /* The first beat says so, so "the beat never arrived" is distinguishable
-       from "the beat was never worth mentioning". The wording is asserted, not
-       just the subject: `quiet for …` and `resumed after …` both contain
-       "device heartbeat", so a looser check passes on any of the three and
-       would stay green if the first beat printed `resumed after 0.0s` (#98). */
-    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("first beat") },
-               "the first beat of a session was not traced as the first")
-
-    /* On time, it says nothing. */
-    for _ in 0..<5 {
-        _ = f.advance(SessionEngine.heartbeatInterval)
-        Check.equal(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat))), [],
-                    "a beat arriving on time was traced")
-    }
-
-    /* A transfer: the device keeps sending, so the session holds, while the
-       idle-gated beat correctly stops. */
-    var duringTransfer: [String] = []
-    for _ in 0..<4 {
-        duringTransfer += f.notes(f.advance(SessionEngine.heartbeatInterval))
-        f.send(try f.deviceFrame(0x20, body: [1, 0, 0, 0x80]))
-    }
-    Check.equal(f.engine.state, .connected, "a transfer without beats dropped the session")
-    Check.equal(duringTransfer.filter { $0.contains("quiet") }.count, 1,
-                "the beat falling silent was not traced exactly once")
-
-    /* And the far side of it, with the measurement attached. */
-    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("resumed") },
-               "the beat coming back was not traced")
-}
-
-/*
- * The trace is measured inside one session and must not outlive it. A
- * config-mode round trip is the common path that proves it: the board leaves
- * under its other identity for minutes, which is `deviceLeft` and not
- * `dropConnection`, and a beat remembered from before the chord makes both
- * edges of the next session wrong — a `quiet for 300.0s` about a session one
- * tick old, and a genuine first beat announcing itself as `resumed` (#98).
- */
-private func testTheBeatTraceStartsAfreshAfterAConfigModeRoundTrip() throws {
-    let f = Fixture()
-    try f.establishSession()
-    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
-
-    /* The chord: config mode, minutes away, then back as itself. */
-    f.send(.deviceAppeared(.configMode))
-    _ = f.advance(SessionEngine.silenceWindow)
-    f.now += 300
-    f.send(.deviceAppeared(.normal))
-    try f.reacquire()
-
-    Check.equal(f.notes(f.advance(0.25)).filter { $0.contains("quiet") }, [],
-                "a quiet spell measured before the chord outlived the session it belonged to")
-    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("first beat") },
-               "the first beat after a config-mode round trip was not traced as the first")
-}
-
-/*
- * Every other frame type refuses one that arrives outside a session and says
- * so; the beat did not. A beat still in the read queue when the connection
- * went announced the first beat of a session that does not exist — and then
- * swallowed the real one, since the real first beat is only first while
- * nothing has claimed it (#98).
- *
- * Under v2 it is refused a step earlier, at the tag: the session key went
- * with the session, so there is nothing to verify the frame against. The
- * property the test is about is unchanged — the stale beat must not consume
- * the next session's first.
- */
-private func testABeatOutsideASessionIsIgnored() throws {
-    let f = Fixture()
-    try f.establishSession()
-    let stray = try f.deviceFrame(MessageType.deviceHeartbeat)
-    f.send(.transportFailed("link went away"))
-
-    let stale = f.notes(f.send(stray))
-    Check.that(stale.contains { $0.contains("dropping") },
-               "a beat outside a session was acted on rather than refused")
-    Check.that(!stale.contains { $0.contains("first beat") },
-               "a beat outside a session announced the first beat of one")
-
-    try f.reacquire()
-    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("first beat") },
-               "the stale beat consumed the new session's first")
-}
-
-/*
- * The same leak on the pairing path, which the engine reaches without ever
- * going idle. A HELLO_REFUSED(unpaired) ends the session while deliberately
- * keeping the phase — #46 needs the helper live and asking — so it is the one
- * place where losing a session is not going quiet, and the one a teardown
- * keyed on the phase steps straight past.
- *
- * A beat remembered across it silences the *next* session's first beat
- * entirely: it is no longer the first, and no quiet spell was noted to make
- * it a resumption, so it says nothing at all.
- */
-private func testTheBeatTraceStartsAfreshAfterAHelloIsRefused() throws {
-    let f = Fixture()
-    try f.establishSession()
-    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
-
-    /* The link goes, and this time the board has forgotten the registration:
-       the fresh hello is refused, and the helper is left unpaired and asking. */
-    f.send(.transportFailed("link went away"))
-    f.send(.channelsAcquired(count: 1))
-    try f.becomeUnpaired()
-    Check.equal(f.engine.state, .notPaired, "the refused hello did not leave the helper unpaired")
-
-    /* The chord lands, and the grant restarts the handshake. */
-    f.send(try f.pairGrant())
-    f.send(try f.ack())
-    Check.equal(f.engine.state, .connected, "pairing did not establish a session")
-
-    Check.that(f.notes(f.send(try f.deviceFrame(MessageType.deviceHeartbeat)))
-                   .contains { $0.contains("first beat") },
-               "the first beat of the session pairing established was not traced at all")
-}
-
-/*
- * The quiet note is scoped to a session, exactly as the liveness check three
- * lines above it is. An unpaired helper is deliberately live and the device
- * holds no session for it, so it is sent nothing by design — tracing the
- * absence of beats that are not supposed to exist is noise in the log the
- * trace exists to keep readable (#98).
- */
-private func testAnUnpairedHelperTracesNoBeatItCannotGet() throws {
-    let f = Fixture()
-    try f.establishSession()
-    f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
-
-    f.send(.transportFailed("link went away"))
-    f.send(.channelsAcquired(count: 1))
-    try f.becomeUnpaired()
-    Check.equal(f.engine.state, .notPaired, "the refused hello did not leave the helper unpaired")
-
-    var notes: [String] = []
-    for _ in 0..<8 { notes += f.notes(f.advance(SessionEngine.heartbeatInterval)) }
-
-    Check.equal(notes.filter { $0.contains("quiet") }, [],
-                "an unpaired helper traced beats the device is designed not to send it")
-    Check.equal(f.engine.state, .notPaired, "the unpaired helper was torn down")
 }
 
 /* An eviction the device knows about is announced, so the helper need not
@@ -891,20 +670,20 @@ private func testUnpairedHelperSurvivesTheDeviceSayingNothing() throws {
     var beats = 0
     var asks = 0
     for _ in 0..<8 {
-        let types = try f.sentFrames(f.advance(SessionEngine.heartbeatInterval)).map(\.type)
+        let types = try f.sentFrames(f.advance(HelperSession.heartbeatInterval)).map(\.type)
         Check.that(!f.states(f.advance(0)).contains(.deviceAbsent),
                    "an unpaired helper was reported absent")
         beats += types.filter { $0 == MessageType.heartbeat }.count
         asks += types.filter { $0 == MessageType.pairRequest }.count
     }
 
-    Check.equal(f.engine.state, .notPaired,
+    Check.equal(f.session.state, .notPaired,
                 "an unpaired helper was torn down by the detector, so the chord could not reach it")
     Check.that(asks >= 2, "an unpaired helper stopped asking to be paired")
     Check.equal(beats, 0,
                 "an unpaired helper beat with a session key it cannot have — a beat it could "
                 + "send unauthenticated is a beat anybody could send")
-    Check.that(!f.engine.canSendBulk, "an unpaired helper would carry bulk")
+    Check.that(!f.session.canSendBulk, "an unpaired helper would carry bulk")
 }
 
 /*
@@ -916,36 +695,36 @@ private func testUnpairedHelperSurvivesTheDeviceSayingNothing() throws {
 private func testALostSessionIsReportedOnlyIfItStaysLost() throws {
     let quick = Fixture()
     try quick.establishSession()
-    _ = quick.advance(SessionEngine.deviceBeatTimeout)
-    Check.equal(quick.states(quick.advance(SessionEngine.silenceWindow / 2)), [],
+    _ = quick.advance(HelperSession.deviceBeatTimeout)
+    Check.equal(quick.states(quick.advance(HelperSession.silenceWindow / 2)), [],
                 "a session that dropped and returned was announced")
 
     quick.send(.channelsAcquired(count: 1))
     Check.equal(quick.states(quick.send(try quick.ack())), [],
                 "reconnecting inside the window was visible to the user")
-    Check.equal(quick.engine.state, .connected, "the reconnected session was not reported")
+    Check.equal(quick.session.state, .connected, "the reconnected session was not reported")
 
     let stuck = Fixture()
     try stuck.establishSession()
-    _ = stuck.advance(SessionEngine.deviceBeatTimeout)
-    Check.equal(stuck.states(stuck.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+    _ = stuck.advance(HelperSession.deviceBeatTimeout)
+    Check.equal(stuck.states(stuck.advance(HelperSession.silenceWindow)), [.deviceAbsent],
                 "a session lost for good went on reading as connected")
 }
 
 /* Bulk needs a session, and #52 consumes this rather than inventing it. */
 private func testBulkNeedsASession() throws {
     let f = Fixture()
-    Check.that(!f.engine.canSendBulk, "an idle helper would carry bulk")
+    Check.that(!f.session.canSendBulk, "an idle helper would carry bulk")
 
     f.send(.deviceAppeared(.normal))
     f.send(.channelsAcquired(count: 1))
-    Check.that(!f.engine.canSendBulk, "a helper still awaiting an ack would carry bulk")
+    Check.that(!f.session.canSendBulk, "a helper still awaiting an ack would carry bulk")
 
     f.send(try f.ack())
-    Check.that(f.engine.canSendBulk, "an established session refused to carry bulk")
+    Check.that(f.session.canSendBulk, "an established session refused to carry bulk")
 
     f.send(.transportFailed("link went away"))
-    Check.that(!f.engine.canSendBulk, "a dropped connection would still carry bulk")
+    Check.that(!f.session.canSendBulk, "a dropped connection would still carry bulk")
 }
 
 private func testUnansweredHello() throws {
@@ -953,12 +732,12 @@ private func testUnansweredHello() throws {
     f.send(.deviceAppeared(.normal))
     f.send(.channelsAcquired(count: 1))
 
-    Check.equal(f.advance(SessionEngine.helloTimeout / 2), [], "gave up on the device early")
+    Check.equal(f.advance(HelperSession.helloTimeout / 2), [], "gave up on the device early")
 
-    let outputs = f.advance(SessionEngine.helloTimeout)
+    let outputs = f.advance(HelperSession.helloTimeout)
     Check.that(outputs.contains(.closeChannels), "a silent device kept its channels")
     Check.that(!f.retries(outputs).isEmpty, "a silent device was not retried")
-    Check.equal(f.engine.state, .quiet, "a silent device was reported to the user")
+    Check.equal(f.session.state, .quiet, "a silent device was reported to the user")
 }
 
 private func testProtocolErrorDropsConnection() throws {
@@ -983,8 +762,15 @@ private func testFailedWriteDropsConnection() throws {
     Check.that(outputs.contains(.closeChannels), "a failed write kept the connection")
     Check.that(!f.retries(outputs).isEmpty, "a failed write did not reconnect")
 
+    /* The core takes the failure, not the sentence — there is no field on
+       `dh_helper_transport_failed` for one. So the reason only reaches the log
+       if the binding carries it there itself, and a log that says "transport
+       failed" without saying how is the log that hid #93 for two days. */
+    Check.that(f.notes(outputs).contains { $0.contains("report write failed") },
+               "the transport's own reason never reached the log")
+
     /* And the session is gone: no heartbeat into a desynchronised reader. */
-    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval * 3)), [],
                 "kept beating after the connection was dropped")
 }
 
@@ -996,9 +782,9 @@ private func testMismatchedHelperDoesNotBeat() throws {
     f.send(.channelsAcquired(count: 1))
     f.send(try f.helloRefused(.versionIncompatible, version: 3))
 
-    Check.equal(try f.sentFrames(f.advance(SessionEngine.heartbeatInterval * 3)), [],
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval * 3)), [],
                 "beat at a device that had refused the session")
-    Check.equal(f.engine.state, .versionIncompatible, "the state did not survive the ticks")
+    Check.equal(f.session.state, .versionIncompatible, "the state did not survive the ticks")
 
     /* An unpaired helper is the opposite case: it is deliberately live and
        keeps asking, because the window can only provision a helper that is
@@ -1008,7 +794,7 @@ private func testMismatchedHelperDoesNotBeat() throws {
     unpaired.send(.channelsAcquired(count: 1))
     unpaired.send(try unpaired.helloRefused(.unpaired))
 
-    let types = try unpaired.sentFrames(unpaired.advance(SessionEngine.heartbeatInterval))
+    let types = try unpaired.sentFrames(unpaired.advance(HelperSession.heartbeatInterval))
         .map(\.type)
     Check.that(types.contains(MessageType.pairRequest),
                "an unpaired helper never asked to be paired")
@@ -1022,13 +808,13 @@ private func testBriefDisappearanceIsSilent() throws {
 
     Check.equal(f.states(f.send(.deviceDisappeared)), [],
                 "the user was told the moment the device blinked")
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow / 2)), [], "told too early")
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow / 2)), [], "told too early")
 
     /* Back before the window closes: the user never learns it happened. */
     Check.equal(f.states(f.send(.deviceAppeared(.normal))), [],
                 "the device returning was itself an announcement")
-    Check.equal(f.engine.state, .connected, "a brief disappearance changed the reported state")
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 2)), [],
+    Check.equal(f.session.state, .connected, "a brief disappearance changed the reported state")
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow * 2)), [],
                 "a state deferred before the device returned was still reported")
 }
 
@@ -1036,7 +822,7 @@ private func testLongAbsenceIsReported() throws {
     let f = Fixture()
     try f.establishSession()
     f.send(.deviceDisappeared)
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceAbsent],
                 "a device gone for good was never reported")
 }
 
@@ -1044,15 +830,15 @@ private func testStartingWithNoDevice() throws {
     /* A LaunchAgent runs at login, which may well be before the device is
        attached — so the same silence applies before anything is said. */
     let f = Fixture()
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow / 2)), [],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow / 2)), [],
                 "told the user before waiting out the silence window")
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceAbsent],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceAbsent],
                 "a helper that never saw a device said nothing at all")
 
     /* And it stops saying it the moment one turns up. */
     f.send(.deviceAppeared(.normal))
-    Check.equal(f.engine.state, .quiet, "the absence outlived the device arriving")
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 2)), [],
+    Check.equal(f.session.state, .quiet, "the absence outlived the device arriving")
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow * 2)), [],
                 "the absence was reported again after the device arrived")
 }
 
@@ -1062,18 +848,18 @@ private func testConfigModeIsDistinct() throws {
 
     Check.equal(f.states(f.send(.deviceAppeared(.configMode))), [],
                 "config mode is something the user did — say nothing at first")
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceInConfigMode],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceInConfigMode],
                 "the config-mode identity was never reported")
-    Check.unequal(f.engine.state, .deviceAbsent,
+    Check.unequal(f.session.state, .deviceAbsent,
                   "seeing the config-mode identity was reported as an absent device")
-    Check.that(!f.engine.state.promptsConfigChord, "config mode prompted the chord")
+    Check.that(!f.session.state.promptsConfigChord, "config mode prompted the chord")
 
     /* And it keeps saying so. Config mode lasts as long as the user leaves
        it — up to minutes — so being right for five seconds is not being
        right. */
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow * 4)), [],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow * 4)), [],
                 "config mode was reported and then replaced by something else")
-    Check.equal(f.engine.state, .deviceInConfigMode, "config mode did not survive the ticks")
+    Check.equal(f.session.state, .deviceInConfigMode, "config mode did not survive the ticks")
 }
 
 /*
@@ -1088,10 +874,10 @@ private func testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode() thr
     f.send(.deviceAppeared(.configMode))
 
     /* Silent at first, exactly as a device that blinks is. */
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow / 2)), [],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow / 2)), [],
                 "config mode was announced before the window closed")
 
-    Check.equal(f.states(f.advance(SessionEngine.silenceWindow)), [.deviceInConfigMode],
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceInConfigMode],
                 "config mode was never reported")
 
     /* The tick right after the deferred state fired is where this broke:
@@ -1102,7 +888,7 @@ private func testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode() thr
     var reported: [HelperState] = []
     for _ in 0..<40 { reported += f.states(f.advance(0.25)) }
     Check.equal(reported, [], "config mode decayed into another state while it was still on")
-    Check.equal(f.engine.state, .deviceInConfigMode,
+    Check.equal(f.session.state, .deviceInConfigMode,
                 "the user was told the device was not connected while it sat in config mode")
 }
 
@@ -1111,14 +897,14 @@ private func testConfigModeRoundTrip() throws {
     try f.establishSession()
 
     f.send(.deviceAppeared(.configMode))
-    _ = f.advance(SessionEngine.silenceWindow)
-    Check.equal(f.engine.state, .deviceInConfigMode, "config mode was not reported")
+    _ = f.advance(HelperSession.silenceWindow)
+    Check.equal(f.session.state, .deviceInConfigMode, "config mode was not reported")
 
     /* Config mode reboots back under the normal identity, minutes later. */
     f.now += 300
     let outputs = f.send(.deviceAppeared(.normal))
     Check.that(outputs.contains(.openChannels), "the helper did not re-acquire by itself")
-    Check.equal(f.engine.state, .quiet, "a stale state survived the device returning")
+    Check.equal(f.session.state, .quiet, "a stale state survived the device returning")
 
     f.send(.channelsAcquired(count: 1))
     Check.equal(f.states(f.send(try f.ack())), [.connected],
@@ -1145,7 +931,7 @@ private func testPairingRoundTrip() throws {
     f.send(.deviceAppeared(.normal))
     f.send(.channelsAcquired(count: 1))
     try f.becomeUnpaired()
-    Check.equal(f.engine.state, .notPaired, "the helper did not report being unpaired")
+    Check.equal(f.session.state, .notPaired, "the helper did not report being unpaired")
 
     /* The helper's request carries its public key — never a private half, and
        never a secret the board has to keep. */
@@ -1161,9 +947,12 @@ private func testPairingRoundTrip() throws {
     let frames = try f.sentFrames(outputs)
     Check.equal(frames.map(\.type), [MessageType.hello], "no fresh hello after being paired")
     guard let hello = frames.first else { return }
-    let key = try f.boardIdentity.deriveHelloKey(
-        boardPublicKey: f.helperIdentity.publicKey,
-        helperNonce: Hello.decode(body: unverifiedBody(hello)).helperNonce)
+    guard let key = try f.boardIdentity.helloKey(
+        peer: f.helperIdentity.publicKey,
+        helperNonce: Hello.decode(body: unverifiedBody(hello)).helperNonce) else {
+        Check.that(false, "the board could not derive a key against the hello it was sent")
+        return
+    }
     var counter = dh_auth_counter()
     dh_auth_counter_init(&counter)
     _ = Check.doesNotThrow("the hello after pairing was not authenticated under the granted key") {
@@ -1173,7 +962,7 @@ private func testPairingRoundTrip() throws {
     /* The device accepts it, and *that* is what the user sees. */
     Check.equal(f.states(f.send(try f.ack())), [.connected],
                 "pairing succeeded but the helper never confirmed it visibly")
-    Check.that(!f.engine.state.promptsConfigChord, "a paired helper still prompts the chord")
+    Check.that(!f.session.state.promptsConfigChord, "a paired helper still prompts the chord")
 }
 
 /*
@@ -1191,9 +980,12 @@ private func testPinnedBoardKeyAuthenticatesTheHello() throws {
 
     let paired = Fixture(paired: true)
     let pairedHello = try helloFrom(paired)
-    let pairedKey = try paired.boardIdentity.deriveHelloKey(
-        boardPublicKey: paired.helperIdentity.publicKey,
-        helperNonce: Hello.decode(body: unverifiedBody(pairedHello)).helperNonce)
+    guard let pairedKey = try paired.boardIdentity.helloKey(
+        peer: paired.helperIdentity.publicKey,
+        helperNonce: Hello.decode(body: unverifiedBody(pairedHello)).helperNonce) else {
+        Check.that(false, "the board could not derive a key against a paired helper's hello")
+        return
+    }
     var counter = dh_auth_counter()
     dh_auth_counter_init(&counter)
     _ = Check.doesNotThrow("a pinned board key did not authenticate the hello") {
@@ -1202,9 +994,12 @@ private func testPinnedBoardKeyAuthenticatesTheHello() throws {
 
     let fresh = Fixture(paired: false)
     let freshHello = try helloFrom(fresh)
-    let freshKey = try fresh.boardIdentity.deriveHelloKey(
-        boardPublicKey: fresh.helperIdentity.publicKey,
-        helperNonce: Hello.decode(body: unverifiedBody(freshHello)).helperNonce)
+    guard let freshKey = try fresh.boardIdentity.helloKey(
+        peer: fresh.helperIdentity.publicKey,
+        helperNonce: Hello.decode(body: unverifiedBody(freshHello)).helperNonce) else {
+        Check.that(false, "the board could not derive a key against a fresh helper's hello")
+        return
+    }
     var freshCounter = dh_auth_counter()
     dh_auth_counter_init(&freshCounter)
     var verified = true
@@ -1230,14 +1025,14 @@ private func testUnpairedRefusalKeepsThePin() throws {
     f.send(.channelsAcquired(count: 1))
 
     f.send(try f.helloRefused(.unpaired))
-    Check.equal(f.engine.state, .notPaired, "the refusal did not leave the helper unpaired")
+    Check.equal(f.session.state, .notPaired, "the refusal did not leave the helper unpaired")
 
     /* The pin is still there, and it is what a different board is measured
        against: a grant from something else is refused, not accepted. */
     _ = f.advance(0)
-    let other = try SoftwareIdentity(privateKey: [UInt8](0x41...0x60))
+    let other = keyPair(0x41...0x60)
     f.send(try f.pairGrant(key: other.publicKey))
-    Check.equal(f.engine.state, .boardIdentityChanged,
+    Check.equal(f.session.state, .boardIdentityChanged,
                 "the refusal dropped the pin, so a different board was accepted silently")
 }
 
@@ -1261,17 +1056,17 @@ private func testABoardWhoseKeyChangedIsNotSilentlyAccepted() throws {
     _ = f.advance(0)
 
     /* The chord is pressed, and what answers grants a different identity. */
-    let other = try SoftwareIdentity(privateKey: [UInt8](0x41...0x60))
+    let other = keyPair(0x41...0x60)
     let outputs = f.send(try f.pairGrant(key: other.publicKey))
 
     Check.that(!outputs.contains(where: {
         if case .storeBoardKey = $0 { return true } else { return false }
     }), "a different board's key was pinned without a word")
-    Check.equal(f.engine.state, .boardIdentityChanged,
+    Check.equal(f.session.state, .boardIdentityChanged,
                 "a board with a new identity key was accepted as the paired one")
-    Check.that(!f.engine.state.promptsConfigChord,
+    Check.that(!f.session.state.promptsConfigChord,
                "a changed board identity prompted the chord — pressing it is what accepts it")
-    Check.that(!f.engine.state.allowsBulkTransfers,
+    Check.that(!f.session.state.allowsBulkTransfers,
                "a board that may not be ours would carry bulk")
     Check.equal(try f.sentFrames(outputs), [], "a different board's grant restarted the handshake")
 
@@ -1287,7 +1082,7 @@ private func testABoardWhoseKeyChangedIsNotSilentlyAccepted() throws {
 
 /* A grant arriving after the connection was dropped must not restart a
    handshake down a channel that is closed: the hello would go nowhere and the
-   engine would sit in awaitingAck until it timed out, on top of a
+   machine would sit awaiting an ack until it timed out, on top of a
    reconnection already scheduled. */
 private func testGrantOutsideSessionIgnored() throws {
     let f = Fixture()
@@ -1304,38 +1099,6 @@ private func testGrantOutsideSessionIgnored() throws {
 
 // MARK: - Reconnection
 
-private func testBackoffIsCapped() throws {
-    let f = Fixture()
-    var delays: [TimeInterval] = []
-    f.send(.deviceAppeared(.normal))
-    for _ in 0..<10 {
-        delays += f.retries(f.send(.acquisitionRefused(acquired: 0, of: 1)))
-    }
-
-    Check.equal(delays.count, 10, "not every refusal produced a retry")
-    Check.that(zip(delays, delays.dropFirst()).allSatisfy { $0 <= $1 },
-               "the delay did not grow monotonically: \(delays)")
-    Check.that((delays.last ?? 0) > (delays.first ?? 0), "the delay never grew at all")
-    Check.that((delays.max() ?? 0) <= 5,
-               "the backoff is not capped at a few seconds: \(delays)")
-}
-
-private func testWorkingSessionResetsBackoff() throws {
-    let f = Fixture()
-    f.send(.deviceAppeared(.normal))
-    var delays: [TimeInterval] = []
-    for _ in 0..<5 { delays += f.retries(f.send(.acquisitionRefused(acquired: 0, of: 1))) }
-    Check.equal(delays.max(), delays.last, "the delay did not grow before the session")
-
-    f.send(.channelsAcquired(count: 1))
-    f.send(try f.ack())
-    f.send(.deviceDisappeared)
-    f.send(.deviceAppeared(.normal))
-
-    Check.equal(f.retries(f.send(.acquisitionRefused(acquired: 0, of: 1))).first, delays.first,
-                "a working session did not reset the reconnection delay")
-}
-
 /*
  * The defect #94 was opened for. A helper too old to decode a frame the
  * device had started sending tore the connection down and rebuilt it about
@@ -1350,20 +1113,20 @@ private func testRepeatedReconnectionIsNotReportedAsConnected() throws {
     let f = Fixture()
     try f.establishSession()
 
-    for _ in 0..<(SessionEngine.reconnectLimit - 1) { try f.dropAndReconnect() }
-    Check.equal(f.engine.state, .connected,
+    for _ in 0..<(HelperSession.reconnectLimit - 1) { try f.dropAndReconnect() }
+    Check.equal(f.session.state, .connected,
                 "a couple of reconnections is an ordinary recovery, not a fault")
 
     /* The rate itself goes in the log, where the operator finds it. */
     Check.that(f.notes(try f.dropAndReconnect()).contains { $0.contains("reconnections") },
                "the measurement behind the state was never recorded")
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
-                "a connection rebuilt \(SessionEngine.reconnectLimit) times in a few seconds "
+    Check.equal(f.session.state, .reconnectingRepeatedly,
+                "a connection rebuilt \(HelperSession.reconnectLimit) times in a few seconds "
                 + "went on reading as connected")
-    Check.that(!f.engine.state.promptsConfigChord,
+    Check.that(!f.session.state.promptsConfigChord,
                "a connection being rebuilt prompted the chord: the chord provisions whoever is "
                + "connected, and this helper barely is")
-    Check.that(f.engine.canSendBulk,
+    Check.that(f.session.canSendBulk,
                "reporting the rate also revoked the session — this is what the user is told, "
                + "not what the session may carry")
 
@@ -1372,7 +1135,7 @@ private func testRepeatedReconnectionIsNotReportedAsConnected() throws {
        and a line per cycle is the log that hid it (#94). */
     var reported: [HelperState] = []
     var recorded: [String] = []
-    for _ in 0..<SessionEngine.reconnectLimit {
+    for _ in 0..<HelperSession.reconnectLimit {
         let outputs = try f.dropAndReconnect()
         reported += f.states(outputs)
         recorded += f.notes(outputs)
@@ -1389,14 +1152,14 @@ private func testAFlappingLinkIsTheSameReading() throws {
     let f = Fixture()
     try f.establishSession()
 
-    for _ in 0..<SessionEngine.reconnectLimit {
+    for _ in 0..<HelperSession.reconnectLimit {
         f.send(.deviceDisappeared)
         _ = f.advance(0.5)
         f.send(.deviceAppeared(.normal))
         try f.reacquire()
     }
 
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
+    Check.equal(f.session.state, .reconnectingRepeatedly,
                 "a link re-enumerating once a second went on reading as connected")
 }
 
@@ -1416,11 +1179,11 @@ private func testAHandshakeThatNeverCompletesIsReported() throws {
     try f.establishSession()
 
     /* Acquire, hello, no answer, timeout, and round again. */
-    for _ in 0..<SessionEngine.reconnectLimit {
+    for _ in 0..<HelperSession.reconnectLimit {
         f.send(.channelsAcquired(count: 1))
-        _ = f.advance(SessionEngine.helloTimeout)
+        _ = f.advance(HelperSession.helloTimeout)
     }
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
+    Check.equal(f.session.state, .reconnectingRepeatedly,
                 "a helper that never got past hello went on reading as connected")
 
     /* And from a standing start, where there is no stale `connected` to
@@ -1428,11 +1191,11 @@ private func testAHandshakeThatNeverCompletesIsReported() throws {
        all is the reading that sent someone looking at the wrong thing. */
     let fresh = Fixture()
     fresh.send(.deviceAppeared(.normal))
-    for _ in 0..<SessionEngine.reconnectLimit {
+    for _ in 0..<HelperSession.reconnectLimit {
         fresh.send(.channelsAcquired(count: 1))
-        _ = fresh.advance(SessionEngine.helloTimeout)
+        _ = fresh.advance(HelperSession.helloTimeout)
     }
-    Check.equal(fresh.engine.state, .reconnectingRepeatedly,
+    Check.equal(fresh.session.state, .reconnectingRepeatedly,
                 "a helper that never once got a session reported nothing at all")
 }
 
@@ -1460,13 +1223,13 @@ private func testAStuckHandshakeStillAsksToBePaired() throws {
 
     /* The board says nothing at all, however many times it is asked. */
     var asked = 0
-    for _ in 0..<(SessionEngine.reconnectLimit * 2) {
+    for _ in 0..<(HelperSession.reconnectLimit * 2) {
         asked += try f.sentFrames(f.send(.channelsAcquired(count: 1)))
             .filter { $0.type == MessageType.pairRequest }.count
-        _ = f.advance(SessionEngine.helloTimeout)
+        _ = f.advance(HelperSession.helloTimeout)
     }
 
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
+    Check.equal(f.session.state, .reconnectingRepeatedly,
                 "a handshake that never completes was not reported")
     Check.that(asked >= 1,
                "a helper looping on an unanswerable hello never asked to be paired, so the "
@@ -1483,7 +1246,7 @@ private func testAStuckHandshakeStillAsksToBePaired() throws {
        ages back to connected once the link holds, which
        `testAConnectionThatHoldsGoesBackToConnected` covers. */
     f.send(try f.ack())
-    Check.that(f.engine.canSendBulk,
+    Check.that(f.session.canSendBulk,
                "pairing did not recover the helper from the stuck handshake")
 }
 
@@ -1497,9 +1260,9 @@ private func testAnOccasionalReconnectionIsAnOrdinaryRecovery() throws {
     try f.establishSession()
 
     /* Well past the count, spread past the window. */
-    for _ in 0..<(SessionEngine.reconnectLimit * 3) {
-        try f.dropAndReconnect(after: SessionEngine.reconnectWindow)
-        Check.equal(f.engine.state, .connected,
+    for _ in 0..<(HelperSession.reconnectLimit * 3) {
+        try f.dropAndReconnect(after: HelperSession.reconnectWindow)
+        Check.equal(f.session.state, .connected,
                     "an occasional reconnection was reported as a connection that will not hold")
     }
 }
@@ -1509,8 +1272,8 @@ private func testAnOccasionalReconnectionIsAnOrdinaryRecovery() throws {
 private func testAConnectionThatHoldsGoesBackToConnected() throws {
     let f = Fixture()
     try f.establishSession()
-    for _ in 0..<SessionEngine.reconnectLimit { try f.dropAndReconnect() }
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
+    for _ in 0..<HelperSession.reconnectLimit { try f.dropAndReconnect() }
+    Check.equal(f.session.state, .reconnectingRepeatedly,
                 "the repeated rebuilding was never reported")
 
     /* The device beats all the while, so the only thing that changes is the
@@ -1518,16 +1281,202 @@ private func testAConnectionThatHoldsGoesBackToConnected() throws {
     var reported: [HelperState] = []
     func hold(_ seconds: Int) throws {
         for _ in 0..<seconds {
-            reported += f.states(f.advance(SessionEngine.heartbeatInterval))
+            reported += f.states(f.advance(HelperSession.heartbeatInterval))
             f.send(try f.deviceFrame(MessageType.deviceHeartbeat))
         }
     }
 
-    try hold(Int(SessionEngine.reconnectWindow / 2))
-    Check.equal(f.engine.state, .reconnectingRepeatedly,
+    try hold(Int(HelperSession.reconnectWindow / 2))
+    Check.equal(f.session.state, .reconnectingRepeatedly,
                 "the state cleared before the window it is measured over had passed")
 
-    try hold(Int(SessionEngine.reconnectWindow / 2) + 2)
+    try hold(Int(HelperSession.reconnectWindow / 2) + 2)
     Check.equal(reported, [.connected],
                 "a connection that then held for the whole window did not go back to connected")
+}
+
+// MARK: - The seam itself
+
+/*
+ * The one place the binding can drift silently. `HelperState` pairs with
+ * `dh_helper_state` by raw value rather than by a switch, so a state renumbered
+ * in the core would quietly become a different state here — the user would be
+ * shown the wrong sentence, and `promptsConfigChord` would answer for the
+ * wrong case, which is the #34 property.
+ *
+ * The two predicates are read off the core deliberately (`dh_helper.h` says
+ * why: the chord provisions whatever is attached during its window, so a
+ * second helper must not get to re-decide it). What is asserted here is that
+ * each answer arrives against the state it was meant for, and that every state
+ * the user can be shown has words.
+ */
+private func testEveryStateCrossesTheSeamIntact() throws {
+    let pairing: [(HelperState, dh_helper_state)] = [
+        (.quiet, DH_HELPER_QUIET),
+        (.connected, DH_HELPER_CONNECTED),
+        (.reconnectingRepeatedly, DH_HELPER_RECONNECTING_REPEATEDLY),
+        (.notPaired, DH_HELPER_NOT_PAIRED),
+        (.deviceInConfigMode, DH_HELPER_DEVICE_IN_CONFIG_MODE),
+        (.deviceAbsent, DH_HELPER_DEVICE_ABSENT),
+        (.versionIncompatible, DH_HELPER_VERSION_INCOMPATIBLE),
+        (.listenerDetected, DH_HELPER_LISTENER_DETECTED),
+        (.boardIdentityChanged, DH_HELPER_BOARD_IDENTITY_CHANGED),
+    ]
+    Check.equal(pairing.count, HelperState.allCases.count,
+                "a state was added without being paired with the core's")
+
+    for (swift, core) in pairing {
+        Check.equal(swift.rawValue, core.rawValue, "\(swift) is not the core's \(core.rawValue)")
+        Check.equal(swift.promptsConfigChord, dh_helper_prompts_config_chord(core),
+                    "\(swift) answers the chord question against the wrong state")
+        Check.equal(swift.allowsBulkTransfers, dh_helper_allows_bulk(core),
+                    "\(swift) answers the bulk question against the wrong state")
+
+        /* Every state but `quiet` is something to say. `quiet` is the one that
+           says nothing on purpose: a device that blinks is ordinary. */
+        if swift == .quiet {
+            Check.that(swift.message == nil, "quiet put something in the menu bar")
+        } else {
+            Check.that(!(swift.message ?? "").isEmpty, "\(swift) has no words")
+        }
+    }
+
+    /* The chord, from exactly one state — the rule #34 buys. */
+    Check.equal(HelperState.allCases.filter(\.promptsConfigChord), [.notPaired],
+                "the chord is offered from somewhere other than an unpaired helper")
+
+    /* And the two that must warn against it say so in words, not only by
+       withholding the prompt (#38): a user who has heard "press the chord"
+       once will press it again unless told not to. */
+    let listener = HelperState.listenerDetected.message ?? ""
+    Check.that(listener.lowercased().contains("do not press the config chord"),
+               "a detected listener does not warn off the chord")
+    let swapped = HelperState.boardIdentityChanged.message ?? ""
+    Check.that(swapped.contains("remove the pinned board key"),
+               "a swapped board names no remedy the user can actually reach")
+}
+
+/*
+ * The first of the two defects the Swift machine took to its grave (#81).
+ *
+ * It used to clear the deferred report on the way *into* an acquisition and
+ * never re-arm it when the hello could not be built, and it recorded no drop
+ * either — so an enclave that would not answer, or a stored board key that is
+ * not a point on the curve, left the menu bar showing a working helper over a
+ * dead device, for ever. `dh_helper` clears the deferral only once the hello
+ * exists, and this is the binding's check that it still does.
+ */
+private func testAHelloThatCannotBeBuiltIsStillReported() throws {
+    let session = HelperSession(identity: RefusingIdentity(),
+                                boardPublicKey: keyPair(0x21...0x40).publicKey,
+                                entropy: { count in [UInt8](repeating: 0x7C, count: count) })
+    var now: TimeInterval = 1000
+
+    /* The device is seen first, deliberately. Without that the "nothing was
+       ever attached" fallback would report the absence on its own, and this
+       test would pass whatever the deferral did. */
+    _ = session.handle(.deviceAppeared(.normal), at: now)
+
+    let opened = session.handle(.channelsAcquired(count: 1), at: now)
+    Check.that(opened.contains(.closeChannels), "a channel nothing can be said down was kept")
+    Check.that(!opened.contains(where: { if case .send = $0 { return true } else { return false } }),
+               "something went out under a key that cannot be derived")
+    Check.that(opened.contains(where: {
+        if case .note(let note) = $0 { return note.contains("not a point on the curve") }
+        return false
+    }), "the log does not say why the hello could not be built")
+
+    /* It keeps failing, and the retry cadence must not push the report out for
+       ever: the backoff caps below the silence window on purpose. */
+    var reported: [HelperState] = []
+    for _ in 0..<10 {
+        now += HelperSession.backoffCap
+        reported += session.handle(.channelsAcquired(count: 1), at: now)
+            .compactMap { if case .state(let s) = $0 { return s } else { return nil } }
+        reported += session.handle(.tick, at: now)
+            .compactMap { if case .state(let s) = $0 { return s } else { return nil } }
+    }
+    Check.equal(reported, [.deviceAbsent],
+                "a device that could never be used said nothing at all, or said it over and over")
+}
+
+/*
+ * The second one. `pairingRequestedAt` was set to nil on success but never
+ * *tested*, and the correlation guard could not stand in for it — the second
+ * copy of a grant carries the value this helper really did ask with.
+ *
+ * Replayed two seconds into the session it produced, it re-pinned the key,
+ * sent a fresh hello and dropped the session, while the menu bar still read
+ * *Connected and paired*. `dh_helper` requires a request to be outstanding.
+ */
+private func testAGrantNobodyAskedForIsIgnored() throws {
+    let f = Fixture(paired: false)
+    f.send(.deviceAppeared(.normal))
+    f.send(.channelsAcquired(count: 1))
+    try f.becomeUnpaired()
+
+    /* The chord lands. The grant is kept, because the point is what happens
+       when the *same* one arrives twice. */
+    let grant = try f.pairGrant()
+    Check.that(f.send(grant).contains(.storeBoardKey(f.boardIdentity.publicKey)),
+               "the genuine grant did not pair the helper")
+    f.send(try f.ack())
+    Check.equal(f.session.state, .connected, "pairing did not end in a session")
+
+    /* Two seconds later, the same bytes again. */
+    _ = f.advance(2)
+    let outputs = f.send(grant)
+
+    Check.that(f.session.canSendBulk, "a repeated grant tore down the live session")
+    Check.equal(f.session.state, .connected,
+                "a repeated grant changed what the user is told about a session that is fine")
+    Check.that(!outputs.contains(where: {
+        if case .storeBoardKey = $0 { return true } else { return false }
+    }), "a repeated grant re-pinned the board key")
+    Check.equal(try f.sentFrames(outputs), [], "a repeated grant sent a fresh hello")
+}
+
+/*
+ * The seam #52 consumes. The counter space belongs to the session key, and the
+ * heartbeat is already writing into it — so the frames are built here rather
+ * than by a platform keeping a counter of its own beside it. Two writers in one
+ * space means the board refuses whichever frame loses the race, silently, at
+ * the far end, with nothing at either end able to say why.
+ *
+ * The board's own check is the assertion: `openFromHelper` consumes the
+ * counter, so a reused one fails on the next call.
+ */
+private func testBulkGoesOutUnderTheSessionsCounter() throws {
+    /* A bulk type the core routes and this machine does not decide anything
+       about — exactly what #52 will be handing it. */
+    let clipChunk = UInt8(DH_MSG_CLIP_CHUNK.rawValue)
+
+    let f = Fixture()
+    Check.that(f.session.emit(type: clipChunk, body: [1, 2, 3]) == nil,
+               "a frame was tagged with no session to carry it")
+
+    try f.establishSession()
+    for i: UInt8 in 0..<2 {
+        guard let bytes = f.session.emit(type: clipChunk, body: [1, 2, 3, i]) else {
+            Check.that(false, "a live session would not build a bulk frame")
+            return
+        }
+        let frame = try FrameCodec.decode(bytes).frame
+        Check.equal(frame.type, clipChunk, "the frame is not the one that was asked for")
+        Check.equal(try f.openFromHelper(frame), [1, 2, 3, i],
+                    "the board refused a bulk frame this session built")
+        f.session.noteSent(at: f.now)
+    }
+
+    /* ADR-0004: the transfer filled the direction, so no beat is owed — and
+       the machine only knows that because the platform said the frame went. */
+    Check.equal(try f.sentFrames(f.advance(HelperSession.heartbeatInterval * 0.9)), [],
+                "beat into a direction carrying a transfer")
+
+    /* And the beat that does follow keeps the counter moving forwards. */
+    let frames = try f.sentFrames(f.advance(HelperSession.heartbeatInterval))
+    Check.equal(frames.map(\.type), [MessageType.heartbeat], "no beat once the direction went idle")
+    guard let beat = frames.first else { return }
+    Check.equal(try f.openFromHelper(beat), [],
+                "the beat reused a counter the transfer had already spent")
 }

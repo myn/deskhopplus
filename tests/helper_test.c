@@ -295,6 +295,35 @@ static void pump(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     answer_all(h, &produced, now_ms, o);
 }
 
+/*
+ * A device→helper frame under the *published* k_b2h, at the next counter in
+ * that space. One counter for the whole file, never reset: a receiver refuses
+ * anything not strictly greater, and a counter that only rises is accepted
+ * across a fresh handshake as readily as within one.
+ *
+ * Deliberately not mixed with `pump` in a single test. That drives the real
+ * `dh_session`, which writes into this same counter space under the same key —
+ * two writers, and the helper would refuse whichever frame lost the race.
+ */
+static uint64_t board_counter = 1;
+
+/*
+ * The published helper nonce, armed again. A second handshake in one test
+ * draws a fresh nonce, so without this the session keys it derives are not the
+ * published ones and `board_frame` builds something the helper is right to
+ * refuse.
+ */
+static void republish_the_helper_nonce(void) {
+    reset_entropy();
+    script_draw(published_helper_nonce, DH_NONCE_SIZE);
+}
+
+static bool board_frame(uint8_t type, const uint8_t *body, size_t body_len, uint8_t *out,
+                        size_t cap, size_t *out_len) {
+    return dh_auth_frame(type, 0, k_b2h, board_counter++, body, body_len, out, cap, out_len) ==
+           DH_FRAME_OK;
+}
+
 /* ------------------------------------------------------------ output digging */
 
 static dh_helper_outputs out;
@@ -1298,6 +1327,364 @@ static void test_the_machine_owns_the_counter_bulk_goes_out_under(void) {
           name, "a frame was tagged with no session");
 }
 
+/*
+ * ADR-0004 gates the device's beat on an idle direction, so beats stopping
+ * during a transfer is the design working — and it looks identical in a log to
+ * a device that has stalled. #88 had to tell those apart on hardware, and the
+ * helper had no surface for it at all: the beat arrived and was dropped on the
+ * floor.
+ *
+ * Traced at the edges rather than per beat. A line per arrival would be a line
+ * a second, which is precisely the log that hid a live defect for two days
+ * during that sitting (#94, #98).
+ */
+static void test_the_device_beat_is_traced_where_it_changes(void) {
+    const char *name = "the device beat is traced where it changes";
+    dh_helper h;
+    a_live_session(&h);
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+
+    /* The first beat says so, so "the beat never arrived" is distinguishable
+       from "the beat was never worth mentioning". */
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 0, &out);
+    CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
+          "the first beat of a session was not traced as the first");
+
+    /* On time, it says nothing. */
+    uint32_t t = 0;
+    for (unsigned i = 0; i < 5; i++) {
+        t += DH_SESSION_HEARTBEAT_MS;
+        dh_helper_outputs_reset(&out);
+        CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+              "the beat would not encode");
+        dh_helper_received(&h, frame, len, t, &out);
+        CHECK(count_of(&out, DH_HELPER_OUT_NOTE) == 0, name, "a beat arriving on time was traced");
+        no_overflow(name);
+    }
+    const uint32_t last_beat = t;
+
+    /*
+     * A transfer: the device keeps sending, so the session holds while the
+     * idle-gated beat correctly stops. The placement frames are what keep
+     * liveness up — they authenticate, so they are liveness, which is the
+     * whole of ADR-0004.
+     */
+    const uint8_t place[4] = {1, 0, 0, 0x80};
+    unsigned quiet_notes = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        t += DH_SESSION_HEARTBEAT_MS;
+        dh_helper_outputs_reset(&out);
+        dh_helper_tick(&h, t, &out);
+        if (saw_note(&out, DH_NOTE_BEAT_QUIET)) quiet_notes++;
+        CHECK(board_frame(DH_MSG_PLACE, place, sizeof place, frame, sizeof frame, &len), name,
+              "the placement would not encode");
+        dh_helper_received(&h, frame, len, t, &out);
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_CONNECTED, name, "a transfer without beats dropped the session");
+    CHECK(quiet_notes == 1, name, "the beat falling silent was not traced exactly once");
+
+    /* And the far side of it, with the measurement attached — a note that says
+       a gap without saying how long it was is the note #94 cost two days to. */
+    t += DH_SESSION_HEARTBEAT_MS;
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, t, &out);
+
+    const dh_helper_output *resumed = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_BEAT_RESUMED)
+            resumed = &out.items[i];
+    CHECK(resumed != NULL, name, "the beat coming back was not traced");
+    CHECK(resumed != NULL && (uint32_t)resumed->a == t - last_beat, name,
+          "the resumption was traced without saying how long the gap was");
+    no_overflow(name);
+}
+
+/*
+ * The trace is measured inside one session and must not outlive it.
+ *
+ * A config-mode round trip is the common path that proves it: the board leaves
+ * under its other identity for minutes, which is `device_left` and not
+ * `drop_connection`, and a beat remembered from before the chord makes both
+ * edges of the next session wrong — a "quiet for 300.0s" about a session one
+ * tick old, and a genuine first beat announcing itself as a resumption (#98).
+ *
+ * The tail of the old session is the other half: a beat still in the read queue
+ * when the connection went used to announce the first beat of a session that
+ * does not exist, and then swallow the real one.
+ */
+static void test_the_beat_trace_does_not_outlive_its_session(void) {
+    const char *name = "the beat trace does not outlive its session";
+    dh_helper h;
+    a_live_session(&h);
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 0, &out);
+
+    /* The chord: config mode, minutes away, then back as itself. */
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_CONFIG_MODE, 1000, &out);
+    dh_helper_tick(&h, 6000, &out);
+    CHECK(h.state == DH_HELPER_DEVICE_IN_CONFIG_MODE, name, "config mode was not reported");
+
+    republish_the_helper_nonce();
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 300000, &out);
+    dh_helper_channels_acquired(&h, 1, 300000, &out);
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 300000, &out);
+    CHECK(h.state == DH_HELPER_CONNECTED, name, "the session did not come back");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, 300250, &out);
+    CHECK(!saw_note(&out, DH_NOTE_BEAT_QUIET), name,
+          "a quiet spell measured before the chord outlived the session it belonged to");
+
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 300250, &out);
+    CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
+          "the first beat after a config-mode round trip was not traced as the first");
+    no_overflow(name);
+
+    /* And a beat that arrives after the connection has gone. Under v2 it is
+       refused a step earlier, at the tag — the session key went with the
+       session — but the property is unchanged: it must not consume the next
+       session's first. */
+    a_live_session(&h);
+    uint8_t stray[DH_FRAME_MAX_SIZE];
+    size_t stray_len = 0;
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, stray, sizeof stray, &stray_len), name,
+          "the beat would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_transport_failed(&h, 100, &out);
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, stray, stray_len, 200, &out);
+    CHECK(saw_note(&out, DH_NOTE_NO_SESSION_KEY), name,
+          "a beat outside a session was acted on rather than refused");
+    CHECK(!saw_note(&out, DH_NOTE_FIRST_BEAT), name,
+          "a beat outside a session announced the first beat of one");
+
+    republish_the_helper_nonce();
+    dh_helper_outputs_reset(&out);
+    dh_helper_channels_acquired(&h, 1, 300, &out);
+    acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 300, &out);
+
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 400, &out);
+    CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
+          "the stale beat consumed the new session's first");
+    no_overflow(name);
+}
+
+/*
+ * The same leak on the pairing path, which the machine reaches without ever
+ * going idle. A HELLO_REFUSED(unpaired) ends the session while deliberately
+ * keeping the phase live — #46 needs the helper up and asking — so it is the
+ * one place where losing a session is not going quiet, and the one a teardown
+ * keyed on the phase steps straight past.
+ *
+ * While it waits, it must trace nothing: the board holds no session for it and
+ * so sends it nothing by design, and tracing the absence of beats that are not
+ * supposed to exist is noise in the log the trace exists to keep readable.
+ */
+static void test_the_beat_trace_starts_afresh_after_a_hello_is_refused(void) {
+    const char *name = "the beat trace starts afresh after a hello is refused";
+    dh_helper h;
+    a_live_session(&h);
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 0, &out);
+
+    /* The link goes, and this time the board has forgotten the registration. */
+    dh_helper_outputs_reset(&out);
+    dh_helper_transport_failed(&h, 100, &out);
+    dh_pair_init(&pairing);
+    (void)dh_pair_set_identity(&pairing, board_private);
+    dh_session_init(&board, DH_BUILD_RELEASE);
+    dh_session_stage_nonce(&board, published_board_nonce);
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_channels_acquired(&h, 1, 200, &out);
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 200, &out);
+    CHECK(h.state == DH_HELPER_NOT_PAIRED, name, "the refused hello did not leave it unpaired");
+
+    /* Nothing is traced while it waits. */
+    for (uint32_t t = 1000; t <= 9000; t += 1000) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_tick(&h, t, &out);
+        CHECK(!saw_note(&out, DH_NOTE_BEAT_QUIET), name,
+              "an unpaired helper traced beats the device is designed not to send it");
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_NOT_PAIRED, name, "the unpaired helper was torn down");
+
+    /* The chord lands. 11000 is where the next ask is due — the retry interval
+       is 2 s and the last one went out at 9000, so a window opened at 10000
+       would find nothing on the wire to grant. */
+    dh_pair_open_window(&pairing, 11000);
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, 11000, &out);
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no pairing request went out");
+
+    dh_helper_outputs asked = out;
+    republish_the_helper_nonce();
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &asked, 11000, &out);
+    dh_helper_outputs paired = out;
+    CHECK(first_of(&paired, DH_HELPER_OUT_STORE_BOARD_KEY) != NULL, name,
+          "the chord did not pin the board's key");
+
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &paired, 11000, &out);
+    CHECK(h.state == DH_HELPER_CONNECTED, name, "pairing did not establish a session");
+
+    dh_helper_outputs_reset(&out);
+    CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
+          "the beat would not encode");
+    dh_helper_received(&h, frame, len, 11100, &out);
+    CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
+          "the first beat of the session pairing established was not traced at all");
+    no_overflow(name);
+}
+
+/*
+ * The hello half of #108. An attacker who can write to the channel can produce
+ * a well-formed, correctly tagged ack — what it cannot produce is the random
+ * value this helper put in the question it is answering. A helper that acts on
+ * any ack it can verify is one an unrelated conversation can walk into a
+ * session with.
+ */
+static void test_an_ack_for_someone_elses_hello_is_dropped(void) {
+    const char *name = "an ack for someone else's hello is dropped";
+    dh_helper h;
+    a_helper_with_the_hello_sent(&h);
+
+    dh_hello_ack ack = {
+        .correlation = h.hello_correlation ^ 1u,
+        .proto_version = DH_PROTO_VERSION,
+        .build_type = DH_BUILD_RELEASE,
+        .channel_count = 1,
+        .max_chunk = 256,
+    };
+    memcpy(ack.board_nonce, published_board_nonce, DH_NONCE_SIZE);
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_hello_ack_encode(&ack, k_b2h, 0, frame, sizeof frame, &len) == DH_FRAME_OK, name,
+          "the ack would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+    CHECK(saw_note(&out, DH_NOTE_IGNORED_WRONG_CORRELATION), name, "the mismatch was not noted");
+    CHECK(h.state != DH_HELPER_CONNECTED, name, "an ack answering a different question connected");
+    CHECK(!dh_helper_can_send_bulk(&h), name, "a session built on somebody else's ack carries bulk");
+    no_overflow(name);
+
+    /*
+     * And the real answer still works. Dropping one must not poison the
+     * handshake still legitimately in flight — nor spend the counter, which is
+     * why the ack path verifies against a counter of its own and commits
+     * nothing until it has.
+     */
+    ack.correlation = h.hello_correlation;
+    CHECK(dh_hello_ack_encode(&ack, k_b2h, 0, frame, sizeof frame, &len) == DH_FRAME_OK, name,
+          "the genuine ack would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+    CHECK(h.state == DH_HELPER_CONNECTED, name,
+          "the genuine ack was refused after a forged one had been dropped");
+    no_overflow(name);
+}
+
+/*
+ * The same trap on the pairing path, which is the one #108 was opened for: a
+ * manufactured PAIR_GRANT arriving without any chord pins an attacker's key as
+ * the board's. The correlation value in this helper's own PAIR_REQUEST is the
+ * thing the attacker has to guess.
+ *
+ * The key offered is a real point on the curve, which ECDH would happily
+ * accept. The correlation is the only thing wrong with the grant, and it has to
+ * be enough on its own.
+ */
+static void test_a_grant_answering_someone_elses_request_is_dropped(void) {
+    const char *name = "a grant answering someone else's request is dropped";
+    an_identity();
+    an_unpaired_board();
+    reset_entropy();
+
+    dh_helper h;
+    dh_helper_init(&h, &identity, NULL);
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
+    dh_helper_channels_acquired(&h, 1, 0, &out);
+
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 0, &out);
+    CHECK(h.state == DH_HELPER_NOT_PAIRED, name, "the board did not say it was unpaired");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, 1000, &out);
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no pairing request went out");
+
+    dh_pair_grant grant = {.correlation = h.pair_correlation ^ 1u};
+    memcpy(grant.board_public, helper_public, DH_P256_PUBLIC_SIZE);
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_pair_grant_encode(&grant, frame, sizeof frame, &len) == DH_FRAME_OK, name,
+          "the grant would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 1000, &out);
+    CHECK(saw_note(&out, DH_NOTE_IGNORED_WRONG_CORRELATION), name, "the mismatch was not noted");
+    CHECK(count_of(&out, DH_HELPER_OUT_STORE_BOARD_KEY) == 0, name,
+          "a key nobody asked for was pinned as the board's");
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 0, name, "a manufactured grant restarted the "
+                                                          "handshake");
+    CHECK(h.state == DH_HELPER_NOT_PAIRED, name, "a manufactured grant paired the helper");
+    no_overflow(name);
+
+    /* The board's own grant, echoing what this helper asked, is acted on. */
+    grant.correlation = h.pair_correlation;
+    memcpy(grant.board_public, board_public, DH_P256_PUBLIC_SIZE);
+    CHECK(dh_pair_grant_encode(&grant, frame, sizeof frame, &len) == DH_FRAME_OK, name,
+          "the genuine grant would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 1000, &out);
+    CHECK(first_of(&out, DH_HELPER_OUT_STORE_BOARD_KEY) != NULL, name,
+          "the board's own grant was refused along with the forged one");
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no fresh hello after being paired");
+    no_overflow(name);
+}
+
 int main(int argc, char **argv) {
     const char *frames = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     const char *primitives = argc > 2 ? argv[2] : DH_PRIMITIVE_VECTORS;
@@ -1333,6 +1720,11 @@ int main(int argc, char **argv) {
     test_a_hello_that_cannot_be_built_is_still_reported();
     test_a_grant_nobody_asked_for_is_ignored();
     test_the_machine_owns_the_counter_bulk_goes_out_under();
+    test_the_device_beat_is_traced_where_it_changes();
+    test_the_beat_trace_does_not_outlive_its_session();
+    test_the_beat_trace_starts_afresh_after_a_hello_is_refused();
+    test_an_ack_for_someone_elses_hello_is_dropped();
+    test_a_grant_answering_someone_elses_request_is_dropped();
 
     if (failures) {
         printf("%d helper check(s) failed\n", failures);

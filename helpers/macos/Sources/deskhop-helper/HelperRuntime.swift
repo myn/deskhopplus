@@ -3,13 +3,14 @@ import Foundation
 import Security
 
 /*
- * The loop: transport events into the session engine, engine outputs back out
- * to the transport. Everything decided here is decided in SessionEngine; this
- * file only carries messages and owns the clock.
+ * The loop: transport events into the session, its outputs back out to the
+ * transport. Nothing here is decided here — every decision is the shared C
+ * core's, reached through HelperSession. This file carries messages, owns the
+ * clock, and turns an output into a log line.
  */
 final class HelperRuntime {
     private let secrets = SecretStore()
-    private let engine: SessionEngine
+    private let session: HelperSession
     private let transport = ChannelTransport()
 
     init() {
@@ -40,7 +41,7 @@ final class HelperRuntime {
 
         let boardKey = secrets.loadBoardKey()
 
-        engine = SessionEngine(
+        session = HelperSession(
             identity: identity, boardPublicKey: boardKey,
             entropy: { count in
                 var bytes = [UInt8](repeating: 0, count: count)
@@ -54,7 +55,7 @@ final class HelperRuntime {
     private static let started = ProcessInfo.processInfo.systemUptime
     private static let stamp = LogStamp()
 
-    /// The engine's tick — fine enough that a heartbeat is never late by much.
+    /// The session's tick — fine enough that a heartbeat is never late by much.
     static let tickInterval: TimeInterval = 0.25
 
     /*
@@ -74,7 +75,7 @@ final class HelperRuntime {
         return ProcessInfo.processInfo.systemUptime - origin
     }
 
-    /// The engine's clock, and the same origin the log's elapsed column counts from.
+    /// The session's clock, and the same origin the log's elapsed column counts from.
     private var now: TimeInterval { Self.elapsed }
 
     func run() {
@@ -91,7 +92,7 @@ final class HelperRuntime {
     }
 
     private func feed(_ input: SessionInput) {
-        for output in engine.handle(input, at: now) {
+        for output in session.handle(input, at: now) {
             apply(output)
         }
     }

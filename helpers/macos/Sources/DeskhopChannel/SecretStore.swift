@@ -42,23 +42,18 @@ public final class EnclaveIdentity: HelperIdentity {
         self.keyId = kid
     }
 
-    public func deriveHelloKey(boardPublicKey: [UInt8], helperNonce: [UInt8]) throws -> [UInt8] {
-        try checkNonce(helperNonce)
-        return deriveHelloKeyFromSharedSecret(try ecdh(boardPublicKey: boardPublicKey),
-                                              helperNonce: helperNonce)
-    }
-
-    public func deriveSessionKeys(boardPublicKey: [UInt8], helperNonce: [UInt8],
-                                  boardNonce: [UInt8]) throws -> (kH2B: [UInt8], kB2H: [UInt8]) {
-        try checkNonce(helperNonce)
-        try checkNonce(boardNonce)
-        return deriveSessionKeysFromSharedSecret(try ecdh(boardPublicKey: boardPublicKey),
-                                                 helperNonce: helperNonce, boardNonce: boardNonce)
-    }
-
-    private func ecdh(boardPublicKey: [UInt8]) throws -> [UInt8] {
-        let peerKey = try P256.KeyAgreement.PublicKey(rawRepresentation: boardPublicKey)
-        let ss = try enclaveKey.sharedSecretFromKeyAgreement(with: peerKey)
+    /*
+     * The one ECDH the enclave can do, which is the whole of what the shared
+     * core asks a platform for. `nil` rather than a thrown error, because the
+     * core's seam is a `bool`: a key the enclave will not agree against and a
+     * board key that is not a point on the curve are the same unusable device,
+     * and `dh_helper` reports both as one.
+     */
+    public func sharedSecret(with boardPublicKey: [UInt8]) -> [UInt8]? {
+        guard let peerKey = try? P256.KeyAgreement.PublicKey(rawRepresentation: boardPublicKey),
+              let ss = try? enclaveKey.sharedSecretFromKeyAgreement(with: peerKey) else {
+            return nil
+        }
         /*
          * The raw 32 bytes, not a CryptoKit-derived key: `SharedSecret` is
          * `ContiguousBytes` over the X coordinate of the agreed point, which
@@ -67,8 +62,8 @@ public final class EnclaveIdentity: HelperIdentity {
          * derivation rather than two that happen to agree.
          *
          * This equivalence is the one thing in the crypto path the host tests
-         * cannot check — they run SoftwareIdentity, which is the C path on
-         * both sides. It is confirmed against hardware, not here.
+         * cannot check — they run the C curve on both sides. It is confirmed
+         * against hardware, not here.
          */
         return ss.withUnsafeBytes { ptr in [UInt8](ptr) }
     }
@@ -150,40 +145,4 @@ public struct SecretStore {
     private func deleteLegacySecret() {
         try? FileManager.default.removeItem(at: legacySecretURL)
     }
-}
-
-/* Shared HKDF wrappers using the C core — used by both EnclaveIdentity
-   (after extracting the shared secret from CryptoKit) and SoftwareIdentity. */
-
-func deriveHelloKeyFromSharedSecret(_ ss: [UInt8], helperNonce: [UInt8]) -> [UInt8] {
-    var key = [UInt8](repeating: 0, count: Int(DH_SESSION_KEY_SIZE))
-    ss.withUnsafeBufferPointer { ssPtr in
-        helperNonce.withUnsafeBufferPointer { nonce in
-            key.withUnsafeMutableBufferPointer { out in
-                dh_auth_derive_hello_key(ssPtr.baseAddress, nonce.baseAddress, out.baseAddress)
-            }
-        }
-    }
-    return key
-}
-
-func deriveSessionKeysFromSharedSecret(
-    _ ss: [UInt8], helperNonce: [UInt8], boardNonce: [UInt8]
-) -> (kH2B: [UInt8], kB2H: [UInt8]) {
-    var kH2B = [UInt8](repeating: 0, count: Int(DH_SESSION_KEY_SIZE))
-    var kB2H = [UInt8](repeating: 0, count: Int(DH_SESSION_KEY_SIZE))
-    ss.withUnsafeBufferPointer { ssPtr in
-        helperNonce.withUnsafeBufferPointer { hn in
-            boardNonce.withUnsafeBufferPointer { bn in
-                kH2B.withUnsafeMutableBufferPointer { h2b in
-                    kB2H.withUnsafeMutableBufferPointer { b2h in
-                        dh_auth_derive_session_keys(ssPtr.baseAddress,
-                                                    hn.baseAddress, bn.baseAddress,
-                                                    h2b.baseAddress, b2h.baseAddress)
-                    }
-                }
-            }
-        }
-    }
-    return (kH2B, kB2H)
 }

@@ -6,13 +6,14 @@ import IOKit.hid
 /*
  * The IOKit end of the channel: find the device, seize every channel or none,
  * carry reports in and out. It decides nothing — it reports what it sees to
- * the session engine and does what the engine asks (SessionEngine.swift).
+ * the session and does what the session asks (HelperSession.swift, which is
+ * itself only a binding onto the shared core's machine).
  *
  * Platform-boundary code, verified by hand and by use rather than at a seam
  * (#42, "Not tested at a seam").
  */
 final class ChannelTransport {
-    /// Events for the session engine.
+    /// Events for the session.
     var onEvent: ((SessionInput) -> Void)?
     /// Diagnostics.
     var log: ((String) -> Void)?

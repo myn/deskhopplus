@@ -1,13 +1,19 @@
+import DHCore
+
 /*
- * What the user is told, named in words with its remedy (#38).
+ * What the user is told, in words. The *distinctions* are the shared core's
+ * (`dh_helper_state`, #80) and so is the policy read off them; what lives here
+ * is the wording, because a Windows tray tooltip and a macOS menu bar item are
+ * not one string table living in C.
  *
  * The distinction that carries a security property: **only `notPaired` prompts
  * the config chord**, because the chord provisions whatever is attached to the
  * channel during its window (#34). Two states here are precisely the ones a
  * chord press would make worse — `listenerDetected`, where something else is
  * writing to the channel, and `boardIdentityChanged`, where pressing it is the
- * act that accepts a swapped board — so the rule is asserted by a test rather
- * than left to a reading of this comment.
+ * act that accepts a swapped board. That rule is *not* re-decided here: both
+ * predicates below call the core's, so a second helper cannot answer them
+ * differently.
  *
  * `channelHeld` — *"Another program holds the channel"* — used to carry that
  * rule and is gone (#72, #114, ADR-0008). It asserted something that can never
@@ -17,24 +23,24 @@
  * rather than assumed — the board counts frames it could not authenticate and
  * says so.
  */
-public enum HelperState: Equatable {
+public enum HelperState: UInt32, CaseIterable, Equatable {
     /* Looking, or briefly gone. Nothing is shown to the user: a device that
        disappears for a moment is ordinary, and config mode is something the
        user did on purpose. */
-    case quiet
+    case quiet = 0
 
-    case connected
+    case connected = 1
     /*
      * The connection keeps having to be rebuilt. Each cycle on its own is
      * correctly too brief to report — and a helper failing every frame it
      * received once spent two days saying `Connected and paired` on exactly
      * that reasoning (#94). This is what a rate says that no single cycle can.
      */
-    case reconnectingRepeatedly
-    case notPaired
-    case deviceInConfigMode
-    case deviceAbsent
-    case versionIncompatible
+    case reconnectingRepeatedly = 2
+    case notPaired = 3
+    case deviceInConfigMode = 4
+    case deviceAbsent = 5
+    case versionIncompatible = 6
     /*
      * Something other than this helper is writing frames the board could not
      * authenticate, at a rate the board measured and reported (#111). It says
@@ -42,7 +48,7 @@ public enum HelperState: Equatable {
      * cannot be detected at all, here or anywhere else in the protocol, so
      * silence here is not a clean channel.
      */
-    case listenerDetected
+    case listenerDetected = 7
     /*
      * The board granted a pairing under a different identity key from the one
      * this helper had pinned. That is a board wiped past its identity sector,
@@ -50,7 +56,13 @@ public enum HelperState: Equatable {
      * must *not* be offered, because pressing it is precisely how a swapped
      * board would be accepted (#112).
      */
-    case boardIdentityChanged
+    case boardIdentityChanged = 8
+
+    /* The raw values above are `dh_helper_state`'s, so the two conversions are
+       arithmetic rather than a switch a new state could be left out of. The
+       pairing is asserted state by state in the tests. */
+    init?(core: dh_helper_state) { self.init(rawValue: core.rawValue) }
+    var core: dh_helper_state { dh_helper_state(rawValue: rawValue) }
 
     public var message: String? {
         switch self {
@@ -71,29 +83,18 @@ public enum HelperState: Equatable {
         }
     }
 
-    /* The chord remedy is shown only here. See the type's note. */
-    public var promptsConfigChord: Bool { self == .notPaired }
+    /* The chord remedy is shown only from `notPaired`. Decided by the core, so
+       that the #34 property has one answer across both helpers. */
+    public var promptsConfigChord: Bool { dh_helper_prompts_config_chord(core) }
 
     /*
      * An incompatible peer keeps placement and refuses bulk: a misparsed
      * placement puts the cursor somewhere wrong and self-corrects, while a
      * misparsed chunk header writes a corrupted file presented as valid.
      *
-     * A connection that keeps being rebuilt is *not* one of those: while it
-     * is up it is a negotiated session like any other, and this must keep
-     * agreeing with `SessionEngine.canSendBulk`, the seam #52 consumes.
-     * Reporting how often it is rebuilt changes what the user is told, not
-     * what the session may carry.
-     *
-     * `listenerDetected` is the same reading again. The session is negotiated
-     * and authenticated; what the board detected is somebody *writing* frames
-     * it refused, which the tag already keeps out of this session. Refusing
-     * bulk here would disagree with `canSendBulk` and give #52 two answers.
-     * What a listener can still do is *read* a payload in clear — and the
-     * remedy for that is sealing it (#113), not withholding it on a signal
-     * that a passive listener never trips.
+     * Also the core's, and it must keep agreeing with
+     * `HelperSession.canSendBulk` — the seam #52 consumes. This answers for
+     * what the user is being told; that one answers for the session.
      */
-    public var allowsBulkTransfers: Bool {
-        self == .connected || self == .reconnectingRepeatedly || self == .listenerDetected
-    }
+    public var allowsBulkTransfers: Bool { dh_helper_allows_bulk(core) }
 }

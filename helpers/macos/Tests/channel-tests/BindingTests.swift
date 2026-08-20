@@ -97,12 +97,15 @@ func testMalformedInputIsRejected() throws {
 /* v2: a hello carries the key id, nonce, and correlation — and is authenticated
    under k_hello. This round-trips encode → auth_open → decode → re-encode. */
 func testHelloRoundTrips() throws {
-    let helper = try SoftwareIdentity(privateKey: [UInt8](0x01...0x20))
-    let board = try SoftwareIdentity(privateKey: [UInt8](0x21...0x40))
     let nonce = [UInt8](0x00...0x0F)
     let correlation: UInt64 = 0xDEADBEEFCAFE0DF0
 
-    let kHello = try helper.deriveHelloKey(boardPublicKey: board.publicKey, helperNonce: nonce)
+    guard let helper = TestIdentity(privateKey: [UInt8](0x01...0x20)),
+          let board = TestIdentity(privateKey: [UInt8](0x21...0x40)),
+          let kHello = helper.helloKey(peer: board.publicKey, helperNonce: nonce) else {
+        Check.that(false, "the test key material would not load")
+        return
+    }
 
     let hello = Hello(correlation: correlation, helperKeyId: helper.keyId, helperNonce: nonce)
     let bytes = try hello.encoded(key: kHello)
@@ -153,11 +156,14 @@ func testPairingMessagesRoundTrip() throws {
 }
 
 func testTheHelloThisHelperSendsIsWellFormed() throws {
-    let helper = try SoftwareIdentity(privateKey: [UInt8](0x01...0x20))
-    let board = try SoftwareIdentity(privateKey: [UInt8](0x21...0x40))
     let nonce = [UInt8](repeating: 0xAA, count: Int(DH_NONCE_SIZE))
 
-    let kHello = try helper.deriveHelloKey(boardPublicKey: board.publicKey, helperNonce: nonce)
+    guard let helper = TestIdentity(privateKey: [UInt8](0x01...0x20)),
+          let board = TestIdentity(privateKey: [UInt8](0x21...0x40)),
+          let kHello = helper.helloKey(peer: board.publicKey, helperNonce: nonce) else {
+        Check.that(false, "the test key material would not load")
+        return
+    }
     let bytes = try Hello(helperKeyId: helper.keyId, helperNonce: nonce)
         .encoded(key: kHello)
 

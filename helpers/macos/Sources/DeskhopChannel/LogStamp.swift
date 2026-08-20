@@ -36,7 +36,7 @@ import Foundation
  *
  * `DateFormatter` is not safe to share across threads, and this holds one. It
  * is fine here because the helper is single-threaded by construction: IOKit is
- * scheduled on the main run loop (`ChannelTransport`), the engine tick is a
+ * scheduled on the main run loop (`ChannelTransport`), the session tick is a
  * `Timer` on that same loop, and the only hop is `DispatchQueue.main`. Anything
  * logging from another thread needs its own instance.
  *

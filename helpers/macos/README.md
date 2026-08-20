@@ -8,7 +8,7 @@ clipboard and cursor placement arrive on the session this establishes.
 
 | Path | What it is |
 | --- | --- |
-| `Sources/DeskhopChannel` | The binding to the shared C core, and the session logic. No IOKit — all of it runs in the tests. |
+| `Sources/DeskhopChannel` | The binding to the shared C core. No IOKit — all of it runs in the tests. |
 | `Sources/deskhop-helper` | The agent: IOKit transport, run loop, and the state the user is shown. |
 | `Tests/channel-tests` | The host tests. |
 | `LaunchAgent/` | The launchd job that starts it at login and restarts it after a crash. |
@@ -17,6 +17,40 @@ The Swift package manifest is `Package.swift` at the **repository root**, becaus
 target compiles `src/core` in place — the same sources the firmware compiles. A copy of the codec
 inside the helper would be a second implementation of the wire format wearing a binding's name,
 which is exactly what [#64](https://github.com/myn/deskhopplus/issues/64) consolidated away.
+
+## The session machine is not here
+
+Every decision this helper makes is `src/core/dh_helper.c`
+([#79](https://github.com/myn/deskhopplus/issues/79),
+[#80](https://github.com/myn/deskhopplus/issues/80),
+[#81](https://github.com/myn/deskhopplus/issues/81)) — the hello exchange, negotiation,
+ADR-0004's liveness, pairing, all-or-nothing acquisition, the capped backoff, and the states
+below. `HelperSession.swift` carries events down to it and outputs back up, and that is all it
+does.
+
+It used to be a second implementation of that machine, in Swift, that only macOS could run. Two
+of them would have given ADR-0004's traffic-gated liveness two chances to be got right, failing
+differently on two operating systems under load, in a way that looks like a hardware fault —
+and [#49](https://github.com/myn/deskhopplus/issues/49)'s Windows helper drives the same one.
+
+**Three things stay on this side, and only these three:**
+
+| Kept in Swift | Why |
+| --- | --- |
+| The wording — `HelperState.message`, `HelperNotes` | A Windows tray tooltip and a macOS menu bar item are not one string table living in C. Outputs cross carrying a code and its numbers. |
+| Secret storage — `SecretStore` | The core decides a board key is worth keeping; whether it lands in a 0600 file or in DPAPI is the platform's business. |
+| The Secure Enclave — `EnclaveIdentity` | The private half cannot be handed to C at all. What the enclave *can* do is one ECDH, which is the whole of `dh_helper_identity`. The HKDF over the result stays in the core, so both ends run one derivation rather than two that happen to agree. |
+
+The two policy predicates — *does this state prompt the config chord*, and *may bulk go out* —
+are read off the core rather than restated, because the first carries a security property
+(a chord press provisions whatever is attached to the channel during its window,
+[#34](https://github.com/myn/deskhopplus/issues/34)) and a second helper must not get to answer
+it differently.
+
+Tests follow the same line. `Tests/channel-tests` describes what the *helper* does and proves the
+binding loses nothing on the way through; the machine's own arithmetic — the beat trace, the
+backoff, the correlation guards — is `tests/helper_test.c`, where the other end of every round
+trip is the real `dh_session` rather than a mock.
 
 ## Build and test
 
@@ -36,7 +70,7 @@ Xcode, not with the Command Line Tools, and a test suite that needs a 10 GB inst
 test suite that stops being run. The style matches the C harness next door — an assertion helper,
 a main, a non-zero exit, no framework.
 
-The C core's own tests are separate and unchanged:
+The C core's own tests are a separate build, and the session machine's are among them:
 
 ```sh
 cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir tests/build
