@@ -148,8 +148,12 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
         return "released " + std::to_string(a) + " of " + std::to_string(b) +
                " channels: a partial acquisition is not a session";
     case DH_NOTE_EVERY_CHANNEL_REFUSED:
-        return "every channel refused — another program holds the channel, and this helper "
-               "keeps retrying until it lets go";
+        /* No cause claimed. The core is not told one, and this line asserting
+           contention is what sent #87's sitting hunting for a second process
+           during an ordinary config-mode round trip (#125). The open failure
+           logged just above carries the Win32 error, which does say. */
+        return "every channel refused — the open failure above says whether another program "
+               "holds it or the device has gone; retrying either way";
     case DH_NOTE_PROTOCOL_ERROR:
         return "protocol error on the channel (frame result " + std::to_string(a) + ")";
     case DH_NOTE_NO_SESSION_KEY:

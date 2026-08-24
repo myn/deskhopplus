@@ -52,8 +52,27 @@ std::string narrow(const std::wstring &text) {
     return out;
 }
 
-std::string last_error(const char *what) {
-    return std::string(what) + ": win32 error " + std::to_string(GetLastError());
+std::string error_text(const char *what, DWORD error) {
+    return std::string(what) + ": win32 error " + std::to_string(error);
+}
+
+std::string last_error(const char *what) { return error_text(what, GetLastError()); }
+
+/*
+ * Whether an open failed because the device is not there, rather than because
+ * something else has it.
+ *
+ * The distinction is the whole of #125. Contention is ERROR_SHARING_VIOLATION
+ * or ERROR_ACCESS_DENIED; everything below means the path itself has gone,
+ * which is the ordinary end of a config-mode round trip or an unplug. Reading
+ * the second as the first made "every channel refused" — since #114 the only
+ * remaining way to detect a channel someone else holds — fire on the happy
+ * path, and sent a reader hunting for a process that was never there.
+ */
+bool device_is_gone(DWORD error) {
+    return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+           error == ERROR_NO_SUCH_DEVICE || error == ERROR_DEVICE_NOT_CONNECTED ||
+           error == ERROR_NOT_FOUND;
 }
 
 enum class Match { None, Normal, ConfigMode };
@@ -318,7 +337,13 @@ void HidTransport::acquire() {
         channel.handle = CreateFileW(channel.path.c_str(), GENERIC_READ | GENERIC_WRITE, 0,
                                      nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
         if (channel.handle == INVALID_HANDLE_VALUE) {
-            note(last_error("exclusive open refused"));
+            /* Read before anything else can overwrite it. Naming which of the
+               two this was is the whole of #125: the note that follows cannot
+               know, and used to guess. */
+            const DWORD error = GetLastError();
+            note(error_text(device_is_gone(error) ? "open failed: the device is no longer there"
+                                                  : "exclusive open refused",
+                            error));
             break;
         }
         channel.read_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -342,6 +367,19 @@ void HidTransport::acquire() {
          * opened is rolled back and the whole attempt is reported as refused.
          */
         release();
+
+        /*
+         * Reported as a refusal whichever it was, because this is the event
+         * that carries the backoff retry and the once-only deferral the core
+         * arms from it (dh_helper.c:419-425). Routing an absent device to
+         * device_disappeared instead loses both: nothing re-arms acquisition,
+         * so a helper that lost a race against the last notification of a
+         * re-enumeration would wait for a notification that never comes.
+         *
+         * What #125 asked for is that the *log* stop asserting a cause nobody
+         * checked. The truthful line is the one above, carrying the real Win32
+         * error; the note no longer claims to know which happened.
+         */
         if (events_.acquisition_refused)
             events_.acquisition_refused(acquired, static_cast<uint8_t>(channels_.size()));
         return;

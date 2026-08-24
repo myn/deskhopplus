@@ -132,6 +132,17 @@ static void forget_session(dh_helper *h) {
 static void record_drop(dh_helper *h, uint32_t now_ms) {
     if (!h->holding_channels && h->phase == DH_HELPER_PHASE_IDLE) return;
 
+    /*
+     * The same disappearance, arriving again. One physical event raises one
+     * notification per HID interface, so counting each of them measures how
+     * many collections the device has rather than how well the link is
+     * holding — and it spent three of the four drops on a config-mode return
+     * (#126).
+     */
+    if (h->drop_count > 0 &&
+        (uint32_t)(now_ms - h->recent_drops[h->drop_count - 1]) < DH_HELPER_DROP_DEBOUNCE_MS)
+        return;
+
     if (h->drop_count == DH_HELPER_RECONNECT_LIMIT) {
         memmove(h->recent_drops, h->recent_drops + 1,
                 sizeof h->recent_drops - sizeof h->recent_drops[0]);

@@ -801,6 +801,74 @@ static void test_a_flapping_link_is_reported_as_a_rate(void) {
 }
 
 /*
+ * One physical disappearance is one drop, however many notifications the
+ * platform raises for it (#126).
+ *
+ * Measured on Windows returning from config mode: the device re-enumerated
+ * four times inside 187 ms, one notification per HID interface, and three of
+ * the four drops the rate counts were spent on that single event. The next
+ * genuine drop — up to thirty seconds later — then read as a flapping link and
+ * told the user to check a cable that was fine.
+ */
+static void test_one_re_enumeration_is_one_drop(void) {
+    const char *name = "one re-enumeration is one drop";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* The burst, at the intervals the board actually produced. */
+    const uint32_t at[] = {1000, 1046, 1140, 1187};
+    for (size_t i = 0; i < sizeof at / sizeof at[0]; i++) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_device_disappeared(&h, at[i], &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, at[i] + 10, &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, at[i] + 20, &out);
+        no_overflow(name);
+    }
+
+    CHECK(h.drop_count == 1, name, "a single disappearance was counted more than once");
+
+    /*
+     * And the alarm the burst used to raise. One genuine drop after it is two
+     * drops, not the four that trip the threshold — which is exactly the shape
+     * the log showed: a config-mode return, then one liveness timeout 24 s
+     * later reading as a flapping link and telling the user to check a cable
+     * that was fine.
+     */
+    dh_helper_outputs_reset(&out);
+    dh_helper_transport_failed(&h, 2000, &out);
+    no_overflow(name);
+    CHECK(h.state != DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "a re-enumeration plus one real drop was reported as a flapping link");
+
+    /*
+     * And the collapse is scoped to the burst, not to the rate: three further
+     * drops, spaced like a link that really is flapping, still reach the
+     * threshold. Debouncing that also swallowed these would trade #126 for the
+     * two days #94 cost.
+     */
+    for (uint32_t t = 3000; t <= 5000; t += 1000) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_transport_failed(&h, t, &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_outputs acquired = out;
+        dh_helper_outputs_reset(&out);
+        answer_all(&h, &acquired, t + 100, &out);
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "a genuinely flapping link stopped being reported");
+}
+
+/*
  * The whole pairing exchange against the real board, ending in a session. The
  * grant is what the pin comes from, and the helper stores it only once the key
  * has produced a hello.
@@ -1718,6 +1786,7 @@ int main(int argc, char **argv) {
     test_a_brief_disappearance_is_silent();
     test_the_backoff_caps_and_resets();
     test_a_flapping_link_is_reported_as_a_rate();
+    test_one_re_enumeration_is_one_drop();
     test_pairing_round_trip();
     test_a_board_whose_key_changed_is_not_accepted();
     test_an_answer_to_someone_elses_question_is_dropped();

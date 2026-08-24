@@ -88,6 +88,18 @@ extern "C" {
 #define DH_HELPER_RECONNECT_WINDOW_MS 30000u
 #define DH_HELPER_RECONNECT_LIMIT 4u
 
+/*
+ * How close two drops must be to be the same drop. A platform raises one
+ * device notification per HID interface, so a single disappearance arrives
+ * several times: returning from config mode, board B re-enumerated four times
+ * inside 187 ms and spent three of the four drops above on one event (#126).
+ *
+ * Chosen well clear of that burst and well under any interval a link could
+ * flap at and still be rebuilding a session in between — the rate has to keep
+ * catching what #94 cost two days.
+ */
+#define DH_HELPER_DROP_DEBOUNCE_MS 500u
+
 /* How often an unpaired helper asks again. The board ignores it outside a
    pairing window, so the cost of asking is one untagged frame. */
 #define DH_HELPER_PAIRING_RETRY_MS 2000u
