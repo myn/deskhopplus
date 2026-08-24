@@ -32,6 +32,12 @@ That builds the firmware, the macOS helper, and both host test suites. Upstream'
 | `./tools/build.sh tests` | Both host test suites, no firmware |
 | `./tools/build.sh clean` | Remove `build/`, `tests/build/`, `.build/` |
 
+The **Windows helper is not in that list, and cannot be**: this script is a macOS shell script,
+and the exe needs MSVC on a Windows machine. It is a standalone CMake project with its own
+instructions in [`helpers/windows/README.md`](helpers/windows/README.md), and CI builds and
+publishes it on every push to `main` — so the usual way to get one is to download the artifact
+rather than to build it.
+
 ### `build/` and `.build/` are different trees
 
 They differ by one character and belong to different build systems. Only one of them holds anything you flash:
@@ -41,8 +47,9 @@ They differ by one character and belong to different build systems. Only one of 
 | `build/` | CMake | The firmware — **`deskhop.uf2`, the image you flash** |
 | `.build/` | SwiftPM | The macOS helper and its tests. Nothing to flash |
 | `tests/build/` | CMake | The C core's host test suite |
+| `helpers/windows/build/` | CMake | The Windows helper, on a Windows machine. Nothing to flash |
 
-`.build/` is SwiftPM's hardcoded default, not a choice this project made — a bare `swift build` puts its output there too. All three are gitignored.
+`.build/` is SwiftPM's hardcoded default, not a choice this project made — a bare `swift build` puts its output there too. All four are gitignored.
 
 ### Read the version it prints
 
@@ -69,7 +76,9 @@ The script finds these itself and fails with the install command if one is missi
 
 - **CMake** — on `PATH`, or `CMake.app`
 - **Arm GNU Toolchain** — `brew install --cask gcc-arm-embedded`. Its `.pkg` step needs `sudo` in an interactive terminal; it fails headless. Located by glob under `/Applications/ArmGNUToolchain/*/`, so a version upgrade doesn't silently fall back to a system `gcc`
-- **Swift** — from the Command Line Tools, for the helper only
+- **Swift** — from the Command Line Tools, for the macOS helper only
+- **MSVC** — Windows only, and for the Windows helper only. Not something this script looks for:
+  nothing else in the tree needs it, and nothing on a Mac can use it
 
 Rebuilding the web UI (`webconfig/`) and the disk image (`disk/`) is unchanged from upstream and not covered by the script.
 
