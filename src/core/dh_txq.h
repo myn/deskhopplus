@@ -15,6 +15,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     uint32_t dropped; /* packets lost to a full queue since boot; saturates */
 } dh_txq_stats;
@@ -29,5 +34,9 @@ static inline bool dh_txq_track(dh_txq_stats *stats, bool enqueued) {
         stats->dropped++;
     return enqueued;
 }
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_TXQ_H_ */

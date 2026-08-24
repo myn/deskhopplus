@@ -19,6 +19,11 @@
 
 #include "dh_clip.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Working values; the chunk size is a build constant until #39 measures,
    then the hello negotiates the effective value. */
 #define DH_XFER_CHUNK_SIZE 1024u
@@ -161,5 +166,9 @@ static inline const uint8_t *dh_xfer_delivered_meta(const dh_xfer *x, uint16_t *
     *len = x->rx.meta_len;
     return x->rx.meta;
 }
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_XFER_H_ */

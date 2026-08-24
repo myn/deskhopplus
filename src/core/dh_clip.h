@@ -13,6 +13,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* CLIP_OFFER: id:u32 kind:u8 total:u64 meta_len:u16 meta */
 typedef struct {
     uint32_t id;
@@ -49,5 +54,9 @@ bool dh_clip_decode_chunk(const uint8_t *payload, size_t len, dh_clip_chunk *out
 bool dh_clip_decode_id(const uint8_t *payload, size_t len, uint32_t *id);
 bool dh_clip_decode_retransmit(const uint8_t *payload, size_t len, uint32_t *id, uint32_t *seq);
 bool dh_clip_decode_credit(const uint8_t *payload, size_t len, uint32_t *id, uint16_t *credits);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_CLIP_H_ */

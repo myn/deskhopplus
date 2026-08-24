@@ -21,6 +21,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DH_SHA256_DIGEST_SIZE 32u
 #define DH_SHA256_BLOCK_SIZE 64u
 
@@ -68,5 +73,9 @@ void dh_hmac_sha256(const uint8_t *key, size_t key_len, const uint8_t *data, siz
 
 void dh_hkdf_sha256(const uint8_t *ikm, size_t ikm_len, const uint8_t *salt, size_t salt_len,
                     const uint8_t *info, size_t info_len, uint8_t *out, size_t out_len);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_SHA256_H_ */

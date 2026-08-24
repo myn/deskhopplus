@@ -70,6 +70,11 @@
 
 #include "dh_p256.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * How long a window stays open. "About a minute" (#42): long enough to cover
  * the config-mode reboot and a helper's reconnection backoff, short enough
@@ -208,5 +213,9 @@ dh_pair_result dh_pair_register(dh_pair *p, uint32_t now_ms,
  * PAIR_REFUSED a board owes the asker. Never called on DH_PAIR_OK.
  */
 dh_pair_result dh_pair_refusal(const dh_pair *p, uint32_t now_ms);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_PAIR_H_ */

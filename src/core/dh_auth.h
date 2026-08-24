@@ -31,6 +31,11 @@
 #include "dh_p256.h"
 #include "dh_sha256.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DH_SESSION_KEY_SIZE 32u
 #define DH_NONCE_SIZE 16u
 
@@ -158,5 +163,9 @@ bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *
  * this is not memcmp.
  */
 bool dh_auth_bytes_equal(const uint8_t *a, const uint8_t *b, size_t len);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_AUTH_H_ */

@@ -13,6 +13,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DH_FRAME_HEADER_SIZE 4u
 #define DH_FRAME_MAX_PAYLOAD 4096u
 #define DH_FRAME_MAX_SIZE (DH_FRAME_HEADER_SIZE + DH_FRAME_MAX_PAYLOAD)
@@ -175,5 +180,9 @@ typedef struct {
 void dh_frame_reader_init(dh_frame_reader *r);
 dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, size_t len,
                                      size_t *consumed, dh_frame_view *out);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_FRAME_H_ */

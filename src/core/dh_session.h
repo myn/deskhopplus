@@ -64,6 +64,11 @@
 #include "dh_pair.h"
 #include "dh_xfer.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * 2, and it moved with this file rather than with the specification. A board
  * that announced version 2 while speaking v1 would be worse than one
@@ -475,5 +480,9 @@ dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint8_t *out, size
  * writing junk across a reconnection is exactly what the alert is for.
  */
 void dh_session_drop(dh_session *s);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_SESSION_H_ */

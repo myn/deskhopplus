@@ -23,6 +23,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define DH_P256_PRIVATE_SIZE 32u
 #define DH_P256_PUBLIC_SIZE 64u
 #define DH_P256_SHARED_SIZE 32u
@@ -63,5 +68,9 @@ bool dh_p256_ecdh(const uint8_t private_key[DH_P256_PRIVATE_SIZE],
 /* SHA-256(public)[0..8] — the id a hello carries in place of a key. */
 void dh_p256_key_id(const uint8_t public_key[DH_P256_PUBLIC_SIZE],
                     uint8_t out[DH_KEY_ID_SIZE]);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_P256_H_ */

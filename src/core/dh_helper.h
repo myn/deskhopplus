@@ -52,6 +52,11 @@
 #include "dh_p256.h"
 #include "dh_session.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* ------------------------------------------------------------------ timings */
 
 /*
@@ -487,5 +492,9 @@ dh_frame_result dh_helper_emit(dh_helper *h, uint8_t type, uint8_t flags, const 
 void dh_helper_note_sent(dh_helper *h, uint32_t now_ms);
 
 void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *out);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_HELPER_H_ */

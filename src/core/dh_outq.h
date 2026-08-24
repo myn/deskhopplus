@@ -40,6 +40,11 @@
 
 #include "dh_frame.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * The priority band holds one frame. Session, placement and pairing frames are
  * small — the largest the board emits is a 76-byte pairing grant
@@ -161,5 +166,9 @@ void dh_outq_note_preamble(dh_outq *q, const dh_outq_view *view);
 
 /* True while any frame is still owed, in either band. */
 bool dh_outq_busy(const dh_outq *q);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_OUTQ_H_ */

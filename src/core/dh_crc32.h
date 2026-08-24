@@ -10,6 +10,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 uint32_t dh_crc32(const uint8_t *data, size_t len);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_CRC32_H_ */

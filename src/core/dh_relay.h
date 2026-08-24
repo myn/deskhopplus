@@ -28,6 +28,11 @@
 #include "dh_frame.h"
 #include "dh_outq.h"
 
+/* C++ links these symbols too — the Windows helper is C++ (#49). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* One inter-board packet carries this many payload bytes (PACKET_DATA_LENGTH). */
 #define DH_RELAY_PAYLOAD 8u
 
@@ -131,5 +136,9 @@ void dh_relay_rx_init(dh_relay_rx *r, uint8_t *buf, uint16_t cap);
  */
 dh_relay_result dh_relay_rx_push(dh_relay_rx *r, const dh_relay_packet *packet,
                                  dh_frame_view *out);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* DH_RELAY_H_ */
