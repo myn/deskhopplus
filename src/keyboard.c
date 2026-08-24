@@ -94,16 +94,18 @@ hotkey_combo_t hotkeys[] = {
      .acknowledge    = true,
      .action_handler = &config_enable_hotkey_handler},
 
-    /* Left shift + right shift + A ==> BOOTSEL on board A (kbd), reached from the keyboard
-       rather than the on-board button, so flashing needs no replug. */
+    /* Left shift + right shift + A ==> BOOTSEL on board A, reached from the keyboard rather
+       than the on-board button, so flashing needs no replug. The handler reads BOARD_ROLE, so
+       the letter names board A from either board (#124). */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT | KEYBOARD_MODIFIER_LEFTSHIFT,
      .keys           = {HID_KEY_A},
      .key_count      = 1,
      .acknowledge    = true,
      .action_handler = &fw_upgrade_hotkey_handler_A},
 
-    /* Left shift + right shift + B ==> BOOTSEL on board B (mouse). The keyboard is on A, so
-       this travels as FIRMWARE_UPGRADE_MSG and B reboots itself on receipt. */
+    /* Left shift + right shift + B ==> BOOTSEL on board B. Pressed on board A it travels as
+       FIRMWARE_UPGRADE_MSG and B reboots itself on receipt; pressed on board B it resets
+       there directly. */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT | KEYBOARD_MODIFIER_LEFTSHIFT,
      .keys           = {HID_KEY_B},
      .key_count      = 1,

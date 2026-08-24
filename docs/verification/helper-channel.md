@@ -278,14 +278,15 @@ to name them; confirmed working on board A, 2026-08-17):
 | Chord | Effect |
 |---|---|
 | `Left Shift + Right Shift + A` | Board A into BOOTSEL |
-| `Left Shift + Right Shift + B` | Board B into BOOTSEL — travels as `FIRMWARE_UPGRADE_MSG` while the keyboard is on A |
+| `Left Shift + Right Shift + B` | Board B into BOOTSEL |
 
-**Both of these read the wrong board if the keyboard is not on A (#124).** Neither handler
-consults `BOARD_ROLE`: the letters mean "local" and "peer", so with the keyboard on B they swap.
+**Each letter names the board, from wherever the keyboard is (#124, fixed).** Both handlers read
+`BOARD_ROLE`: the named board resets locally, and the other one is asked over the inter-board link
+with `FIRMWARE_UPGRADE_MSG`. Before that fix the letters meant "local" and "peer", so they swapped
+whenever the keyboard sat on board B.
 
-Defined at `src/keyboard.c:97-111`. Board A's is a local `reset_usb_boot`; board B's crosses the
-inter-board link, so B reboots itself on receipt. Prefer these over the button — the board stays
-plugged in, and nothing has to be reseated.
+Defined at `src/keyboard.c:97-113`, handlers at `src/handlers.c:54-75`. Prefer these over the
+button — the board stays plugged in, and nothing has to be reseated.
 
 Board in BOOTSEL first (chord above, or hold the on-board button while connecting). This sidesteps
 both hazards above, and it is the only route that worked on 2026-08-11: the `RPI-RP2` volume would not
@@ -342,8 +343,8 @@ else — `process_keyboard_report` runs only on the board hosting the physical k
 Windows helper means physically moving the keyboard to board B's USB-A port** for the two presses.
 This cost the first hour of #87's sitting (2026-08-24): the chord was pressed with the keyboard on
 A, board A entered config mode, and the config page's *Paired helper* was read as evidence when it
-was showing the Mac's own registration all along. While the keyboard is on B, **both BOOTSEL
-chords are inverted** — see #124 before reaching for either.
+was showing the Mac's own registration all along. Moving the keyboard used to invert **both
+BOOTSEL chords** as well; #124 fixed that, so each letter now names the board from either side.
 
 **The helper must already be running when the window opens.** The window is 60 s from the
 normal-mode boot, and it can only provision a helper that is connected while it is open. Start

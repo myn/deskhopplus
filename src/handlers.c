@@ -51,14 +51,27 @@ void screen_border_hotkey_handler(device_t *state, hid_keyboard_report_t *report
     (void)queue_packet((uint8_t *)border, SYNC_BORDERS_MSG, sizeof(border_size_t));
 };
 
+/* Puts the named board into firmware upgrade mode, from either board.
+
+   A hotkey only ever runs on the board hosting the physical keyboard, so a handler that
+   resets itself means "this board", not "board A" — and the keyboard moves, because pairing
+   a helper requires it on that helper's board. Both letters were inverted whenever it sat on
+   B (#124). Reading BOARD_ROLE is what makes the letters name the board. */
+void _fw_upgrade_board(uint8_t named_role) {
+    if (BOARD_ROLE == named_role)
+        reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
+    else
+        (void)send_value(ENABLE, FIRMWARE_UPGRADE_MSG);
+};
+
 /* This key combo puts board A in firmware upgrade mode */
 void fw_upgrade_hotkey_handler_A(device_t *state, hid_keyboard_report_t *report) {
-    reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);
+    _fw_upgrade_board(OUTPUT_A);
 };
 
 /* This key combo puts board B in firmware upgrade mode */
 void fw_upgrade_hotkey_handler_B(device_t *state, hid_keyboard_report_t *report) {
-    (void)send_value(ENABLE, FIRMWARE_UPGRADE_MSG);
+    _fw_upgrade_board(OUTPUT_B);
 };
 
 /* This key combo prevents mouse from switching outputs */
