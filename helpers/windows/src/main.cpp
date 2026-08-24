@@ -27,6 +27,7 @@
 #include <dbt.h>
 #include <shlobj.h>
 
+#include <share.h>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -136,7 +137,15 @@ bool Helper::start(HINSTANCE instance) {
 
     const std::wstring log_path = secrets_.directory() + L"\\helper.log";
     SHCreateDirectoryExW(nullptr, secrets_.directory().c_str(), nullptr);
-    _wfopen_s(&log_file_, log_path.c_str(), L"a");
+    /*
+     * _wfsopen and not _wfopen_s: the secure variant opens a file
+     * non-shareable, which locked this log against every reader while the
+     * helper ran. Reading it is the documented way to tell a refused channel
+     * from a disconnected device (#114), so a log nobody can open until the
+     * helper is quit answers the question only after destroying its subject.
+     * _SH_DENYWR keeps this process the only writer and lets anything read.
+     */
+    log_file_ = _wfsopen(log_path.c_str(), L"a", _SH_DENYWR);
 
     /*
      * Apartment-threaded, for the shell. The startup-folder rung of the
