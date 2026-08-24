@@ -94,10 +94,28 @@ target_include_directories(outq_test PRIVATE ${CORE})
 add_test(NAME outq_test COMMAND outq_test)
 
 
-add_executable(xfer_test xfer_test.c ${CORE}/dh_xfer.c ${CORE}/dh_clip.c
-               ${CORE}/dh_crc32.c ${CORE}/dh_frame.c)
+# The transfer machine, with every message crossing the real codecs — which
+# since #113 means crossing the real seal too. aes_gcm_ref.c is the suite's own
+# AES-256-GCM: ADR-0008 put the cipher on the platform, so the C suite carries
+# one of its own to open what the core sealed. seal_test.c gates it.
+add_executable(xfer_test xfer_test.c aes_gcm_ref.c ${CORE}/dh_xfer.c ${CORE}/dh_clip.c
+               ${CORE}/dh_seal.c ${CORE}/dh_crc32.c ${CORE}/dh_frame.c ${CORE}/dh_auth.c
+               ${CORE}/dh_sha256.c ${CORE}/dh_p256.c)
 target_include_directories(xfer_test PRIVATE ${CORE})
 add_test(NAME xfer_test COMMAND xfer_test)
+
+# The end-to-end clipboard seal (#113). Gated by both vector files: the frames
+# carry the sealed bodies an independent implementation produced, and the
+# primitives carry the key material they were produced from. It drives a real
+# dh_session board as the hop in between, so what it checks is a payload
+# crossing a board rather than a payload beside one.
+add_executable(seal_test seal_test.c aes_gcm_ref.c ${CORE}/dh_seal.c ${CORE}/dh_clip.c
+               ${CORE}/dh_crc32.c ${CORE}/dh_frame.c ${CORE}/dh_auth.c ${CORE}/dh_sha256.c
+               ${CORE}/dh_p256.c ${CORE}/dh_session.c ${CORE}/dh_pair.c)
+target_include_directories(seal_test PRIVATE ${CORE})
+target_compile_definitions(seal_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
+                           DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")
+add_test(NAME seal_test COMMAND seal_test)
 
 # The configuration's validation decision (#74). Not part of src/core/ — it is
 # firmware domain, not the helper↔firmware protocol — but it is pure C with no

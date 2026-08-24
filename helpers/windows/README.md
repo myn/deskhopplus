@@ -31,10 +31,12 @@ The exe lands at `helpers/windows/build/Release/deskhop-helper.exe`. CI builds a
 on every push to `main`, which is what makes the no-install property something a user receives
 rather than something this file asserts.
 
-The tests cover the autostart ladder's decisions and nothing else. That is deliberate: the ladder
-is the code most likely to be wrong on a managed laptop nobody can reproduce, and it needs no
-registry to be worth checking. The Win32 calls behind it, and the transport, are verified by hand
-and on hardware (#87) — the same line the macOS helper draws.
+The tests cover two things: the autostart ladder's decisions, and the clipboard seal's cipher. The
+ladder is the code most likely to be wrong on a managed laptop nobody can reproduce, and it needs
+no registry to be worth checking. The seal test needs Windows because CNG is Windows — and that is
+exactly why it is here rather than in the shared suite: nobody else's machine can check that
+**CNG's** AES-256-GCM produces the bytes on the wire. The Win32 calls behind the ladder, and the
+transport, are verified by hand and on hardware (#87) — the same line the macOS helper draws.
 
 ## Pairing
 
@@ -48,6 +50,24 @@ has cost a debugging session:
   into**, so pairing this helper means moving the keyboard to board B's USB-A port for the two
   presses;
 - the window is 60 seconds, and a helper started after it opens has missed it.
+
+## The clipboard payload is sealed
+
+Bulk payloads are encrypted **helper to helper**
+([ADR-0008](../../docs/adr/0008-channel-identity-and-sealed-clipboard.md),
+[#113](https://github.com/myn/deskhopplus/issues/113)). Both boards relay ciphertext and hold no
+key that opens it, so what a board forwards is bytes it could not read even if it wanted to.
+
+The key is agreed per seal over ephemeral P-256 keys, and the cipher is CNG's AES-256-GCM —
+`BCryptEncrypt` in GCM chaining mode, from `bcrypt.dll`, which is already on this helper's list of
+inbox libraries. ChaCha20-Poly1305 would have needed Windows 11 and so was never a candidate here.
+
+The DPAPI-held identity below is **not** part of the seal: a seal needs no long-term identity, and
+its keys do not outlive the session. Cursor placement is authenticated but not sealed — the
+coordinates cross in the clear, by decision.
+
+No build turns this off. #44's development-build exemption is the *board's*, and the board is not
+a party to this key.
 
 ## Where it keeps things
 

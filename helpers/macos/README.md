@@ -212,6 +212,29 @@ Equal means this helper is the registered one. Different means the board is pair
 else, and a chord press is what moves it — with the usual caution: press it only when nothing you
 did not start is attached to the channel.
 
+### The clipboard payload is sealed
+
+Bulk payloads are encrypted **helper to helper**
+([ADR-0008](../../docs/adr/0008-channel-identity-and-sealed-clipboard.md),
+[#113](https://github.com/myn/deskhopplus/issues/113)). The two boards relay ciphertext and hold
+no key that opens it, so *opaque relay* stops being a discipline the firmware keeps and becomes a
+property it could not break: a board relays bytes it could not read even if it wanted to. That
+matters because a board is already something you cannot fully trust —
+[ADR-0007](../../docs/adr/0007-inter-board-link-is-trusted-for-firmware.md) accepts that a
+compromised board can flash its peer.
+
+The key is agreed per seal, over ephemeral P-256 keys that cross through both boards, and the
+cipher is CryptoKit's AES-256-GCM. The enclave identity above is **not** part of it: a seal needs
+no long-term identity. What vouches for the far helper is that board A relays only what its own
+registered helper authenticated, carried across the inter-board link — which ADR-0008 records as
+the decision's one uncomfortable lean.
+
+Cursor placement is authenticated but **not** sealed. Coordinates cross in the clear, by decision:
+they are idempotent, self-correcting, and already available to any local process through the OS.
+
+No build turns this off. [#44](https://github.com/myn/deskhopplus/issues/44)'s development-build
+exemption is the *board's*, and the board is not a party to this key.
+
 ### What this does not protect against
 
 Two limits, stated plainly, because a security note that only lists wins is not a security note.
@@ -228,8 +251,11 @@ Two limits, stated plainly, because a security note that only lists wins is not 
    `LISTENER_ALERT` when too many arrive in a window — so it detects something probing the
    channel, which is an active listener. A process that only opens a channel and reads is silent
    by construction: it writes nothing to refuse, and nothing in the protocol can distinguish it
-   from a channel nobody has opened. The exclusive-seize rule is what actually keeps a reader off
-   the channel, and it is enforced by the OS, not by this document.
+   from a channel nobody has opened. Nothing keeps it off the channel either — a second
+   `kIOHIDOptionsTypeSeizeDevice` open succeeds on macOS, measured on 2026-08-13, which is what
+   ADR-0001 retracted and ADR-0008 was written to answer. The answer is not detection but the
+   seal above: after it, a reader learns that a transfer happened and roughly how big it was, and
+   nothing about what was in it.
 
 ## Installing the agent
 

@@ -471,4 +471,17 @@ public enum MessageType {
     public static let pairGrant = UInt8(DH_MSG_PAIR_GRANT.rawValue)
     public static let pairRefused = UInt8(DH_MSG_PAIR_REFUSED.rawValue)
     public static let helloRefused = UInt8(DH_MSG_HELLO_REFUSED.rawValue)
+
+    /* The bulk band. The two that carry the user's bytes are sealed
+       helper-to-helper (Seal.swift); the rest carry ids and counts only. */
+    public static let clipOffer = UInt8(DH_MSG_CLIP_OFFER.rawValue)
+    public static let clipRequest = UInt8(DH_MSG_CLIP_REQUEST.rawValue)
+    public static let clipChunk = UInt8(DH_MSG_CLIP_CHUNK.rawValue)
+    public static let clipDone = UInt8(DH_MSG_CLIP_DONE.rawValue)
+    public static let clipCancel = UInt8(DH_MSG_CLIP_CANCEL.rawValue)
+    public static let clipRetransmit = UInt8(DH_MSG_CLIP_RETRANSMIT.rawValue)
+    public static let clipCredit = UInt8(DH_MSG_CLIP_CREDIT.rawValue)
+    public static let sealOffer = UInt8(DH_MSG_SEAL_OFFER.rawValue)
+    public static let sealAccept = UInt8(DH_MSG_SEAL_ACCEPT.rawValue)
+    public static let sealStale = UInt8(DH_MSG_SEAL_STALE.rawValue)
 }

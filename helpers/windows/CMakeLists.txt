@@ -45,7 +45,12 @@ add_library(dhcore STATIC
   ${CORE}/dh_frame.c
   ${CORE}/dh_auth.c
   ${CORE}/dh_sha256.c
-  ${CORE}/dh_p256.c)
+  ${CORE}/dh_p256.c
+  # The end-to-end clipboard seal (#113) and the CLIP_* layouts it seals into.
+  # The cipher is not here and is not in the core: ADR-0008 put AES-256-GCM on
+  # the platform, which for this helper is src/seal_aead.cpp over CNG.
+  ${CORE}/dh_seal.c
+  ${CORE}/dh_clip.c)
 target_include_directories(dhcore PUBLIC ${CORE})
 
 if(MSVC)
@@ -80,6 +85,21 @@ target_link_libraries(autostart_ladder_test PRIVATE ladder)
 add_test(NAME autostart_ladder COMMAND autostart_ladder_test)
 
 if(WIN32)
+  # The seal, through the cipher this helper actually ships (#113). Windows
+  # only, because BCrypt is — and that is exactly why it is worth having: CNG's
+  # AES-GCM agreeing with the golden vectors is a claim no other machine's
+  # suite can make for it.
+  add_executable(seal_test tests/seal_test.cpp src/seal_aead.cpp)
+  target_link_libraries(seal_test PRIVATE dhcore bcrypt)
+  target_include_directories(seal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_definitions(seal_test PRIVATE
+    DH_TEST_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../../test-vectors/frames.txt")
+  if(MSVC)
+    target_compile_options(seal_test PRIVATE /WX)
+    target_compile_definitions(seal_test PRIVATE _Static_assert=static_assert)
+  endif()
+  add_test(NAME seal COMMAND seal_test)
+
   # WIN32 rather than a console app: the helper lives in the notification area
   # and must not flash a console window when it autostarts at logon.
   add_executable(deskhop-helper WIN32
@@ -87,6 +107,7 @@ if(WIN32)
     src/helper_session.cpp
     src/words.cpp
     src/secret_store.cpp
+    src/seal_aead.cpp
     src/hid_transport.cpp
     src/autostart.cpp
     src/tray.cpp

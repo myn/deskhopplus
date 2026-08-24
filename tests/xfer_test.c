@@ -4,19 +4,28 @@
  * credit updates, assert the next action and the assembled payload.
  *
  * Every message between the two sides crosses the real codecs — dh_clip
- * payloads inside dh_frame frames — with fault injection for the cases
- * hardware will not produce on demand: a dropped chunk, a corrupted chunk,
- * credit exhaustion mid-transfer, cancellation during retransmission, and a
- * link dropping mid-payload. The base scenarios (round trip, chunk count,
- * cap refusal, cancel-then-recover, supersede, lazy reads, no streaming
- * before a request) port from mkroamer's clip_transfer_test.cpp.
+ * payloads inside dh_frame frames, and since #113 through the real seal as
+ * well — with fault injection for the cases hardware will not produce on
+ * demand: a dropped chunk, a corrupted chunk, credit exhaustion mid-transfer,
+ * cancellation during retransmission, and a link dropping mid-payload. The
+ * base scenarios (round trip, chunk count, cap refusal, cancel-then-recover,
+ * supersede, lazy reads, no streaming before a request) port from mkroamer's
+ * clip_transfer_test.cpp.
+ *
+ * The seal changes what a corrupted chunk means, and the change is the wire's
+ * rather than this file's: a flipped byte is caught by the GCM tag and the
+ * chunk never reaches the transfer machine at all. So the CRC32 is checked
+ * directly instead — it is fidelity, covering the plaintext end to end, and
+ * what it now catches is a bug in the seal layer rather than a bus glitch.
  */
 
 #include <stdio.h>
 #include <string.h>
 
+#include "aes_gcm_ref.h"
 #include "dh_crc32.h"
 #include "dh_frame.h"
+#include "dh_seal.h"
 #include "dh_xfer.h"
 
 static int failures = 0;
@@ -44,6 +53,9 @@ struct wire_msg {
 struct side {
     dh_xfer x;
     uint8_t rx_buf[RX_CAP];
+    /* This side's outgoing seal and the one it accepted from the other. */
+    dh_seal_tx seal_tx;
+    dh_seal_rx seal_rx;
     /* what landed */
     int delivered;
     int failed;
@@ -52,6 +64,7 @@ struct side {
     /* counters */
     int chunks_sent;
     int retransmits_sent;
+    int seal_refused; /* arrived sealed and would not open */
 };
 
 struct fault_plan {
@@ -68,12 +81,45 @@ struct fault_plan {
 static struct side A, B;
 static struct fault_plan plan;
 
+/*
+ * One seal, established the way the two helpers establish one: the sender
+ * offers, the receiver accepts, and each direction gets its own. The ephemeral
+ * keys and nonces are fixed rather than drawn, because this file has no
+ * entropy source and does not need one — what is being tested is the transfer,
+ * not the key agreement (seal_test.c has that).
+ */
+static void establish_seal(struct side *from, struct side *to, uint8_t material) {
+    uint8_t offer_private[DH_P256_PRIVATE_SIZE], accept_private[DH_P256_PRIVATE_SIZE];
+    uint8_t offer_nonce[DH_NONCE_SIZE], accept_nonce[DH_NONCE_SIZE];
+    for (size_t i = 0; i < DH_P256_PRIVATE_SIZE; i++) {
+        offer_private[i] = (uint8_t)(i + 1u + material);
+        accept_private[i] = (uint8_t)(i + 101u + material);
+    }
+    for (size_t i = 0; i < DH_NONCE_SIZE; i++) {
+        offer_nonce[i] = (uint8_t)(i + 0x20u + material);
+        accept_nonce[i] = (uint8_t)(i + 0x40u + material);
+    }
+
+    uint8_t offer[DH_SEAL_EXCHANGE_LEN], accept[DH_SEAL_EXCHANGE_LEN];
+    size_t offer_len = 0, accept_len = 0;
+    CHECK(dh_seal_tx_offer(&from->seal_tx, 0x51EA1000u + material, offer_private, offer_nonce,
+                           offer, sizeof offer, &offer_len) == DH_SEAL_OK,
+          "seal", "the offer was not built");
+    CHECK(dh_seal_rx_offered(&to->seal_rx, offer, offer_len, accept_private, accept_nonce, accept,
+                             sizeof accept, &accept_len) == DH_SEAL_OK,
+          "seal", "the offer was not accepted");
+    CHECK(dh_seal_tx_accepted(&from->seal_tx, accept, accept_len) == DH_SEAL_OK, "seal",
+          "the accept was refused");
+}
+
 static void reset_scenario(void) {
     memset(&A, 0, sizeof A);
     memset(&B, 0, sizeof B);
     memset(&plan, 0, sizeof plan);
     dh_xfer_init(&A.x, A.rx_buf, RX_CAP);
     dh_xfer_init(&B.x, B.rx_buf, RX_CAP);
+    establish_seal(&A, &B, 0);
+    establish_seal(&B, &A, 1);
 }
 
 /* Encode one action from `from` into a wire message; false = nothing to send
@@ -85,7 +131,10 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         dh_clip_offer offer;
         CHECK(dh_xfer_offer_info(&from->x, &offer), "wire", "offer_info failed");
         m->type = DH_MSG_CLIP_OFFER;
-        n = dh_clip_encode_offer(&offer, m->payload, sizeof m->payload);
+        size_t sealed = 0;
+        if (dh_seal_encode_offer(&from->seal_tx, aes_gcm_ref_aead(), &offer, m->payload,
+                                 sizeof m->payload, &sealed) == DH_SEAL_OK)
+            n = (int)sealed;
         break;
     }
     case DH_XFER_ACT_SEND_CHUNK: {
@@ -97,10 +146,15 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
             return 0; /* lost in transit */
         }
         m->type = DH_MSG_CLIP_CHUNK;
-        n = dh_clip_encode_chunk(&chunk, m->payload, sizeof m->payload);
+        size_t sealed = 0;
+        if (dh_seal_encode_chunk(&from->seal_tx, aes_gcm_ref_aead(), &chunk, m->payload,
+                                 sizeof m->payload, &sealed) == DH_SEAL_OK)
+            n = (int)sealed;
         if (n > 0 && plan.corrupt_armed && a->seq == plan.corrupt_seq) {
             plan.corrupt_armed = 0;
-            m->payload[n - 1] ^= 0xff; /* flip a data byte; CRC now lies */
+            /* A byte of ciphertext, which the GCM tag covers: the far end
+               refuses the chunk instead of assembling it. */
+            m->payload[n - 1] ^= 0xff;
         }
         break;
     }
@@ -163,15 +217,27 @@ static size_t dispatch(struct side *to, const struct wire_msg *m, dh_xfer_action
     CHECK(dh_frame_decode(framed, framed_len, &fv, &consumed) == DH_FRAME_OK,
           "wire", "frame decode failed");
 
+    /* The plaintext of whichever sealed message is being opened. One buffer,
+       because a message is opened and handled before the next arrives. */
+    static uint8_t plain[DH_FRAME_MAX_PAYLOAD];
+
     switch (fv.hdr.type) {
     case DH_MSG_CLIP_OFFER: {
         dh_clip_offer offer;
-        CHECK(dh_clip_decode_offer(fv.payload, fv.hdr.len, &offer), "wire", "offer decode");
+        if (dh_seal_open_offer(&to->seal_rx, aes_gcm_ref_aead(), fv.payload, fv.hdr.len, plain,
+                               sizeof plain, &offer) != DH_SEAL_OK) {
+            to->seal_refused++;
+            return 0;
+        }
         return dh_xfer_handle_offer(&to->x, &offer, acts, ACTS_CAP);
     }
     case DH_MSG_CLIP_CHUNK: {
         dh_clip_chunk chunk;
-        CHECK(dh_clip_decode_chunk(fv.payload, fv.hdr.len, &chunk), "wire", "chunk decode");
+        if (dh_seal_open_chunk(&to->seal_rx, aes_gcm_ref_aead(), fv.payload, fv.hdr.len, plain,
+                               sizeof plain, &chunk) != DH_SEAL_OK) {
+            to->seal_refused++;
+            return 0;
+        }
         return dh_xfer_handle_chunk(&to->x, &chunk, acts, ACTS_CAP);
     }
     case DH_MSG_CLIP_REQUEST: {
@@ -288,33 +354,41 @@ int main(void) {
         CHECK(dh_crc32(NULL, 0) == 0, "crc", "empty");
     }
 
-    /* Payload codecs round-trip through the frame codec (AC: offer, request,
-       chunk, done, cancel round-trip through the shared core's codec). */
+    /* Payload codecs round-trip through the frame codec and, for the two that
+       carry the user's bytes, through the seal (AC: offer, request, chunk,
+       done, cancel round-trip through the shared core's codec). */
     {
+        reset_scenario();
         const uint8_t meta[] = {0x61, 0x62};
         dh_clip_offer offer = {7, 2, 123456, meta, 2};
-        uint8_t p[DH_FRAME_MAX_PAYLOAD], f[DH_FRAME_MAX_SIZE];
-        int n = dh_clip_encode_offer(&offer, p, sizeof p);
-        CHECK(n == 17, "codec", "offer encode length");
+        uint8_t p[DH_FRAME_MAX_PAYLOAD], f[DH_FRAME_MAX_SIZE], plain[DH_FRAME_MAX_PAYLOAD];
+        size_t n = 0;
+        CHECK(dh_seal_encode_offer(&A.seal_tx, aes_gcm_ref_aead(), &offer, p, sizeof p, &n) ==
+                      DH_SEAL_OK &&
+                  n == DH_SEAL_OFFER_OVERHEAD + 2u,
+              "codec", "sealed offer length");
         size_t fl = 0, consumed = 0;
         dh_frame_view fv;
-        CHECK(dh_frame_encode(DH_MSG_CLIP_OFFER, 0, p, (size_t)n, f, sizeof f, &fl) ==
-                      DH_FRAME_OK &&
+        CHECK(dh_frame_encode(DH_MSG_CLIP_OFFER, 0, p, n, f, sizeof f, &fl) == DH_FRAME_OK &&
                   dh_frame_decode(f, fl, &fv, &consumed) == DH_FRAME_OK,
               "codec", "offer through frame codec");
         dh_clip_offer back;
-        CHECK(dh_clip_decode_offer(fv.payload, fv.hdr.len, &back) && back.id == 7 &&
-                  back.kind == 2 && back.total == 123456 && back.meta_len == 2 &&
+        CHECK(dh_seal_open_offer(&B.seal_rx, aes_gcm_ref_aead(), fv.payload, fv.hdr.len, plain,
+                                 sizeof plain, &back) == DH_SEAL_OK &&
+                  back.id == 7 && back.kind == 2 && back.total == 123456 && back.meta_len == 2 &&
                   memcmp(back.meta, meta, 2) == 0,
               "codec", "offer fields survive");
 
         dh_clip_chunk chunk = {7, 3, dh_crc32(payload, 100), payload, 100};
-        n = dh_clip_encode_chunk(&chunk, p, sizeof p);
-        CHECK(n == 112, "codec", "chunk encode length");
+        CHECK(dh_seal_encode_chunk(&A.seal_tx, aes_gcm_ref_aead(), &chunk, p, sizeof p, &n) ==
+                      DH_SEAL_OK &&
+                  n == DH_SEAL_CHUNK_OVERHEAD + 100u,
+              "codec", "sealed chunk length");
         dh_clip_chunk cback;
-        CHECK(dh_clip_decode_chunk(p, (size_t)n, &cback) && cback.id == 7 && cback.seq == 3 &&
-                  cback.crc32 == chunk.crc32 && cback.data_len == 100 &&
-                  memcmp(cback.data, payload, 100) == 0,
+        CHECK(dh_seal_open_chunk(&B.seal_rx, aes_gcm_ref_aead(), p, n, plain,
+                                 sizeof plain, &cback) == DH_SEAL_OK &&
+                  cback.id == 7 && cback.seq == 3 && cback.crc32 == chunk.crc32 &&
+                  cback.data_len == 100 && memcmp(cback.data, payload, 100) == 0,
               "codec", "chunk fields survive");
 
         uint32_t id, seq;
@@ -328,7 +402,8 @@ int main(void) {
         CHECK(dh_clip_encode_credit(9, 16, p, sizeof p) == 6 &&
                   dh_clip_decode_credit(p, 6, &id, &credits) && id == 9 && credits == 16,
               "codec", "credit round-trip");
-        CHECK(!dh_clip_decode_offer(p, 3, &back), "codec", "short offer rejected");
+        dh_clip_offer_head head;
+        CHECK(!dh_clip_decode_offer_head(p, 3, &head), "codec", "short offer head rejected");
         CHECK(!dh_clip_decode_id(p, 5, &id), "codec", "wrong-length id rejected");
     }
 
@@ -454,16 +529,43 @@ int main(void) {
                   "partial batch carried a non-chunk action");
     }
 
-    /* AC: a corrupt chunk produces a retransmit for that chunk alone. */
+    /* AC: a corrupt chunk produces a retransmit for that chunk alone. The seal
+       is what refuses it now, one layer before the transfer machine sees it. */
     {
         reset_scenario();
         plan.corrupt_seq = 1;
         plan.corrupt_armed = 1;
         const size_t len = 4 * DH_XFER_CHUNK_SIZE;
         offer_and_run(&A, payload, len);
+        CHECK(B.seal_refused == 1, "corrupt", "the corrupted chunk was not refused by the seal");
         CHECK(B.delivered == 1, "corrupt", "not delivered after corruption");
         CHECK(memcmp(B.rx_buf, payload, len) == 0, "corrupt", "bytes differ");
         CHECK(B.retransmits_sent == 1, "corrupt", "retransmit not selective");
+    }
+
+    /* The CRC32 inside the seal is fidelity, not authentication: what it
+       catches is a chunk whose bytes and checksum disagree, which after #113
+       means a bug in the seal layer rather than anything the wire did. Driven
+       directly, because no wire fault can reach it — GCM refuses first. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        const uint8_t data[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        const dh_clip_offer offer = {
+            .id = 77, .kind = 0, .total = sizeof data, .meta = NULL, .meta_len = 0};
+        (void)dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+
+        dh_clip_chunk chunk = {.id = 77,
+                               .seq = 0,
+                               .crc32 = dh_crc32(data, sizeof data) ^ 0xffffffffu,
+                               .data = data,
+                               .data_len = (uint16_t)sizeof data};
+        (void)dh_xfer_handle_chunk(&B.x, &chunk, acts, ACTS_CAP);
+        CHECK(B.x.rx.nreceived == 0, "crc", "a chunk whose CRC32 lies was accepted");
+
+        chunk.crc32 = dh_crc32(data, sizeof data);
+        (void)dh_xfer_handle_chunk(&B.x, &chunk, acts, ACTS_CAP);
+        CHECK(B.x.rx.nreceived == 1, "crc", "the honest chunk was not accepted");
     }
 
     /* AC: credit exhaustion stops the sender; replenishment resumes it. */

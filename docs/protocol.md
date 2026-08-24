@@ -29,11 +29,22 @@ which is the thing being removed. Recovery is one chord press, by design.
 > the board's public key, and authenticates every session-band frame. `src/core/dh_session_v1.[ch]`
 > is deleted — there is one wire format again.
 >
-> **Windows is still on v1** until [#84](https://github.com/myn/deskhopplus/issues/84). A v1
-> helper cannot pair with a v2 board, which is this document's own rule rather than a defect —
-> old pairings do not migrate. `#109` shipped this spec first because #111, #112 and #84 are all
-> written from it — that is what [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2
-> exists to say.
+> **The Windows helper speaks this document** as of
+> [#84](https://github.com/myn/deskhopplus/issues/84): a DPAPI-held key pair, the same pairing
+> gesture, and the same per-frame tags, over the shared core rather than a second implementation
+> of it. A v1 helper cannot pair with a v2 board, which is this document's own rule rather than a
+> defect — old pairings do not migrate. `#109` shipped this spec first because #111, #112 and #84
+> are all written from it — that is what
+> [#97](https://github.com/myn/deskhopplus/issues/97) Stage 2 exists to say.
+>
+> **The seal exists** as of [#113](https://github.com/myn/deskhopplus/issues/113):
+> `src/core/dh_seal.c` holds the exchange, the key agreement, the counter and the layouts, and
+> `src/core/dh_clip.c` splits each bulk message into the clear head a board routes on and the
+> plaintext only the far helper sees. The cipher is each platform's — CryptoKit in
+> `helpers/macos/Sources/DeskhopChannel/Seal.swift`, CNG in
+> `helpers/windows/src/seal_aead.cpp` — so no board and no core links an AEAD, and each cipher is
+> gated against `clip_offer_text2` and `clip_chunk_hi` in its own suite. What is still to come is
+> the clipboard itself (#52, #55, #56): this is the layer those carry their bytes in.
 
 ## Assumptions
 
