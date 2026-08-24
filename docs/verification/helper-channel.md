@@ -1041,7 +1041,8 @@ gone — the helper's last state line was still the `Not paired` from 16:46:51. 
 recovered, and it did not recover on its own at all. `launchctl kickstart -k` at 16:49:08 brought
 it back to `Connected and paired` in under a second.
 
-The reason is in `SessionEngine.swift`: on `.authenticationFailed` the helper sets `phase = .live`
+The reason is in `SessionEngine.swift` (the v1 Swift machine, since replaced by
+`src/core/dh_helper.c`): on `.authenticationFailed` the helper sets `phase = .live`
 and waits to be paired, which is right when the rejection is real — #46 can only provision a
 helper that stays connected. **It never retries the hello with the secret it is still holding.**
 So when the rejection is manufactured, one burst leaves the machine telling its owner to press the

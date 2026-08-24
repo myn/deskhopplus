@@ -64,11 +64,13 @@ confirmation under the implementation ticket.
 
 **2. A listener can manufacture the chord trap.** It sends a hello with a wrong token. The board
 answers `DH_HELLO_AUTH_FAILED`. That answer reaches **every** attached client, because it is an input
-report. The legitimate helper decodes it, and `SessionEngine.swift:412` moves it to `.notPaired` —
+report. The legitimate helper decodes it, and `SessionEngine.swift:412` (the v1 Swift machine, since
+replaced by `src/core/dh_helper.c`) moves it to `.notPaired` —
 *"Not paired — press the config chord"*. The user presses the chord and provisions the listener. This
 is precisely the losing sequence #34 wrote down on 2026-08-10, which was then thought to require
 winning a startup race. It requires no race, and the helper correlates nothing: `dh_hello_ack` has no
-field tying an ack to the hello that asked for it, and `pairGranted` (`SessionEngine.swift:447`)
+field tying an ack to the hello that asked for it, and `pairGranted` (`SessionEngine.swift:447`,
+now `src/core/dh_helper.c`)
 accepts any grant that arrives.
 
 Together these mean the exclusivity loss is not "belt and braces gone". It is the only thing that was

@@ -149,6 +149,7 @@ public final class HelperSession {
             bytes.withUnsafeBufferPointer { out.update(from: $0.baseAddress!, count: len) }
         }
 
+        machine.initialize(to: dh_helper())
         outputs.initialize(to: dh_helper_outputs())
         if let boardPublicKey, boardPublicKey.count == Int(DH_P256_PUBLIC_SIZE) {
             boardPublicKey.withUnsafeBufferPointer {
@@ -320,13 +321,17 @@ public final class HelperSession {
     }
 }
 
-/* A Swift array into one of the core's fixed-size byte fields. Short sources
-   leave the tail as it was, which is why every one of them is zeroed first. */
+/* A Swift array into one of the core's fixed-size byte fields. The sizes must
+   match exactly: a `HelperIdentity` handing over CryptoKit's 65-byte
+   `x963Representation` instead of the 64 raw bytes the wire wants would
+   otherwise lose its last byte here and fail every tag check on the board,
+   with nothing naming the cause. */
 private func copy<T>(_ source: [UInt8], into destination: inout T) {
+    precondition(source.count == MemoryLayout<T>.size,
+                 "\(source.count) bytes into a \(MemoryLayout<T>.size)-byte field")
     withUnsafeMutableBytes(of: &destination) { field in
-        let count = min(field.count, source.count)
         source.withUnsafeBufferPointer { src in
-            field.copyBytes(from: UnsafeRawBufferPointer(src)[..<count])
+            field.copyBytes(from: UnsafeRawBufferPointer(src))
         }
     }
 }
