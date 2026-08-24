@@ -301,6 +301,17 @@ bool HidTransport::refresh() {
     const bool have_something = !channels_.empty() || config_mode_nodes_ > 0;
     const bool had_something = had_device || config_before > 0;
     if (had_something && !have_something) {
+        /*
+         * Said out loud, as the counterpart of "channel(s) found on serial …".
+         * Neither this nor dh_helper_device_left writes anything, so a device
+         * going away was silent until the deferred state surfaced five seconds
+         * later — and the minutes of quiet that follow, which are simply a
+         * device that is not there, read as a helper that had stopped trying.
+         * That cost #127, filed against the helper for a board that was in the
+         * middle of a firmware pull.
+         */
+        note("the device went away" + (serial_.empty() ? std::string()
+                                                       : " (serial " + narrow(serial_) + ")"));
         serial_.clear();
         announced = true;
         if (events_.device_disappeared) events_.device_disappeared();
