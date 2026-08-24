@@ -189,6 +189,20 @@ bool Helper::start(HINSTANCE instance) {
        compared by eye. */
     log("helper key id: " + hex(identity.key_id));
 
+    /*
+     * Both halves of "am I paired?", said at startup rather than left to be
+     * inferred from what happens next. Without them a helper that pairs and is
+     * a stranger again after a restart looks like the board forgetting, and
+     * the sitting goes looking at the firmware.
+     */
+    if (!identity.persisted)
+        log("this key could not be written and exists only in memory; pairing will work now and "
+            "be gone after a restart, because the next start draws a different key");
+
+    std::vector<uint8_t> board_key = secrets_.load_board_key();
+    log(board_key.empty() ? "no stored board key: this helper must pair before it has a session"
+                          : "stored board key found: this helper has paired with a board before");
+
     Identity core_identity;
     core_identity.public_key = identity.public_key;
     core_identity.key_id = identity.key_id;
@@ -201,7 +215,7 @@ bool Helper::start(HINSTANCE instance) {
     };
 
     session_ = std::make_unique<HelperSession>(
-        std::move(core_identity), secrets_.load_board_key(),
+        std::move(core_identity), std::move(board_key),
         [](uint8_t *out, size_t len) {
             /* A short draw would leave the core keying on bytes nobody chose.
                There is nothing to fall back to, so this stops. */

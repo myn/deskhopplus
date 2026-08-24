@@ -121,6 +121,7 @@ bool SecretStore::load_identity(Identity &out) {
 
     if (stored.size() == DH_P256_PRIVATE_SIZE) {
         out.private_key = stored;
+        out.persisted = true;
         /* The copy in `out` is the one that gets used; this one is about to go
            back to the allocator, and it does not go back holding the key. */
         wipe(stored);
@@ -144,9 +145,12 @@ bool SecretStore::load_identity(Identity &out) {
         }
         out.private_key = candidate;
         /* A key that cannot be stored still works for this run. The helper
-           re-pairs on the next start instead of refusing to run now, and the
-           caller says so in the log. */
-        write_protected(identity_path_, out.private_key);
+           re-pairs on the next start instead of refusing to run now — and the
+           caller says so in the log, which it can only do if this result
+           reaches it. Discarding it here is what made a helper that pairs,
+           reports paired, and is a stranger again after a restart look like
+           the board forgetting rather than this write failing. */
+        out.persisted = write_protected(identity_path_, out.private_key);
     }
 
     out.public_key.assign(DH_P256_PUBLIC_SIZE, 0);

@@ -59,6 +59,12 @@ class SecretStore {
         std::vector<uint8_t> private_key; /* 32 bytes, this helper's own */
         std::vector<uint8_t> public_key;  /* 64 raw bytes, X || Y, big-endian */
         std::vector<uint8_t> key_id;      /* SHA-256(public)[0..8] */
+        /* False when this key exists only in memory: it was freshly made and
+           could not be written. The helper still pairs and runs, but the next
+           start draws a different key and the board's registration — made
+           against this one — stops matching. Nothing else distinguishes that
+           from never having paired, so the caller must say so. */
+        bool persisted = false;
     };
 
     /*
@@ -71,7 +77,10 @@ class SecretStore {
      * lost.
      *
      * False only when a key cannot be created at all, which is the RNG
-     * failing — there is nothing to retry into.
+     * failing — there is nothing to retry into. A key that cannot be *stored*
+     * returns true with `persisted` false: it works for this run, and the
+     * caller logs what the user will otherwise meet as an unexplained
+     * "not paired" after every restart.
      */
     bool load_identity(Identity &out);
 
