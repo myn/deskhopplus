@@ -134,6 +134,20 @@ typedef enum {
      * or swapped (#112).
      */
     DH_HELPER_BOARD_IDENTITY_CHANGED = 8,
+
+    /*
+     * A bound, not a state: never passed to anything that takes a
+     * dh_helper_state. It exists so a binding can enumerate this enum and
+     * prove it carries every value — the macOS helper pairs `HelperState` with
+     * these by raw value, and without a count on this side a state added here
+     * would fall through to `.quiet` and be shown to nobody (#119).
+     *
+     * Keep it last, and keep the values above contiguous from 0 — this is a
+     * count, not a maximum. A state retired the way `channelHeld` was (#114)
+     * must be renumbered out rather than left as a gap, even though those raw
+     * values are the contract the bindings pin against.
+     */
+    DH_HELPER_STATE_COUNT
 } dh_helper_state;
 
 /*

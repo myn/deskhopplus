@@ -1049,7 +1049,18 @@ static void test_the_policy_predicates_are_decided_once(void) {
         {DH_HELPER_BOARD_IDENTITY_CHANGED, false, false},
     };
 
+    /* The table is written by hand, so it can only guard what it lists. The
+       count is what makes a state added to the enum fail here rather than go
+       unasserted — the same drift the macOS binding fixed in #119, on the side
+       that decides the answers. */
+    CHECK(sizeof table / sizeof table[0] == (size_t)DH_HELPER_STATE_COUNT, name,
+          "a state was added to the enum without a row here");
+
     for (size_t i = 0; i < sizeof table / sizeof table[0]; i++) {
+        /* Row order is the enum's order, so a row inserted for the wrong state
+           cannot leave another state covered twice and a third not at all. */
+        CHECK(table[i].state == (dh_helper_state)i, name,
+              "the table's rows are not in the enum's order");
         CHECK(dh_helper_prompts_config_chord(table[i].state) == table[i].chord, name,
               "the chord is offered from the wrong state");
         CHECK(dh_helper_allows_bulk(table[i].state) == table[i].bulk, name,

@@ -1325,6 +1325,26 @@ private func testEveryStateCrossesTheSeamIntact() throws {
     Check.equal(pairing.count, HelperState.allCases.count,
                 "a state was added without being paired with the core's")
 
+    /*
+     * The list above is written by hand, so on its own it can only catch a
+     * state added *here*. `DH_HELPER_STATE_COUNT` is what lets the core be
+     * counted too: without it a tenth `dh_helper_state` — #49's Windows helper
+     * is the likely source — left this suite green while `HelperState(core:)`
+     * returned nil, `state` fell back to `.quiet`, and the user was shown
+     * nothing at all.
+     */
+    Check.equal(HelperState.allCases.count, Int(DH_HELPER_STATE_COUNT.rawValue),
+                "the core carries a different number of states than this helper does")
+
+    for raw in 0 ..< DH_HELPER_STATE_COUNT.rawValue {
+        /* `HelperState(core:)` is a one-line forward to this initialiser, and
+           is internal, so this is the same question asked through the public
+           half of the seam. */
+        Check.that(HelperState(rawValue: raw) != nil,
+                   "the core's state \(raw) has no case on this side, so it would be "
+                   + "reported as quiet and shown to nobody")
+    }
+
     for (swift, core) in pairing {
         Check.equal(swift.rawValue, core.rawValue, "\(swift) is not the core's \(core.rawValue)")
         Check.equal(swift.promptsConfigChord, dh_helper_prompts_config_chord(core),
