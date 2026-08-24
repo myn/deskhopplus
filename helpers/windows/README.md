@@ -44,7 +44,9 @@ has cost a debugging session:
 - the chord is a **toggle** — two quick presses enter and immediately leave, which looks exactly
   like the chord not working;
 - the pairing window is **per board**, and the secret is written to the flash of whichever board
-  processed the chord;
+  processed the chord — and the board that processes it is the one **the keyboard is plugged
+  into**, so pairing this helper means moving the keyboard to board B's USB-A port for the two
+  presses (while it sits there, both BOOTSEL chords name the wrong board — #124);
 - the window is 60 seconds, and a helper started after it opens has missed it.
 
 ## Where it keeps things

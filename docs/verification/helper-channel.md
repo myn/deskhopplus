@@ -278,7 +278,10 @@ to name them; confirmed working on board A, 2026-08-17):
 | Chord | Effect |
 |---|---|
 | `Left Shift + Right Shift + A` | Board A into BOOTSEL |
-| `Left Shift + Right Shift + B` | Board B into BOOTSEL — travels as `FIRMWARE_UPGRADE_MSG`, since the keyboard is on A |
+| `Left Shift + Right Shift + B` | Board B into BOOTSEL — travels as `FIRMWARE_UPGRADE_MSG` while the keyboard is on A |
+
+**Both of these read the wrong board if the keyboard is not on A (#124).** Neither handler
+consults `BOARD_ROLE`: the letters mean "local" and "peer", so with the keyboard on B they swap.
 
 Defined at `src/keyboard.c:97-111`. Board A's is a local `reset_usb_boot`; board B's crosses the
 inter-board link, so B reboots itself on receipt. Prefer these over the button — the board stays
@@ -332,6 +335,15 @@ that processes the chord, and `channel_open_pairing_window` writes the secret in
 board's* flash. Nothing crosses the UART. So the chord must be pressed on the board attached to
 the computer whose helper you want paired, and a secret from one board is refused by the other
 (measured 2026-08-11). Pressing the chord on the Windows side does nothing for the Mac's helper.
+
+**Which board takes the chord is decided by where the keyboard is plugged in**, and by nothing
+else — `process_keyboard_report` runs only on the board hosting the physical keyboard
+(`src/usb.c:285`). Board role comes from a GPIO probe and does not move with it. So **pairing the
+Windows helper means physically moving the keyboard to board B's USB-A port** for the two presses.
+This cost the first hour of #87's sitting (2026-08-24): the chord was pressed with the keyboard on
+A, board A entered config mode, and the config page's *Paired helper* was read as evidence when it
+was showing the Mac's own registration all along. While the keyboard is on B, **both BOOTSEL
+chords are inverted** — see #124 before reaching for either.
 
 **The helper must already be running when the window opens.** The window is 60 s from the
 normal-mode boot, and it can only provision a helper that is connected while it is open. Start
