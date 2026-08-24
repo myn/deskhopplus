@@ -115,7 +115,21 @@ void HidTransport::stop() {
 
 void HidTransport::on_device_change(WPARAM event, LPARAM) {
     if (event != DBT_DEVICEARRIVAL && event != DBT_DEVICEREMOVECOMPLETE) return;
-    refresh();
+
+    /*
+     * Every device event is also a retry of a refused acquisition, which is
+     * why this is not just the sweep.
+     *
+     * When the sweep announces an arrival the session asks for the channels
+     * itself, and doing it again here would charge the backoff twice for one
+     * event. When it does not — our device was already here and something
+     * else on the bus moved — nothing else would try, and the channel we were
+     * refused might be free now. The program that held it does not announce
+     * letting go, so a helper that only ever retried on *its own* device's
+     * events would be waiting for a notification that is never sent.
+     */
+    const bool announced = refresh();
+    if (!announced && has_device() && !holding_channels()) acquire();
 }
 
 std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) const {
@@ -187,7 +201,7 @@ std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) 
     return found;
 }
 
-void HidTransport::refresh() {
+bool HidTransport::refresh() {
     size_t config_nodes = 0;
     std::vector<Found> found = sweep(config_nodes);
 
@@ -239,15 +253,25 @@ void HidTransport::refresh() {
         ++added;
     }
 
+    bool announced = false;
     if (added > 0) {
         note("channel(s) found on serial " +
              (serial_.empty() ? std::string("(none exposed)") : narrow(serial_)) + ": " +
              std::to_string(channels_.size()) + " so far");
+        announced = true;
         if (events_.device_appeared) events_.device_appeared(DH_DEVICE_NORMAL);
     }
 
-    if (config_before == 0 && config_mode_nodes_ > 0 && events_.device_appeared)
-        events_.device_appeared(DH_DEVICE_CONFIG_MODE);
+    /*
+     * Config mode is announced on its own. The core takes it as the session
+     * ending under a named reason rather than as the device vanishing, so
+     * there is no disappearance to report first — dh_helper_device_appeared
+     * closes the channels itself.
+     */
+    if (config_before == 0 && config_mode_nodes_ > 0) {
+        announced = true;
+        if (events_.device_appeared) events_.device_appeared(DH_DEVICE_CONFIG_MODE);
+    }
 
     /*
      * Absent means *nothing* of ours is attached — neither a channel nor a
@@ -259,8 +283,10 @@ void HidTransport::refresh() {
     const bool had_something = had_device || config_before > 0;
     if (had_something && !have_something) {
         serial_.clear();
+        announced = true;
         if (events_.device_disappeared) events_.device_disappeared();
     }
+    return announced;
 }
 
 bool HidTransport::holding_channels() const {
@@ -331,9 +357,20 @@ void HidTransport::release() {
 
 void HidTransport::close(Channel &channel) {
     if (channel.handle != INVALID_HANDLE_VALUE) {
-        /* Cancel before closing: a pending overlapped read owns the buffer and
-           the event, and both are about to go. */
-        CancelIoEx(channel.handle, &channel.overlapped);
+        if (channel.read_pending) {
+            /*
+             * Cancel *and wait*. A pending read owns this OVERLAPPED and this
+             * buffer, and on the removal path refresh() erases the whole
+             * Channel a moment later — so a cancellation still in flight would
+             * complete into freed memory. CancelIoEx only asks; the wait is
+             * what makes it true. It comes back ERROR_OPERATION_ABORTED, which
+             * is the answer we want and not an error to report.
+             */
+            CancelIoEx(channel.handle, &channel.overlapped);
+            DWORD ignored = 0;
+            GetOverlappedResult(channel.handle, &channel.overlapped, &ignored, TRUE);
+            channel.read_pending = false;
+        }
         CloseHandle(channel.handle);
         channel.handle = INVALID_HANDLE_VALUE;
     }
@@ -461,10 +498,20 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
         BOOL ok = WriteFile(channel->handle, report.data(), static_cast<DWORD>(report.size()),
                             &written, &overlapped);
         if (!ok && GetLastError() == ERROR_IO_PENDING) {
-            if (WaitForSingleObject(overlapped.hEvent, kWriteTimeoutMs) == WAIT_OBJECT_0)
+            if (WaitForSingleObject(overlapped.hEvent, kWriteTimeoutMs) == WAIT_OBJECT_0) {
                 ok = GetOverlappedResult(channel->handle, &overlapped, &written, FALSE);
-            else
+            } else {
+                /*
+                 * CancelIoEx only *asks*. Returning here would leave the
+                 * driver owning an OVERLAPPED on a stack frame about to be
+                 * reused and a buffer about to be freed, and it would do that
+                 * on exactly the path this timeout exists for — a device that
+                 * has stopped draining. So the cancellation is waited out.
+                 */
                 CancelIoEx(channel->handle, &overlapped);
+                GetOverlappedResult(channel->handle, &overlapped, &written, TRUE);
+                ok = FALSE;
+            }
         }
         CloseHandle(overlapped.hEvent);
 

@@ -112,10 +112,12 @@ bool state_is_known(dh_helper_state state) {
 
 bool state_names_a_remedy(dh_helper_state state) {
     /*
-     * Three states, and each names something the user can go and do: press the
-     * chord, find the other program, or update one end. The rest change the
-     * tooltip silently — ordinary reconnection is not worth interrupting
-     * anyone for, and the quiet state shows nothing at all.
+     * Four states, and each names something the user can go and do: press the
+     * chord, find the other program, update one end, or clear a pinned key.
+     * (#49 asked for three, listing `channelHeld` — retired by #114 — and the
+     * two measured states from #111 and #112 arrived after it was written.)
+     * The rest change the tooltip silently: ordinary reconnection is not worth
+     * interrupting anyone for, and the quiet state shows nothing at all.
      *
      * This is presentation, which is why it lives here. The one predicate that
      * is *not* — whether the chord may be offered at all — is

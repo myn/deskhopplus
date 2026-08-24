@@ -104,8 +104,12 @@ class HidTransport {
 
     /* A fresh sweep, diffed against what is held. Arrival and removal both
        land here, so there is one description of what "the device is present"
-       means rather than two that can disagree. */
-    void refresh();
+       means rather than two that can disagree.
+
+       True when it announced an arrival — which is the session's cue to ask
+       for the channels, and so the difference between a device event that has
+       already triggered an acquisition and one that has not. */
+    bool refresh();
     std::vector<Found> sweep(size_t &config_mode_nodes) const;
     void close(Channel &channel);
     bool start_read(Channel &channel);

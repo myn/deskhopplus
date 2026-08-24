@@ -71,9 +71,11 @@ class Tray {
     Callbacks callbacks_;
     bool icon_shown_{false};
     dh_helper_state state_{DH_HELPER_QUIET};
-    /* A balloon fires on *entering* a state, not on every report of it. The
-       core re-reports a standing state whenever it recomputes one, and a
-       balloon per report would be a notification storm. */
+    /* A balloon fires on *entering* a state, not on every call saying it.
+       The core emits a state output only on a change, so this is not guarding
+       against it — it guards the paths that re-assert the current state
+       without one, which today is Explorer restarting and taking the icon
+       with it. Without the latch that would re-balloon every time. */
     bool announced_{false};
 };
 

@@ -47,6 +47,21 @@ std::wstring command_line(const std::wstring &exe) {
     return L"\"" + exe + L"\" " + kAutostartArgument;
 }
 
+/*
+ * Two paths naming the same file. Windows filesystems are case-insensitive and
+ * the shell hands back its own normalisation of a link target rather than the
+ * string SetPath was given — so an exact comparison can report that a working
+ * entry names somewhere else, which would have the self-heal rewrite a correct
+ * shortcut on every start and clear its proof each time.
+ *
+ * This does not settle resolution differences (a junction, a mapped drive);
+ * see #122, which waits on a machine where the third rung is actually reached.
+ */
+bool same_path(const std::wstring &a, const std::wstring &b) {
+    return CompareStringOrdinal(a.c_str(), static_cast<int>(a.size()), b.c_str(),
+                                static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
+}
+
 std::wstring startup_link_path() {
     PWSTR folder = nullptr;
     if (SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &folder) != S_OK) return {};
@@ -89,12 +104,21 @@ std::wstring run_key_value() {
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
         return {};
     wchar_t value[1024] = {0};
-    DWORD size = sizeof(value);
+    constexpr size_t kCapacity = sizeof(value) / sizeof(wchar_t);
+    /* One character short of the buffer, so there is always somewhere to put a
+       terminator: RegQueryValueExW does not promise a REG_SZ carries one, and
+       a full-length value written by other software would otherwise be read
+       past the end of the array. */
+    DWORD size = sizeof(value) - sizeof(wchar_t);
     DWORD type = 0;
     const LSTATUS status = RegQueryValueExW(key, kEntryName, nullptr, &type,
                                             reinterpret_cast<LPBYTE>(value), &size);
     RegCloseKey(key);
     if (status != ERROR_SUCCESS || type != REG_SZ) return {};
+
+    size_t chars = size / sizeof(wchar_t);
+    if (chars >= kCapacity) chars = kCapacity - 1;
+    value[chars] = L'\0'; /* a no-op when the stored value already had one */
     return value;
 }
 
@@ -175,12 +199,17 @@ void Autostart::start(bool launched_by_autostart) {
              std::string(autostart::name(record_.mechanism)));
         const Mechanism previous = record_.mechanism;
         remove(previous);
-        if (write(previous)) {
+        /* Both halves again, for the reason enable() states: a rewrite that
+           policy silently discards would otherwise be recorded as a working
+           entry at the new path, and the ladder would never fall through to a
+           rung that does work. */
+        if (write(previous) && reads_back(previous)) {
             record_.exe_path = narrow(exe_path_);
             /* A rewritten entry has never been seen to fire. */
             record_.confirmed = false;
             save();
         } else {
+            remove(previous); /* take back whatever a half-done rewrite left */
             /* The rung that worked before will not take now. Run the whole
                ladder again rather than leaving an entry pointing nowhere. */
             note("rewriting the " + std::string(autostart::name(previous)) +
@@ -203,8 +232,18 @@ void Autostart::enable() {
          rung = autostart::next_attempt(refused)) {
         /* Both halves of "it took": the call succeeded *and* the entry reads
            back. A mechanism that reports success and leaves nothing behind is
-           what a managed laptop's policy actually looks like from here. */
-        const bool took = write(rung) && reads_back(rung);
+           what a managed laptop's policy actually looks like from here.
+           
+           Rolled back when only the first half held. Otherwise a rung whose
+           write survived but whose readback did not would sit there
+           unrecorded, while the record named whichever rung took afterwards —
+           and disabling, which removes only the recorded one, would leave it
+           behind for good. */
+        bool took = write(rung);
+        if (took && !reads_back(rung)) {
+            remove(rung);
+            took = false;
+        }
         attempts.push_back(autostart::Attempt{rung, took});
         note(std::string(took ? "autostart registered: " : "autostart refused: ") +
              autostart::name(rung));
@@ -284,11 +323,11 @@ bool Autostart::reads_back(Mechanism mechanism) const {
         /* The value must still name where the helper is running from — an
            entry pointing at the old location reads back as *present* and is
            exactly the failure the self-heal exists for. */
-        return !value.empty() && value == command_line(exe_path_);
+        return !value.empty() && same_path(value, command_line(exe_path_));
     }
     case Mechanism::StartupFolder: {
         const std::wstring link = startup_link_path();
-        return !link.empty() && link_target(link) == exe_path_;
+        return !link.empty() && same_path(link_target(link), exe_path_);
     }
     case Mechanism::None:
         break;

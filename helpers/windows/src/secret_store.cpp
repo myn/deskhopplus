@@ -121,6 +121,9 @@ bool SecretStore::load_identity(Identity &out) {
 
     if (stored.size() == DH_P256_PRIVATE_SIZE) {
         out.private_key = stored;
+        /* The copy in `out` is the one that gets used; this one is about to go
+           back to the allocator, and it does not go back holding the key. */
+        wipe(stored);
     } else {
         /*
          * First run, or a blob this account cannot unprotect. Either way there

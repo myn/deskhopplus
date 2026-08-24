@@ -84,9 +84,9 @@ class HelperSession {
     dh_helper_negotiated negotiated() const { return machine_->negotiated; }
 
     /* Whether a bulk transfer may go out right now — the seam #52 consumes. It
-       answers for the *session*, where words.h's allows_bulk answers for what
-       the user is being told; the two must not disagree, so both call the
-       core. */
+       answers for the *session*, where dh_helper_allows_bulk answers for what
+       the user is being told; the two must not disagree, which is why both are
+       the core's rather than either being restated here. */
     bool can_send_bulk() const { return dh_helper_can_send_bulk(machine_.get()); }
 
   private:
