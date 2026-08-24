@@ -8,12 +8,23 @@
 #
 #   cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir tests/build
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.20)
 project(deskhopplus_core_tests C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-add_compile_options(-Wall -Wextra -pedantic)
+
+if(MSVC)
+  # The same static CRT the Windows helper links (ADR-0006), carried here in
+  # the test harness's own build file rather than as a flag CI passes. A rule
+  # that lives only in a YAML file is invisible to anyone building locally on a
+  # Windows box, which is the drift the ADR is trying to prevent.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  # /W4 is the third reading of this core, and the strictest of the three.
+  add_compile_options(/W4 /utf-8)
+else()
+  add_compile_options(-Wall -Wextra -pedantic)
+endif()
 
 set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../src/core)
 set(VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/frames.txt)

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ADR-0006, points 4 and the whole of the context behind it.
+
+  `asInvoker` is the one that matters: the target is a managed Windows 11
+  Enterprise laptop on an account with no administrator rights, and a helper
+  that ever raises an elevation prompt is not a helper on that machine. It is
+  declared rather than left to default so that nothing later turns it on by
+  accident.
+
+  PerMonitorV2 because the only UI is a notification-area icon, a tooltip and a
+  menu, and a DPI-unaware process gets those bitmap-stretched on a laptop panel
+  beside two external monitors.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="deskhopplus.helper" version="1.0.0.0"/>
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>

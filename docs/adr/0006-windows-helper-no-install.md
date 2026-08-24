@@ -16,8 +16,12 @@ anything installed on the target machine.** Concretely, today:
 
 1. **Static CRT.** `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>` (`/MT`), so
    there is no redistributable to install.
-2. **Inbox libraries only** — `user32 shell32 ole32 setupapi hid cfgmgr32 crypt32`. Anything not
-   already on a stock Windows install is not a candidate.
+2. **Inbox libraries only** — `user32 shell32 ole32 setupapi hid cfgmgr32 crypt32 bcrypt`.
+   Anything not already on a stock Windows install is not a candidate. `bcrypt` was added when
+   the helper was built ([#82](https://github.com/myn/deskhopplus/issues/82)) for
+   `BCryptGenRandom`, the documented system RNG the shared core's entropy seam is fed from; it
+   ships with Windows, so the rule above governs it unchanged. The list is what is linked
+   today, not a closed set — what is closed is the rule.
 3. **No package manager.** No vcpkg, no conan. Third-party code, if it ever becomes necessary, is
    vendored header-only, so a clean MSVC box builds the tree as checked out.
 4. **Embedded manifest**: PerMonitorV2 DPI awareness and `asInvoker` — the helper never requests

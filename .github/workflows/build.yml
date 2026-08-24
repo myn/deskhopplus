@@ -117,6 +117,60 @@ jobs:
         name: deskhop-gha-${{ github.run_number }}
         path: build/deskhop.uf2
 
+  # The Windows helper (#49, ADR-0006). A separate job because it needs MSVC,
+  # and parallel with the other two because none of them depends on another's
+  # output.
+  #
+  # This job is what makes the no-install claim something a user *receives*
+  # rather than something we assert: the exe it publishes is the deliverable,
+  # built with the static CRT against inbox libraries only, and a change that
+  # quietly reintroduced a redistributable would fail here rather than on the
+  # managed laptop.
+  #
+  # It also runs the existing host suite under MSVC — a third reading of a core
+  # that gcc and clang have both already accepted. Warnings that reading raises
+  # are core defects to fix, not to suppress.
+  windows-helper:
+    runs-on: windows-latest
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Split from the build so a configure failure reads as one. No vcpkg, no
+    # conan, no toolchain file: a clean MSVC box builds the tree as checked out
+    # (ADR-0006), so there is nothing to install first.
+    - name: Configure the helper
+      shell: bash
+      run: cmake -S helpers/windows -B helpers/windows/build
+
+    - name: Build the helper
+      shell: bash
+      run: cmake --build helpers/windows/build --config Release
+
+    # The autostart ladder's decisions. Narrow on purpose: this is the logic
+    # most likely to be wrong on a managed laptop nobody can reproduce, and the
+    # Win32 calls behind it are not reached from here (#86).
+    - name: Run the helper tests
+      shell: bash
+      run: ctest --test-dir helpers/windows/build -C Release --output-on-failure
+
+    # The core's own suite, compiled by MSVC. The runtime setting comes from
+    # tests/CMakeLists.txt rather than from a flag passed here, deliberately —
+    # see ADR-0006.
+    - name: Run the host suite under MSVC
+      shell: bash
+      run: |
+        cmake -S tests -B tests/build-msvc
+        cmake --build tests/build-msvc --config Release
+        ctest --test-dir tests/build-msvc -C Release --output-on-failure
+
+    - name: Publish the helper
+      uses: actions/upload-artifact@v4
+      with:
+        name: deskhop-helper-windows-${{ github.run_number }}
+        path: helpers/windows/build/Release/deskhop-helper.exe
+
   # The macOS helper's own suite (#77). A separate job because it needs a
   # macOS runner, and parallel with the firmware because neither depends on
   # the other's output — so this costs no wall-clock time at all: 39s
