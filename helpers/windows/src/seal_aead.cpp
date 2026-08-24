@@ -31,7 +31,8 @@ struct Provider {
         if (BCryptSetProperty(handle, BCRYPT_CHAINING_MODE,
                               reinterpret_cast<PUCHAR>(const_cast<wchar_t *>(
                                   BCRYPT_CHAIN_MODE_GCM)),
-                              sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != STATUS_SUCCESS) {
+                              static_cast<ULONG>(sizeof(BCRYPT_CHAIN_MODE_GCM)),
+                              0) != STATUS_SUCCESS) {
             BCryptCloseAlgorithmProvider(handle, 0);
             handle = nullptr;
         }

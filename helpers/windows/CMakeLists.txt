@@ -96,7 +96,16 @@ if(WIN32)
     DH_TEST_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../../test-vectors/frames.txt")
   if(MSVC)
     target_compile_options(seal_test PRIVATE /WX)
-    target_compile_definitions(seal_test PRIVATE _Static_assert=static_assert)
+    # `_Static_assert` for the reason the helper defines it below: the core's
+    # headers are C11 and MSVC's C++ compiler does not take the keyword.
+    #
+    # `_CRT_SECURE_NO_WARNINGS` for `fopen`, which this test uses to read
+    # test-vectors/frames.txt. MSVC deprecates it in favour of `fopen_s`, and
+    # /WX makes that deprecation an error. Nothing else in this helper reads a
+    # file through the C library — the exe uses Win32 — so the exemption is
+    # this one test's rather than the build's.
+    target_compile_definitions(seal_test PRIVATE _Static_assert=static_assert
+                               _CRT_SECURE_NO_WARNINGS)
   endif()
   add_test(NAME seal COMMAND seal_test)
 

@@ -130,6 +130,10 @@ jobs:
   # It also runs the existing host suite under MSVC — a third reading of a core
   # that gcc and clang have both already accepted. Warnings that reading raises
   # are core defects to fix, not to suppress.
+  #
+  # And it is the only place the clipboard seal's cipher is exercised: CNG is
+  # Windows, so no other runner can check that *its* AES-256-GCM produces the
+  # bytes on the wire (#113).
   windows-helper:
     runs-on: windows-latest
     steps:
@@ -148,9 +152,11 @@ jobs:
       shell: bash
       run: cmake --build helpers/windows/build --config Release
 
-    # The autostart ladder's decisions. Narrow on purpose: this is the logic
-    # most likely to be wrong on a managed laptop nobody can reproduce, and the
-    # Win32 calls behind it are not reached from here (#86).
+    # Two things: the autostart ladder's decisions (#86), and the seal's cipher
+    # against the golden vectors (#113). The ladder is the logic most likely to
+    # be wrong on a managed laptop nobody can reproduce, and the Win32 calls
+    # behind it are not reached from here. The seal test is here because CNG is
+    # only here.
     - name: Run the helper tests
       shell: bash
       run: ctest --test-dir helpers/windows/build -C Release --output-on-failure
