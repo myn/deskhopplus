@@ -68,6 +68,7 @@ let helperSessionTests: [(String, () throws -> Void)] = [
     ("a stuck handshake still asks to be paired", testAStuckHandshakeStillAsksToBePaired),
     ("an occasional reconnection is an ordinary recovery",
      testAnOccasionalReconnectionIsAnOrdinaryRecovery),
+    ("a slow teardown loop is reported", testASlowTeardownLoopIsReported),
     ("a connection that then holds goes back to connected",
      testAConnectionThatHoldsGoesBackToConnected),
     ("every state crosses the seam with its words and its policy",
@@ -1254,6 +1255,12 @@ private func testAStuckHandshakeStillAsksToBePaired() throws {
  * The other side of the judgement. A re-enumeration, a config-mode round
  * trip and a laptop waking up each cost a reconnection, and a helper that
  * called any of those a fault would be the more annoying defect.
+ *
+ * The spacing is exactly `reconnectWindow`, which since #107 is also the
+ * boundary of the long reading: a teardown no further than a whole short
+ * window from the one before it belongs to the short window and is kept out of
+ * the long ring. So this pins that boundary from below, and
+ * `testASlowTeardownLoopIsReported` pins it from above.
  */
 private func testAnOccasionalReconnectionIsAnOrdinaryRecovery() throws {
     let f = Fixture()
@@ -1265,6 +1272,23 @@ private func testAnOccasionalReconnectionIsAnOrdinaryRecovery() throws {
         Check.equal(f.session.state, .connected,
                     "an occasional reconnection was reported as a connection that will not hold")
     }
+}
+
+/*
+ * And the fault the same shape becomes once it is slower (#107). Sessions that
+ * come up and then die, with the device never going anywhere, at a spacing no
+ * count inside thirty seconds can reach: 586 of them in sixteen hours, one
+ * every 98 s, under a state line that read "Connected and paired" throughout.
+ */
+private func testASlowTeardownLoopIsReported() throws {
+    let f = Fixture()
+    try f.establishSession()
+
+    for _ in 0..<HelperSession.sessionLossLimit {
+        try f.dropAndReconnect(after: 98)
+    }
+    Check.equal(f.session.state, .reconnectingRepeatedly,
+                "a session rebuilt every 98 s still read as connected and paired")
 }
 
 /* The state is not a latch: a connection that then holds for the whole

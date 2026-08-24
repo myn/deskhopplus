@@ -99,6 +99,9 @@ public final class HelperSession {
     public static let helloTimeout = seconds(DH_HELPER_HELLO_TIMEOUT_MS)
     public static let reconnectWindow = seconds(DH_HELPER_RECONNECT_WINDOW_MS)
     public static let reconnectLimit = Int(DH_HELPER_RECONNECT_LIMIT)
+    /* The slow reading of the same fault: sessions lost with the board still
+       attached, which is what #107 spent sixteen hours doing invisibly. */
+    public static let sessionLossLimit = Int(DH_HELPER_SESSION_LOSS_LIMIT)
     public static let pairingRetryInterval = seconds(DH_HELPER_PAIRING_RETRY_MS)
     /* The reconnection delay's ceiling. It sits *below* the silence window on
        purpose: a retry cadence slower than the window would push a deferred

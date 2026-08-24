@@ -88,7 +88,7 @@ enum HelperNotes {
         case DH_NOTE_TRANSPORT_FAILED:
             return "transport failed: \(transportReason ?? "no reason given")"
         case DH_NOTE_RECONNECTION_RATE:
-            return "the last \(a) reconnections came inside \(seconds(b))"
+            return "the last \(a) reconnections came inside \(span(b))"
         default:
             /* A code this helper has no words for. Printed rather than dropped:
                a note nobody can read still says something happened. */
@@ -98,6 +98,14 @@ enum HelperNotes {
 
     private static func seconds(_ ms: Int32) -> String {
         String(format: "%.1fs", Double(ms) / 1000)
+    }
+
+    /* The same, for a span that reaches into minutes — which the slow
+       reconnection window does (#107). Three quarters of an hour printed in
+       tenths of a second is the number, but not one anybody reads at a
+       glance. */
+    private static func span(_ ms: Int32) -> String {
+        ms < 60_000 ? seconds(ms) : String(format: "%.1f min", Double(ms) / 60_000)
     }
 
     /* The protocol's own spelling for a frame type, so a log line and

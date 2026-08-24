@@ -869,6 +869,170 @@ static void test_one_re_enumeration_is_one_drop(void) {
 }
 
 /*
+ * The slow loop, which the short window cannot see (#107).
+ *
+ * 586 teardowns in sixteen hours — one every 98 s — and the state line said
+ * "Connected and paired" for every one of them, because four teardowns 98 s
+ * apart never land inside thirty seconds. Later the same shape on Windows at
+ * one every ~195 s, and on macOS at one every ~17 minutes.
+ */
+static void test_a_slow_teardown_loop_reaches_the_state_line(void) {
+    const char *name = "a slow teardown loop reaches the state line";
+    dh_helper h;
+    a_live_session(&h);
+
+    const uint32_t period = 98000; /* the rate the log carried */
+    bool rate_reported = false;
+
+    for (unsigned i = 0; i < DH_HELPER_SESSION_LOSS_LIMIT; i++) {
+        const uint32_t t = (i + 1) * period;
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_transport_failed(&h, t, &out);
+        no_overflow(name);
+        if (saw_note(&out, DH_NOTE_RECONNECTION_RATE)) rate_reported = true;
+
+        if (i + 1 < DH_HELPER_SESSION_LOSS_LIMIT)
+            CHECK(h.state != DH_HELPER_RECONNECTING_REPEATEDLY, name,
+                  "a couple of teardowns is an ordinary recovery, not a fault");
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_outputs acquired = out;
+        dh_helper_outputs_reset(&out);
+        answer_all(&h, &acquired, t + 100, &out);
+        no_overflow(name);
+    }
+
+    CHECK(h.state == DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "a session rebuilt every 98 s still read as connected and paired");
+    CHECK(rate_reported, name, "the rate was reported without its number");
+    /* And the long window is what caught it. Without this the test would still
+       pass on the short one alone, which is the thing that did not work. */
+    CHECK(h.drop_count < DH_HELPER_RECONNECT_LIMIT, name,
+          "the short window reached its threshold, so this proves nothing");
+}
+
+/*
+ * And a burst does not leave the slow reading standing behind it.
+ *
+ * Eight seconds apart is four inside thirty — squarely what the short window
+ * reports, and it clears about thirty seconds after the link heals. An earlier
+ * cut of this change let those into the long ring as well, because it excluded
+ * only spacings under the short window's *average* of one every seven and a
+ * half seconds. A jiggled cable then read "check the link" for the next
+ * three quarters of an hour over a link that had been fine throughout.
+ */
+static void test_a_burst_does_not_hold_the_slow_reading(void) {
+    const char *name = "a burst does not hold the slow reading";
+    dh_helper h;
+    a_live_session(&h);
+
+    for (uint32_t t = 8000; t <= 32000; t += 8000) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_transport_failed(&h, t, &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_outputs acquired = out;
+        dh_helper_outputs_reset(&out);
+        answer_all(&h, &acquired, t + 100, &out);
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "a flap the short window is for was not reported");
+    CHECK(h.session_loss_count <= 1, name, "a burst filled the long ring");
+
+    /* The link holds. It clears on the short window's terms, not forty-five
+       minutes later. */
+    for (uint32_t t = 33000; t <= 70000; t += 1000) {
+        dh_helper_outputs_reset(&out);
+        pump(&h, t, &out);
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_CONNECTED, name,
+          "a healed link stayed reported as one that will not hold");
+}
+
+/*
+ * And an unplugged cable never accumulates there.
+ *
+ * The long window can only be that long because a disappearance clears it.
+ * Four unplugs across an afternoon are four ordinary events, and a window wide
+ * enough to hold them all would have called them a fault.
+ */
+static void test_a_disappearance_clears_the_slow_reading(void) {
+    const char *name = "a disappearance clears the slow reading";
+    dh_helper h;
+    a_live_session(&h);
+
+    for (unsigned i = 0; i < DH_HELPER_SESSION_LOSS_LIMIT + 1; i++) {
+        const uint32_t t = (i + 1) * 300000; /* five minutes apart */
+
+        /* The shape of a real unplug: the write fails first, and the
+           platform's notification follows it. */
+        dh_helper_outputs_reset(&out);
+        dh_helper_transport_failed(&h, t, &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_device_disappeared(&h, t + 300, &out);
+        no_overflow(name);
+        CHECK(h.session_loss_count == 0, name, "a disappearance left a session loss behind");
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, t + 5000, &out);
+        dh_helper_channels_acquired(&h, 1, t + 5000, &out);
+        dh_helper_outputs acquired = out;
+        dh_helper_outputs_reset(&out);
+        answer_all(&h, &acquired, t + 5000, &out);
+        no_overflow(name);
+
+        CHECK(h.state != DH_HELPER_RECONNECTING_REPEATEDLY, name,
+              "unplugging the board four times in an afternoon read as a fault");
+    }
+}
+
+/*
+ * A session that comes up and then dies does not ask to be paired (#107).
+ *
+ * Measured on Windows: after a liveness timeout the helper asked while holding
+ * a valid board key, and the board refused with `already registered`. That was
+ * correct only because no pairing window happened to be open — a helper that
+ * re-pairs whenever a session dies walks into the next window somebody opens
+ * for a different reason. Its registration was working; the handshake
+ * completed every single time.
+ *
+ * The other half — a handshake that genuinely cannot complete, which is what a
+ * pairing window fixes — is `testAStuckHandshakeStillAsksToBePaired` in the
+ * macOS suite, and it is the reason this gate is on the hello and not on
+ * whether a board key is stored. That helper holds one.
+ */
+static void test_a_completed_handshake_does_not_ask_to_pair(void) {
+    const char *name = "a completed handshake does not ask to pair";
+    dh_helper h;
+    a_live_session(&h);
+
+    for (uint32_t t = 1000; t <= 4000; t += 1000) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_transport_failed(&h, t, &out);
+        no_overflow(name);
+
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        CHECK(!saw_note(&out, DH_NOTE_ASKING_TO_BE_PAIRED), name,
+              "a helper whose hello is answered every time asked to be paired");
+        dh_helper_outputs acquired = out;
+        dh_helper_outputs_reset(&out);
+        answer_all(&h, &acquired, t + 100, &out);
+        no_overflow(name);
+    }
+    CHECK(h.state == DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "the state that asks was never reached, so nothing was proved");
+}
+
+/*
  * The whole pairing exchange against the real board, ending in a session. The
  * grant is what the pin comes from, and the helper stores it only once the key
  * has produced a hello.
@@ -1787,6 +1951,10 @@ int main(int argc, char **argv) {
     test_the_backoff_caps_and_resets();
     test_a_flapping_link_is_reported_as_a_rate();
     test_one_re_enumeration_is_one_drop();
+    test_a_slow_teardown_loop_reaches_the_state_line();
+    test_a_burst_does_not_hold_the_slow_reading();
+    test_a_disappearance_clears_the_slow_reading();
+    test_a_completed_handshake_does_not_ask_to_pair();
     test_pairing_round_trip();
     test_a_board_whose_key_changed_is_not_accepted();
     test_an_answer_to_someone_elses_question_is_dropped();

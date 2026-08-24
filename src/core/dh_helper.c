@@ -129,8 +129,29 @@ static void forget_session(dh_helper *h) {
 
 /* -------------------------------------------------------- the reconnect rate */
 
-static void record_drop(dh_helper *h, uint32_t now_ms) {
-    if (!h->holding_channels && h->phase == DH_HELPER_PHASE_IDLE) return;
+/*
+ * Two rings, because one window cannot answer both faults. See the constants
+ * in dh_helper.h for which is which and why widening the short one is not the
+ * same change.
+ */
+static void push_time(uint32_t *ring, size_t *count, size_t cap, uint32_t now_ms) {
+    if (*count == cap) {
+        memmove(ring, ring + 1, (cap - 1) * sizeof ring[0]);
+        (*count)--;
+    }
+    ring[(*count)++] = now_ms;
+}
+
+static bool rate_reached(const uint32_t *ring, size_t count, size_t need, uint32_t window_ms,
+                         uint32_t now_ms) {
+    if (count < need) return false;
+    return (uint32_t)(now_ms - ring[0]) <= window_ms;
+}
+
+/* False when the drop was not counted, so a caller feeding the second ring
+   makes the same decision about the same event rather than a second one. */
+static bool record_drop(dh_helper *h, uint32_t now_ms) {
+    if (!h->holding_channels && h->phase == DH_HELPER_PHASE_IDLE) return false;
 
     /*
      * The same disappearance, arriving again. One physical event raises one
@@ -141,19 +162,48 @@ static void record_drop(dh_helper *h, uint32_t now_ms) {
      */
     if (h->drop_count > 0 &&
         (uint32_t)(now_ms - h->recent_drops[h->drop_count - 1]) < DH_HELPER_DROP_DEBOUNCE_MS)
-        return;
+        return false;
 
-    if (h->drop_count == DH_HELPER_RECONNECT_LIMIT) {
-        memmove(h->recent_drops, h->recent_drops + 1,
-                sizeof h->recent_drops - sizeof h->recent_drops[0]);
-        h->drop_count--;
-    }
-    h->recent_drops[h->drop_count++] = now_ms;
+    push_time(h->recent_drops, &h->drop_count, DH_HELPER_RECONNECT_LIMIT, now_ms);
+    return true;
+}
+
+/*
+ * Whether this teardown is far enough from the one before it to be outside
+ * anything the short window could have measured — which is what the slow ring
+ * is for. Two things about the comparison were each got wrong once:
+ *
+ * **Against the previous teardown, not the previous ring entry.** Comparing
+ * against the entry lets a flap at just under the threshold land every second
+ * one and fill the ring at half rate.
+ *
+ * **A whole short window, not the average spacing inside one.** Four inside
+ * thirty seconds averages one every seven and a half, and admitting anything
+ * slower than *that* admits an eight-second flap three times over — a burst
+ * squarely inside what the short window reports, which then held the state
+ * line for three quarters of an hour after the link had healed. Measured.
+ * That is a latch rather than a reading, the mistake #94 corrected.
+ *
+ * The cost is a band the two readings share no cover for: teardowns spaced
+ * from about ten seconds to thirty, too slow for four to fit the short window
+ * and too fast to reach this one. Nothing has been observed there, and the
+ * alternative is an alarm that stands for forty-five minutes every time a
+ * cable is jiggled — which is the alarm a user learns to ignore.
+ *
+ * Read before this drop is recorded, so recent_drops still ends with the one
+ * before it.
+ */
+static bool stands_alone(const dh_helper *h, uint32_t now_ms) {
+    if (h->drop_count == 0) return true;
+    return (uint32_t)(now_ms - h->recent_drops[h->drop_count - 1]) >
+           DH_HELPER_RECONNECT_WINDOW_MS;
 }
 
 static bool reconnecting_repeatedly(const dh_helper *h, uint32_t now_ms) {
-    if (h->drop_count < DH_HELPER_RECONNECT_LIMIT) return false;
-    return (uint32_t)(now_ms - h->recent_drops[0]) <= DH_HELPER_RECONNECT_WINDOW_MS;
+    return rate_reached(h->recent_drops, h->drop_count, DH_HELPER_RECONNECT_LIMIT,
+                        DH_HELPER_RECONNECT_WINDOW_MS, now_ms) ||
+           rate_reached(h->recent_session_losses, h->session_loss_count,
+                        DH_HELPER_SESSION_LOSS_LIMIT, DH_HELPER_SESSION_LOSS_WINDOW_MS, now_ms);
 }
 
 /* The rate, with the reading that produced it. The note goes first and only
@@ -161,15 +211,36 @@ static bool reconnecting_repeatedly(const dh_helper *h, uint32_t now_ms) {
    a state without its number is what let #94 run for two days. */
 static void report_repeated_reconnection(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     if (h->state == DH_HELPER_RECONNECTING_REPEATEDLY) return;
-    if (h->drop_count > 0)
+
+    /*
+     * The reading that actually tripped, not whichever ring is fuller. A slow
+     * loop reported as four inside thirty seconds sends the user after a cable
+     * that is fine; a fast one reported over three quarters of an hour buries
+     * the number that matters. The short window is named first because where
+     * both hold it is the tighter statement of the two.
+     */
+    if (rate_reached(h->recent_drops, h->drop_count, DH_HELPER_RECONNECT_LIMIT,
+                     DH_HELPER_RECONNECT_WINDOW_MS, now_ms))
         put_note(o, DH_NOTE_RECONNECTION_RATE, (int32_t)h->drop_count,
                  (int32_t)(now_ms - h->recent_drops[0]));
+    else if (h->session_loss_count > 0)
+        put_note(o, DH_NOTE_RECONNECTION_RATE, (int32_t)h->session_loss_count,
+                 (int32_t)(now_ms - h->recent_session_losses[0]));
     set_state(h, o, DH_HELPER_RECONNECTING_REPEATEDLY);
 }
 
 static void drop_connection(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o,
                             dh_helper_note note, int32_t a, int32_t b) {
-    record_drop(h, now_ms);
+    /*
+     * Every teardown feeds the short window. This one feeds the long window as
+     * well: it is a session *this end* gave up on, and nothing has said the
+     * device went anywhere — which is the whole of what the long window
+     * measures, and what #107 spent sixteen hours doing invisibly.
+     */
+    const bool alone = stands_alone(h, now_ms);
+    if (record_drop(h, now_ms) && alone)
+        push_time(h->recent_session_losses, &h->session_loss_count, DH_HELPER_SESSION_LOSS_LIMIT,
+                  now_ms);
     forget_session(h);
     h->holding_channels = false;
     h->have_deferred = true;
@@ -301,7 +372,15 @@ static void note_started(dh_helper *h, uint32_t now_ms) {
 
 static void device_left(dh_helper *h, dh_helper_state reason, uint32_t now_ms,
                         dh_helper_outputs *o) {
-    record_drop(h, now_ms);
+    (void)record_drop(h, now_ms);
+    /*
+     * The long window starts again. It holds sessions lost while the board
+     * stayed attached, and the board has just left — so an unplug, a sleep, or
+     * a config-mode round trip cannot accumulate there, however many of them a
+     * day carries. Unconditional, and not inside record_drop: a disappearance
+     * the debounce swallows is still a disappearance.
+     */
+    h->session_loss_count = 0;
     forget_session(h);
     h->have_deferred = true;
     h->deferred_state = reason;
@@ -395,8 +474,24 @@ void dh_helper_channels_acquired(dh_helper *h, uint8_t count, uint32_t now_ms,
      * The cost is one untagged frame per acquisition, and only once the rate
      * already says retrying is not working. A board outside a pairing window
      * ignores it.
+     *
+     * Gated on the last hello having gone unanswered (#107), which is what the
+     * note beside it has always claimed: *the handshake is not completing*.
+     * The rate alone does not say that. A session that completes every time
+     * and then dies of a liveness timeout trips the same rate, and there the
+     * registration is working and a fresh one fixes nothing.
+     *
+     * Measured on Windows: after a liveness timeout the helper asked to pair
+     * while holding a valid board key, and the board refused with `already
+     * registered`. Correct, and only because no window happened to be open at
+     * that moment — a helper that re-pairs whenever a session dies is one that
+     * walks into the next window somebody opens for a different reason.
+     *
+     * Gating on holding no board key was tried first and is wrong: the case
+     * above is a *paired* helper whose own identity changed, so it still holds
+     * the pin while the board no longer knows it.
      */
-    if (h->state == DH_HELPER_RECONNECTING_REPEATEDLY &&
+    if (h->state == DH_HELPER_RECONNECTING_REPEATEDLY && h->hello_went_unanswered &&
         build_pair_request(h, now_ms, frame, sizeof frame, &len)) {
         put_note(o, DH_NOTE_ASKING_TO_BE_PAIRED, 0, 0);
         put_bytes(o, DH_HELPER_OUT_SEND, frame, len);
@@ -528,6 +623,8 @@ static void on_hello_ack(dh_helper *h, const dh_frame_view *f, uint32_t now_ms,
     h->negotiated.max_chunk = ack.max_chunk;
     h->negotiated.device_build = ack.build_type;
     h->have_negotiated = true;
+    /* The board answered, so whatever the rate says, it is not the handshake. */
+    h->hello_went_unanswered = false;
 
     if (ack.build_type == DH_BUILD_DEVELOPMENT) put_note(o, DH_NOTE_DEVELOPMENT_BUILD, 0, 0);
 
@@ -888,8 +985,13 @@ void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     }
 
     if (h->phase == DH_HELPER_PHASE_AWAITING_ACK) {
-        if (elapsed(now_ms, h->hello_sent_at, DH_HELPER_HELLO_TIMEOUT_MS))
+        if (elapsed(now_ms, h->hello_sent_at, DH_HELPER_HELLO_TIMEOUT_MS)) {
+            /* The one drop a pairing window can do anything about: the board
+               said nothing, which on firmware predating #117 is how it answers
+               a helper it has no registration for. */
+            h->hello_went_unanswered = true;
             drop_connection(h, now_ms, o, DH_NOTE_NO_ACK, DH_HELPER_HELLO_TIMEOUT_MS, 0);
+        }
         return;
     }
     if (h->phase != DH_HELPER_PHASE_LIVE) return;

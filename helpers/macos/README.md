@@ -95,7 +95,11 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 5. **Reconnects by itself**, with an exponential backoff capped at a few seconds — and says so
    when it finds itself doing that over and over, because a single reconnection is invisible by
    design and a great many of them must not be
-   ([#94](https://github.com/myn/deskhopplus/issues/94)).
+   ([#94](https://github.com/myn/deskhopplus/issues/94)). "Over and over" is two readings, not
+   one: several drops inside half a minute, and — over a far longer window — a handful of
+   sessions that came up and then died with the board never going anywhere. The second is there
+   because the first cannot see a slow loop, and a slow loop ran for sixteen hours under
+   *Connected and paired* ([#107](https://github.com/myn/deskhopplus/issues/107)).
 
 ## The states, and the one that matters
 

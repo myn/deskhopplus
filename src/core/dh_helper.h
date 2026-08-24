@@ -89,6 +89,40 @@ extern "C" {
 #define DH_HELPER_RECONNECT_LIMIT 4u
 
 /*
+ * The second reading of the same fault, over a window three orders of
+ * magnitude longer, counting only sessions lost with the board still attached.
+ *
+ * The window above answers a link that is flapping *fast*. It cannot answer a
+ * slow loop, and a slow loop is what #107 measured: 586 teardowns in sixteen
+ * hours, one every 98 s, and later the same shape on Windows at one every
+ * ~195 s and on macOS at one every ~17 minutes. Four of those never land
+ * inside thirty seconds, so the state line read "Connected and paired" for the
+ * whole sixteen hours while the session was rebuilt underneath it.
+ *
+ * Widening the window above was not the fix. It counts every teardown,
+ * disappearances included, so a window long enough to reach 17-minute spacing
+ * would also call four ordinary unplugs across an afternoon a flapping link.
+ * This one counts only the teardowns *this end* decided on with the device
+ * still there — a liveness timeout, a protocol error, a failed write — and is
+ * cleared whenever the device goes away, so nothing innocent accumulates in it
+ * and the window can be as long as the fault is slow.
+ *
+ * Three inside three quarters of an hour: the slowest spacing observed puts
+ * three of them in ~34 minutes, and three sessions dying over a link that
+ * never moved has no benign reading.
+ *
+ * It takes only teardowns spaced further apart than the whole short window, so
+ * a burst contributes one entry and never three, and the two readings answer
+ * one fault each instead of the fast one latching the slow one for the rest of
+ * the hour. See `stands_alone` for what that costs and why the alternatives
+ * are worse. A loop slow enough to reach this reading does hold it up for as
+ * long as the window, which is the price of measuring something slow and the
+ * same property the short window has at its own scale.
+ */
+#define DH_HELPER_SESSION_LOSS_WINDOW_MS 2700000u
+#define DH_HELPER_SESSION_LOSS_LIMIT 3u
+
+/*
  * How close two drops must be to be the same drop. A platform raises one
  * device notification per HID interface, so a single disappearance arrives
  * several times: returning from config mode, board B re-enumerated four times
@@ -380,6 +414,11 @@ typedef struct {
     uint32_t recent_drops[DH_HELPER_RECONNECT_LIMIT];
     size_t drop_count;
 
+    /* The same, over the long window, holding only sessions lost while the
+       board stayed attached. Cleared whenever the device goes away. */
+    uint32_t recent_session_losses[DH_HELPER_SESSION_LOSS_LIMIT];
+    size_t session_loss_count;
+
     /* A state worth reporting only if it is still true when the window ends.
        `deferred_at` is when it was armed, not when it comes due: a deadline
        stored as a sum cannot be compared wrap-safely against the clock. */
@@ -389,6 +428,11 @@ typedef struct {
 
     uint32_t pairing_requested_at;
     bool pairing_requested;
+
+    /* The last hello timed out with the board answering nothing. It is what
+       separates a handshake that cannot complete — which a pairing window can
+       fix — from a session that completes and then dies, which one cannot. */
+    bool hello_went_unanswered;
 
     uint32_t started_at;
     bool started;

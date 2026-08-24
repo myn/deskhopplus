@@ -14,6 +14,16 @@ std::string seconds(int32_t ms) {
     return buf;
 }
 
+/* The same, for a span that reaches into minutes — which the slow reconnection
+   window does (#107). Three quarters of an hour printed in tenths of a second
+   is the number, but not one anybody reads at a glance. */
+std::string span(int32_t ms) {
+    if (ms < 60000) return seconds(ms);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.1f min", static_cast<double>(ms) / 60000.0);
+    return buf;
+}
+
 std::string hex_byte(int32_t value) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "frame of type 0x%02x", static_cast<unsigned>(value) & 0xFFu);
@@ -207,7 +217,7 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
         return "transport failed: " +
                (transport_reason.empty() ? std::string("no reason given") : transport_reason);
     case DH_NOTE_RECONNECTION_RATE:
-        return "the last " + std::to_string(a) + " reconnections came inside " + seconds(b);
+        return "the last " + std::to_string(a) + " reconnections came inside " + span(b);
     }
 
     /* A code this helper has no words for. Printed rather than dropped: a note
