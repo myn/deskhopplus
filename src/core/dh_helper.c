@@ -353,11 +353,20 @@ void dh_helper_init(dh_helper *h, const dh_helper_identity *identity,
     dh_frame_reader_init(&h->reader);
     dh_auth_counter_init(&h->rx);
     backoff_reset(h);
+    /* Both directions until the board says otherwise, matching the stored
+       default. Zeroing here would silently refuse every copy on a board that
+       has not got as far as stating a policy. */
+    h->clip_flags = DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE;
 
     if (board_public_key != NULL) {
         memcpy(h->board_public_key, board_public_key, DH_P256_PUBLIC_SIZE);
         h->have_board_key = true;
     }
+}
+
+void dh_helper_set_payload_sink(dh_helper *h, dh_helper_payload_fn fn, void *ctx) {
+    h->payload_fn = fn;
+    h->payload_ctx = ctx;
 }
 
 /* The clock arrives with the first input, because a machine with no clock of
@@ -813,6 +822,31 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
     drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason, 0);
 }
 
+/*
+ * The board's clipboard direction policy (#52). Reported every time it is
+ * stated, not only when it changes: the board already sends it only on a
+ * change or a fresh session, and a platform that has just started has nothing
+ * to compare against.
+ */
+static void on_clip_policy(dh_helper *h, const dh_frame_view *f, const uint8_t *body,
+                           size_t body_len, dh_helper_outputs *o) {
+    uint8_t flags = 0;
+    if (!dh_clip_policy_decode(body, body_len, &flags)) {
+        put_note(o, DH_NOTE_UNDECODABLE, f->hdr.type, 0);
+        return;
+    }
+
+    h->clip_flags = flags;
+    h->have_clip_policy = true;
+
+    dh_helper_output *item = slot(o);
+    if (item != NULL) {
+        item->kind = DH_HELPER_OUT_CLIP_POLICY;
+        item->a = (int32_t)flags;
+    }
+    put_note(o, DH_NOTE_CLIP_POLICY, (int32_t)flags, 0);
+}
+
 static void on_listener_alert(dh_helper *h, const dh_frame_view *f, const uint8_t *body,
                               size_t body_len, uint32_t now_ms, dh_helper_outputs *o) {
     dh_listener_alert alert;
@@ -892,9 +926,15 @@ static void on_authenticated(dh_helper *h, const dh_frame_view *f, uint32_t now_
     case DH_MSG_LISTENER_ALERT:
         on_listener_alert(h, f, body, body_len, now_ms, o);
         break;
+    case DH_MSG_CLIP_POLICY:
+        on_clip_policy(h, f, body, body_len, o);
+        break;
     default:
         /* Placement and bulk are authenticated here — which is what makes them
-           liveness — and carried by the platform, not decided by this machine. */
+           liveness — and carried by the platform, not decided by this machine.
+           The sink is where "carried" happens; without one they are dropped,
+           which is a helper that has no payloads rather than an error. */
+        if (h->payload_fn != NULL) h->payload_fn(h->payload_ctx, f->hdr.type, body, body_len);
         break;
     }
 }

@@ -248,6 +248,13 @@ typedef enum {
     DH_HELPER_OUT_STATE = 4,
     DH_HELPER_OUT_RETRY = 5, /* `a` is the delay in milliseconds */
     DH_HELPER_OUT_NOTE = 6,  /* diagnostics, never shown to the user */
+    /*
+     * The board's clipboard direction policy (#52); `a` is the DH_CLIP_MAY_*
+     * flags. Emitted whenever the board states one, which is at least once per
+     * session and again on any change — so a platform that only ever reads
+     * this output is never working from a stale toggle.
+     */
+    DH_HELPER_OUT_CLIP_POLICY = 7,
 } dh_helper_output_kind;
 
 /*
@@ -292,6 +299,7 @@ typedef enum {
     DH_NOTE_DEVICE_SILENT = 28,       /* a = ms of silence */
     DH_NOTE_TRANSPORT_FAILED = 29,
     DH_NOTE_RECONNECTION_RATE = 30,   /* a = drops counted, b = ms they spanned */
+    DH_NOTE_CLIP_POLICY = 31,         /* a = DH_CLIP_MAY_* flags the board stated */
 } dh_helper_note;
 
 /*
@@ -390,6 +398,23 @@ typedef enum {
     DH_HELPER_PHASE_LIVE = 2,
 } dh_helper_phase;
 
+/*
+ * A frame this machine authenticated but does not decide about — a bulk
+ * clipboard message, a cursor placement — handed to the platform as a verified
+ * body (#52).
+ *
+ * A callback rather than an output because of size: an output slot is 76 bytes
+ * and a sealed clipboard chunk is over a thousand, so carrying one through
+ * `dh_helper_outputs` would grow every slot by the largest payload on the
+ * wire. `body` views the reader's buffer and is valid only for the duration of
+ * the call.
+ *
+ * Everything upstream of this has already happened: the frame was decoded, its
+ * tag verified under the session key, and its counter checked against replay.
+ * What reaches a sink is a frame the registered board sent.
+ */
+typedef void (*dh_helper_payload_fn)(void *ctx, uint8_t type, const uint8_t *body, size_t len);
+
 typedef struct {
     const dh_helper_identity *identity;
 
@@ -397,6 +422,18 @@ typedef struct {
     dh_helper_state state;
     dh_helper_negotiated negotiated;
     bool have_negotiated;
+
+    /*
+     * The board's clipboard direction policy (#52), and whether it has said
+     * one this session. Until it has, both directions are allowed — the stored
+     * default — so a helper never refuses a copy because a frame is still in
+     * flight.
+     */
+    uint8_t clip_flags;
+    bool have_clip_policy;
+
+    dh_helper_payload_fn payload_fn;
+    void *payload_ctx;
 
     uint8_t phase; /* dh_helper_phase */
     dh_frame_reader reader;
@@ -484,6 +521,23 @@ void dh_helper_init(dh_helper *h, const dh_helper_identity *identity,
    user is being told; the two must not disagree. */
 static inline bool dh_helper_can_send_bulk(const dh_helper *h) {
     return h->phase == DH_HELPER_PHASE_LIVE && h->have_negotiated;
+}
+
+/*
+ * Where verified bulk and placement frames go. Set once, before the first
+ * input; passing NULL drops them, which is what a helper with no payloads yet
+ * does.
+ */
+void dh_helper_set_payload_sink(dh_helper *h, dh_helper_payload_fn fn, void *ctx);
+
+/* What the board last said about the clipboard's two directions (#52). Both
+   allowed until it has said anything, which is what the toggles default to. */
+static inline uint8_t dh_helper_clip_flags(const dh_helper *h) { return h->clip_flags; }
+static inline bool dh_helper_may_send_clip(const dh_helper *h) {
+    return (h->clip_flags & DH_CLIP_MAY_SEND) != 0;
+}
+static inline bool dh_helper_may_receive_clip(const dh_helper *h) {
+    return (h->clip_flags & DH_CLIP_MAY_RECEIVE) != 0;
 }
 
 /*

@@ -52,6 +52,17 @@ CONFIG_ = [
     FormField(73, "KBD LED as Indicator", None, {}, "uint8", "checkbox"),
 
     FormField(76, "Enforce Ports", None, {}, "uint8", "checkbox"),
+
+    # Clipboard sharing, one toggle per direction (#52). Named for the *block*
+    # rather than the permission because that is how the board stores them —
+    # zero means allowed, which is what let the two bytes land in existing
+    # padding instead of costing every user their settings and their pairing
+    # (config_layout.h). Showing them the other way round would put an
+    # inversion between what the page says and what the board holds, which is
+    # one more place for the two to drift.
+    FormField(1004, "Clipboard", elem="label"),
+    FormField(89, "Block clipboard A to B", None, {}, "uint8", "checkbox"),
+    FormField(90, "Block clipboard B to A", None, {}, "uint8", "checkbox"),
 ]
 
 OUTPUT_ = [

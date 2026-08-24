@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "config_store.h"
+#include "dh_session.h"
 
 static int failures = 0;
 
@@ -158,6 +159,48 @@ static void test_sealing_is_idempotent(void) {
     CHECK(config_is_valid(&cfg), "idempotent", "sealing twice invalidated the config");
 }
 
+/*
+ * The clipboard toggles came out of padding, which is what lets them arrive
+ * without a CURRENT_CONFIG_VERSION bump — and a version bump costs every user
+ * their settings and their pairing (#52).
+ *
+ * Two things have to hold. A configuration written before these existed has
+ * zeros where they now sit, so it must still validate; and those zeros must
+ * mean *allowed*, because that is what both toggles default to. A field named
+ * for the permission rather than the block would read as "clipboard off in
+ * both directions" on every board already in use, which looks exactly like the
+ * feature not working.
+ */
+static void test_the_clipboard_toggles_fit_the_padding(void) {
+    /* A configuration sealed before the toggles existed: the bytes they now
+       occupy were padding, zeroed by the same initialisation every writer
+       used. */
+    config_t before;
+    memset(&before, 0, sizeof before);
+    before.magic_header = CONFIG_MAGIC_HEADER;
+    before.version = CURRENT_CONFIG_VERSION;
+    before.jump_threshold = 200;
+    config_seal(&before);
+
+    CHECK(config_is_valid(&before), "toggles",
+          "a configuration written before the toggles existed stopped validating");
+    CHECK(before.clip_block_a_to_b == 0 && before.clip_block_b_to_a == 0, "toggles",
+          "the toggle bytes did not land on the old padding");
+
+    /* Zero is allowed, which is the default both toggles are specified to
+       have. The one place that translation happens is the core's. */
+    CHECK(dh_clip_policy_for(0, before.clip_block_a_to_b, before.clip_block_b_to_a) ==
+              (DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE),
+          "toggles", "a stored zero did not mean both directions allowed");
+
+    /* And they are inside the checksummed range like everything else, so a
+       toggle cannot be flipped in flash without the board noticing. */
+    config_t flipped = before;
+    flipped.clip_block_a_to_b = 1;
+    CHECK(!config_is_valid(&flipped), "toggles",
+          "a toggle changed underneath the checksum was accepted");
+}
+
 int main(void) {
     test_a_sealed_config_validates();
     test_every_payload_byte_is_covered();
@@ -165,6 +208,7 @@ int main(void) {
     test_the_checksum_itself_is_checked();
     test_magic_and_version_are_refused_distinctly();
     test_sealing_is_idempotent();
+    test_the_clipboard_toggles_fit_the_padding();
 
     if (failures) {
         printf("%d config check(s) failed\n", failures);

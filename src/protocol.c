@@ -94,6 +94,18 @@ const field_map_t api_field_map[] = {
     { 86, true,  UINT32, 4, offsetof(device_t, config.channel_helper_key_id) },
     { 87, true,  UINT32, 4, offsetof(device_t, config.channel_helper_key_id) + 4 },
     { 88, true,  UINT8,  1, offsetof(device_t, config.channel_paired) },
+
+    /* Clipboard sharing, one toggle per direction (#52). Writable, and written
+       to *both* boards by the config page — which is what the direction names
+       depend on: "A to B" means the same thing on either board only while both
+       hold the same pair of values.
+
+       Stored as blocks so that zero means allowed; config_layout.h says why.
+       The board turns them into what its own helper acts on with
+       dh_clip_policy_for, so neither the page nor a helper has to work out
+       which end of a direction it is standing at. */
+    { 89, false, UINT8,  1, offsetof(device_t, config.clip_block_a_to_b) },
+    { 90, false, UINT8,  1, offsetof(device_t, config.clip_block_b_to_a) },
 };
 
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave

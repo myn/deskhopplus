@@ -148,6 +148,7 @@ _Static_assert(DH_SESSION_MAX_CHUNK <= DH_SESSION_CHUNK_CEILING,
 #define DH_PAIR_GRANT_LEN (8u + DH_P256_PUBLIC_SIZE)
 #define DH_PAIR_REFUSED_LEN 9u
 #define DH_HELLO_REFUSED_LEN 11u
+#define DH_CLIP_POLICY_LEN 1u
 
 /*
  * The largest complete frame this layer emits: a PAIR_GRANT, 4 header bytes
@@ -184,6 +185,37 @@ typedef enum {
     DH_OS_MAC = 1,
     DH_OS_WINDOWS = 2,
 } dh_os;
+
+/*
+ * The clipboard direction policy (#52), told to the helper in CLIP_POLICY.
+ *
+ * The user's two toggles are per *direction* — A→B and B→A — but a helper
+ * cannot act on a direction, only on its own two verbs: may I send what was
+ * copied here, and may I write what arrives. `dh_clip_policy_for` is the one
+ * place those are turned into each other, so that neither board nor helper
+ * ever has to work out which end of "A to B" it is standing at.
+ *
+ * The board is the single source of truth for settings (spec #42), so nothing
+ * on either helper stores a toggle. A board that says nothing leaves both
+ * verbs allowed, which is what the stored default means.
+ */
+#define DH_CLIP_MAY_SEND 0x01u
+#define DH_CLIP_MAY_RECEIVE 0x02u
+
+/*
+ * `board_role` is 0 for board A and 1 for board B. The two blocks are the
+ * stored toggles, both false by default — see config_layout.h for why they are
+ * stored as blocks rather than as permissions.
+ */
+static inline uint8_t dh_clip_policy_for(uint8_t board_role, bool block_a_to_b,
+                                         bool block_b_to_a) {
+    /* Outbound from this board's computer is A→B on board A, B→A on board B;
+       inbound is the other one. */
+    const bool blocked_out = (board_role == 0) ? block_a_to_b : block_b_to_a;
+    const bool blocked_in = (board_role == 0) ? block_b_to_a : block_a_to_b;
+    return (uint8_t)((blocked_out ? 0u : DH_CLIP_MAY_SEND) |
+                     (blocked_in ? 0u : DH_CLIP_MAY_RECEIVE));
+}
 
 typedef enum {
     DH_BUILD_RELEASE = 0,
@@ -299,6 +331,9 @@ dh_frame_result dh_pair_refused_encode(const dh_pair_refused *in, uint8_t *out, 
 
 bool dh_listener_alert_decode(const uint8_t *body, size_t len, dh_listener_alert *out);
 
+/* CLIP_POLICY carries one byte of DH_CLIP_MAY_* flags. */
+bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags);
+
 /*
  * How wide a window the listener count is measured over, and how many refused
  * frames inside one make it worth telling the helper about.
@@ -351,6 +386,16 @@ typedef struct {
        that authenticates, carrying the window it was measured over. */
     bool alert_pending;
     dh_listener_alert alert;
+
+    /*
+     * The clipboard policy this board last set, and whether the helper has yet
+     * to be told it (#52). Owed rather than sent on the spot for the reason the
+     * alert is: the outbound priority band holds one frame, and the moment a
+     * session first exists is the moment the HELLO_ACK is occupying it. The
+     * tick is where one frame per pass is already the rule.
+     */
+    uint8_t clip_flags;
+    bool clip_policy_owed;
 } dh_session;
 
 /*
@@ -446,11 +491,23 @@ void dh_session_note_sent(dh_session *s, uint32_t now_ms);
 void dh_session_note_owed_sent(dh_session *s, uint8_t type);
 
 /*
+ * Set the clipboard direction policy this board's helper is to be told about
+ * (#52) — `dh_clip_policy_for` turns the two stored toggles into it.
+ *
+ * Safe to call every pass with the same value: a helper is told only when the
+ * value it holds is no longer the one this board has. That is what makes the
+ * config page's *next* write take effect on a live session, without the caller
+ * having to notice that a setting changed.
+ */
+void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags);
+
+/*
  * Advance the clock, encoding whatever is owed the helper into out — a
- * listener alert that has been waiting for a session, the board's beat when
- * the direction has been idle for an interval, or a SESSION_END on the call
- * that evicts a helper for silence. Never more than one: an evicted session is
- * not beaten at, and one frame per tick is what the outbound queue takes.
+ * clipboard policy it has not been told, a listener alert that has been
+ * waiting for a session, the board's beat when the direction has been idle for
+ * an interval, or a SESSION_END on the call that evicts a helper for silence.
+ * Never more than one: an evicted session is not beaten at, and one frame per
+ * tick is what the outbound queue takes.
  *
  * There is no separate transition flag. The eviction *is* the frame, so the
  * signal and what goes on the wire cannot disagree.

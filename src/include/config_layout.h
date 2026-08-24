@@ -86,14 +86,32 @@ typedef struct {
     uint8_t channel_shared_secret[DH_P256_SHARED_SIZE];
     uint8_t channel_paired;
 
+    /*
+     * Clipboard sharing, one toggle per direction (#52). Stored as **blocks**,
+     * so that zero means allowed: these two bytes were padding until now, and
+     * every configuration already written has zeros in them. A field meaning
+     * "enabled" would have read as off on every existing board and cost a
+     * CURRENT_CONFIG_VERSION bump to avoid — which costs every user their
+     * settings and their pairing. The sense is inverted here so that nobody
+     * has to press a chord for a feature they have not asked for yet.
+     *
+     * The config page shows them as blocks too, so the stored sense and the
+     * shown sense cannot drift apart.
+     *
+     * dh_clip_policy_for (dh_session.h) is the only place these are turned
+     * into what a helper acts on.
+     */
+    uint8_t clip_block_a_to_b;
+    uint8_t clip_block_b_to_a;
+
     /* Named, not left to the compiler: _reserved needs 4-byte alignment, so
-       three bytes sit here either way — and they are inside the checksummed
-       range. As padding their contents are indeterminate, so a config_t built
-       by aggregate initialisation rather than copied whole would be sealed
-       over undefined bytes and refused on the next boot. That is #74's
-       failure mode with a different cause. A named member is zeroed by
-       initialisation and copied deterministically, which removes it. */
-    uint8_t _pad[3];
+       a byte sits here either way — and it is inside the checksummed range. As
+       padding its contents are indeterminate, so a config_t built by aggregate
+       initialisation rather than copied whole would be sealed over undefined
+       bytes and refused on the next boot. That is #74's failure mode with a
+       different cause. A named member is zeroed by initialisation and copied
+       deterministically, which removes it. */
+    uint8_t _pad[1];
 
     /* Two words, so the struct ends exactly on the checksum. #46's 17 bytes
        rounded config_t up to 160 and left four bytes of padding *behind* the
@@ -119,3 +137,14 @@ typedef struct {
  */
 _Static_assert(offsetof(config_t, checksum) == sizeof(config_t) - sizeof(uint32_t),
                "config_t: checksum must be last, with no trailing padding (see #74)");
+
+/*
+ * The clipboard toggles came out of padding that was already there, so the
+ * layout is unchanged and no stored configuration stops validating (#52). That
+ * claim is only true while those three bytes still sit between `channel_paired`
+ * and `_reserved` — a fourth field here would push `_reserved` along, change
+ * every offset after it, and silently invalidate every board's stored config
+ * without the version bump that is supposed to announce exactly that.
+ */
+_Static_assert(offsetof(config_t, _reserved) == offsetof(config_t, channel_paired) + 4,
+               "config_t: the clipboard toggles must fit the padding, not extend the struct");

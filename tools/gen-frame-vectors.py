@@ -326,6 +326,12 @@ def build():
     # 4 refused frames in a 10 s window: a rate, not an event.
     v.append(("listener_alert", frame(0x03, struct.pack("<II", 10000, 4), K_B2H, 5)))
 
+    # The clipboard's two directions, as the two verbs a helper acts on (#52).
+    # Both forms, because the interesting failure is a flags byte read the
+    # wrong way round and the all-allowed case cannot show one.
+    v.append(("clip_policy_both", frame(0x04, bytes([0x03]), K_B2H, 8)))
+    v.append(("clip_policy_receive_only", frame(0x04, bytes([0x02]), K_B2H, 9)))
+
     # --- pairing and refusal, the untagged band ----------------------------
     v.append(("pair_request", frame(0x08, struct.pack("<Q", CORRELATION) + HELPER_PUB)))
     v.append(("pair_grant", frame(0x09, struct.pack("<Q", CORRELATION) + BOARD_PUB)))
@@ -396,7 +402,8 @@ HEADER = """\
 #   helper to device (k_h2b)   heartbeat 0, pos_response 1, seal_offer 2, seal_accept 3,
 #                              seal_stale 4, and the clipboard messages 5 through 11
 #   device to helper (k_b2h)   hello_ack 0, device_heartbeat 1, session_end 2/3/4,
-#                              listener_alert 5, place 6, pos_query 7
+#                              listener_alert 5, place 6, pos_query 7,
+#                              clip_policy_both 8, clip_policy_receive_only 9
 #   pair_* and hello_refused_* carry no prefix and no counter at all
 #
 # The bulk vectors are all in the helper-to-device direction. Which way a relayed

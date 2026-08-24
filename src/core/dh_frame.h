@@ -33,6 +33,7 @@ extern "C" {
     X(DH_MSG_HELLO, 0x01)            \
     X(DH_MSG_HELLO_ACK, 0x02)        \
     X(DH_MSG_LISTENER_ALERT, 0x03)   \
+    X(DH_MSG_CLIP_POLICY, 0x04)      \
     X(DH_MSG_HEARTBEAT, 0x05)        \
     X(DH_MSG_DEVICE_HEARTBEAT, 0x06) \
     X(DH_MSG_SESSION_END, 0x07)      \

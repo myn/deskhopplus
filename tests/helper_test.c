@@ -1928,6 +1928,112 @@ static void test_a_grant_answering_someone_elses_request_is_dropped(void) {
     no_overflow(name);
 }
 
+/*
+ * The board's clipboard direction policy (#52). The device is the single
+ * source of truth for settings, so this machine holds no toggle of its own —
+ * what it holds is the last thing the board said, and both directions until
+ * the board has said anything.
+ */
+static void test_the_board_states_the_clipboard_policy(void) {
+    const char *name = "the board states the clipboard policy";
+    dh_helper h;
+    a_live_session(&h);
+
+    CHECK(dh_helper_may_send_clip(&h) && dh_helper_may_receive_clip(&h), name,
+          "a helper told nothing did not assume both directions allowed");
+    CHECK(!h.have_clip_policy, name, "a policy was recorded before one arrived");
+
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    const uint8_t receive_only[1] = {DH_CLIP_MAY_RECEIVE};
+    CHECK(board_frame(DH_MSG_CLIP_POLICY, receive_only, sizeof receive_only, frame, sizeof frame,
+                      &len),
+          name, "the policy frame would not build");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+
+    const dh_helper_output *stated = first_of(&out, DH_HELPER_OUT_CLIP_POLICY);
+    CHECK(stated != NULL, name, "the policy was not reported to the platform");
+    CHECK(stated != NULL && stated->a == DH_CLIP_MAY_RECEIVE, name,
+          "the reported policy is not the one the board sent");
+    CHECK(saw_note(&out, DH_NOTE_CLIP_POLICY), name, "the policy was not traced");
+    CHECK(!dh_helper_may_send_clip(&h), name, "sending survived a policy that forbids it");
+    CHECK(dh_helper_may_receive_clip(&h), name, "receiving was lost with sending");
+    CHECK(h.have_clip_policy, name, "a stated policy was not recorded as stated");
+    no_overflow(name);
+
+    /* A policy that will not decode changes nothing. Reading a half-arrived
+       flags byte as "both off" would turn a corrupt frame into a clipboard
+       that has silently stopped working. */
+    const uint8_t too_long[2] = {DH_CLIP_MAY_SEND, 0};
+    CHECK(board_frame(DH_MSG_CLIP_POLICY, too_long, sizeof too_long, frame, sizeof frame, &len),
+          name, "the malformed frame would not build");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 200, &out);
+    CHECK(first_of(&out, DH_HELPER_OUT_CLIP_POLICY) == NULL, name,
+          "a malformed policy was reported as a policy");
+    CHECK(saw_note(&out, DH_NOTE_UNDECODABLE), name, "a malformed policy was not traced");
+    CHECK(!dh_helper_may_send_clip(&h) && dh_helper_may_receive_clip(&h), name,
+          "a malformed policy overwrote the one that was understood");
+    no_overflow(name);
+}
+
+/*
+ * Bulk frames are the one thing this machine authenticates and then declines to
+ * decide about (#52). They reach the platform through a sink rather than an
+ * output because an output slot is 76 bytes and a sealed chunk is over a
+ * thousand — but what reaches it must still be a frame the board sent, tag
+ * verified and counter checked, or the sink becomes the hole every rule above
+ * it was written to close.
+ */
+static struct {
+    unsigned calls;
+    uint8_t type;
+    uint8_t body[64];
+    size_t len;
+} payloads;
+
+static void record_payload(void *ctx, uint8_t type, const uint8_t *body, size_t len) {
+    (void)ctx;
+    payloads.calls++;
+    payloads.type = type;
+    payloads.len = len < sizeof payloads.body ? len : sizeof payloads.body;
+    if (body != NULL) memcpy(payloads.body, body, payloads.len);
+}
+
+static void test_verified_bulk_reaches_the_platform(void) {
+    const char *name = "verified bulk reaches the platform";
+    dh_helper h;
+    a_live_session(&h);
+    memset(&payloads, 0, sizeof payloads);
+    dh_helper_set_payload_sink(&h, record_payload, NULL);
+
+    const uint8_t chunk[5] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01};
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(board_frame(DH_MSG_CLIP_CHUNK, chunk, sizeof chunk, frame, sizeof frame, &len), name,
+          "the bulk frame would not build");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+    CHECK(payloads.calls == 1, name, "the bulk frame did not reach the platform");
+    CHECK(payloads.type == DH_MSG_CLIP_CHUNK, name, "the platform was handed the wrong type");
+    CHECK(payloads.len == sizeof chunk && memcmp(payloads.body, chunk, sizeof chunk) == 0, name,
+          "the platform was handed the wrong body");
+    no_overflow(name);
+
+    /* The sink sits behind the tag, not beside it. */
+    CHECK(board_frame(DH_MSG_CLIP_CHUNK, chunk, sizeof chunk, frame, sizeof frame, &len), name,
+          "the second bulk frame would not build");
+    frame[DH_FRAME_HEADER_SIZE + DH_FRAME_COUNTER_SIZE] ^= 0x40u;
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 200, &out);
+    CHECK(payloads.calls == 1, name, "a frame that did not authenticate reached the platform");
+    CHECK(saw_note(&out, DH_NOTE_TAG_FAILED), name, "a bad tag on bulk was not traced");
+    no_overflow(name);
+}
+
 int main(int argc, char **argv) {
     const char *frames = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     const char *primitives = argc > 2 ? argv[2] : DH_PRIMITIVE_VECTORS;
@@ -1973,6 +2079,8 @@ int main(int argc, char **argv) {
     test_the_beat_trace_starts_afresh_after_a_hello_is_refused();
     test_an_ack_for_someone_elses_hello_is_dropped();
     test_a_grant_answering_someone_elses_request_is_dropped();
+    test_the_board_states_the_clipboard_policy();
+    test_verified_bulk_reaches_the_platform();
 
     if (failures) {
         printf("%d helper check(s) failed\n", failures);

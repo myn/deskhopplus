@@ -192,11 +192,23 @@ bool dh_listener_alert_decode(const uint8_t *body, size_t len, dh_listener_alert
     return true;
 }
 
+bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags) {
+    if (body == NULL || flags == NULL || len != DH_CLIP_POLICY_LEN) return false;
+    *flags = body[0];
+    return true;
+}
+
 /* ------------------------------------------------------------------ session */
 
 void dh_session_init(dh_session *s, uint8_t build_type) {
     memset(s, 0, sizeof *s);
     s->build_type = build_type;
+    /* Both directions allowed until the caller says otherwise, because that is
+       what the stored toggles default to. Zeroing here instead would make a
+       board that never sets a policy tell its helper the clipboard is off in
+       both directions, which is the same silence the feature not working looks
+       like from the desk. */
+    s->clip_flags = DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE;
 }
 
 void dh_session_stage_nonce(dh_session *s, const uint8_t nonce[DH_NONCE_SIZE]) {
@@ -221,10 +233,20 @@ void dh_session_drop(dh_session *s) {
     dh_auth_counter_init(&s->rx);
     s->tx_counter = 0;
 
+    /* Nobody left to tell. `clip_flags` itself survives — it is configuration,
+       not session state, and the next helper is owed it from scratch. */
+    s->clip_policy_owed = false;
+
     /* The listener count and the staged nonce deliberately survive: a client
        that keeps writing junk across a reconnection is exactly what the alert
        exists to notice, and entropy the caller already drew is not the
        session's to throw away. */
+}
+
+void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags) {
+    if (s->clip_flags == clip_flags) return;
+    s->clip_flags = clip_flags;
+    if (s->present) s->clip_policy_owed = true;
 }
 
 /* Anything that arrived and authenticated proves the helper is alive. Only a
@@ -242,6 +264,10 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type) {
     /* The measurement is released only once something has taken the frame
        carrying it. See the header for why the beat needs no equivalent. */
     if (type == DH_MSG_LISTENER_ALERT) s->alert_pending = false;
+    /* The policy has the same problem for a different reason: a helper told
+       nothing goes on believing whatever it last heard, and there is no second
+       chance to notice — unlike the beat, nothing follows to correct it. */
+    if (type == DH_MSG_CLIP_POLICY) s->clip_policy_owed = false;
 }
 
 /*
@@ -471,6 +497,9 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
        session starts with a full idle interval ahead of it rather than owing a
        beat immediately. */
     s->last_sent_ms = now_ms;
+    /* A helper that has just arrived has been told nothing, whatever the last
+       one heard — so this is set outright rather than only on a change (#52). */
+    s->clip_policy_owed = true;
 
     const dh_frame_result rc =
         dh_hello_ack_encode(&ack, s->k_b2h, s->tx_counter, out, out_cap, out_len);
@@ -648,6 +677,23 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
        just arithmetic rather than a session dropped once every 49 days. */
     if ((uint32_t)(now_ms - s->last_seen_ms) >= (uint32_t)DH_SESSION_ABSENT_MS)
         return dh_session_end(s, DH_SESSION_END_LIVENESS_TIMEOUT, out, out_cap, out_len);
+
+    /*
+     * Ahead of everything else this tick can produce, because until a helper
+     * has it the clipboard does not work at all, and one tick's delay to a
+     * beat or an alert costs neither of them anything. Like the alert, it is
+     * released only by dh_session_note_owed_sent.
+     */
+    if (s->clip_policy_owed) {
+        const uint8_t body[DH_CLIP_POLICY_LEN] = {s->clip_flags};
+        const dh_frame_result rc = encode_tagged(DH_MSG_CLIP_POLICY, 0, s->k_b2h, s->tx_counter,
+                                                 body, sizeof body, out, out_cap, out_len);
+        if (rc == DH_FRAME_OK) {
+            s->tx_counter++;
+            dh_session_note_sent(s, now_ms);
+        }
+        return rc;
+    }
 
     /* A measurement waiting for someone to tell. Ahead of the beat because it
        is itself traffic — it fills the idle direction the beat would have — and

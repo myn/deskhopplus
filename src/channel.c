@@ -685,20 +685,35 @@ void channel_task(device_t *state) {
     channel_pump_inbound();
 
     /*
-     * Whichever the session owes its helper: a listener alert that has been
-     * waiting for a session to tell, the beat that fills an idle direction, or
-     * the announcement that a silent helper has just been evicted. Never more
-     * than one, and nothing at all on the ordinary tick.
+     * The clipboard's two direction toggles, as the two verbs this board's own
+     * helper acts on (#52). Set every pass rather than watched for changes:
+     * the session sends a frame only when the value it holds is no longer this
+     * one, so a config page write takes effect on a live session without
+     * anything here having to notice that a setting moved.
+     */
+    dh_session_set_clip_policy(&channel.session,
+                               dh_clip_policy_for(state->board_role,
+                                                  state->config.clip_block_a_to_b != 0,
+                                                  state->config.clip_block_b_to_a != 0));
+
+    /*
+     * Whichever the session owes its helper: the clipboard policy a fresh or
+     * changed setting owes it, a listener alert that has been waiting for a
+     * session to tell, the beat that fills an idle direction, or the
+     * announcement that a silent helper has just been evicted. Never more than
+     * one, and nothing at all on the ordinary tick.
      */
     uint8_t owed[DH_SESSION_REPLY_MAX];
     size_t owed_len = 0;
     if (dh_session_tick(&channel.session, now, owed, sizeof owed, &owed_len) == DH_FRAME_OK &&
         owed_len > 0 && channel_queue_frame(owed, owed_len)) {
-        /* Only a listener alert cares, and it cares a great deal: the queue's
-           priority band holds one frame, and the tick that first has a session
-           to report to is the one right after the HELLO_ACK went into it. A
-           refused alert that had already been marked sent would be a
-           measurement destroyed. owed[0] is the frame's type byte. */
+        /* The listener alert and the clipboard policy both care, and both for
+           the same reason: the queue's priority band holds one frame, and the
+           tick that first has a session to tell is the one right after the
+           HELLO_ACK went into it. A refused alert marked sent would be a
+           measurement destroyed; a refused policy marked sent would leave a
+           helper acting on a toggle the user has changed, with nothing
+           following to correct it. owed[0] is the frame's type byte. */
         dh_session_note_owed_sent(&channel.session, owed[0]);
     }
 

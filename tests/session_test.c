@@ -196,6 +196,19 @@ static size_t tick(dh_session *s, uint32_t now_ms, uint8_t *out, size_t out_cap)
     return out_len;
 }
 
+/*
+ * Take the clipboard policy a fresh session owes its helper (#52) off the
+ * queue, exactly as a board does when it accepts that frame. It is the first
+ * thing any tick after a handshake produces, and the tests below are about the
+ * beat, the alert and the eviction — so they settle it here once rather than
+ * each accounting for a frame that is not their subject.
+ */
+static void settle_policy(dh_session *s, uint32_t now_ms) {
+    uint8_t out[MAX_BYTES];
+    const size_t len = tick(s, now_ms, out, sizeof out);
+    if (len > 0 && out[0] == DH_MSG_CLIP_POLICY) dh_session_note_owed_sent(s, out[0]);
+}
+
 /* A complete authenticated frame, built the way a helper would build one. */
 static size_t make_tagged(uint8_t type, const uint8_t key[DH_SESSION_KEY_SIZE], uint64_t counter,
                           const uint8_t *body, size_t body_len, uint8_t *out, size_t cap) {
@@ -313,6 +326,26 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
               "hello_ack_ok", "re-encode failed");
         CHECK(out_len == ack_v->len[0] && memcmp(out, ack_v->f[0], out_len) == 0, "hello_ack_ok",
               "re-encode mismatch");
+    }
+
+    /* The clipboard policy, both forms. There is no encoder to round-trip
+       against — the board writes the byte inside dh_session_tick — so what is
+       gated here is the decode: a flags byte read the wrong way round would
+       disable the direction the user left on. */
+    const struct {
+        const char *name;
+        uint8_t expected;
+    } policies[] = {
+        {"clip_policy_both", (uint8_t)(DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE)},
+        {"clip_policy_receive_only", (uint8_t)DH_CLIP_MAY_RECEIVE},
+    };
+    for (size_t i = 0; i < sizeof policies / sizeof policies[0]; i++) {
+        const struct vector *p_v = find(policies[i].name);
+        if (!p_v || !decoded_body(p_v->f[0], p_v->len[0], &v, &body, &body_len)) continue;
+        CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, policies[i].name, "wrong message type");
+        uint8_t flags = 0;
+        CHECK(dh_clip_policy_decode(body, body_len, &flags), policies[i].name, "decode failed");
+        CHECK(flags == policies[i].expected, policies[i].name, "wrong flags");
     }
 
     /* The untagged band: pairing and the two refusals. */
@@ -887,6 +920,7 @@ static void test_only_authenticated_traffic_is_liveness(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "liveness",
           "no session");
+    settle_policy(&s, now);
 
     /* A helper's beat, properly tagged, keeps the session indefinitely — and
        is not answered. The board's own beat is idle-gated, so a direction kept
@@ -958,6 +992,7 @@ static void test_the_board_beats_only_into_an_idle_direction(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "idle",
           "no session");
+    settle_policy(&s, now);
 
     /* The ack is itself traffic, so the direction is not idle yet. */
     now += DH_SESSION_HEARTBEAT_MS - 1;
@@ -966,7 +1001,9 @@ static void test_the_board_beats_only_into_an_idle_direction(void) {
     now += 1;
     const size_t beat_len = tick(&s, now, reply, sizeof reply);
     CHECK(beat_len > 0, "idle", "an idle interval drew no beat");
-    CHECK(authenticates(reply, beat_len, k_b2h, 1), "idle",
+    /* Counter 2, not 1: the ack spent 0 and the clipboard policy this session
+       owed its helper (#52) spent 1. */
+    CHECK(authenticates(reply, beat_len, k_b2h, 2), "idle",
           "the board's beat is not tagged under k_b2h at the next counter");
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle", "beat twice in one interval");
 
@@ -988,6 +1025,7 @@ static void test_liveness_survives_the_clock_wrapping(void) {
     const uint32_t before_wrap = UINT32_MAX - (DH_SESSION_HEARTBEAT_MS / 2);
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], before_wrap, reply, sizeof reply) > 0, "wrap",
           "no session");
+    settle_policy(&s, before_wrap);
 
     const uint32_t after_wrap = before_wrap + DH_SESSION_HEARTBEAT_MS; /* wraps */
     CHECK(tick(&s, after_wrap, reply, sizeof reply) > 0, "wrap",
@@ -1106,6 +1144,7 @@ static void test_a_rate_of_refused_frames_is_reported_to_the_helper(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "alert",
           "no session");
+    settle_policy(&s, now);
 
     const size_t alert_len =
         measure_a_window(&s, &now, &beats, DH_LISTENER_THRESHOLD, reply, sizeof reply);
@@ -1159,6 +1198,7 @@ static void test_a_count_below_the_threshold_is_not_reported(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "threshold",
           "no session");
+    settle_policy(&s, now);
 
     CHECK(measure_a_window(&s, &now, &beats, DH_LISTENER_THRESHOLD - 1u, reply, sizeof reply) == 0,
           "threshold", "a count below the threshold was reported");
@@ -1181,6 +1221,7 @@ static void test_an_ordinary_liveness_timeout_is_not_a_listener(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "timeout",
           "no session");
+    settle_policy(&s, now);
 
     /* The board evicts for silence. */
     now += DH_SESSION_ABSENT_MS;
@@ -1222,6 +1263,7 @@ static void test_a_measurement_outlives_the_session_it_was_taken_in(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "pending",
           "no session");
+    settle_policy(&s, now);
 
     /* Enough refusals to trip, then the session dies before the window it was
        measured in has closed. */
@@ -1256,6 +1298,7 @@ static void test_a_measurement_outlives_the_session_it_was_taken_in(void) {
     dh_session_stage_nonce(&s, board_nonce);
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "pending",
           "no new session");
+    settle_policy(&s, now);
     const size_t alert_len = tick(&s, now, reply, sizeof reply);
     CHECK(decoded_body(reply, alert_len, &v, &body, &body_len), "pending",
           "the pending alert was never sent");
@@ -1412,6 +1455,106 @@ static void test_an_eviction_the_board_knows_about_is_announced(void) {
     CHECK(out_len == 0, "end", "announced the end of a session that never started");
 }
 
+/*
+ * The clipboard direction policy (#52). Every session is told one, whether or
+ * not it differs from the last session's — a helper that has just arrived has
+ * been told nothing, and one that assumed a default would be assuming it about
+ * a board it has never spoken to.
+ */
+static void test_every_session_is_told_the_clipboard_policy(void) {
+    const struct vector *hello_v = find("hello_mac");
+    if (!hello_v) return;
+
+    dh_session s;
+    a_paired_board(&s, DH_BUILD_RELEASE);
+    uint32_t now = 400000;
+    uint8_t reply[DH_SESSION_REPLY_MAX];
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "policy",
+          "no session");
+
+    dh_frame_view v;
+    const uint8_t *body = NULL;
+    size_t body_len = 0;
+    size_t len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len), "policy",
+          "a fresh session sent no policy");
+    CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, "policy", "the first frame is not the policy");
+
+    uint8_t flags = 0;
+    CHECK(dh_clip_policy_decode(body, body_len, &flags), "policy", "decode failed");
+    CHECK(flags == (DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE), "policy",
+          "a board that was told nothing did not report both directions allowed");
+
+    /* Until something takes the frame, it is still owed: a helper never told is
+       a helper working from whatever it last heard, with nothing following to
+       correct it. */
+    CHECK(tick(&s, now, reply, sizeof reply) > 0, "policy",
+          "a policy the queue refused was thrown away");
+    dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
+    dh_session_note_sent(&s, now);
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy", "the policy was sent twice");
+
+    /* The config page writes a toggle. The live session hears about it. */
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE);
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len), "policy",
+          "a changed toggle was not sent to the live session");
+    CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, "policy", "the change is not a policy frame");
+    CHECK(dh_clip_policy_decode(body, body_len, &flags) && flags == DH_CLIP_MAY_RECEIVE, "policy",
+          "the change carried the wrong flags");
+    dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
+    dh_session_note_sent(&s, now);
+
+    /* Setting the same value again is not a change, so it is not traffic. A
+       board calls this every pass; a frame per pass would fill the link. */
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE);
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy",
+          "an unchanged toggle was sent anyway");
+
+    /* A second helper arrives after the first is gone. It has been told
+       nothing, so it is told — and it is told what the board holds now, not
+       the default. */
+    dh_session_drop(&s);
+    dh_session_stage_nonce(&s, board_nonce);
+    now += 1000;
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "policy",
+          "no second session");
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_CLIP_POLICY,
+          "policy", "the second session was not told the policy");
+    CHECK(dh_clip_policy_decode(body, body_len, &flags) && flags == DH_CLIP_MAY_RECEIVE, "policy",
+          "the second session was told the default rather than what is set");
+}
+
+/*
+ * Two toggles named by direction, four helpers that only know "me" and "the
+ * other computer". This is the whole of that translation, and getting it
+ * backwards on one board would disable the wrong direction — visibly wrong at
+ * the desk and invisible in any test that only ever looks at board A.
+ */
+static void test_the_direction_toggles_map_onto_each_board(void) {
+    const uint8_t both = DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE;
+    CHECK(dh_clip_policy_for(0, false, false) == both, "directions",
+          "board A blocked something with both toggles off");
+    CHECK(dh_clip_policy_for(1, false, false) == both, "directions",
+          "board B blocked something with both toggles off");
+
+    /* A→B off: A may not send, B may not receive. Neither loses the other
+       direction. */
+    CHECK(dh_clip_policy_for(0, true, false) == DH_CLIP_MAY_RECEIVE, "directions",
+          "blocking A to B did not stop board A sending");
+    CHECK(dh_clip_policy_for(1, true, false) == DH_CLIP_MAY_SEND, "directions",
+          "blocking A to B did not stop board B receiving");
+
+    CHECK(dh_clip_policy_for(0, false, true) == DH_CLIP_MAY_SEND, "directions",
+          "blocking B to A did not stop board A receiving");
+    CHECK(dh_clip_policy_for(1, false, true) == DH_CLIP_MAY_RECEIVE, "directions",
+          "blocking B to A did not stop board B sending");
+
+    CHECK(dh_clip_policy_for(0, true, true) == 0, "directions", "board A kept a direction");
+    CHECK(dh_clip_policy_for(1, true, true) == 0, "directions", "board B kept a direction");
+}
+
 int main(int argc, char **argv) {
     const char *frames = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     const char *primitives = argc > 2 ? argv[2] : DH_PRIMITIVE_VECTORS;
@@ -1443,6 +1586,8 @@ int main(int argc, char **argv) {
     test_pairing_hands_over_a_public_key_and_closes_the_window();
     test_a_pair_grant_does_not_fit_the_buffer_v1_used();
     test_an_eviction_the_board_knows_about_is_announced();
+    test_every_session_is_told_the_clipboard_policy();
+    test_the_direction_toggles_map_onto_each_board();
 
     if (failures) {
         printf("%d session check(s) failed\n", failures);
