@@ -40,7 +40,7 @@ std::vector<uint8_t> read_file(const std::wstring &path) {
         bytes.resize(static_cast<size_t>(size.QuadPart));
         DWORD read = 0;
         if (!ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) ||
-            read != bytes.size())
+            read != static_cast<DWORD>(bytes.size()))
             bytes.clear();
     }
     CloseHandle(file);
@@ -59,7 +59,7 @@ bool write_file(const std::wstring &path, const std::vector<uint8_t> &bytes) {
     DWORD written = 0;
     const bool ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written,
                               nullptr) &&
-                    written == bytes.size();
+                    written == static_cast<DWORD>(bytes.size());
     CloseHandle(file);
     if (!ok) {
         DeleteFileW(temporary.c_str());

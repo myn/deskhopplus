@@ -4,6 +4,18 @@
 
 #include <hidclass.h>
 
+/*
+ * hidpi.h declares every HidP_ function as returning NTSTATUS, and nothing on
+ * the user-mode include path defines that type — windows.h does not, and the
+ * header that would is a driver header. Without this, MSVC reads a hundred
+ * prototypes as implicit-int variable declarations and reports the last of
+ * them as a redefinition of the first.
+ *
+ * An identical redeclaration is legal in both C and C++, so this stays correct
+ * on a toolchain whose headers do define it (mingw's, via ntdef.h).
+ */
+typedef LONG NTSTATUS;
+
 /* Order matters and is not alphabetical: hidpi.h declares the preparsed-data
    and usage types hidsdi.h then uses in its prototypes. */
 extern "C" {
@@ -290,7 +302,7 @@ void HidTransport::acquire() {
             channel.handle = INVALID_HANDLE_VALUE;
             break;
         }
-        channel.buffer.assign(channel.input_report_len, 0);
+        channel.buffer.assign(channel.input_report_len, uint8_t{0});
         channel.opened = true;
         if (!start_read(channel)) break;
         ++acquired;
@@ -430,7 +442,8 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
        filled with the padding byte — that is what tells the device's reader
        where the frames stopped (docs/protocol.md, "The report carrier"). */
     for (size_t offset = 0; offset < len; offset += kReportSize) {
-        std::vector<uint8_t> report(channel->output_report_len, DH_FRAME_PAD);
+        std::vector<uint8_t> report(channel->output_report_len,
+                                   static_cast<uint8_t>(DH_FRAME_PAD));
         report[0] = 0; /* the report ID Windows expects in front of every write */
         const size_t take = std::min(kReportSize, len - offset);
         std::memcpy(report.data() + 1, frame + offset, take);
