@@ -343,7 +343,18 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
      * makes the tag checkable at all. Nothing read here is recorded, acted on
      * or believed until the tag verifies.
      */
-    dh_hello hello;
+    /*
+     * Zeroed rather than left indeterminate. `readable` being true is what
+     * says this was filled, and a third compiler could not follow that across
+     * the short circuit — MSVC at /W4 called it a potentially uninitialised
+     * read (C4701) where gcc and clang had both been quiet.
+     *
+     * It is a false positive today, and the zeroing stays anyway: it costs
+     * eight stores on a path that is about to do an HMAC, and it means a
+     * future edit that reads this before the decode gets zeros rather than
+     * whatever the stack held.
+     */
+    dh_hello hello = {0};
     const bool readable =
         f->hdr.len >= DH_FRAME_AUTH_PREFIX_SIZE &&
         dh_hello_decode(f->payload + DH_FRAME_AUTH_PREFIX_SIZE,
