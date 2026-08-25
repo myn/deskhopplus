@@ -16,6 +16,10 @@ import Foundation
  * of a second is what mkroamer settled on and is below the threshold at which
  * a copy-then-switch feels like it did not happen.
  *
+ * When a poll has actually *seen* a copy is subtler than it looks, because the
+ * count moves before the bytes do — `CopyWatch` in the channel module owns
+ * that, and says why.
+ *
  * **Host-only writes.** Received content is written with
  * `NSPasteboardContentsCurrentHostOnly`, so it does not travel onward over
  * Universal Clipboard. A project whose premise is removing the radio between
@@ -44,16 +48,16 @@ final class Pasteboard {
 
     private let pasteboard = NSPasteboard.general
     private var timer: Timer?
-    private var lastChangeCount: Int
     /*
-     * The change count our own write produced. Without it, writing what
-     * arrived from the other computer looks exactly like a fresh local copy,
-     * and the two helpers hand the same payload back and forth for ever.
+     * Which changes have been accounted for, including the ones our own writes
+     * produced: writing what arrived from the other computer otherwise looks
+     * exactly like a fresh local copy, and the two helpers hand the same
+     * payload back and forth for ever.
      */
-    private var selfChangeCount = -1
+    private var watch: CopyWatch
 
     init() {
-        lastChangeCount = pasteboard.changeCount
+        watch = CopyWatch(changeCount: pasteboard.changeCount)
     }
 
     func start() {
@@ -71,11 +75,19 @@ final class Pasteboard {
 
     private func poll() {
         let count = pasteboard.changeCount
-        guard count != lastChangeCount else { return }
-        lastChangeCount = count
-        guard count != selfChangeCount else { return }
-        guard let string = pasteboard.string(forType: .string), !string.isEmpty else { return }
-        onLocalCopy?(string)
+        /* Read only when something has changed. macOS notices pasteboard
+           reads, so there is no reason to make one five times a second. */
+        guard count != watch.settledAt else { return }
+
+        let text = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
+        guard case .take(let polls) = watch.looked(at: count, foundText: text != nil),
+              let text
+        else { return }
+
+        /* More than one means a copy was caught mid-write and waited for —
+           the case that used to be dropped in silence. */
+        if polls > 1 { log?("a copy took \(polls) polls to become readable") }
+        onLocalCopy?(text)
     }
 
     /*
@@ -114,8 +126,7 @@ final class Pasteboard {
                 /* Read back rather than assumed. The change count our own write
                    produced is what stops it being read as a fresh local copy on
                    the next poll. */
-                selfChangeCount = pasteboard.changeCount
-                lastChangeCount = selfChangeCount
+                watch.wrote(changeCount: pasteboard.changeCount)
                 if attempt > 1 { log?("the pasteboard took \(attempt) attempts to accept a write") }
                 return
             }
@@ -134,8 +145,7 @@ final class Pasteboard {
         guard let displaced else { return }
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         if pasteboard.setString(displaced, forType: .string) {
-            selfChangeCount = pasteboard.changeCount
-            lastChangeCount = selfChangeCount
+            watch.wrote(changeCount: pasteboard.changeCount)
             log?("what was on the pasteboard before was put back")
         } else {
             log?("what was on the pasteboard before could not be put back; it is now empty")
