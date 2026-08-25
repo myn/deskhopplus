@@ -144,8 +144,18 @@ size_t dh_xfer_link_down(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_action *acts,
                             size_t acts_cap);
 size_t dh_xfer_handle_request(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
+/* A receive completes here, on the chunk that fills the received-set, with
+   DH_XFER_ACT_DELIVERED — not at CLIP_DONE (#132). Every chunk is verified on
+   arrival, so the receiver can see for itself that it is finished, and a DONE
+   refused by the device's bounded outbound queue then costs nothing. A
+   zero-length offer is the exception: it has no chunks, so nothing reaches
+   here and only CLIP_DONE can complete it. */
 size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_action *acts,
                             size_t acts_cap);
+/* Drives the retransmit sweep for an incomplete receive. It still completes a
+   transfer that already has every chunk, which since #132 means a zero-length
+   one — nothing else reaches here with the set full — plus the unreached case
+   of a DELIVERED the chunk handler had no room to emit. */
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_handle_cancel(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_action *acts,

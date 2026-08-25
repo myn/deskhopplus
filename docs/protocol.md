@@ -721,7 +721,24 @@ between the helpers**; the firmware relays its messages opaquely.
   chunk alone once — its retransmission is behind that DONE in the FIFO — **but a chunk
   still missing a full round later is requested again**, so a retransmitted chunk that is
   itself lost converges on the next DONE round. Only the loss of a message with no DONE
-  behind it (the final DONE, a lone request) is left to the helper's transfer timeout.
+  behind it (a CLIP_OFFER, a lone request) is left to the helper's transfer timeout.
+- **A receive completes on its last chunk, not on CLIP_DONE.** The paste side verifies every
+  chunk's length and CRC32 as it arrives, so a receiver holding the whole received-set already
+  knows it is finished; CLIP_DONE carries nothing but the id. Completing on the chunk is what
+  makes a lost CLIP_DONE free: the device's outbound queue refuses frames under a burst deeper
+  than itself and nothing retransmits beneath that seam ([ADR-0005](adr/0005-bounded-outbound-queues.md)),
+  and CLIP_DONE is always part of such a burst because it is emitted in the same pump batch as
+  the last chunk. Before
+  [#132](https://github.com/myn/deskhopplus/issues/132) that one refusal stranded a complete,
+  verified payload until the 30-second stall timeout — in both directions, intermittently, with
+  every board counter reading zero. CLIP_DONE keeps its other job, the retransmit sweep for an
+  *incomplete* receive, and is still sent on every transfer.
+
+  Two cases this does **not** cover, both still resolved by the helper's transfer timeout. If the
+  same burst eats the *last chunk* as well as the DONE behind it, nothing completes the set and no
+  DONE arrives to drive a sweep. And a zero-length payload has no chunks at all, so it can only
+  ever complete at CLIP_DONE — reachable in `dh_xfer` but not from either helper, which refuse an
+  empty copy before offering it.
 - **The transfer timeout is a *progress* deadline, not a duration.** Each helper's clipboard
   service gives up on a direction that has produced nothing for 30 seconds and reports it. It
   cannot live in `dh_xfer`, which has no clock and must not gain one — and a deadline on the

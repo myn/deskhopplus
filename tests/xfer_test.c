@@ -72,6 +72,7 @@ struct fault_plan {
     int drop_armed;
     uint32_t corrupt_seq; /* corrupt the first chunk with this seq once */
     int corrupt_armed;
+    int drop_done;        /* drop this many CLIP_DONE messages */
     int block_credits;    /* while set, CLIP_CREDIT messages are discarded */
     struct wire_msg held_credits[16];
     size_t held_count;
@@ -159,6 +160,10 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         break;
     }
     case DH_XFER_ACT_SEND_DONE:
+        if (plan.drop_done > 0) {
+            plan.drop_done--;
+            return 0; /* lost in transit, with no retransmit beneath it */
+        }
         m->type = DH_MSG_CLIP_DONE;
         n = dh_clip_encode_id(a->id, m->payload, sizeof m->payload);
         break;
@@ -509,6 +514,48 @@ int main(void) {
         CHECK(memcmp(B.rx_buf, payload, len) == 0, "double-loss", "bytes differ");
         CHECK(B.retransmits_sent == 2, "double-loss", "expected two retransmit requests");
         CHECK(A.chunks_sent == 7, "double-loss", "expected 5 chunks + 2 retransmissions");
+    }
+
+    /* A dropped CLIP_DONE costs nothing (#132). The board's outbound queue
+       refuses frames under burst with no retransmit beneath it, and DONE is
+       emitted in the same pump batch as the last chunk — so it is the frame
+       most likely to be the casualty. The receiver has every chunk, each one
+       length-checked and CRC32-verified, so it completes on the last chunk
+       rather than waiting to be told what it can already see. */
+    {
+        reset_scenario();
+        plan.drop_done = 1;
+        offer_and_run(&A, payload, 40);
+        CHECK(B.delivered == 1, "done-drop", "not delivered without CLIP_DONE");
+        CHECK(B.delivered_len == 40, "done-drop", "length wrong");
+        CHECK(memcmp(B.rx_buf, payload, 40) == 0, "done-drop", "bytes differ");
+        CHECK(B.retransmits_sent == 0, "done-drop", "asked for chunks it already had");
+    }
+
+    /* The same across a multi-chunk payload: completion is the last chunk
+       landing, not the chunk count. */
+    {
+        reset_scenario();
+        plan.drop_done = 1;
+        const size_t len = 3 * DH_XFER_CHUNK_SIZE + 7;
+        offer_and_run(&A, payload, len);
+        CHECK(B.delivered == 1, "done-drop", "multi-chunk not delivered without CLIP_DONE");
+        CHECK(B.delivered_len == len, "done-drop", "multi-chunk length wrong");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "done-drop", "multi-chunk bytes differ");
+        CHECK(B.retransmits_sent == 0, "done-drop", "multi-chunk asked for chunks it already had");
+    }
+
+    /* DONE keeps its other job. With a chunk lost as well, the sweep it
+       drives is still what re-requests the gap. */
+    {
+        reset_scenario();
+        plan.drop_seq = 1;
+        plan.drop_armed = 1;
+        const size_t len = 3 * DH_XFER_CHUNK_SIZE;
+        offer_and_run(&A, payload, len);
+        CHECK(B.delivered == 1, "done-sweep", "not delivered after a lost chunk");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "done-sweep", "bytes differ");
+        CHECK(B.retransmits_sent == 1, "done-sweep", "gap not re-requested exactly once");
     }
 
     /* A pump batch is bounded, and a partial batch never carries DONE

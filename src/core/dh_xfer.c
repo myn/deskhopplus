@@ -289,6 +289,20 @@ static void rx_request_chunk(dh_xfer *x, uint32_t seq, bool stale, dh_xfer_actio
     (*credits)++;
 }
 
+/* Hand the finished payload up. total/kind/meta stay readable until the next
+   offer, which is what dh_xfer_delivered_len and friends read. False when the
+   action would not fit, which leaves the transfer active so that a CLIP_DONE
+   behind it still completes the transfer rather than the payload being lost. */
+static bool rx_complete(dh_xfer *x, dh_xfer_action *acts, size_t *n, size_t acts_cap) {
+    dh_xfer_action *a = emit(acts, n, acts_cap);
+    if (a == NULL)
+        return false;
+    a->type = DH_XFER_ACT_DELIVERED;
+    a->id = x->rx.id;
+    x->rx.active = false;
+    return true;
+}
+
 static void rx_grant(uint32_t id, dh_xfer_action *acts, size_t *n, size_t acts_cap,
                      uint16_t credits) {
     if (credits == 0)
@@ -338,6 +352,27 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
     bit_set(x->rx.received, chunk->seq);
     bit_clear(x->rx.requested, chunk->seq);
     x->rx.nreceived++;
+
+    /*
+     * The last chunk completes the transfer here rather than at CLIP_DONE
+     * (#132). Every chunk is length-checked and CRC32-verified on arrival, so
+     * a receiver holding all of them already knows it is finished; DONE
+     * carries nothing but the id.
+     *
+     * Waiting to be told made one dropped frame cost the whole payload. The
+     * device's outbound queue refuses frames under a burst deeper than itself
+     * and there is no retransmit beneath that seam (ADR-0005, channel.c) — and
+     * DONE is always part of such a burst, because dh_xfer_pump emits it in
+     * the same batch as the last chunk. A chunk lost that way is re-requested;
+     * a DONE lost that way used to strand a complete payload until the
+     * helper's stall timeout.
+     *
+     * No credit is granted alongside it: nothing further is owed, and a frame
+     * not sent is one the queue cannot refuse.
+     */
+    if (x->rx.nreceived >= x->rx.nchunks && rx_complete(x, acts, &n, acts_cap))
+        return n;
+
     x->rx.ungranted++;
     if (x->rx.ungranted >= DH_XFER_CREDIT_WINDOW / 2) {
         credits = (uint16_t)(credits + x->rx.ungranted);
@@ -374,10 +409,12 @@ size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t
         rx_grant(x->rx.id, acts, &n, acts_cap, credits);
         return n;
     }
-    x->rx.active = false; /* total/kind/meta stay readable until the next offer */
-    dh_xfer_action *a = emit(acts, &n, acts_cap);
-    if (a)
-        a->type = DH_XFER_ACT_DELIVERED;
+    /* Since #132 the ordinary completion is in dh_xfer_handle_chunk, so this
+       is reached only by a transfer whose set was already full on arrival: a
+       zero-length offer, which has no chunk to complete it. (It also backstops
+       a DELIVERED the chunk handler had no room to emit, though on that path
+       nothing precedes it in the batch, so it never fails to fit.) */
+    rx_complete(x, acts, &n, acts_cap);
     return n;
 }
 
