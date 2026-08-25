@@ -38,13 +38,36 @@ jobs:
     # already has jinja2, and this runner has one, so the render takes 0s and
     # never builds a venv. If a future runner does need one, the render step says
     # so plainly rather than failing obscurely.
+    #
+    # Bounded and retried, because this is the step that hangs. Run #30 sat here
+    # for 14 minutes and was still going; the job cap caught it, 25 minutes
+    # after a developer stopped learning anything. A stalled apt is almost
+    # always one unreachable mirror, and the second attempt picks a different
+    # one — so three bounded tries cost at most six minutes and usually one.
+    #
+    # `timeout` rather than a longer job cap: the useful signal is "this hung
+    # again", and it is only useful quickly.
     - name: Install build deps
       shell: bash
       run: |
-        sudo apt-get install -y \
-          gcc-arm-none-eabi \
-          libnewlib-arm-none-eabi \
-          mtools
+        for attempt in 1 2 3; do
+          echo "::group::apt attempt $attempt"
+          if sudo timeout 120 apt-get install -y \
+              gcc-arm-none-eabi \
+              libnewlib-arm-none-eabi \
+              mtools; then
+            echo "::endgroup::"
+            exit 0
+          fi
+          echo "::endgroup::"
+          echo "attempt $attempt did not finish inside 120s"
+          # Only ahead of a *retry*, never on the first pass: refreshing the
+          # lists re-fetches a dozen third-party indexes this build has no use
+          # for, which is why the first attempt deliberately does not.
+          sudo timeout 120 apt-get update || true
+        done
+        echo "apt-get could not install the toolchain in three bounded attempts"
+        exit 1
 
     - name: Checkout
       uses: actions/checkout@v4
