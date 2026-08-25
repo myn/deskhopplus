@@ -50,11 +50,15 @@ static int failures = 0;
 namespace {
 
 std::vector<uint8_t> bytes_of(const std::string &text) {
-    return std::vector<uint8_t>(text.begin(), text.end());
+    std::vector<uint8_t> out(text.size());
+    for (size_t i = 0; i < text.size(); i++) out[i] = static_cast<uint8_t>(text[i]);
+    return out;
 }
 
 std::string text_of(const std::vector<uint8_t> &bytes) {
-    return std::string(bytes.begin(), bytes.end());
+    std::string out(bytes.size(), '\0');
+    for (size_t i = 0; i < bytes.size(); i++) out[i] = static_cast<char>(bytes[i]);
+    return out;
 }
 
 /*
@@ -63,7 +67,10 @@ std::string text_of(const std::vector<uint8_t> &bytes) {
  * bytes twice would key both directions identically and hide a real mix-up.
  */
 std::function<void(uint8_t *, size_t)> counter_entropy(uint8_t seed) {
-    auto step = std::make_shared<uint8_t>(0);
+    /* uint8_t{0}, not 0: a bare literal is an int, and MSVC at /W4 reports the
+       narrowing inside make_shared's instantiation — where /WX makes it an
+       error. Every conversion in this file is spelled out for that reason. */
+    auto step = std::make_shared<uint8_t>(uint8_t{0});
     return [seed, step](uint8_t *out, size_t len) {
         ++*step;
         for (size_t i = 0; i < len; i++)
@@ -237,8 +244,8 @@ void test_sending_off_stops_one_direction() {
     Pair pair;
     /* A→B off: A may not send, B may not receive — the same fact told to each
        end in its own terms (dh_clip_policy_for). */
-    pair.settle(pair.a.policy_changed(DH_CLIP_MAY_RECEIVE), Side::A);
-    pair.settle(pair.b.policy_changed(DH_CLIP_MAY_SEND), Side::B);
+    pair.settle(pair.a.policy_changed(static_cast<uint8_t>(DH_CLIP_MAY_RECEIVE)), Side::A);
+    pair.settle(pair.b.policy_changed(static_cast<uint8_t>(DH_CLIP_MAY_SEND)), Side::B);
 
     pair.copy_on_a("this must not cross");
     CHECK(pair.delivered_to_b.empty(), "a copy crossed a direction that is turned off");
@@ -258,7 +265,7 @@ void test_sending_off_stops_one_direction() {
  */
 void test_receiving_off_refuses_the_offer() {
     Pair pair;
-    pair.settle(pair.b.policy_changed(DH_CLIP_MAY_SEND), Side::B);
+    pair.settle(pair.b.policy_changed(static_cast<uint8_t>(DH_CLIP_MAY_SEND)), Side::B);
 
     pair.copy_on_a("refused at the far end");
     CHECK(pair.delivered_to_b.empty(), "a payload was written to a clipboard that is off");
@@ -281,7 +288,7 @@ void test_a_turned_off_toggle_abandons_in_flight() {
 
     std::string long_text(40000, 'x');
     std::vector<ClipOutput> outputs = pair.a.local_copy(ClipKind::Text, bytes_of(long_text));
-    for (ClipOutput &item : pair.a.policy_changed(DH_CLIP_MAY_RECEIVE))
+    for (ClipOutput &item : pair.a.policy_changed(static_cast<uint8_t>(DH_CLIP_MAY_RECEIVE)))
         outputs.push_back(std::move(item));
     pair.settle(std::move(outputs), Side::A);
 
@@ -351,7 +358,7 @@ void test_malformed_control_messages() {
                   "a malformed control message produced something other than a diagnostic");
 
     /* A type this helper has no case for is named, not dropped silently. */
-    const std::vector<ClipOutput> unknown = a.received(0x3F, nullptr, 0);
+    const std::vector<ClipOutput> unknown = a.received(static_cast<uint8_t>(0x3F), nullptr, 0);
     CHECK(unknown.size() == 1 && unknown[0].kind == ClipOutput::Kind::Note,
           "an unknown clipboard message vanished without a word");
 }
@@ -456,7 +463,7 @@ void test_chunks_are_refused_before_the_seal_is_opened() {
        the guard it would try to open the chunk, fail to find the seal, and
        answer SEAL_STALE — which is the payload having reached the cipher. */
     ClipService refusing(seal_aead(), counter_entropy(3));
-    (void)refusing.policy_changed(DH_CLIP_MAY_SEND);
+    (void)refusing.policy_changed(static_cast<uint8_t>(DH_CLIP_MAY_SEND));
     CHECK(refusing.received(DH_MSG_CLIP_CHUNK, chunk.data(), chunk.size()).empty(),
           "a chunk reached the seal on a helper that had already refused to receive");
 
