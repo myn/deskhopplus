@@ -50,7 +50,11 @@ add_library(dhcore STATIC
   # The cipher is not here and is not in the core: ADR-0008 put AES-256-GCM on
   # the platform, which for this helper is src/seal_aead.cpp over CNG.
   ${CORE}/dh_seal.c
-  ${CORE}/dh_clip.c)
+  ${CORE}/dh_clip.c
+  # The chunked transfer machine (#48) and the CRC32 that is its fidelity
+  # check (ADR-0003). Both arrive with the first real payload (#52).
+  ${CORE}/dh_xfer.c
+  ${CORE}/dh_crc32.c)
 target_include_directories(dhcore PUBLIC ${CORE})
 
 if(MSVC)
@@ -109,11 +113,26 @@ if(WIN32)
   endif()
   add_test(NAME seal COMMAND seal_test)
 
+  # The clipboard path, driven as two helpers talking to each other (#52).
+  # Windows only for the same reason seal_test is: it needs the cipher this
+  # helper actually ships, which is CNG's.
+  add_executable(clip_service_test tests/clip_service_test.cpp src/clip_service.cpp
+                 src/seal_aead.cpp)
+  target_link_libraries(clip_service_test PRIVATE dhcore bcrypt)
+  target_include_directories(clip_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(MSVC)
+    target_compile_options(clip_service_test PRIVATE /WX)
+    target_compile_definitions(clip_service_test PRIVATE _Static_assert=static_assert)
+  endif()
+  add_test(NAME clip_service COMMAND clip_service_test)
+
   # WIN32 rather than a console app: the helper lives in the notification area
   # and must not flash a console window when it autostarts at logon.
   add_executable(deskhop-helper WIN32
     src/main.cpp
     src/helper_session.cpp
+    src/clip_service.cpp
+    src/clipboard.cpp
     src/words.cpp
     src/secret_store.cpp
     src/seal_aead.cpp

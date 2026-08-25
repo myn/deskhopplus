@@ -13,6 +13,74 @@ import Foundation
  * and giving the received one somewhere to assemble.
  */
 
+/*
+ * The transfer's unsealed messages: a transfer id, sometimes a sequence
+ * number, and nothing else. They carry no user bytes, so sealing them would
+ * add sixteen bytes each to hide nothing (docs/protocol.md).
+ *
+ * The offer's *head* is here for the same reason it exists at all — a receiver
+ * has to read which transfer and which seal a message names before it holds
+ * anything it can trust, and a helper that is refusing the transfer outright
+ * never opens the seal.
+ */
+public enum ClipCodec {
+    public static func id(_ id: UInt32) -> [UInt8] {
+        encode(4) { dh_clip_encode_id(id, $0, $1) }
+    }
+
+    public static func retransmit(id: UInt32, seq: UInt32) -> [UInt8] {
+        encode(8) { dh_clip_encode_retransmit(id, seq, $0, $1) }
+    }
+
+    public static func credit(id: UInt32, credits: UInt16) -> [UInt8] {
+        encode(6) { dh_clip_encode_credit(id, credits, $0, $1) }
+    }
+
+    public static func decodeID(_ body: [UInt8]) -> UInt32? {
+        var value: UInt32 = 0
+        let ok = body.withUnsafeBufferPointer { dh_clip_decode_id($0.baseAddress, $0.count, &value) }
+        return ok ? value : nil
+    }
+
+    public static func decodeRetransmit(_ body: [UInt8]) -> (id: UInt32, seq: UInt32)? {
+        var id: UInt32 = 0
+        var seq: UInt32 = 0
+        let ok = body.withUnsafeBufferPointer {
+            dh_clip_decode_retransmit($0.baseAddress, $0.count, &id, &seq)
+        }
+        return ok ? (id, seq) : nil
+    }
+
+    public static func decodeCredit(_ body: [UInt8]) -> (id: UInt32, credits: UInt16)? {
+        var id: UInt32 = 0
+        var credits: UInt16 = 0
+        let ok = body.withUnsafeBufferPointer {
+            dh_clip_decode_credit($0.baseAddress, $0.count, &id, &credits)
+        }
+        return ok ? (id, credits) : nil
+    }
+
+    /// Which transfer a sealed offer names, from its clear head alone.
+    public static func offerID(ofSealedOffer body: [UInt8]) -> UInt32? {
+        var head = dh_clip_offer_head()
+        let ok = body.withUnsafeBufferPointer {
+            dh_clip_decode_offer_head($0.baseAddress, $0.count, &head)
+        }
+        return ok ? head.id : nil
+    }
+
+    private static func encode(_ capacity: Int,
+                               _ body: (UnsafeMutablePointer<UInt8>, Int) -> Int32) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: capacity)
+        let written = out.withUnsafeMutableBufferPointer { body($0.baseAddress!, $0.count) }
+        /* The capacities above are the layouts in dh_clip.h. A negative return
+           is this file disagreeing with that header, which is a bug here
+           rather than anything a caller can be handed. */
+        precondition(written > 0, "a clipboard control message would not encode")
+        return Array(out.prefix(Int(written)))
+    }
+}
+
 /// One thing the transfer machine wants done. A thin view of `dh_xfer_action`;
 /// the fields it does not use for a given type are zero.
 public struct TransferAction: Equatable {
@@ -87,10 +155,46 @@ public final class Transfer {
         }
     }
 
+    /*
+     * Offer the payload already in flight again, as a fresh transfer.
+     *
+     * This is what a SEAL_STALE costs: the far end holds no key for the seal
+     * the offer went out under, so as far as it is concerned the transfer never
+     * happened, and re-sending the same offer under a new key would leave the
+     * two ends disagreeing about which transfer id is live. Starting over is
+     * the honest form of that.
+     *
+     * The bytes do not move — only the transfer around them starts again — so
+     * this costs no copy of the payload.
+     */
+    public func reoffer() -> [TransferAction] {
+        guard let storage = txStorage, let current = outgoingOffer() else { return [] }
+        return collect { acts, cap in
+            current.meta.withUnsafeBufferPointer { m in
+                dh_xfer_offer(machine, current.kind, m.baseAddress, UInt16(current.meta.count),
+                              storage.baseAddress, current.total, acts, cap)
+            }
+        }
+    }
+
+    /// Whether a payload is on its way out — the question a stale seal has to
+    /// ask before it knows whether there is anything to start again.
+    public var isSending: Bool { dh_xfer_is_sending(machine) }
+
+    /// Whether a payload is arriving.
+    public var isReceiving: Bool { dh_xfer_is_receiving(machine) }
+
     /// Emit the next credit-gated batch of chunks. Empty when nothing is owed,
     /// which is the ordinary answer.
     public func pump() -> [TransferAction] {
         collect { acts, cap in dh_xfer_pump(machine, acts, cap) }
+    }
+
+    /// Answer NEED_DATA with a refusal. Nothing in this slice offers lazily, so
+    /// reaching it means the core asked for a payload this end never promised —
+    /// said out loud by the caller rather than left as a transfer that hangs.
+    public func provideFail() -> [TransferAction] {
+        collect { acts, cap in dh_xfer_provide_fail(machine, acts, cap) }
     }
 
     public func cancelOutgoing() -> [TransferAction] {

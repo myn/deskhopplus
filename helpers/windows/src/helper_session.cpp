@@ -22,7 +22,7 @@ void copy_exact(const std::vector<uint8_t> &source, uint8_t *destination, size_t
 
 HelperSession::HelperSession(Identity identity, const std::vector<uint8_t> &board_public_key,
                              std::function<void(uint8_t *out, size_t len)> entropy)
-    : callbacks_(std::make_unique<Callbacks>(Callbacks{std::move(identity), std::move(entropy)})),
+    : callbacks_(std::make_unique<Callbacks>(Callbacks{std::move(identity), std::move(entropy), nullptr})),
       identity_(std::make_unique<dh_helper_identity>()),
       machine_(std::make_unique<dh_helper>()),
       outputs_(std::make_unique<dh_helper_outputs>()) {
@@ -49,7 +49,38 @@ HelperSession::HelperSession(Identity identity, const std::vector<uint8_t> &boar
     dh_helper_init(machine_.get(), identity_.get(),
                    board_public_key.size() == DH_P256_PUBLIC_SIZE ? board_public_key.data()
                                                                  : nullptr);
+
+    /* The same backing store the identity callbacks use, for the same reason:
+       the core keeps a bare pointer to it for the life of the machine. */
+    dh_helper_set_payload_sink(
+        machine_.get(),
+        [](void *ctx, uint8_t type, const uint8_t *body, size_t len) {
+            auto *self = static_cast<Callbacks *>(ctx);
+            if (self->payload) self->payload(type, body, len);
+        },
+        callbacks_.get());
 }
+
+void HelperSession::set_payload_sink(
+    std::function<void(uint8_t type, const uint8_t *body, size_t len)> sink) {
+    callbacks_->payload = std::move(sink);
+}
+
+bool HelperSession::emit(uint8_t type, const std::vector<uint8_t> &body,
+                         std::vector<uint8_t> &out) {
+    out.assign(DH_FRAME_MAX_SIZE, 0);
+    size_t written = 0;
+    const dh_frame_result rc = dh_helper_emit(machine_.get(), type, 0, body.data(), body.size(),
+                                              out.data(), out.size(), &written);
+    if (rc != DH_FRAME_OK) {
+        out.clear();
+        return false;
+    }
+    out.resize(written);
+    return true;
+}
+
+void HelperSession::note_sent(uint32_t now_ms) { dh_helper_note_sent(machine_.get(), now_ms); }
 
 std::vector<Output> HelperSession::device_appeared(dh_device_identity which, uint32_t now_ms) {
     dh_helper_outputs_reset(outputs_.get());
@@ -129,6 +160,10 @@ std::vector<Output> HelperSession::collect(const std::string &transport_reason) 
             out.kind = Output::Kind::Note;
             out.note = words::note_line(static_cast<dh_helper_note>(item.note), item.a, item.b,
                                         transport_reason);
+            break;
+        case DH_HELPER_OUT_CLIP_POLICY:
+            out.kind = Output::Kind::ClipPolicy;
+            out.clip_flags = static_cast<uint8_t>(item.a);
             break;
         default:
             /* Unreachable while both sides come out of one build — and said

@@ -67,6 +67,10 @@ public enum SessionOutput: Equatable {
     case retry(after: TimeInterval)
     /* Diagnostics, never shown to the user. */
     case note(String)
+    /* The board's clipboard direction policy (#52); the flags are
+       DH_CLIP_MAY_SEND / DH_CLIP_MAY_RECEIVE. The device is the single source
+       of truth for settings, so this is the only place a helper learns it. */
+    case clipPolicy(flags: UInt8)
 }
 
 public struct Negotiated: Equatable {
@@ -161,6 +165,19 @@ public final class HelperSession {
         } else {
             dh_helper_init(machine, identity, nil)
         }
+
+        /*
+         * Unretained on purpose: this object owns the machine it is handing a
+         * pointer to itself to, so the machine cannot outlive it, and a
+         * retained reference here would be a cycle nothing breaks.
+         */
+        dh_helper_set_payload_sink(machine, { ctx, type, body, len in
+            guard let ctx else { return }
+            let session = Unmanaged<HelperSession>.fromOpaque(ctx).takeUnretainedValue()
+            guard let handler = session.onPayload else { return }
+            let bytes = body.map { Array(UnsafeBufferPointer(start: $0, count: len)) } ?? []
+            handler(type, bytes)
+        }, Unmanaged.passUnretained(self).toOpaque())
     }
 
     deinit {
@@ -187,6 +204,21 @@ public final class HelperSession {
     /// It answers for the *session*, where `HelperState.allowsBulkTransfers`
     /// answers for what the user is being told; the two must not disagree.
     public var canSendBulk: Bool { dh_helper_can_send_bulk(machine) }
+
+    /*
+     * Bulk and placement frames the core authenticates but does not decide
+     * about, handed over as a verified body (#52).
+     *
+     * Set this rather than reading frames off the transport: everything
+     * upstream — decode, tag, replay counter — has already happened by the
+     * time a body reaches here, and a platform that read the stream itself
+     * would be doing all of it again, differently.
+     */
+    public var onPayload: ((UInt8, [UInt8]) -> Void)?
+
+    /// What the board last said about the clipboard's two directions (#52).
+    /// Both allowed until it has said anything, matching the stored default.
+    public var clipFlags: UInt8 { dh_helper_clip_flags(machine) }
 
     public func handle(_ input: SessionInput, at now: TimeInterval) -> [SessionOutput] {
         let ms = Self.milliseconds(now)
@@ -306,6 +338,8 @@ public final class HelperSession {
             return .state(state)
         case DH_HELPER_OUT_RETRY:
             return .retry(after: TimeInterval(item.a) / 1000)
+        case DH_HELPER_OUT_CLIP_POLICY:
+            return .clipPolicy(flags: UInt8(truncatingIfNeeded: item.a))
         case DH_HELPER_OUT_NOTE:
             return .note(HelperNotes.line(dh_helper_note(rawValue: UInt32(item.note)),
                                           a: item.a, b: item.b,

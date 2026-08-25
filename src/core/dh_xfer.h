@@ -153,6 +153,19 @@ size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_
 size_t dh_xfer_handle_credit(dh_xfer *x, uint32_t id, uint16_t credits, dh_xfer_action *acts,
                              size_t acts_cap);
 
+/*
+ * Whether a transfer is live in each direction.
+ *
+ * There is no clock in here and there must not be one — this is pure logic,
+ * messages in and actions out. A stall is therefore the *caller's* to notice:
+ * a helper whose peer stopped answering (its far helper crashed, say) sees no
+ * message at all, so nothing here can fire. These two are what a caller needs
+ * to know there is something to give up on. See the transfer timeout in each
+ * helper's clipboard service.
+ */
+static inline bool dh_xfer_is_sending(const dh_xfer *x) { return x->tx.active; }
+static inline bool dh_xfer_is_receiving(const dh_xfer *x) { return x->rx.active; }
+
 /* Fill in the wire form of the current outgoing offer / one of its chunks
    (computing the chunk's CRC32). False when there is no such transfer. */
 bool dh_xfer_offer_info(const dh_xfer *x, dh_clip_offer *out);

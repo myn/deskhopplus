@@ -46,11 +46,24 @@ struct Identity {
 /* What the core produced. One-for-one with dh_helper_output_kind, translated
    at the seam so the run loop never reads a raw tag. */
 struct Output {
-    enum class Kind { StoreBoardKey, OpenChannels, CloseChannels, Send, State, Retry, Note };
+    enum class Kind {
+        StoreBoardKey,
+        OpenChannels,
+        CloseChannels,
+        Send,
+        State,
+        Retry,
+        Note,
+        /* The board's clipboard direction policy (#52). The device is the
+           single source of truth for settings, so this is the only place a
+           helper learns it. */
+        ClipPolicy,
+    };
 
     Kind kind{Kind::Note};
     dh_helper_state state{DH_HELPER_QUIET};
     uint32_t retry_after_ms{0};
+    uint8_t clip_flags{0};      /* ClipPolicy: DH_CLIP_MAY_* */
     std::vector<uint8_t> bytes; /* StoreBoardKey: the board's key. Send: a frame. */
     std::string note;           /* Note: already in words. */
 };
@@ -89,6 +102,43 @@ class HelperSession {
        the core's rather than either being restated here. */
     bool can_send_bulk() const { return dh_helper_can_send_bulk(machine_.get()); }
 
+    /* What the board last said about the clipboard's two directions (#52).
+       Both allowed until it has said anything, matching the stored default. */
+    uint8_t clip_flags() const { return dh_helper_clip_flags(machine_.get()); }
+
+    /*
+     * Build one authenticated frame to send to the board — a clipboard chunk, a
+     * cursor placement — under the session key and the next counter in its
+     * space. False when there is no session to carry it.
+     *
+     * The counter space belongs to the key, and the heartbeat is already
+     * writing into this one. A platform keeping a counter of its own beside it
+     * would give one space two writers, and the board refuses anything not
+     * strictly greater — so whichever frame lost the race would be dropped
+     * silently, at the far end, with nothing at either end able to say why.
+     *
+     * The idle timer is *not* charged here. A frame the transport then refused
+     * would have suppressed a beat that was owed; call note_sent when it
+     * actually went out.
+     */
+    bool emit(uint8_t type, const std::vector<uint8_t> &body, std::vector<uint8_t> &out);
+
+    /* The transport wrote a frame this machine did not produce. ADR-0004's
+       heartbeat fills a direction that has carried *nothing* for a full
+       interval, and traffic the core never saw would otherwise have it beating
+       into a direction that is far from idle. */
+    void note_sent(uint32_t now_ms);
+
+    /*
+     * Where verified bulk and placement frames go (#52). Everything upstream —
+     * decode, tag, replay counter — has already happened by the time a body
+     * reaches here, so a platform that read the stream itself would be doing
+     * all of it again, differently.
+     *
+     * `body` views the core's reader and is valid only for the call.
+     */
+    void set_payload_sink(std::function<void(uint8_t type, const uint8_t *body, size_t len)> sink);
+
   private:
     std::vector<Output> collect(const std::string &transport_reason);
 
@@ -100,6 +150,7 @@ class HelperSession {
     struct Callbacks {
         Identity identity;
         std::function<void(uint8_t *out, size_t len)> entropy;
+        std::function<void(uint8_t type, const uint8_t *body, size_t len)> payload;
     };
 
     std::unique_ptr<Callbacks> callbacks_;

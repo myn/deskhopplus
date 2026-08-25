@@ -12,6 +12,16 @@ final class HelperRuntime {
     private let secrets = SecretStore()
     private let session: HelperSession
     private let transport = ChannelTransport()
+    private let clipboard: ClipboardService
+    private let pasteboard = Pasteboard()
+
+    /*
+     * Whether the last thing the session said was that bulk may cross. The
+     * clipboard has to be told when a session *ends* — its seal and any
+     * transfer go with it — and the session reports a state rather than an
+     * event, so the transition is worked out here.
+     */
+    private var bulkWasAllowed = false
 
     init() {
         /*
@@ -43,13 +53,19 @@ final class HelperRuntime {
 
         session = HelperSession(
             identity: identity, boardPublicKey: boardKey,
-            entropy: { count in
-                var bytes = [UInt8](repeating: 0, count: count)
-                guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
-                    fatalError("SecRandomCopyBytes failed")
-                }
-                return bytes
-            })
+            entropy: Self.entropy)
+        /* The seal draws ephemeral keys and nonces from the same source the
+           session's correlation values come from. A short draw would key a
+           seal on bytes nobody chose, which `Self.entropy` refuses to do. */
+        clipboard = ClipboardService(entropy: Self.entropy)
+    }
+
+    private static func entropy(_ count: Int) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
+            fatalError("SecRandomCopyBytes failed")
+        }
+        return bytes
     }
 
     private static let started = ProcessInfo.processInfo.systemUptime
@@ -81,7 +97,27 @@ final class HelperRuntime {
     func run() {
         transport.log = { message in Self.note(message) }
         transport.onEvent = { [weak self] event in self?.feed(event) }
+
+        /* Verified bulk frames, straight from the core. Nothing here re-reads
+           the stream: decode, tag and replay counter are all upstream of this. */
+        session.onPayload = { [weak self] type, body in
+            guard let self else { return }
+            self.emit(self.clipboard.received(type: type, body: body))
+        }
+
+        pasteboard.log = { message in Self.note(message) }
+        pasteboard.onLocalCopy = { [weak self] text in
+            guard let self else { return }
+            /* Nothing is offered without a session to carry it. The state the
+               user is shown and this answer come from the same core, so a
+               helper that says "connected" and refuses a copy is not a state
+               this can reach. */
+            guard self.session.canSendBulk else { return }
+            self.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
+        }
+
         transport.start()
+        pasteboard.start()
 
         Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
             self?.feed(.tick)
@@ -94,6 +130,52 @@ final class HelperRuntime {
     private func feed(_ input: SessionInput) {
         for output in session.handle(input, at: now) {
             apply(output)
+        }
+        /* A chance to push the next credit-gated batch. On the tick as well as
+           on arriving frames, so a transfer whose last credit grant was lost
+           still finishes rather than sitting still. */
+        if session.canSendBulk {
+            emit(clipboard.pump())
+        }
+        /* And a chance to give up on one that has stopped moving — the far
+           helper having crashed leaves this end's session perfectly healthy,
+           so nothing else here would ever notice. */
+        if case .tick = input {
+            emit(clipboard.tick(at: now))
+        }
+    }
+
+    /*
+     * The clipboard's outputs: frames to authenticate and send, payloads to
+     * write, and diagnostics.
+     *
+     * Every frame goes out through `session.emit`, never with a counter of this
+     * file's own — the counter space belongs to the session key and the
+     * heartbeat is already writing into it. `noteSent` is what keeps ADR-0004's
+     * beat out of a direction that is far from idle.
+     */
+    private func emit(_ outputs: [ClipboardOutput]) {
+        for output in outputs {
+            switch output {
+            case .send(let type, let body):
+                guard let frame = session.emit(type: type, body: body) else {
+                    Self.note("a clipboard frame could not be built; there is no session")
+                    continue
+                }
+                transport.send(frame)
+                session.noteSent(at: now)
+
+            case .deliver(let kind, let bytes):
+                guard kind == ClipKind.text.rawValue else {
+                    Self.note("a payload of kind \(kind) arrived, which this slice does not "
+                              + "write — images are #55 and files are #56")
+                    continue
+                }
+                pasteboard.deliver(text: bytes)
+
+            case .note(let note):
+                Self.note(note)
+            }
         }
     }
 
@@ -116,6 +198,21 @@ final class HelperRuntime {
 
         case .state(let state):
             Self.note("state: \(state.message ?? "(nothing to report)")")
+            /*
+             * A session that has gone takes the seal and any transfer with it.
+             * Told on the *edge*, not on every state: this arrives whenever
+             * anything the user is shown changes, and resetting a live seal
+             * because a listener alert expired would abandon a healthy
+             * transfer.
+             */
+            let allowed = state.allowsBulkTransfers
+            if bulkWasAllowed && !allowed {
+                emit(clipboard.sessionEnded())
+            }
+            bulkWasAllowed = allowed
+
+        case .clipPolicy(let flags):
+            emit(clipboard.policyChanged(flags: flags))
 
         case .retry(let after):
             DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in

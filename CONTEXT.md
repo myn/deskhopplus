@@ -105,6 +105,14 @@ When bytes move: eager content transfers on copy (text, small images); lazy cont
 paste (files, large payloads).
 _Avoid_: push/pull, immediate/deferred
 
+**Direction toggle**:
+One of the two settings that turn clipboard sharing off for A→B or B→A, both defaulting on.
+They live on the device, which is the single source of truth for settings; a helper holds no
+toggle of its own and is told instead what its own two verbs are — whether it **may send** what
+was copied here, and whether it **may write** what arrives. The two namings are deliberate: a
+helper cannot act on a direction, because it has no way to know which end of "A to B" it is.
+_Avoid_: clipboard enable, sharing flag, direction flag
+
 **Chunk**:
 The unit of integrity, loss detection, and selective retransmission — exactly one frame's payload,
 carrying id, length, and CRC32.

@@ -452,6 +452,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x01 | HELLO | h→d | `k_hello` | `proto_version:u16` `os:u8` (1=mac, 2=windows) `build_type:u8` (0=release, 1=development) `channel_count:u8` (requested) `max_chunk:u16` (requested, bytes) `correlation:u64` (fresh random, per hello) `helper_key_id:8` `helper_nonce:16` (fresh random, per hello). 39 bytes; counter is always 0. |
 | 0x02 | HELLO_ACK | d→h | `k_b2h` | `correlation:u64` (echoed) `proto_version:u16` `build_type:u8` `channel_count:u8` (effective) `max_chunk:u16` (effective) `board_nonce:16`. 30 bytes; counter is always 0. Sent only on success — there is no failure form. |
 | 0x03 | LISTENER_ALERT | d→h | `k_b2h` | `window_ms:u32` `refused:u32` — frames that failed authentication in that window. A rate, not an event. |
+| 0x04 | CLIP_POLICY | d→h | `k_b2h` | `flags:u8` — bit 0 **may send** (clipboard copied on this computer may leave it), bit 1 **may receive** (content arriving may be written here). The board's answer to its own two direction toggles, for the helper on *its* side; `dh_clip_policy_for` is the single place the two are turned into each other. Sent once per session and again whenever the setting changes. A helper that has been told nothing allows both, which is what the toggles default to. |
 | 0x05 | HEARTBEAT | h→d | `k_h2b` | empty (id kept from mkroamer) |
 | 0x06 | DEVICE_HEARTBEAT | d→h | `k_b2h` | empty. The device's own beat, sent only while a session exists, so its absence is meaningful. Idle-gated — see Liveness. |
 | 0x07 | SESSION_END | d→h | `k_b2h` | `reason:u8` (0=unspecified, 1=liveness_timeout, 2=protocol_error, 3=unpaired — the configuration holding the registration was wiped). An unknown reason reads as unspecified rather than as an error, so a later device may end a session for a reason this helper predates. |
@@ -651,6 +652,34 @@ arrives.
 - **On detection, drop and reconnect.** The peer is no longer trustworthy and the byte stream may
   be mid-frame, so recovery is closing and reopening the channels, not re-introducing over them.
 
+## The two direction toggles
+
+Clipboard sharing has one toggle per direction — **A→B** and **B→A** — both defaulting on. The
+device is the single source of truth for settings, so a helper stores neither: it is told, in
+`CLIP_POLICY`, and it acts on what it was last told.
+
+The translation is the whole of the design, and it is one function
+(`dh_clip_policy_for`, `dh_session.h`). A helper cannot act on a *direction* — it has no way to
+know which end of "A to B" it is standing at — but it can act on two verbs: **may I send what
+was copied here**, and **may I write what arrives**. Each board holds both toggles and turns
+them into the pair of verbs for the helper on its own side, using its own `board_role`.
+
+Consequences worth stating, because each is a place the obvious implementation is wrong:
+
+- **The toggles are one setting, held identically on both boards.** The config page writes a
+  changed field to both, which is what keeps "A to B" meaning the same thing on either side.
+- **A direction turned off takes what is already crossing it with it.** Letting the bytes
+  already on the wire finish arriving would make the control a control over *new* copies only.
+- **A refusal to receive happens before the seal is opened.** The clear head of a `CLIP_OFFER`
+  carries the transfer id, which is everything a `CLIP_CANCEL` needs — so a helper told not to
+  receive never decrypts a payload it has already decided to refuse.
+- **Silence means allowed.** A helper that has heard no `CLIP_POLICY` allows both directions,
+  matching the stored default. Refusing until told would refuse every copy made in the moment
+  before the frame lands, which at the desk is indistinguishable from the feature not working.
+- **Stored as blocks, not permissions.** On the board the two bytes mean *blocked*, so that
+  zero means allowed — they came out of `config_t`'s existing padding, and a field meaning
+  "enabled" would have read as off on every configuration already written.
+
 ## Transfer semantics
 
 The chunked transfer state machine (#48) lives in the shared core and runs **end-to-end
@@ -673,6 +702,14 @@ between the helpers**; the firmware relays its messages opaquely.
   still missing a full round later is requested again**, so a retransmitted chunk that is
   itself lost converges on the next DONE round. Only the loss of a message with no DONE
   behind it (the final DONE, a lone request) is left to the helper's transfer timeout.
+- **The transfer timeout is a *progress* deadline, not a duration.** Each helper's clipboard
+  service gives up on a direction that has produced nothing for 30 seconds and reports it. It
+  cannot live in `dh_xfer`, which has no clock and must not gain one — and a deadline on the
+  whole transfer would abandon healthy ones, because a large payload legitimately takes minutes
+  on this link. This is what covers the third interruption in
+  [#52](https://github.com/myn/deskhopplus/issues/52): an unplug and a config-mode reboot both
+  end a helper's own session, but the far helper *crashing* leaves this end's session perfectly
+  healthy and simply unanswered, where no message arrives for anything to react to.
 - **A retransmitted chunk is resealed**, under a fresh `seal_counter`. A seal counter is never
   reused, so a retransmission is not a byte-identical copy of the frame that was lost.
 - **The sender retains its payload after CLIP_DONE** — retransmit requests may still

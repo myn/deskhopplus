@@ -496,6 +496,13 @@ swift run deskhop-helper         # foreground, logging to stderr
       (#52, #55, #56) and cursor placement (#51)"*), and the device only *routes* bulk
       (`channel.c:253`), never originates it. Blocked on a payload existing at either end
 
+      > **Since 2026-08-24:** the wall is down. #52 landed the clipboard text path, so both
+      > helpers now originate bulk and a copy of a few tens of kilobytes makes a direction
+      > busy for long enough to measure. The box itself moved to
+      > [#96](https://github.com/myn/deskhopplus/issues/96) with ADR-0005's, and is to be run
+      > at the next sitting. Nothing above is retracted — it was true of the build it was
+      > written against.
+
 ### Boxes that cannot be measured on this build
 
 **Partial acquisition is degenerate at one channel.** `DH_SESSION_CHANNEL_COUNT` is `1`

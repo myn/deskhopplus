@@ -1,10 +1,11 @@
 /*
  * The Windows helper: a single portable exe that finds the device, seizes
- * every channel, introduces itself, and keeps the session alive (#49).
+ * every channel, introduces itself, keeps the session alive (#49), and carries
+ * the clipboard across it (#52).
  *
- * No payloads yet — clipboard (#52, #55, #56) and cursor placement (#51)
- * arrive on the session this establishes. Nothing needs installing: see
- * helpers/windows/README.md and ADR-0006.
+ * Clipboard text only so far — images are #55, files are #56, and cursor
+ * placement is #51. Nothing needs installing: see helpers/windows/README.md
+ * and ADR-0006.
  *
  * ---------------------------------------------------------------------------
  * THE LOOP, AND WHY IT IS ONE THREAD
@@ -36,9 +37,12 @@
 
 #include "autostart.h"
 #include "channel_identity.h"
+#include "clip_service.h"
+#include "clipboard.h"
 #include "dh_p256.h"
 #include "helper_session.h"
 #include "hid_transport.h"
+#include "seal_aead.h"
 #include "secret_store.h"
 #include "tray.h"
 #include "words.h"
@@ -83,6 +87,7 @@ class Helper {
 
     void feed(const std::vector<Output> &outputs);
     void apply(const Output &output);
+    void emit(const std::vector<ClipOutput> &outputs);
 
     /*
      * Monotonic, deliberately. A wall clock going backwards — routine on a
@@ -107,12 +112,21 @@ class Helper {
     SecretStore secrets_;
     std::unique_ptr<HelperSession> session_;
     std::unique_ptr<Autostart> autostart_;
+    std::unique_ptr<ClipService> clipboard_service_;
     HidTransport transport_;
     Tray tray_;
+    Clipboard clipboard_;
 
     uint32_t last_tick_{0};
     bool retry_pending_{false};
     uint32_t retry_at_{0};
+    /*
+     * Whether the last thing the session said was that bulk may cross. The
+     * clipboard has to be told when a session *ends* — its seal and any
+     * transfer go with it — and the session reports a state rather than an
+     * event, so the transition is worked out here.
+     */
+    bool bulk_was_allowed_{false};
 };
 
 Helper *Helper::instance_ = nullptr;
@@ -222,6 +236,37 @@ bool Helper::start(HINSTANCE instance) {
             if (!fill_random(out, len)) std::abort();
         });
 
+    /*
+     * The clipboard. `seal_aead()` is null on a machine where CNG will not give
+     * up an AES-GCM provider — the service refuses every copy in that case
+     * rather than falling back to sending a payload in clear (ADR-0008).
+     */
+    if (seal_aead() == nullptr)
+        log("this machine has no AES-GCM provider; the clipboard cannot be sealed and so will "
+            "not be carried");
+    clipboard_service_ = std::make_unique<ClipService>(seal_aead(), [](uint8_t *out, size_t len) {
+        /* A short draw would key a seal on bytes nobody chose. There is
+           nothing to fall back to, so this stops. */
+        if (!fill_random(out, len)) std::abort();
+    });
+
+    /* Verified bulk frames, straight from the core. Nothing here re-reads the
+       stream: decode, tag and replay counter are all upstream of this. */
+    session_->set_payload_sink([this](uint8_t type, const uint8_t *body, size_t len) {
+        emit(clipboard_service_->received(type, body, len));
+    });
+
+    Clipboard::Callbacks clipboard_callbacks;
+    clipboard_callbacks.log = [this](const std::string &m) { log(m); };
+    clipboard_callbacks.local_copy = [this](std::vector<uint8_t> utf8) {
+        /* Nothing is offered without a session to carry it. The state the user
+           is shown and this answer come from the same core, so a helper that
+           says "connected" and refuses a copy is not a state this can reach. */
+        if (!session_->can_send_bulk()) return;
+        emit(clipboard_service_->local_copy(ClipKind::Text, utf8));
+    };
+    clipboard_.attach(window_, std::move(clipboard_callbacks));
+
     autostart_ = std::make_unique<Autostart>(secrets_.directory(),
                                              [this](const std::string &m) { log(m); });
     autostart_->start(Autostart::launched_by_autostart());
@@ -266,6 +311,7 @@ int Helper::run() {
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
                 if (message.message == WM_QUIT) {
                     transport_.stop();
+                    clipboard_.detach();
                     tray_.detach();
                     return static_cast<int>(message.wParam);
                 }
@@ -289,6 +335,14 @@ int Helper::run() {
         if (now - last_tick_ >= kTickMs) {
             last_tick_ = now;
             feed(session_->tick(now));
+            /* A chance to push the next credit-gated batch. On the tick as well
+               as on arriving frames, so a transfer whose last credit grant was
+               lost still finishes rather than sitting still. */
+            if (session_->can_send_bulk()) emit(clipboard_service_->pump());
+            /* And a chance to give up on one that has stopped moving — the far
+               helper having crashed leaves this end's session perfectly
+               healthy, so nothing else here would ever notice. */
+            emit(clipboard_service_->tick(now));
         }
     }
 }
@@ -325,6 +379,21 @@ void Helper::apply(const Output &output) {
                              ? std::string("(nothing to report)")
                              : words::state_message(output.state)));
         tray_.show(output.state);
+        /*
+         * A session that has gone takes the seal and any transfer with it.
+         * Acted on at the *edge*, not on every state: this arrives whenever
+         * anything the user is shown changes, and resetting a live seal
+         * because a listener alert expired would abandon a healthy transfer.
+         */
+        {
+            const bool allowed = dh_helper_allows_bulk(output.state);
+            if (bulk_was_allowed_ && !allowed) emit(clipboard_service_->session_ended());
+            bulk_was_allowed_ = allowed;
+        }
+        break;
+
+    case Output::Kind::ClipPolicy:
+        emit(clipboard_service_->policy_changed(output.clip_flags));
         break;
 
     case Output::Kind::Retry:
@@ -338,6 +407,46 @@ void Helper::apply(const Output &output) {
     case Output::Kind::Note:
         log(output.note);
         break;
+    }
+}
+
+/*
+ * The clipboard's outputs: frames to authenticate and send, payloads to write,
+ * and diagnostics.
+ *
+ * Every frame goes out through `session_->emit`, never with a counter of this
+ * file's own — the counter space belongs to the session key and the heartbeat
+ * is already writing into it. `note_sent` is what keeps ADR-0004's beat out of
+ * a direction that is far from idle.
+ */
+void Helper::emit(const std::vector<ClipOutput> &outputs) {
+    for (const ClipOutput &output : outputs) {
+        switch (output.kind) {
+        case ClipOutput::Kind::Send: {
+            std::vector<uint8_t> frame;
+            if (!session_->emit(output.type, output.bytes, frame)) {
+                log("a clipboard frame could not be built; there is no session");
+                break;
+            }
+            transport_.send(frame.data(), frame.size());
+            session_->note_sent(now_ms());
+            break;
+        }
+
+        case ClipOutput::Kind::Deliver:
+            if (output.payload_kind != static_cast<uint8_t>(ClipKind::Text)) {
+                log("a payload of kind " + std::to_string(output.payload_kind) +
+                    " arrived, which this slice does not write — images are #55 and files "
+                    "are #56");
+                break;
+            }
+            clipboard_.deliver_text(output.bytes);
+            break;
+
+        case ClipOutput::Kind::Note:
+            log(output.note);
+            break;
+        }
     }
 }
 
@@ -394,6 +503,13 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
          */
         transport_.on_device_change(w, l);
         return TRUE;
+
+    case WM_CLIPBOARDUPDATE:
+        /* Something was copied on this computer. Handled on this thread
+           because setting clipboard data requires owning a window, and this is
+           the window (clipboard.h). */
+        clipboard_.handle(message);
+        return 0;
 
     case Tray::kCallbackMessage:
         tray_.on_callback(l);
