@@ -317,7 +317,19 @@ typedef struct {
     uint32_t reports;   /* reports the USB callback could not hand to channel_task */
     uint32_t inbound;   /* frames from the peer board that core 0 had not drained */
     uint32_t outq;      /* frames the outbound queue to this helper refused (ADR-0005) */
-    uint32_t link;      /* packets the inter-board link refused */
+    /*
+     * Frames this board could not hand on **either way**: `channel.tx` is
+     * tracked both where a frame goes to this board's helper and where one is
+     * offered to the relay toward the peer board (src/channel.c). So it is the
+     * sum of `outq` and `relay_q` below, not a third seam — which is why it
+     * reads equal to `outq` whenever the relay queue is clean.
+     *
+     * Field 94 has called this "inter-board refused" since #52 and it was
+     * never that. Kept on the wire because removing a field costs a
+     * coordinated flash of both boards (#131); named honestly here so the
+     * helpers stop printing a seam that does not exist.
+     */
+    uint32_t unsent;
     uint32_t orphans;   /* peer data packets with no start to attach to */
     uint32_t truncated; /* peer frames abandoned because packets went missing */
     uint32_t relay_q;   /* frames the relay's own outbound queue refused */

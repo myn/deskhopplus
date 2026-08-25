@@ -716,7 +716,7 @@ void channel_task(device_t *state) {
         .reports = channel.reports_dropped,
         .inbound = channel.inbound_dropped,
         .outq = channel.out.refused,
-        .link = channel.tx.dropped,
+        .unsent = channel.tx.dropped,
         .orphans = channel.relay_rx.orphans,
         .truncated = channel.relay_rx.truncated,
         .relay_q = channel.relay_tx.q.refused,

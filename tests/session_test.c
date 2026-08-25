@@ -370,7 +370,7 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
         CHECK(v.hdr.type == DH_MSG_DEVICE_DROPS, "device_drops", "wrong message type");
         dh_device_drops d;
         CHECK(dh_device_drops_decode(body, body_len, &d), "device_drops", "decode failed");
-        CHECK(d.reports == 1 && d.inbound == 2 && d.outq == 3 && d.link == 4 && d.orphans == 5 &&
+        CHECK(d.reports == 1 && d.inbound == 2 && d.outq == 3 && d.unsent == 4 && d.orphans == 5 &&
                   d.truncated == 6 && d.relay_q == 7,
               "device_drops", "the seven totals decoded in the wrong order");
     }

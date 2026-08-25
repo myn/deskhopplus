@@ -200,7 +200,7 @@ bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags) {
 
 bool dh_device_drops_equal(const dh_device_drops *a, const dh_device_drops *b) {
     return a->reports == b->reports && a->inbound == b->inbound && a->outq == b->outq &&
-           a->link == b->link && a->orphans == b->orphans && a->truncated == b->truncated &&
+           a->unsent == b->unsent && a->orphans == b->orphans && a->truncated == b->truncated &&
            a->relay_q == b->relay_q;
 }
 
@@ -212,7 +212,7 @@ static void drops_write(const dh_device_drops *d, uint8_t *body) {
     wr_u32(body, d->reports);
     wr_u32(body + 4, d->inbound);
     wr_u32(body + 8, d->outq);
-    wr_u32(body + 12, d->link);
+    wr_u32(body + 12, d->unsent);
     wr_u32(body + 16, d->orphans);
     wr_u32(body + 20, d->truncated);
     wr_u32(body + 24, d->relay_q);
@@ -223,7 +223,7 @@ bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *ou
     out->reports = rd_u32(body);
     out->inbound = rd_u32(body + 4);
     out->outq = rd_u32(body + 8);
-    out->link = rd_u32(body + 12);
+    out->unsent = rd_u32(body + 12);
     out->orphans = rd_u32(body + 16);
     out->truncated = rd_u32(body + 20);
     out->relay_q = rd_u32(body + 24);

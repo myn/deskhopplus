@@ -184,7 +184,7 @@ std::string ClipService::drops_line(const dh_device_drops *drops) {
         {"reports not taken", drops->reports},
         {"from peer board", drops->inbound},
         {"outbound refused", drops->outq},
-        {"inter-board refused", drops->link},
+        {"not handed on", drops->unsent},
         {"peer orphan packets", drops->orphans},
         {"peer frames truncated", drops->truncated},
         {"relay queue refused", drops->relay_q},

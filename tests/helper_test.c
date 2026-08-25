@@ -2012,7 +2012,7 @@ static void test_the_board_states_what_it_has_dropped(void) {
     dh_helper_outputs_reset(&out);
     dh_helper_received(&h, frame, len, 100, &out);
     CHECK(dh_helper_device_drops(&h, &got), name, "a stated reading was not recorded");
-    CHECK(got.reports == 1 && got.inbound == 2 && got.outq == 3 && got.link == 4 &&
+    CHECK(got.reports == 1 && got.inbound == 2 && got.outq == 3 && got.unsent == 4 &&
               got.orphans == 5 && got.truncated == 6 && got.relay_q == 7,
           name, "the seven totals were read in the wrong order");
     no_overflow(name);

@@ -92,7 +92,7 @@ public struct BoardDrops: Equatable {
     public let reports: UInt32
     public let inbound: UInt32
     public let outbound: UInt32
-    public let link: UInt32
+    public let unsent: UInt32
     public let orphans: UInt32
     public let truncated: UInt32
     public let relayQueue: UInt32
@@ -101,7 +101,7 @@ public struct BoardDrops: Equatable {
         reports = d.reports
         inbound = d.inbound
         outbound = d.outq
-        link = d.link
+        unsent = d.unsent
         orphans = d.orphans
         truncated = d.truncated
         relayQueue = d.relay_q
@@ -115,7 +115,7 @@ public struct BoardDrops: Equatable {
             ("reports not taken", reports),
             ("from peer board", inbound),
             ("outbound refused", outbound),
-            ("inter-board refused", link),
+            ("not handed on", unsent),
             ("peer orphan packets", orphans),
             ("peer frames truncated", truncated),
             ("relay queue refused", relayQueue),
