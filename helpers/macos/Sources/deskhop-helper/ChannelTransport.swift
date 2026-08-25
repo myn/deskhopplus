@@ -242,7 +242,16 @@ final class ChannelTransport {
             return false
         }
 
-        guard let reports = try? FrameCodec.reports(for: [frame]) else { return false }
+        /* The other refusals above all say why. This one used to throw its
+           error away, which made a frame the codec could not carve into
+           reports look exactly like one the device dropped (#132). */
+        let reports: [[UInt8]]
+        do {
+            reports = try FrameCodec.reports(for: [frame])
+        } catch {
+            log?("a frame could not be turned into reports: \(error)")
+            return false
+        }
         for report in reports {
             let result = report.withUnsafeBufferPointer { buffer in
                 IOHIDDeviceSetReport(channel.device, kIOHIDReportTypeOutput, 0,

@@ -186,9 +186,17 @@ final class HelperRuntime {
                 /* The idle timer is charged only for a frame the transport
                    actually took. Charging for one it refused would suppress a
                    beat that ADR-0004 owed the board — which is exactly what
-                   `HelperSession.emit` says not to do. */
+                   `HelperSession.emit` says not to do.
+
+                   A refusal is said out loud (#132): dropped here in silence,
+                   a frame the transport would not take is indistinguishable
+                   from one lost on the wire, and the two have nothing in
+                   common to fix. */
                 if transport.send(frame) {
                     session.noteSent(at: now)
+                } else {
+                    Self.note("a clipboard frame of type \(type) was not taken by the "
+                              + "transport and is lost")
                 }
 
             case .deliver(let kind, let bytes):
