@@ -188,12 +188,14 @@ public final class ClipboardService {
             sendingSince = now
             sendingMark = txProgress
         } else if now - sendingSince! >= Self.stallTimeout {
+            let line = transfer.progressLine
             sendingSince = nil
             pending = nil
             reofferWhenSealed = false
             outputs += render(transfer.cancelOutgoing())
             outputs.append(.note("a transfer made no progress for \(Int(Self.stallTimeout))s and "
-                                 + "was abandoned; the other computer's helper is not answering"))
+                                 + "was abandoned (\(line)); the other computer's helper is not "
+                                 + "answering"))
         }
 
         if !transfer.isReceiving {
@@ -202,11 +204,12 @@ public final class ClipboardService {
             receivingSince = now
             receivingMark = rxProgress
         } else if now - receivingSince! >= Self.stallTimeout {
+            let line = transfer.progressLine
             receivingSince = nil
             outputs += render(transfer.cancelIncoming())
             outputs.append(.note("an arriving transfer made no progress for "
-                                 + "\(Int(Self.stallTimeout))s and was abandoned; nothing "
-                                 + "partial is ever written"))
+                                 + "\(Int(Self.stallTimeout))s and was abandoned (\(line)); "
+                                 + "nothing partial is ever written"))
         }
         return outputs
     }
@@ -345,7 +348,21 @@ public final class ClipboardService {
 
         do {
             let chunk = try seal.openChunk(body)
-            return render(transfer.handle(chunk: chunk))
+            /*
+             * Before and after, because the transfer machine refuses a chunk by
+             * doing nothing: one for the wrong transfer, out of range, or whose
+             * CRC32 does not match is dropped with no action. Without this the
+             * difference between "no chunk arrived" and "every chunk arrived
+             * and was refused" is invisible, and those two have nothing in
+             * common to fix.
+             */
+            let before = transfer.receivedChunks
+            var outputs = render(transfer.handle(chunk: chunk))
+            if transfer.receivedChunks == before {
+                outputs.append(.note("chunk \(chunk.seq) of transfer \(chunk.id) opened but the "
+                                     + "transfer machine refused it (\(transfer.progressLine))"))
+            }
+            return outputs
         } catch SealError.unknownSeal {
             return staleReply(for: MessageType.clipChunk, body: body)
         } catch {

@@ -144,6 +144,11 @@ class ClipService {
 
     void draw(uint8_t *out, size_t len);
 
+    /* How far each direction has got. A stall that says only "no progress"
+       cannot tell a transfer whose chunks never arrived from one whose chunks
+       all arrived and were refused, and those have nothing in common. */
+    std::string progress_line() const;
+
     const dh_seal_aead *aead_;
     std::function<void(uint8_t *, size_t)> entropy_;
 

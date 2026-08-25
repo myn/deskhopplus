@@ -203,6 +203,28 @@ public final class Transfer {
     /// Whether a payload is arriving.
     public var isReceiving: Bool { dh_xfer_is_receiving(machine) }
 
+    /// How far each direction has got, for a stall that has to say more than
+    /// "no progress" — which covers a transfer whose chunks never arrived and
+    /// one whose chunks all arrived and were refused.
+    public var progressLine: String {
+        var parts: [String] = []
+        if isSending {
+            parts.append("sending \(dh_xfer_tx_next_seq(machine))/\(dh_xfer_tx_chunks(machine)) "
+                         + "chunks" + (dh_xfer_tx_streaming(machine) ? "" : ", never requested"))
+        }
+        if isReceiving {
+            parts.append("receiving \(dh_xfer_rx_received(machine))/"
+                         + "\(dh_xfer_rx_chunks(machine)) chunks")
+        }
+        return parts.isEmpty ? "nothing in flight" : parts.joined(separator: ", ")
+    }
+
+    /// Chunks this end has assembled — read before and after handing one over,
+    /// which is the only way to see the machine refuse one: a chunk for the
+    /// wrong transfer, out of range, or with a CRC32 that does not match is
+    /// dropped with no action at all.
+    public var receivedChunks: UInt32 { dh_xfer_rx_received(machine) }
+
     /// Emit the next credit-gated batch of chunks. Empty when nothing is owed,
     /// which is the ordinary answer.
     public func pump() -> [TransferAction] {

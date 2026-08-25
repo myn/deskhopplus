@@ -159,6 +159,21 @@ std::vector<ClipOutput> ClipService::pump() {
     return render(actions, n);
 }
 
+std::string ClipService::progress_line() const {
+    std::string out;
+    if (dh_xfer_is_sending(xfer_.get())) {
+        out += "sending " + std::to_string(dh_xfer_tx_next_seq(xfer_.get())) + "/" +
+               std::to_string(dh_xfer_tx_chunks(xfer_.get())) + " chunks";
+        if (!dh_xfer_tx_streaming(xfer_.get())) out += ", never requested";
+    }
+    if (dh_xfer_is_receiving(xfer_.get())) {
+        if (!out.empty()) out += ", ";
+        out += "receiving " + std::to_string(dh_xfer_rx_received(xfer_.get())) + "/" +
+               std::to_string(dh_xfer_rx_chunks(xfer_.get())) + " chunks";
+    }
+    return out.empty() ? std::string("nothing in flight") : out;
+}
+
 std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
     std::vector<ClipOutput> outputs;
     dh_xfer_action actions[kActionCapacity];
@@ -172,15 +187,15 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
         sending_since_ = now_ms;
         sending_mark_ = tx_progress_;
     } else if (now_ms - sending_since_ >= kStallTimeoutMs) {
+        const std::string line = progress_line();
         sending_timed_ = false;
         have_pending_ = false;
         pending_.clear();
         reoffer_when_sealed_ = false;
         append(outputs, render(actions, dh_xfer_cancel_tx(xfer_.get(), actions, kActionCapacity)));
         outputs.push_back(note("a transfer made no progress for " +
-                               std::to_string(kStallTimeoutMs / 1000) +
-                               "s and was abandoned; the other computer's helper is not "
-                               "answering"));
+                               std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
+                               line + "); the other computer's helper is not answering"));
     }
 
     if (!dh_xfer_is_receiving(xfer_.get())) {
@@ -190,11 +205,12 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
         receiving_since_ = now_ms;
         receiving_mark_ = rx_progress_;
     } else if (now_ms - receiving_since_ >= kStallTimeoutMs) {
+        const std::string line = progress_line();
         receiving_timed_ = false;
         append(outputs, render(actions, dh_xfer_cancel_rx(xfer_.get(), actions, kActionCapacity)));
         outputs.push_back(note("an arriving transfer made no progress for " +
-                               std::to_string(kStallTimeoutMs / 1000) +
-                               "s and was abandoned; nothing partial is ever written"));
+                               std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
+                               line + "); nothing partial is ever written"));
     }
     return outputs;
 }
@@ -375,9 +391,23 @@ std::vector<ClipOutput> ClipService::on_chunk(const uint8_t *body, size_t len) {
     if (rc != DH_SEAL_OK)
         return {note("a chunk could not be opened: error " + std::to_string(rc))};
 
+    /*
+     * Before and after, because the transfer machine refuses a chunk by doing
+     * nothing: one for the wrong transfer, out of range, or whose CRC32 does
+     * not match is dropped with no action. Without this the difference between
+     * "no chunk arrived" and "every chunk arrived and was refused" is
+     * invisible, and those two have nothing in common to fix.
+     */
+    const uint32_t before = dh_xfer_rx_received(xfer_.get());
     dh_xfer_action actions[kActionCapacity];
-    return render(actions,
-                  dh_xfer_handle_chunk(xfer_.get(), &chunk, actions, kActionCapacity));
+    std::vector<ClipOutput> outputs =
+        render(actions, dh_xfer_handle_chunk(xfer_.get(), &chunk, actions, kActionCapacity));
+    if (dh_xfer_rx_received(xfer_.get()) == before)
+        outputs.push_back(note("chunk " + std::to_string(chunk.seq) + " of transfer " +
+                               std::to_string(chunk.id) +
+                               " opened but the transfer machine refused it (" + progress_line() +
+                               ")"));
+    return outputs;
 }
 
 std::vector<ClipOutput> ClipService::stale_reply(uint8_t type, const uint8_t *body, size_t len) {

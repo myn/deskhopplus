@@ -166,6 +166,22 @@ size_t dh_xfer_handle_credit(dh_xfer *x, uint32_t id, uint16_t credits, dh_xfer_
 static inline bool dh_xfer_is_sending(const dh_xfer *x) { return x->tx.active; }
 static inline bool dh_xfer_is_receiving(const dh_xfer *x) { return x->rx.active; }
 
+/*
+ * How far each direction has got. A stall says nothing useful without these:
+ * "no progress" covers a transfer whose chunks never arrived and one whose
+ * chunks all arrived and were refused, and those have nothing in common.
+ *
+ * `rx_received` against `rx_chunks` is the one that separates them — a chunk
+ * this machine refuses (wrong transfer, sequence out of range, a CRC32 that
+ * does not match) is dropped with no action, so a caller comparing this before
+ * and after is the only way to see it happen at all.
+ */
+static inline uint32_t dh_xfer_rx_chunks(const dh_xfer *x) { return x->rx.nchunks; }
+static inline uint32_t dh_xfer_rx_received(const dh_xfer *x) { return x->rx.nreceived; }
+static inline uint32_t dh_xfer_tx_chunks(const dh_xfer *x) { return x->tx.nchunks; }
+static inline uint32_t dh_xfer_tx_next_seq(const dh_xfer *x) { return x->tx.next_seq; }
+static inline bool dh_xfer_tx_streaming(const dh_xfer *x) { return x->tx.streaming; }
+
 /* Fill in the wire form of the current outgoing offer / one of its chunks
    (computing the chunk's CRC32). False when there is no such transfer. */
 bool dh_xfer_offer_info(const dh_xfer *x, dh_clip_offer *out);
