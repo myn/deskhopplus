@@ -795,7 +795,7 @@ between the helpers**; the firmware relays its messages opaquely.
   sender→receiver, which keeps it unambiguous when both sides transfer at once.
 - **Flow control.** The sender spends one credit per chunk sent (retransmits included) and
   stops at zero; CLIP_DONE is not gated. The paste side grants `DH_XFER_CREDIT_WINDOW`
-  (16 chunks) with its CLIP_REQUEST, replenishes in half-window batches as chunks arrive,
+  (3 chunks) with its CLIP_REQUEST, replenishes in half-window batches as chunks arrive,
   and **every CLIP_RETRANSMIT is accompanied by a covering credit grant** — a lost or
   corrupt chunk consumed the sender's credit without ever being counted on the paste side,
   and without the covering grant sustained loss would drain the window permanently. (When
@@ -810,6 +810,14 @@ between the helpers**; the firmware relays its messages opaquely.
   but they are bounded and deliberately short: sustained overrun is this window's job, and
   the firmware cannot help with it, because a credit lives in a payload the firmware may
   not read ([ADR-0003](adr/0003-content-fidelity-over-content-validation.md)).
+
+  **So the window is sized against that queue, not against the link.** It was 16 while the
+  queue holds one frame in flight and `DH_OUTQ_DEPTH` behind it, which made "sustained
+  overrun is this window's job" untrue in practice — the receiver granted all 16 up front,
+  the sender emitted all 16 in one pump, and everything past the third was refused. A
+  refused chunk is re-requested; a refused CLIP_OFFER or CLIP_DONE is not, and costs the
+  whole transfer. `outq_test` pins the two constants against each other so they cannot
+  drift apart again, and raising the window means deepening that queue first.
 - **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
   paste side discards its partial payload — never delivering it as complete — and its
   helper deletes any partial file and reports the failure. No resumption.

@@ -27,7 +27,35 @@ extern "C" {
 /* Working values; the chunk size is a build constant until #39 measures,
    then the hello negotiates the effective value. */
 #define DH_XFER_CHUNK_SIZE 1024u
-#define DH_XFER_CREDIT_WINDOW 16u
+
+/*
+ * How many chunks the receiver lets the sender have outstanding.
+ *
+ * **It is sized against the board's outbound queue, not against the link.**
+ * The board may not read a payload (ADR-0003), so it cannot enforce a credit
+ * of its own; dh_outq.h says outright that a *sustained* overrun "is the
+ * credit window's problem". This is that window, and it is the only
+ * back-pressure the path has.
+ *
+ * It was 16 while the queue holds one frame in flight and DH_OUTQ_DEPTH behind
+ * it. The receiver granted all 16 up front, the sender emitted all 16 in one
+ * pump, and everything past the third was refused. A refused chunk is
+ * re-requested; a refused CLIP_OFFER or CLIP_DONE has no retransmit and costs
+ * the whole transfer out to a thirty-second timeout (#78) — which at the desk
+ * is a copy that does not arrive until you make it again (#137). Measured on
+ * hardware 2026-08-25: 16 refusals on the receiving board across a handful of
+ * copies, once #133 made that counter readable.
+ *
+ * Three is not a throughput figure either. The drain is the bottleneck at
+ * ~64 KB/s, and three chunks outstanding covers about 48 ms of it — more than
+ * a credit's round trip, so the sender still never waits. What it stops is the
+ * sender running four times ahead of a seam that then throws the difference
+ * away. outq_test pins it against DH_OUTQ_DEPTH so the two cannot drift apart
+ * again; raising it means deepening that queue first, which costs board RAM
+ * and a flash.
+ */
+#define DH_XFER_CREDIT_WINDOW 3u
+
 #define DH_XFER_BATCH_MAX 16u   /* max chunk actions emitted per pump */
 #define DH_XFER_RETX_MAX 64u    /* pending retransmit requests held by the sender */
 #define DH_XFER_MAX_CHUNKS 65536u /* received-set bound: 64 MiB at 1 KiB chunks */

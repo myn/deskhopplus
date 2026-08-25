@@ -475,6 +475,41 @@ static void test_a_queued_slot_holds_the_largest_viable_bulk_frame(void) {
           "receiver will accept");
 }
 
+/*
+ * The credit window is the only back-pressure this queue has, so it may not
+ * grant more than the queue can hold.
+ *
+ * The board may not read a payload (ADR-0003), so it cannot enforce a credit
+ * of its own — dh_outq.h says outright that a *sustained* overrun "is the
+ * credit window's problem". That only holds while the window is sized against
+ * this queue. It was not: the receiver granted 16 chunks up front
+ * (`dh_xfer.c`), the sender emitted all 16 in one pump batch, and the queue on
+ * the far board holds one in flight and DH_OUTQ_DEPTH behind it. The rest were
+ * refused.
+ *
+ * Refused is not free. A chunk is re-requested end to end, but a CLIP_OFFER or
+ * a CLIP_DONE has no retransmit and costs the whole transfer out to a
+ * thirty-second timeout (#78) — which at the desk is a copy that silently does
+ * not arrive until you copy it again (#137). Measured on hardware 2026-08-25:
+ * 16 refusals on the receiving board across a handful of copies (#133).
+ *
+ * Pinned here rather than argued, because the two constants live in different
+ * headers and neither mentions the other.
+ */
+static void test_the_credit_window_fits_the_queue_it_bursts_into(void) {
+    const unsigned in_flight = 1u;
+
+    CHECK(DH_XFER_CREDIT_WINDOW <= in_flight + DH_OUTQ_DEPTH, "credit",
+          "the credit window grants more chunks than the outbound queue can hold, "
+          "so a burst is refused rather than paced");
+
+    /* The batch cap is what turns a window into a burst. A cap above the
+       window would be dead room; below it would pace by accident rather than
+       by the rule above, and the accident would move the day it changed. */
+    CHECK(DH_XFER_BATCH_MAX >= DH_XFER_CREDIT_WINDOW, "credit",
+          "a pump cannot emit the window it was granted");
+}
+
 /* An offer at that bound queues like anything else, rather than needing an
    idle queue the way a genuinely outsized frame does. */
 static void test_a_full_size_offer_can_queue_behind_a_chunk(void) {
@@ -518,6 +553,7 @@ int main(void) {
     test_malformed_frames_are_refused();
     test_the_preamble_is_owed_once_per_frame();
     test_a_queued_slot_holds_the_largest_viable_bulk_frame();
+    test_the_credit_window_fits_the_queue_it_bursts_into();
     test_a_full_size_offer_can_queue_behind_a_chunk();
 
     if (failures) {
