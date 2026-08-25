@@ -498,14 +498,46 @@ static void test_a_queued_slot_holds_the_largest_viable_bulk_frame(void) {
  */
 static void test_the_credit_window_fits_the_queue_it_bursts_into(void) {
     const unsigned in_flight = 1u;
+    const unsigned queue_holds = in_flight + DH_OUTQ_DEPTH;
 
-    CHECK(DH_XFER_CREDIT_WINDOW <= in_flight + DH_OUTQ_DEPTH, "credit",
+    CHECK(DH_XFER_CREDIT_WINDOW <= queue_holds, "credit",
           "the credit window grants more chunks than the outbound queue can hold, "
           "so a burst is refused rather than paced");
 
-    /* The batch cap is what turns a window into a burst. A cap above the
-       window would be dead room; below it would pace by accident rather than
-       by the rule above, and the accident would move the day it changed. */
+    /*
+     * **This is one short of the whole truth, and the shortfall is #141.**
+     * dh_xfer_pump emits the last chunks and the CLIP_DONE behind them in the
+     * same batch, and the DONE is not credit-gated — so the worst-case
+     * loss-free burst is DH_XFER_CREDIT_WINDOW + 1, and the frame that does
+     * not fit is the DONE, the one nothing retransmits.
+     *
+     * Asserting the honest bound here would fail, and the two ways to satisfy
+     * it both make things worse: a window of 2 stalls double-loss recovery
+     * outright (xfer_test's "did not converge"), and so does capping the
+     * accumulated credit, because the covering grants that pay for
+     * retransmissions are exactly what gets discarded. The remedy is a deeper
+     * queue, which costs board RAM and a flash.
+     *
+     * So this pins what is true and safe today and no more. Do not tighten it
+     * without reading #141.
+     */
+
+    /*
+     * **This bounds the loss-free burst and nothing more.** Credit accumulates
+     * without a ceiling (dh_xfer_handle_credit): a covering grant rides every
+     * retransmit request, deliberately, because draining the window is fatal
+     * where inflating it is not. So after a lossy round the sender can hold
+     * more credit than the window names and pump all of it — up to
+     * DH_XFER_BATCH_MAX — into a queue sized for the window.
+     *
+     * That gap is open. Capping the running total at the window was tried and
+     * it breaks recovery: a double loss never converges, because the grants
+     * that would pay for the retransmissions are the ones discarded.
+     *
+     * DH_XFER_BATCH_MAX is an action-array bound, not a queue-safety one. It
+     * is checked here only so that a pump can emit the window it was granted;
+     * do not read it as a bound on the burst.
+     */
     CHECK(DH_XFER_BATCH_MAX >= DH_XFER_CREDIT_WINDOW, "credit",
           "a pump cannot emit the window it was granted");
 }

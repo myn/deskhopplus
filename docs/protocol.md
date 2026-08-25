@@ -795,7 +795,8 @@ between the helpers**; the firmware relays its messages opaquely.
   sender→receiver, which keeps it unambiguous when both sides transfer at once.
 - **Flow control.** The sender spends one credit per chunk sent (retransmits included) and
   stops at zero; CLIP_DONE is not gated. The paste side grants `DH_XFER_CREDIT_WINDOW`
-  (3 chunks) with its CLIP_REQUEST, replenishes in half-window batches as chunks arrive,
+  (3 chunks) with its CLIP_REQUEST, replenishes as chunks arrive — the rule is half-window
+  batches, which at a window of 3 means one grant per chunk,
   and **every CLIP_RETRANSMIT is accompanied by a covering credit grant** — a lost or
   corrupt chunk consumed the sender's credit without ever being counted on the paste side,
   and without the covering grant sustained loss would drain the window permanently. (When
@@ -818,6 +819,15 @@ between the helpers**; the firmware relays its messages opaquely.
   refused chunk is re-requested; a refused CLIP_OFFER or CLIP_DONE is not, and costs the
   whole transfer. `outq_test` pins the two constants against each other so they cannot
   drift apart again, and raising the window means deepening that queue first.
+
+  **Two gaps remain open, both in [#141](https://github.com/myn/deskhopplus/issues/141).**
+  CLIP_DONE is not credit-gated and rides the same pump batch as the last chunks, so the
+  worst-case loss-free burst is the window *plus one* and the frame that overflows is the
+  one with no retransmit behind it. And credit accumulates without a ceiling — the covering
+  grant on every CLIP_RETRANSMIT is deliberate and load-bearing, so a lossy round can leave
+  the sender holding more credit than the window names. Both are fixed by a deeper queue,
+  not by a smaller window: a window of 2, and capping the accumulated credit, each break
+  double-loss recovery outright.
 - **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
   paste side discards its partial payload — never delivering it as complete — and its
   helper deletes any partial file and reports the failure. No resumption.
