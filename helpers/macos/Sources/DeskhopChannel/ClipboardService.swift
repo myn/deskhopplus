@@ -178,9 +178,17 @@ public final class ClipboardService {
      * Measured against *progress*, not against the transfer's total duration: a
      * large payload legitimately takes minutes on this link, and a deadline on
      * the whole transfer would abandon healthy ones.
+     *
+     * `boardDrops` is what the board has said it dropped (#133), quoted into
+     * the abandonment note. A stall and a board that has been losing frames is
+     * a different fault from a stall with clean seams, and the numbers are
+     * only worth reading at the moment one happens — which is here. Passed on
+     * every tick rather than held, because the board restates them whenever
+     * they move and nothing tells this service when that was.
      */
-    public func tick(at now: TimeInterval) -> [ClipboardOutput] {
+    public func tick(at now: TimeInterval, boardDrops: BoardDrops? = nil) -> [ClipboardOutput] {
         var outputs: [ClipboardOutput] = []
+        let drops = boardDrops?.line ?? "the board has stated no drop totals"
 
         if !transfer.isSending {
             sendingSince = nil
@@ -194,8 +202,8 @@ public final class ClipboardService {
             reofferWhenSealed = false
             outputs += render(transfer.cancelOutgoing())
             outputs.append(.note("a transfer made no progress for \(Int(Self.stallTimeout))s and "
-                                 + "was abandoned (\(line)); the other computer's helper is not "
-                                 + "answering"))
+                                 + "was abandoned (\(line); \(drops)); the other computer's "
+                                 + "helper is not answering"))
         }
 
         if !transfer.isReceiving {
@@ -208,8 +216,8 @@ public final class ClipboardService {
             receivingSince = nil
             outputs += render(transfer.cancelIncoming())
             outputs.append(.note("an arriving transfer made no progress for "
-                                 + "\(Int(Self.stallTimeout))s and was abandoned (\(line)); "
-                                 + "nothing partial is ever written"))
+                                 + "\(Int(Self.stallTimeout))s and was abandoned (\(line); "
+                                 + "\(drops)); nothing partial is ever written"))
         }
         return outputs
     }

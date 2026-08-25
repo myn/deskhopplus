@@ -299,6 +299,37 @@ typedef struct {
 } dh_listener_alert;
 
 /*
+ * Board → helper: what this board has dropped on the channel, since boot
+ * (#133). Seven totals rather than one, because each names a different seam
+ * and each seam has a different remedy.
+ *
+ * These were readable only from the config page, which is reachable only in
+ * config mode, which is entered by rebooting — so they were read on a board
+ * that had just zeroed them and could only ever say zero. Three sittings on
+ * #132 read that row of zeros as evidence the seams were clean. Sending them
+ * to the helper is what makes them a measurement instead of an artifact: the
+ * helper is attached while the fault is happening.
+ *
+ * Field order is the wire order, and it is the order the config page's fields
+ * 91-97 already used.
+ */
+typedef struct {
+    uint32_t reports;   /* reports the USB callback could not hand to channel_task */
+    uint32_t inbound;   /* frames from the peer board that core 0 had not drained */
+    uint32_t outq;      /* frames the outbound queue to this helper refused (ADR-0005) */
+    uint32_t link;      /* packets the inter-board link refused */
+    uint32_t orphans;   /* peer data packets with no start to attach to */
+    uint32_t truncated; /* peer frames abandoned because packets went missing */
+    uint32_t relay_q;   /* frames the relay's own outbound queue refused */
+} dh_device_drops;
+
+#define DH_DEVICE_DROPS_LEN 28u
+
+/* Whether two readings say the same thing — the whole of what decides that a
+   fresh one is worth a frame. */
+bool dh_device_drops_equal(const dh_device_drops *a, const dh_device_drops *b);
+
+/*
  * Body codecs. Decode reads a frame's **body** — what dh_auth_open hands back
  * for an authenticated type, or the whole payload for types 0x08-0x0F. Encode
  * writes a complete frame, header included, so a caller never assembles one by
@@ -333,6 +364,17 @@ bool dh_listener_alert_decode(const uint8_t *body, size_t len, dh_listener_alert
 
 /* CLIP_POLICY carries one byte of DH_CLIP_MAY_* flags. */
 bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags);
+
+/* DEVICE_DROPS carries the seven totals as little-endian uint32s. */
+bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *out);
+
+/* The board builds this one into the same reply buffer everything else in the
+   tick uses. A body that outgrew it would take DH_FRAME_ERR_BUFFER and the
+   totals would simply never be sent — no error at the desk, and the diagnostic
+   silently back to being unreadable, which is #133 all over again. */
+_Static_assert(DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_DEVICE_DROPS_LEN <=
+                   DH_SESSION_REPLY_MAX,
+               "a DEVICE_DROPS frame must fit the board's reply buffer");
 
 /*
  * How wide a window the listener count is measured over, and how many refused
@@ -396,6 +438,23 @@ typedef struct {
      */
     uint8_t clip_flags;
     bool clip_policy_owed;
+
+    /*
+     * The drop totals this board last set, whether the helper has yet to be
+     * told them, and when it last was (#133).
+     *
+     * Owed on change rather than sent on a timer, so what the helper holds is
+     * current by construction and an idle channel carries nothing at all. The
+     * stamp is the rate limit: a seam losing a frame per tick would otherwise
+     * put a frame per tick into a queue ADR-0005 keeps deliberately short, and
+     * a diagnostic that crowds out the traffic it is measuring is worse than
+     * none. One reading per heartbeat interval is plenty — these are totals,
+     * so a reading skipped is not a reading lost.
+     */
+    dh_device_drops drops;
+    bool drops_owed;
+    uint32_t drops_sent_ms;
+    bool drops_ever_sent;
 } dh_session;
 
 /*
@@ -502,12 +561,25 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type);
 void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags);
 
 /*
+ * Set the drop totals this board's helper is to be told about (#133).
+ *
+ * Safe to call every pass with the same values, exactly like the clipboard
+ * policy above: a helper is told only when what it holds is no longer what
+ * this board has. The first session tick after a hello owes a reading whatever
+ * the values are, so a helper always has a baseline — "the board reports no
+ * drops" is itself the answer a stall wants, and it cannot be told apart from
+ * "the board has said nothing" unless one is sent.
+ */
+void dh_session_set_drops(dh_session *s, const dh_device_drops *drops);
+
+/*
  * Advance the clock, encoding whatever is owed the helper into out — a
  * clipboard policy it has not been told, a listener alert that has been
- * waiting for a session, the board's beat when the direction has been idle for
- * an interval, or a SESSION_END on the call that evicts a helper for silence.
- * Never more than one: an evicted session is not beaten at, and one frame per
- * tick is what the outbound queue takes.
+ * waiting for a session, a fresh reading of the board's drop totals, the
+ * board's beat when the direction has been idle for an interval, or a
+ * SESSION_END on the call that evicts a helper for silence. Never more than
+ * one: an evicted session is not beaten at, and one frame per tick is what the
+ * outbound queue takes.
  *
  * There is no separate transition flag. The eviction *is* the frame, so the
  * signal and what goes on the wire cannot disagree.

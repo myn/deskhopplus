@@ -332,6 +332,11 @@ def build():
     v.append(("clip_policy_both", frame(0x04, bytes([0x03]), K_B2H, 8)))
     v.append(("clip_policy_receive_only", frame(0x04, bytes([0x02]), K_B2H, 9)))
 
+    # The seven drop totals (#133), each a different value so that a field read
+    # in the wrong order cannot pass. Order is docs/protocol.md's, which is the
+    # order the config page's fields 91-97 already used.
+    v.append(("device_drops", frame(0x10, struct.pack("<7I", 1, 2, 3, 4, 5, 6, 7), K_B2H, 10)))
+
     # --- pairing and refusal, the untagged band ----------------------------
     v.append(("pair_request", frame(0x08, struct.pack("<Q", CORRELATION) + HELPER_PUB)))
     v.append(("pair_grant", frame(0x09, struct.pack("<Q", CORRELATION) + BOARD_PUB)))
@@ -403,7 +408,8 @@ HEADER = """\
 #                              seal_stale 4, and the clipboard messages 5 through 11
 #   device to helper (k_b2h)   hello_ack 0, device_heartbeat 1, session_end 2/3/4,
 #                              listener_alert 5, place 6, pos_query 7,
-#                              clip_policy_both 8, clip_policy_receive_only 9
+#                              clip_policy_both 8, clip_policy_receive_only 9,
+#                              device_drops 10
 #   pair_* and hello_refused_* carry no prefix and no counter at all
 #
 # The bulk vectors are all in the helper-to-device direction. Which way a relayed

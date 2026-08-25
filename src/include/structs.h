@@ -116,13 +116,19 @@ typedef struct {
 
     /*
      * What the helper channel has dropped, since boot, published here by
-     * channel_task so the config API can read it (fields 91-94).
+     * channel_task so the config API can read it (fields 91-97).
      *
      * The counters themselves live in channel.c, where the seams are. They are
      * copied out rather than moved because each one belongs to the code that
      * increments it — and every one of them was already counted (#43) but
      * readable nowhere, which is the same "silent because nobody can see it"
      * that #94 cost two days to.
+     *
+     * The config page is not where these are worth reading: it is reachable
+     * only in config mode, which is entered by rebooting the board that holds
+     * them, so it can only ever be shown a board that has just zeroed them
+     * (#133). The live reading goes to the helper over the channel, in
+     * DEVICE_DROPS — channel_task sets both from the same values.
      */
     uint32_t _channel_reports_dropped;
     uint32_t _channel_inbound_dropped;

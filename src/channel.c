@@ -685,9 +685,24 @@ void channel_task(device_t *state) {
     channel_pump_inbound();
 
     /*
-     * What this board has dropped, where the config API can read it (#52).
+     * What this board has dropped, published twice over.
+     *
+     * To the config API first (#52), where it was the only reader — and could
+     * not be a useful one: the page is reachable only in config mode, config
+     * mode is entered by rebooting, and these counters live in plain RAM. So
+     * every reading was taken on a board that had just zeroed them, and three
+     * sittings on #132 read that row of zeros as evidence the seams were
+     * clean. Kept because the page is still the only reader on a board with no
+     * helper paired, and because a since-boot number is honest as long as
+     * whoever reads it knows the boot just happened.
+     *
+     * Then to the session, which is where the number is worth something
+     * (#133): the helper is attached while the fault is happening, so it can
+     * read these live, at the moment of a stall, with no reboot at all.
+     *
      * Published every pass rather than on change: these are counters, and a
-     * page that reads one is asking what the total is now.
+     * reader of one is asking what the total is now. The session decides for
+     * itself whether a fresh reading is worth a frame.
      */
     state->_channel_reports_dropped = channel.reports_dropped;
     state->_channel_inbound_dropped = channel.inbound_dropped;
@@ -696,6 +711,17 @@ void channel_task(device_t *state) {
     state->_channel_relay_orphans = channel.relay_rx.orphans;
     state->_channel_relay_truncated = channel.relay_rx.truncated;
     state->_channel_relay_refused = channel.relay_tx.q.refused;
+
+    const dh_device_drops drops = {
+        .reports = channel.reports_dropped,
+        .inbound = channel.inbound_dropped,
+        .outq = channel.out.refused,
+        .link = channel.tx.dropped,
+        .orphans = channel.relay_rx.orphans,
+        .truncated = channel.relay_rx.truncated,
+        .relay_q = channel.relay_tx.q.refused,
+    };
+    dh_session_set_drops(&channel.session, &drops);
 
     /*
      * The clipboard's two direction toggles, as the two verbs this board's own

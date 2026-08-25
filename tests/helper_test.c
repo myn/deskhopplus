@@ -1981,6 +1981,63 @@ static void test_the_board_states_the_clipboard_policy(void) {
 }
 
 /*
+ * What the board has dropped on the channel (#133).
+ *
+ * These were readable only from the config page before, which is reachable
+ * only in config mode, which is entered by rebooting the board that holds
+ * them — so they were always read on a board that had just zeroed them. Over
+ * the channel they are read live, and this is the half that makes them
+ * readable at all.
+ */
+static void test_the_board_states_what_it_has_dropped(void) {
+    const char *name = "the board states what it has dropped";
+    dh_helper h;
+    a_live_session(&h);
+
+    dh_device_drops got;
+    CHECK(!dh_helper_device_drops(&h, &got), name,
+          "totals were reported before the board stated any");
+
+    /* Seven distinct values: a field read out of order names the wrong seam,
+       and each seam has a different remedy. */
+    const uint8_t body[DH_DEVICE_DROPS_LEN] = {
+        1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0,
+        5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0,
+    };
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(board_frame(DH_MSG_DEVICE_DROPS, body, sizeof body, frame, sizeof frame, &len), name,
+          "the drops frame would not build");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+    CHECK(dh_helper_device_drops(&h, &got), name, "a stated reading was not recorded");
+    CHECK(got.reports == 1 && got.inbound == 2 && got.outq == 3 && got.link == 4 &&
+              got.orphans == 5 && got.truncated == 6 && got.relay_q == 7,
+          name, "the seven totals were read in the wrong order");
+    no_overflow(name);
+
+    /* A reading that will not decode changes nothing. A half-arrived frame
+       read as zeros would say the seams are clean, which is the exact wrong
+       answer this whole change exists to stop being given. */
+    const uint8_t too_short[DH_DEVICE_DROPS_LEN - 1] = {0};
+    CHECK(board_frame(DH_MSG_DEVICE_DROPS, too_short, sizeof too_short, frame, sizeof frame, &len),
+          name, "the malformed frame would not build");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 200, &out);
+    CHECK(saw_note(&out, DH_NOTE_UNDECODABLE), name, "a malformed reading was not traced");
+    CHECK(dh_helper_device_drops(&h, &got) && got.reports == 1, name,
+          "a malformed reading overwrote the one that was understood");
+    no_overflow(name);
+
+    /* The totals go with the session: they are the board's, and the next
+       session is told a baseline of its own. */
+    dh_helper_transport_failed(&h, 300, &out);
+    CHECK(!dh_helper_device_drops(&h, &got), name,
+          "a lost session left the last board's totals behind");
+}
+
+/*
  * Bulk frames are the one thing this machine authenticates and then declines to
  * decide about (#52). They reach the platform through a sink rather than an
  * output because an output slot is 76 bytes and a sealed chunk is over a
@@ -2168,6 +2225,7 @@ int main(int argc, char **argv) {
     test_an_ack_for_someone_elses_hello_is_dropped();
     test_a_grant_answering_someone_elses_request_is_dropped();
     test_the_board_states_the_clipboard_policy();
+    test_the_board_states_what_it_has_dropped();
     test_verified_bulk_reaches_the_platform();
     test_a_reordered_bulk_frame_survives_the_counter();
 

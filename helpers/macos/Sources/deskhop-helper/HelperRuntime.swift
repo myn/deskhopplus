@@ -162,7 +162,11 @@ final class HelperRuntime {
            helper having crashed leaves this end's session perfectly healthy,
            so nothing else here would ever notice. */
         if case .tick = input {
-            emit(clipboard.tick(at: now))
+            /* The board's drop totals go with the tick so that an abandonment
+               can quote them (#133). Read here rather than held there: the
+               board restates them whenever they move, and nothing tells the
+               clipboard when that was. */
+            emit(clipboard.tick(at: now, boardDrops: session.boardDrops))
         }
     }
 

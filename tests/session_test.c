@@ -197,16 +197,23 @@ static size_t tick(dh_session *s, uint32_t now_ms, uint8_t *out, size_t out_cap)
 }
 
 /*
- * Take the clipboard policy a fresh session owes its helper (#52) off the
- * queue, exactly as a board does when it accepts that frame. It is the first
- * thing any tick after a handshake produces, and the tests below are about the
- * beat, the alert and the eviction — so they settle it here once rather than
- * each accounting for a frame that is not their subject.
+ * Take the two frames a fresh session owes its helper off the queue, exactly
+ * as a board does when it accepts them: the clipboard policy (#52) and the
+ * baseline drop totals (#133). They are what any tick after a handshake
+ * produces first, and the tests below are about the beat, the alert and the
+ * eviction — so they settle these here once rather than each accounting for
+ * frames that are not their subject.
+ *
+ * Both are settled at the same `now_ms`, so the idle timer they charge leaves
+ * the direction idle a full interval later, as it would after any traffic.
  */
-static void settle_policy(dh_session *s, uint32_t now_ms) {
+static void settle_openers(dh_session *s, uint32_t now_ms) {
     uint8_t out[MAX_BYTES];
-    const size_t len = tick(s, now_ms, out, sizeof out);
-    if (len > 0 && out[0] == DH_MSG_CLIP_POLICY) dh_session_note_owed_sent(s, out[0]);
+    for (int i = 0; i < 2; i++) {
+        const size_t len = tick(s, now_ms, out, sizeof out);
+        if (len > 0 && (out[0] == DH_MSG_CLIP_POLICY || out[0] == DH_MSG_DEVICE_DROPS))
+            dh_session_note_owed_sent(s, out[0]);
+    }
 }
 
 /* A complete authenticated frame, built the way a helper would build one. */
@@ -346,6 +353,21 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
         uint8_t flags = 0;
         CHECK(dh_clip_policy_decode(body, body_len, &flags), policies[i].name, "decode failed");
         CHECK(flags == policies[i].expected, policies[i].name, "wrong flags");
+    }
+
+    /* The seven drop totals (#133). Decode only, like the policy above: the
+       board writes them inside dh_session_tick and there is no encoder to
+       round-trip against. Each value in the vector differs, so a field read
+       out of order names the wrong seam — and naming the wrong seam sends
+       whoever reads it to fix the wrong thing. */
+    const struct vector *drops_v = find("device_drops");
+    if (drops_v && decoded_body(drops_v->f[0], drops_v->len[0], &v, &body, &body_len)) {
+        CHECK(v.hdr.type == DH_MSG_DEVICE_DROPS, "device_drops", "wrong message type");
+        dh_device_drops d;
+        CHECK(dh_device_drops_decode(body, body_len, &d), "device_drops", "decode failed");
+        CHECK(d.reports == 1 && d.inbound == 2 && d.outq == 3 && d.link == 4 && d.orphans == 5 &&
+                  d.truncated == 6 && d.relay_q == 7,
+              "device_drops", "the seven totals decoded in the wrong order");
     }
 
     /* The untagged band: pairing and the two refusals. */
@@ -920,7 +942,7 @@ static void test_only_authenticated_traffic_is_liveness(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "liveness",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     /* A helper's beat, properly tagged, keeps the session indefinitely — and
        is not answered. The board's own beat is idle-gated, so a direction kept
@@ -992,7 +1014,7 @@ static void test_the_board_beats_only_into_an_idle_direction(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "idle",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     /* The ack is itself traffic, so the direction is not idle yet. */
     now += DH_SESSION_HEARTBEAT_MS - 1;
@@ -1001,9 +1023,9 @@ static void test_the_board_beats_only_into_an_idle_direction(void) {
     now += 1;
     const size_t beat_len = tick(&s, now, reply, sizeof reply);
     CHECK(beat_len > 0, "idle", "an idle interval drew no beat");
-    /* Counter 2, not 1: the ack spent 0 and the clipboard policy this session
-       owed its helper (#52) spent 1. */
-    CHECK(authenticates(reply, beat_len, k_b2h, 2), "idle",
+    /* Counter 3, not 1: the ack spent 0, the clipboard policy this session owed
+       its helper (#52) spent 1, and the baseline drop totals (#133) spent 2. */
+    CHECK(authenticates(reply, beat_len, k_b2h, 3), "idle",
           "the board's beat is not tagged under k_b2h at the next counter");
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "idle", "beat twice in one interval");
 
@@ -1025,7 +1047,7 @@ static void test_liveness_survives_the_clock_wrapping(void) {
     const uint32_t before_wrap = UINT32_MAX - (DH_SESSION_HEARTBEAT_MS / 2);
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], before_wrap, reply, sizeof reply) > 0, "wrap",
           "no session");
-    settle_policy(&s, before_wrap);
+    settle_openers(&s, before_wrap);
 
     const uint32_t after_wrap = before_wrap + DH_SESSION_HEARTBEAT_MS; /* wraps */
     CHECK(tick(&s, after_wrap, reply, sizeof reply) > 0, "wrap",
@@ -1144,7 +1166,7 @@ static void test_a_rate_of_refused_frames_is_reported_to_the_helper(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "alert",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     const size_t alert_len =
         measure_a_window(&s, &now, &beats, DH_LISTENER_THRESHOLD, reply, sizeof reply);
@@ -1198,7 +1220,7 @@ static void test_a_count_below_the_threshold_is_not_reported(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "threshold",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     CHECK(measure_a_window(&s, &now, &beats, DH_LISTENER_THRESHOLD - 1u, reply, sizeof reply) == 0,
           "threshold", "a count below the threshold was reported");
@@ -1221,7 +1243,7 @@ static void test_an_ordinary_liveness_timeout_is_not_a_listener(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "timeout",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     /* The board evicts for silence. */
     now += DH_SESSION_ABSENT_MS;
@@ -1263,7 +1285,7 @@ static void test_a_measurement_outlives_the_session_it_was_taken_in(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "pending",
           "no session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
 
     /* Enough refusals to trip, then the session dies before the window it was
        measured in has closed. */
@@ -1298,7 +1320,7 @@ static void test_a_measurement_outlives_the_session_it_was_taken_in(void) {
     dh_session_stage_nonce(&s, board_nonce);
     CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "pending",
           "no new session");
-    settle_policy(&s, now);
+    settle_openers(&s, now);
     const size_t alert_len = tick(&s, now, reply, sizeof reply);
     CHECK(decoded_body(reply, alert_len, &v, &body, &body_len), "pending",
           "the pending alert was never sent");
@@ -1310,6 +1332,10 @@ static void test_a_measurement_outlives_the_session_it_was_taken_in(void) {
 
     dh_session_note_owed_sent(&s, DH_MSG_LISTENER_ALERT);
     dh_session_note_sent(&s, now);
+
+    /* The alert outranks the baseline drop totals, so they are still owed
+       behind it — settled here so the silence below is about the alert. */
+    settle_openers(&s, now);
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "pending", "the alert was reported twice");
 }
 
@@ -1492,6 +1518,9 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
           "a policy the queue refused was thrown away");
     dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
     dh_session_note_sent(&s, now);
+    /* The baseline drop totals (#133) follow the policy on a fresh session;
+       settled here so the silence below is about the policy. */
+    settle_openers(&s, now);
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy", "the policy was sent twice");
 
     /* The config page writes a toggle. The live session hears about it. */
@@ -1524,6 +1553,101 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
           "policy", "the second session was not told the policy");
     CHECK(dh_clip_policy_decode(body, body_len, &flags) && flags == DH_CLIP_MAY_RECEIVE, "policy",
           "the second session was told the default rather than what is set");
+}
+
+/*
+ * The seven drop totals reach the helper over the channel, which is the whole
+ * point of #133: on the config page they could only ever read zero, because
+ * the page is reachable only in config mode and config mode is entered by
+ * rebooting the board that holds them.
+ *
+ * What is gated here is the three things that make the reading trustworthy —
+ * every session gets a baseline even when nothing has dropped, an unchanged
+ * reading is not traffic, and a changed one cannot be sent faster than the
+ * queue can take it.
+ */
+static void test_a_session_is_told_what_the_board_has_dropped(void) {
+    const struct vector *hello_v = find("hello_mac");
+    if (!hello_v) return;
+
+    dh_session s;
+    a_paired_board(&s, DH_BUILD_RELEASE);
+    uint32_t now = 400000;
+    uint8_t reply[DH_SESSION_REPLY_MAX];
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "drops",
+          "no session");
+
+    /* The policy goes first and is released, so what follows is the drops. */
+    size_t len = tick(&s, now, reply, sizeof reply);
+    dh_frame_view v;
+    const uint8_t *body = NULL;
+    size_t body_len = 0;
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_CLIP_POLICY,
+          "drops", "the policy did not come first");
+    dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
+    dh_session_note_sent(&s, now);
+
+    /*
+     * A board that has dropped nothing still says so. "No drops" and "the
+     * board has said nothing" are the two readings a stall has to tell apart,
+     * and without a baseline they look identical — which is exactly how a row
+     * of zeros on the config page was read as evidence three times.
+     */
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len), "drops",
+          "a fresh session sent no drop totals");
+    CHECK(v.hdr.type == DH_MSG_DEVICE_DROPS, "drops", "the second frame is not the drop totals");
+    dh_device_drops got;
+    CHECK(dh_device_drops_decode(body, body_len, &got), "drops", "decode failed");
+    CHECK(got.reports == 0 && got.relay_q == 0, "drops",
+          "a board that has dropped nothing did not report zeros");
+    dh_session_note_owed_sent(&s, DH_MSG_DEVICE_DROPS);
+    dh_session_note_sent(&s, now);
+
+    /* Setting the same reading again is not a change, so it is not traffic. A
+       board calls this every pass at 1000 Hz. */
+    const dh_device_drops zero = {0, 0, 0, 0, 0, 0, 0};
+    dh_session_set_drops(&s, &zero);
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "drops",
+          "an unchanged reading was sent anyway");
+
+    /* A seam loses a frame. The helper hears about it — but not before the
+       rate limit allows, because the outbound queue is short on purpose. */
+    const dh_device_drops one = {0, 0, 0, 0, 0, 1, 0};
+    dh_session_set_drops(&s, &one);
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "drops",
+          "a second reading went out inside one interval");
+
+    now += DH_SESSION_HEARTBEAT_MS;
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_DEVICE_DROPS,
+          "drops", "a changed reading never reached the helper");
+    CHECK(dh_device_drops_decode(body, body_len, &got) && got.truncated == 1, "drops",
+          "the changed reading carried the wrong totals");
+    dh_session_note_owed_sent(&s, DH_MSG_DEVICE_DROPS);
+    dh_session_note_sent(&s, now);
+
+    /*
+     * A second helper arrives. It is owed a baseline of its own even though
+     * the totals have not moved since the last one was told — it was told
+     * nothing, and the totals it inherits are the board's, not the session's.
+     */
+    dh_session_drop(&s);
+    dh_session_stage_nonce(&s, board_nonce);
+    now += 1000;
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "drops",
+          "no second session");
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_CLIP_POLICY,
+          "drops", "the second session was not told the policy first");
+    dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
+    dh_session_note_sent(&s, now);
+
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_DEVICE_DROPS,
+          "drops", "the second session was told no drop totals");
+    CHECK(dh_device_drops_decode(body, body_len, &got) && got.truncated == 1, "drops",
+          "the second session was told zeros rather than what the board holds");
 }
 
 /*
@@ -1587,6 +1711,7 @@ int main(int argc, char **argv) {
     test_a_pair_grant_does_not_fit_the_buffer_v1_used();
     test_an_eviction_the_board_knows_about_is_announced();
     test_every_session_is_told_the_clipboard_policy();
+    test_a_session_is_told_what_the_board_has_dropped();
     test_the_direction_toggles_map_onto_each_board();
 
     if (failures) {

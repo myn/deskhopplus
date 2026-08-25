@@ -45,7 +45,15 @@ STATUS_ = [
     # than silently dropped" untrue in practice. Each names a different seam,
     # and each seam has a different remedy — so they are four fields and not a
     # total.
-    FormField(1005, "Channel drops", elem="label"),
+    #
+    # The heading says "since this boot" because this page cannot say anything
+    # else: it is reachable only in config mode, config mode is entered by
+    # rebooting the board, and the counters live in RAM. So a row of zeros here
+    # is what a board that just started always shows, and it is not evidence
+    # that the seams are clean — it was read as evidence three times on #132
+    # before #133 named it. The live reading goes to the helper over the
+    # channel and lands in its log.
+    FormField(1005, "Channel drops (since this boot)", elem="label"),
     FormField(91, "Reports not taken", None, {}, "uint32", elem="hex_info"),
     FormField(92, "From peer board", None, {}, "uint32", elem="hex_info"),
     FormField(93, "Outbound refused", None, {}, "uint32", elem="hex_info"),

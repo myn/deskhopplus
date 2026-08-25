@@ -198,6 +198,38 @@ bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags) {
     return true;
 }
 
+bool dh_device_drops_equal(const dh_device_drops *a, const dh_device_drops *b) {
+    return a->reports == b->reports && a->inbound == b->inbound && a->outq == b->outq &&
+           a->link == b->link && a->orphans == b->orphans && a->truncated == b->truncated &&
+           a->relay_q == b->relay_q;
+}
+
+/* The seven, in the order the struct declares them. Written out rather than
+   looped over the struct's memory: a loop would make the wire layout depend on
+   this compiler's padding, and the vector file is the gate for three
+   implementations, one of which is not C. */
+static void drops_write(const dh_device_drops *d, uint8_t *body) {
+    wr_u32(body, d->reports);
+    wr_u32(body + 4, d->inbound);
+    wr_u32(body + 8, d->outq);
+    wr_u32(body + 12, d->link);
+    wr_u32(body + 16, d->orphans);
+    wr_u32(body + 20, d->truncated);
+    wr_u32(body + 24, d->relay_q);
+}
+
+bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *out) {
+    if (body == NULL || out == NULL || len != DH_DEVICE_DROPS_LEN) return false;
+    out->reports = rd_u32(body);
+    out->inbound = rd_u32(body + 4);
+    out->outq = rd_u32(body + 8);
+    out->link = rd_u32(body + 12);
+    out->orphans = rd_u32(body + 16);
+    out->truncated = rd_u32(body + 20);
+    out->relay_q = rd_u32(body + 24);
+    return true;
+}
+
 /* ------------------------------------------------------------------ session */
 
 void dh_session_init(dh_session *s, uint8_t build_type) {
@@ -237,6 +269,12 @@ void dh_session_drop(dh_session *s) {
        not session state, and the next helper is owed it from scratch. */
     s->clip_policy_owed = false;
 
+    /* Same for the drop totals, and `drops` survives for the same reason: they
+       are the board's, not the session's. `drops_ever_sent` goes, so the next
+       helper is owed a baseline rather than inheriting the last one's. */
+    s->drops_owed = false;
+    s->drops_ever_sent = false;
+
     /* The listener count and the staged nonce deliberately survive: a client
        that keeps writing junk across a reconnection is exactly what the alert
        exists to notice, and entropy the caller already drew is not the
@@ -247,6 +285,12 @@ void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags) {
     if (s->clip_flags == clip_flags) return;
     s->clip_flags = clip_flags;
     if (s->present) s->clip_policy_owed = true;
+}
+
+void dh_session_set_drops(dh_session *s, const dh_device_drops *drops) {
+    if (dh_device_drops_equal(&s->drops, drops)) return;
+    s->drops = *drops;
+    if (s->present) s->drops_owed = true;
 }
 
 /* Anything that arrived and authenticated proves the helper is alive. Only a
@@ -268,6 +312,11 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type) {
        nothing goes on believing whatever it last heard, and there is no second
        chance to notice — unlike the beat, nothing follows to correct it. */
     if (type == DH_MSG_CLIP_POLICY) s->clip_policy_owed = false;
+    /* And the drop totals, for the weakest of the three reasons: a reading the
+       queue refused is simply re-encoded next tick, because the values are
+       still there to read. Releasing it here rather than at encode time only
+       keeps a refusal from skipping a whole rate-limit interval. */
+    if (type == DH_MSG_DEVICE_DROPS) s->drops_owed = false;
 }
 
 /*
@@ -498,8 +547,13 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
        beat immediately. */
     s->last_sent_ms = now_ms;
     /* A helper that has just arrived has been told nothing, whatever the last
-       one heard — so this is set outright rather than only on a change (#52). */
+       one heard — so this is set outright rather than only on a change (#52).
+       The drop totals are owed for the same reason and one more of their own:
+       a baseline of zeros is the answer a stall wants, and a helper cannot
+       tell it from a board that has said nothing (#133). */
     s->clip_policy_owed = true;
+    s->drops_owed = true;
+    s->drops_ever_sent = false;
 
     const dh_frame_result rc =
         dh_hello_ack_encode(&ack, s->k_b2h, s->tx_counter, out, out_cap, out_len);
@@ -717,6 +771,34 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
          */
         if (rc == DH_FRAME_OK) {
             s->tx_counter++;
+            dh_session_note_sent(s, now_ms);
+        }
+        return rc;
+    }
+
+    /*
+     * A fresh reading of what this board has dropped (#133). Behind the alert
+     * because the alert cannot be measured twice and this can — the totals are
+     * still sitting there on the next tick — and ahead of the beat because it
+     * is the diagnostic the beat's own idle window is when someone wants it.
+     *
+     * Rate-limited to one per heartbeat interval, which is what stops a seam
+     * losing a frame per tick from putting a frame per tick into a queue
+     * ADR-0005 keeps short. Skipping a reading costs nothing: these are totals,
+     * so the next one carries everything the skipped one would have.
+     */
+    if (s->drops_owed &&
+        (!s->drops_ever_sent ||
+         (uint32_t)(now_ms - s->drops_sent_ms) >= DH_SESSION_HEARTBEAT_MS)) {
+        uint8_t body[DH_DEVICE_DROPS_LEN];
+        drops_write(&s->drops, body);
+
+        const dh_frame_result rc = encode_tagged(DH_MSG_DEVICE_DROPS, 0, s->k_b2h, s->tx_counter,
+                                                 body, sizeof body, out, out_cap, out_len);
+        if (rc == DH_FRAME_OK) {
+            s->tx_counter++;
+            s->drops_sent_ms = now_ms;
+            s->drops_ever_sent = true;
             dh_session_note_sent(s, now_ms);
         }
         return rc;

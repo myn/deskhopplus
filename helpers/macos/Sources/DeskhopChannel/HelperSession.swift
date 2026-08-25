@@ -80,6 +80,52 @@ public struct Negotiated: Equatable {
 }
 
 /*
+ * What the board says it has dropped on the channel, since it booted (#133).
+ *
+ * Seven totals rather than one, because each names a different seam and each
+ * seam has a different remedy. Read live: these used to be readable only from
+ * the config page, which is reachable only in config mode, which is entered by
+ * rebooting the board that holds them — so they could only ever read zero, and
+ * a row of zeros was taken three times as evidence the seams were clean.
+ */
+public struct BoardDrops: Equatable {
+    public let reports: UInt32
+    public let inbound: UInt32
+    public let outbound: UInt32
+    public let link: UInt32
+    public let orphans: UInt32
+    public let truncated: UInt32
+    public let relayQueue: UInt32
+
+    public init(_ d: dh_device_drops) {
+        reports = d.reports
+        inbound = d.inbound
+        outbound = d.outq
+        link = d.link
+        orphans = d.orphans
+        truncated = d.truncated
+        relayQueue = d.relay_q
+    }
+
+    /// Every seam that has lost something, named. Seams that have lost nothing
+    /// are left out, so the ordinary line says so in three words and a line
+    /// with anything in it is all signal.
+    public var line: String {
+        let seams: [(String, UInt32)] = [
+            ("reports not taken", reports),
+            ("from peer board", inbound),
+            ("outbound refused", outbound),
+            ("inter-board refused", link),
+            ("peer orphan packets", orphans),
+            ("peer frames truncated", truncated),
+            ("relay queue refused", relayQueue),
+        ]
+        let lost = seams.filter { $0.1 > 0 }.map { "\($0.0) \($0.1)" }
+        return lost.isEmpty ? "board reports no drops" : "board drops: " + lost.joined(separator: ", ")
+    }
+}
+
+/*
  * What the core is handed back on every callback. Held strongly by the
  * session, because `dh_helper_identity.ctx` is a bare pointer to it and the
  * core calls through that for the life of the machine.
@@ -219,6 +265,15 @@ public final class HelperSession {
     /// What the board last said about the clipboard's two directions (#52).
     /// Both allowed until it has said anything, matching the stored default.
     public var clipFlags: UInt8 { dh_helper_clip_flags(machine) }
+
+    /// What the board says it has dropped, or nil if it has stated nothing
+    /// this session (#133). Nil is not the same answer as all-zero, and a
+    /// caller that conflates them is back to reading silence as evidence.
+    public var boardDrops: BoardDrops? {
+        var d = dh_device_drops()
+        guard dh_helper_device_drops(machine, &d) else { return nil }
+        return BoardDrops(d)
+    }
 
     public func handle(_ input: SessionInput, at now: TimeInterval) -> [SessionOutput] {
         let ms = Self.milliseconds(now)

@@ -30,6 +30,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a malformed control message is refused, not acted on", testMalformedControlMessages),
     ("a transfer that stops moving is abandoned and reported", testAStalledTransferIsAbandoned),
     ("a transfer that is still moving is left alone", testProgressKeepsATransferAlive),
+    ("an abandonment says what the board has dropped", testAStallSaysWhatTheBoardHasDropped),
     ("a chunk is not opened when receiving is off", testChunksAreRefusedBeforeTheSealIsOpened),
     ("copy after copy after copy all arrive", testRepeatedCopiesAllArrive),
     ("every payload size arrives intact", testEveryPayloadSizeArrives),
@@ -379,6 +380,56 @@ private func testAStalledTransferIsAbandoned() {
     /* And it is gone: a second timeout produces nothing to abandon. */
     Check.that(a.tick(at: ClipboardService.stallTimeout * 3).isEmpty,
                "the abandoned transfer was abandoned twice")
+}
+
+/*
+ * An abandonment quotes what the board says it has dropped (#133).
+ *
+ * A stall on a board that has been losing frames and a stall on a board with
+ * clean seams are different faults, and until #133 the difference could not be
+ * measured at all: the totals were readable only from the config page, which
+ * is reachable only by rebooting the board that holds them.
+ *
+ * The three answers the line has to keep apart are "the board has said
+ * nothing", "the board says nothing was dropped", and "the board says *this*
+ * was dropped" — the first two being the pair that got read as each other.
+ */
+private func testAStallSaysWhatTheBoardHasDropped() {
+    func stallNote(_ drops: BoardDrops?) -> String {
+        let a = ClipboardService(entropy: counterEntropy(1))
+        let b = ClipboardService(entropy: counterEntropy(2))
+        var outputs = a.localCopy(kind: .text, bytes: Array("into the void".utf8))
+        for output in outputs {
+            guard case .send(let type, let body) = output else { continue }
+            for reply in b.received(type: type, body: body) {
+                if case .send(let replyType, let replyBody) = reply {
+                    outputs += a.received(type: replyType, body: replyBody)
+                }
+            }
+        }
+        /* The first tick arms the stall clock; the second is past it. */
+        _ = a.tick(at: 1, boardDrops: drops)
+        let abandoned = a.tick(at: ClipboardService.stallTimeout + 1, boardDrops: drops)
+        for output in abandoned {
+            if case .note(let n) = output, n.contains("abandoned") { return n }
+        }
+        return ""
+    }
+
+    Check.that(stallNote(nil).contains("stated no drop totals"),
+               "a stall on a board that has said nothing did not say so")
+
+    var clean = dh_device_drops()
+    Check.that(stallNote(BoardDrops(clean)).contains("no drops"),
+               "a stall on a board with clean seams did not say so")
+
+    /* One seam, named — and only that one, so the line is all signal. */
+    clean.truncated = 3
+    let named = stallNote(BoardDrops(clean))
+    Check.that(named.contains("peer frames truncated 3"),
+               "a stall did not name the seam the board says is losing frames")
+    Check.that(!named.contains("orphan"),
+               "a stall listed a seam that had lost nothing")
 }
 
 /*

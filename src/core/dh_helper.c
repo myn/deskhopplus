@@ -122,6 +122,10 @@ static void forget_beat_trace(dh_helper *h) {
 static void forget_session(dh_helper *h) {
     h->phase = DH_HELPER_PHASE_IDLE;
     h->have_negotiated = false;
+    /* The totals belong to the board this session was with. Every session is
+       told a fresh baseline, so keeping the old ones would only mean a stall
+       in the first moments of a new session quoting the last board's (#133). */
+    h->have_device_drops = false;
     dh_frame_reader_init(&h->reader);
     forget_beat_trace(h);
     forget_crypto_state(h);
@@ -362,6 +366,12 @@ void dh_helper_init(dh_helper *h, const dh_helper_identity *identity,
         memcpy(h->board_public_key, board_public_key, DH_P256_PUBLIC_SIZE);
         h->have_board_key = true;
     }
+}
+
+bool dh_helper_device_drops(const dh_helper *h, dh_device_drops *out) {
+    if (!h->have_device_drops) return false;
+    *out = h->device_drops;
+    return true;
 }
 
 void dh_helper_set_payload_sink(dh_helper *h, dh_helper_payload_fn fn, void *ctx) {
@@ -847,6 +857,23 @@ static void on_clip_policy(dh_helper *h, const dh_frame_view *f, const uint8_t *
     put_note(o, DH_NOTE_CLIP_POLICY, (int32_t)flags, 0);
 }
 
+/*
+ * What the board has dropped on the channel (#133). Stored rather than
+ * reported: there is no single number a note could carry, and the moment these
+ * are wanted is a stall, which is when the helper asks for them.
+ */
+static void on_device_drops(dh_helper *h, const dh_frame_view *f, const uint8_t *body,
+                            size_t body_len, dh_helper_outputs *o) {
+    dh_device_drops drops;
+    if (!dh_device_drops_decode(body, body_len, &drops)) {
+        put_note(o, DH_NOTE_UNDECODABLE, f->hdr.type, 0);
+        return;
+    }
+
+    h->device_drops = drops;
+    h->have_device_drops = true;
+}
+
 static void on_listener_alert(dh_helper *h, const dh_frame_view *f, const uint8_t *body,
                               size_t body_len, uint32_t now_ms, dh_helper_outputs *o) {
     dh_listener_alert alert;
@@ -928,6 +955,9 @@ static void on_authenticated(dh_helper *h, const dh_frame_view *f, uint32_t now_
         break;
     case DH_MSG_CLIP_POLICY:
         on_clip_policy(h, f, body, body_len, o);
+        break;
+    case DH_MSG_DEVICE_DROPS:
+        on_device_drops(h, f, body, body_len, o);
         break;
     default:
         /* Placement and bulk are authenticated here — which is what makes them

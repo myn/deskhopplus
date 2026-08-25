@@ -106,6 +106,13 @@ class HelperSession {
        Both allowed until it has said anything, matching the stored default. */
     uint8_t clip_flags() const { return dh_helper_clip_flags(machine_.get()); }
 
+    /* What the board says it has dropped, or false if it has stated nothing
+       this session (#133). False is not the same answer as all-zero, and a
+       caller that conflates them is back to reading silence as evidence. */
+    bool device_drops(dh_device_drops *out) const {
+        return dh_helper_device_drops(machine_.get(), out);
+    }
+
     /*
      * Build one authenticated frame to send to the board — a clipboard chunk, a
      * cursor placement — under the session key and the next counter in its

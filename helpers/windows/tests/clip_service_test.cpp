@@ -404,6 +404,59 @@ void test_a_stalled_transfer_is_abandoned() {
 }
 
 /*
+ * An abandonment quotes what the board says it has dropped (#133).
+ *
+ * A stall on a board that has been losing frames and a stall on a board with
+ * clean seams are different faults, and until #133 the difference could not be
+ * measured at all: the totals were readable only from the config page, which
+ * is reachable only by rebooting the board that holds them.
+ *
+ * The three answers the line has to keep apart are "the board has said
+ * nothing", "the board says nothing was dropped", and "the board says *this*
+ * was dropped" — the first two being the pair that got read as each other.
+ */
+static std::string stall_note(const dh_device_drops *drops) {
+    ClipService a(seal_aead(), counter_entropy(1));
+    ClipService b(seal_aead(), counter_entropy(2));
+
+    std::vector<ClipOutput> outputs = a.local_copy(ClipKind::Text, bytes_of("into the void"));
+    for (size_t i = 0; i < outputs.size(); i++) {
+        if (outputs[i].kind != ClipOutput::Kind::Send) continue;
+        for (const ClipOutput &reply :
+             b.received(outputs[i].type, outputs[i].bytes.data(), outputs[i].bytes.size())) {
+            if (reply.kind != ClipOutput::Kind::Send) continue;
+            for (ClipOutput &back : a.received(reply.type, reply.bytes.data(), reply.bytes.size()))
+                outputs.push_back(std::move(back));
+        }
+    }
+
+    /* The first tick arms the stall clock; the second is past it. */
+    a.tick(1, drops);
+    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs + 1, drops))
+        if (output.kind == ClipOutput::Kind::Note &&
+            output.note.find("abandoned") != std::string::npos)
+            return output.note;
+    return std::string();
+}
+
+void test_a_stall_says_what_the_board_has_dropped() {
+    CHECK(stall_note(nullptr).find("stated no drop totals") != std::string::npos,
+          "a stall on a board that has said nothing did not say so");
+
+    dh_device_drops clean{};
+    CHECK(stall_note(&clean).find("no drops") != std::string::npos,
+          "a stall on a board with clean seams did not say so");
+
+    /* One seam, named — and only that one, so the line is all signal. */
+    clean.truncated = 3;
+    const std::string named = stall_note(&clean);
+    CHECK(named.find("peer frames truncated 3") != std::string::npos,
+          "a stall did not name the seam the board says is losing frames");
+    CHECK(named.find("orphan") == std::string::npos,
+          "a stall listed a seam that had lost nothing");
+}
+
+/*
  * The timeout measures *progress*, not the transfer's total duration. A large
  * payload legitimately takes minutes on this link, and a deadline on the whole
  * transfer would abandon healthy ones — which is why the counters exist rather
@@ -499,6 +552,7 @@ int main() {
     test_a_stale_seal_is_reoffered();
     test_malformed_control_messages();
     test_a_stalled_transfer_is_abandoned();
+    test_a_stall_says_what_the_board_has_dropped();
     test_progress_keeps_a_transfer_alive();
     test_chunks_are_refused_before_the_seal_is_opened();
 

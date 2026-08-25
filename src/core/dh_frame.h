@@ -41,6 +41,7 @@ extern "C" {
     X(DH_MSG_PAIR_GRANT, 0x09)       \
     X(DH_MSG_PAIR_REFUSED, 0x0A)     \
     X(DH_MSG_HELLO_REFUSED, 0x0B)    \
+    X(DH_MSG_DEVICE_DROPS, 0x10)     \
     X(DH_MSG_PLACE, 0x20)            \
     X(DH_MSG_POS_QUERY, 0x21)        \
     X(DH_MSG_POS_RESPONSE, 0x22)     \

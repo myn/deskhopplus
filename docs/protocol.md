@@ -480,6 +480,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x09 | PAIR_GRANT | d→h | — | `correlation:u64` (echoed) `board_pubkey:64`. Nothing secret; the shared secret is computed independently at each end. |
 | 0x0A | PAIR_REFUSED | d→h | — | `correlation:u64` (echoed) `reason:u8` (0=no_window, 1=already_registered — the single-shot window closed on someone else). |
 | 0x0B | HELLO_REFUSED | d→h | — | `correlation:u64` (echoed) `proto_version:u16` (the board's own) `status:u8` (1=**reserved**, never sent — it was v1's `auth_failed`; 2=version_incompatible; 3=unpaired). |
+| 0x10 | DEVICE_DROPS | d→h | `k_b2h` | Seven `u32` totals, since the board booted, in this order: `reports` (reports the USB callback could not hand to the channel task) `inbound` (frames from the peer board the channel task had not drained) `outq` (frames the outbound queue to this helper refused) `link` (packets the inter-board link refused) `orphans` (peer data packets with no start to attach to) `truncated` (peer frames abandoned because packets went missing) `relay_q` (frames the relay's own outbound queue refused). 28 bytes. Sent once per session and again whenever a total moves — see Reporting what the device has dropped. |
 | 0x20 | PLACE | d→h | `k_b2h` | `chain_index:u8` `border_direction:u8` (which side of the output the seam was crossed from) `entry_pos:u16` (0–65535 normalized along the seam segment). Fire-and-forget; no reply path. Authenticated, **not** sealed — coordinates cross in the clear. |
 | 0x21 | POS_QUERY | d→h | `k_b2h` | empty |
 | 0x22 | POS_RESPONSE | h→d | `k_h2b` | `chain_index:u8` `x:u16` `y:u16` (0–65535 normalized within that output; layout may be amended by #51/#53 with vectors in the same change) |
@@ -666,6 +667,10 @@ arrives.
   refused anyway is self-correcting, because whatever displaced it refreshes the peer just as well.
   The beat rides the queue's priority band, so it is never stuck behind clipboard bulk that is
   merely waiting — only behind bulk already on the stream, which is bounded by one frame.
+- **A drop report is not a beat.** DEVICE_DROPS is sent on change, ahead of the beat and behind
+  the listener alert, and it charges the idle timer like any other traffic. It is not liveness in
+  its own right — a board with nothing to report sends none, and a helper must never read its
+  absence as anything but "nothing has moved".
 - **SESSION_END is an optimisation, never the mechanism.** The device announces an eviction it
   knows about so the helper need not wait out a timeout. A device that reboots, wedges, or loses
   power announces nothing, so the timeout above is what must be correct.
@@ -699,6 +704,35 @@ Consequences worth stating, because each is a place the obvious implementation i
 - **Stored as blocks, not permissions.** On the board the two bytes mean *blocked*, so that
   zero means allowed — they came out of `config_t`'s existing padding, and a field meaning
   "enabled" would have read as off on every configuration already written.
+
+## Reporting what the device has dropped
+
+The device counts every frame it loses at every seam ([#43](https://github.com/myn/deskhopplus/issues/43)),
+and for a long time counted them where nobody could read the count. The first attempt put the
+seven totals on the config page. That could not work, and the way it could not work is worth
+writing down: the page is reachable only in config mode, config mode is entered by **rebooting**,
+and the counters live in plain RAM. Every reading was therefore taken on a device that had just
+zeroed them. Three sittings on [#132](https://github.com/myn/deskhopplus/issues/132) read a row of
+zeros as evidence the seams were clean; it was an artifact of the measurement.
+
+`DEVICE_DROPS` is the reading that means something, because the helper is attached *while the
+fault is happening*.
+
+- **Sent on change, and once as a baseline.** A fresh session is owed one whatever the totals are.
+  All-zero and "the device has said nothing" are the two answers a stall has to tell apart, and
+  without a baseline they look identical — which is the mistake above, in a new place.
+- **One per heartbeat interval at most.** The device's outbound path is a short bounded queue
+  ([ADR-0005](adr/0005-bounded-outbound-queues.md)), and a seam losing a frame per tick would
+  otherwise put a frame per tick into it. A diagnostic that crowds out the traffic it is measuring
+  is worse than none. Skipping a reading costs nothing: these are totals, so the next one carries
+  everything the skipped one would have.
+- **Seven totals, not one.** Each names a different seam and each seam has a different remedy. A
+  sum would say only that something is wrong.
+- **Each device reports its own.** There is no proxied read: a device in config mode can forward an
+  API GET over the inter-board link, but the answering device drops the response because *it* is
+  not in config mode. So both ends of a pair need the firmware before both ends can be read.
+- **The helper quotes them where they are wanted.** A transfer abandoned for lack of progress logs
+  the totals next to how far each direction got — the one moment the numbers are being asked for.
 
 ## Transfer semantics
 

@@ -174,9 +174,35 @@ std::string ClipService::progress_line() const {
     return out.empty() ? std::string("nothing in flight") : out;
 }
 
-std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
+std::string ClipService::drops_line(const dh_device_drops *drops) {
+    if (drops == nullptr) return "the board has stated no drop totals";
+
+    const struct {
+        const char *name;
+        uint32_t count;
+    } seams[] = {
+        {"reports not taken", drops->reports},
+        {"from peer board", drops->inbound},
+        {"outbound refused", drops->outq},
+        {"inter-board refused", drops->link},
+        {"peer orphan packets", drops->orphans},
+        {"peer frames truncated", drops->truncated},
+        {"relay queue refused", drops->relay_q},
+    };
+
+    std::string out;
+    for (const auto &seam : seams) {
+        if (seam.count == 0) continue;
+        if (!out.empty()) out += ", ";
+        out += std::string(seam.name) + " " + std::to_string(seam.count);
+    }
+    return out.empty() ? std::string("board reports no drops") : "board drops: " + out;
+}
+
+std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops *drops) {
     std::vector<ClipOutput> outputs;
     dh_xfer_action actions[kActionCapacity];
+    const std::string board = drops_line(drops);
 
     /* Unsigned differences throughout, so a wrapping millisecond counter is
        arithmetic rather than a transfer abandoned once every 49 days. */
@@ -195,7 +221,8 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
         append(outputs, render(actions, dh_xfer_cancel_tx(xfer_.get(), actions, kActionCapacity)));
         outputs.push_back(note("a transfer made no progress for " +
                                std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
-                               line + "); the other computer's helper is not answering"));
+                               line + "; " + board +
+                               "); the other computer's helper is not answering"));
     }
 
     if (!dh_xfer_is_receiving(xfer_.get())) {
@@ -210,7 +237,7 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms) {
         append(outputs, render(actions, dh_xfer_cancel_rx(xfer_.get(), actions, kActionCapacity)));
         outputs.push_back(note("an arriving transfer made no progress for " +
                                std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
-                               line + "); nothing partial is ever written"));
+                               line + "; " + board + "); nothing partial is ever written"));
     }
     return outputs;
 }

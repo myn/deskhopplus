@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "dh_seal.h"
+#include "dh_session.h"
 #include "dh_xfer.h"
 
 namespace deskhop {
@@ -115,7 +116,16 @@ class ClipService {
      * the whole transfer would abandon healthy ones. `now_ms` is the same
      * monotonic clock the session runs on, compared as an unsigned difference.
      */
-    std::vector<ClipOutput> tick(uint32_t now_ms);
+    /*
+     * `drops` is what the board has said it dropped (#133), quoted into an
+     * abandonment note; null means it has stated nothing this session, which
+     * is a different answer from all-zero. A stall on a board that has been
+     * losing frames is a different fault from a stall with clean seams, and
+     * the numbers are only worth reading at the moment one happens — which is
+     * here. Passed on every tick rather than held, because the board restates
+     * them whenever they move and nothing tells this service when that was.
+     */
+    std::vector<ClipOutput> tick(uint32_t now_ms, const dh_device_drops *drops = nullptr);
 
     /* One verified bulk frame from the far helper. */
     std::vector<ClipOutput> received(uint8_t type, const uint8_t *body, size_t len);
@@ -148,6 +158,11 @@ class ClipService {
        cannot tell a transfer whose chunks never arrived from one whose chunks
        all arrived and were refused, and those have nothing in common. */
     std::string progress_line() const;
+
+    /* Every seam the board says has lost something, named. Seams that have
+       lost nothing are left out, so the ordinary line says so in three words
+       and a line with anything in it is all signal. */
+    static std::string drops_line(const dh_device_drops *drops);
 
     const dh_seal_aead *aead_;
     std::function<void(uint8_t *, size_t)> entropy_;

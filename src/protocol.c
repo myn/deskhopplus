@@ -116,6 +116,15 @@ const field_map_t api_field_map[] = {
      * first hardware runs were spent guessing at exactly these four numbers
      * from a helper log that cannot see them.
      *
+     * **Read these as since-boot, and read them knowing the boot just
+     * happened.** This page is reachable only in config mode, and config mode
+     * is entered by rebooting the board — so a session that reads them reads
+     * them off a board that zeroed them moments earlier, and a row of zeros
+     * here is not evidence of anything (#133). The reading that means
+     * something is the one the helper takes live over the channel, in
+     * DEVICE_DROPS. These stay because a board with no helper paired has no
+     * other reader.
+     *
      * Read-only, and diagnostic rather than behavioural: a non-zero value
      * names which seam is losing frames, and each seam has a different remedy.
      *

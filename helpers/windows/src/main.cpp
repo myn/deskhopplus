@@ -342,7 +342,13 @@ int Helper::run() {
             /* And a chance to give up on one that has stopped moving — the far
                helper having crashed leaves this end's session perfectly
                healthy, so nothing else here would ever notice. */
-            emit(clipboard_service_->tick(now));
+            /* The board's drop totals go with the tick so that an
+               abandonment can quote them (#133). Read here rather than held
+               there: the board restates them whenever they move, and nothing
+               tells the clipboard when that was. */
+            dh_device_drops drops{};
+            const bool stated = session_->device_drops(&drops);
+            emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
         }
     }
 }

@@ -432,6 +432,18 @@ typedef struct {
     uint8_t clip_flags;
     bool have_clip_policy;
 
+    /*
+     * What the board says it has dropped on the channel, and whether it has
+     * said anything this session (#133). Read live, while the fault is
+     * happening — which is the whole point: the config page could only ever
+     * report these on a board that had just rebooted and zeroed them.
+     *
+     * Forgotten with the session, so a stall never quotes totals from the
+     * board this helper was talking to before.
+     */
+    dh_device_drops device_drops;
+    bool have_device_drops;
+
     dh_helper_payload_fn payload_fn;
     void *payload_ctx;
 
@@ -533,6 +545,13 @@ void dh_helper_set_payload_sink(dh_helper *h, dh_helper_payload_fn fn, void *ctx
 /* What the board last said about the clipboard's two directions (#52). Both
    allowed until it has said anything, which is what the toggles default to. */
 static inline uint8_t dh_helper_clip_flags(const dh_helper *h) { return h->clip_flags; }
+
+/*
+ * The board's drop totals, if it has stated any this session (#133). False
+ * means it has not — which is not the same answer as all-zero, and a caller
+ * that conflates them is back to reading silence as evidence.
+ */
+bool dh_helper_device_drops(const dh_helper *h, dh_device_drops *out);
 static inline bool dh_helper_may_send_clip(const dh_helper *h) {
     return (h->clip_flags & DH_CLIP_MAY_SEND) != 0;
 }
