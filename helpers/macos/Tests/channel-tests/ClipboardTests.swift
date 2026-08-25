@@ -30,6 +30,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a malformed control message is refused, not acted on", testMalformedControlMessages),
     ("a transfer that stops moving is abandoned and reported", testAStalledTransferIsAbandoned),
     ("a transfer that is still moving is left alone", testProgressKeepsATransferAlive),
+    ("a chunk is not opened when receiving is off", testChunksAreRefusedBeforeTheSealIsOpened),
 ]
 
 /*
@@ -396,4 +397,60 @@ private func testProgressKeepsATransferAlive() {
        Nothing is owed and nothing is running, so nothing is abandoned. */
     let late = pair.a.tick(at: ClipboardService.stallTimeout * 10)
     Check.that(late.isEmpty, "a finished transfer was reported as stalled")
+}
+
+
+/*
+ * A helper told not to receive never decrypts a payload it has already decided
+ * to refuse (docs/protocol.md) — and that has to hold for chunks, not only for
+ * the offer that introduced them.
+ *
+ * It is reachable in the ordinary way: turning the toggle off mid-transfer
+ * cancels the transfer, but up to a credit window of chunks is already in
+ * flight behind that cancel.
+ *
+ * What makes the refusal observable is the *silence*. A chunk that reached the
+ * seal under a key this end does not hold would come back as a SEAL_STALE; one
+ * refused ahead of it produces nothing at all.
+ */
+private func testChunksAreRefusedBeforeTheSealIsOpened() {
+    let a = ClipboardService(entropy: counterEntropy(1))
+    let b = ClipboardService(entropy: counterEntropy(2))
+
+    /* A real sealed chunk, built by A. */
+    var chunks: [[UInt8]] = []
+    let pair = Pair()
+    _ = pair
+    var queue = a.localCopy(kind: .text, bytes: Array(String(repeating: "z", count: 4000).utf8))
+    var rounds = 0
+    while !queue.isEmpty && rounds < 1000 {
+        rounds += 1
+        let output = queue.removeFirst()
+        guard case .send(let type, let body) = output else { continue }
+        if type == MessageType.clipChunk { chunks.append(body); continue }
+        queue += b.received(type: type, body: body).compactMap { reply -> ClipboardOutput? in
+            guard case .send(let replyType, let replyBody) = reply else { return nil }
+            return a.received(type: replyType, body: replyBody).first
+        }
+        queue += a.pump()
+    }
+    Check.that(!chunks.isEmpty, "no sealed chunk was produced to test with")
+    guard let chunk = chunks.first else { return }
+
+    /* A third helper, holding no seal at all and told not to receive. Without
+       the guard it would try to open the chunk, fail to find the seal, and
+       answer SEAL_STALE — which is the payload having reached the cipher. */
+    let refusing = ClipboardService(entropy: counterEntropy(3))
+    _ = refusing.policyChanged(flags: UInt8(DH_CLIP_MAY_SEND))
+    let outputs = refusing.received(type: MessageType.clipChunk, body: chunk)
+    Check.that(outputs.isEmpty,
+               "a chunk reached the seal on a helper that had already refused to receive")
+
+    /* And the control: with receiving allowed, the same chunk *does* reach the
+       seal, so the check above is measuring the guard rather than nothing. */
+    let accepting = ClipboardService(entropy: counterEntropy(4))
+    let answered = accepting.received(type: MessageType.clipChunk, body: chunk)
+    Check.that(answered.contains { if case .send(let t, _) = $0 { return t == MessageType.sealStale }
+                                   return false },
+               "with receiving on, a chunk under an unknown seal was not answered with SEAL_STALE")
 }

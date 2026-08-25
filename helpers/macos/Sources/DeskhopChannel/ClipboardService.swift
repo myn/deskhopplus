@@ -330,6 +330,19 @@ public final class ClipboardService {
     }
 
     private func onChunk(_ body: [UInt8]) -> [ClipboardOutput] {
+        /*
+         * Refused before the seal is opened, like the offer — the invariant is
+         * that a helper told not to receive never decrypts a payload it has
+         * already decided to refuse (docs/protocol.md).
+         *
+         * This is reachable in the ordinary way: turning the toggle off
+         * mid-transfer cancels the transfer, but the chunks already in flight
+         * behind that cancel keep arriving. Silent because the cancel already
+         * said why, and there are up to a credit window of these — a line each
+         * would bury the reason under its own consequences.
+         */
+        guard mayReceive else { return [] }
+
         do {
             let chunk = try seal.openChunk(body)
             return render(transfer.handle(chunk: chunk))

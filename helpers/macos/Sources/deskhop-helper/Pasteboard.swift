@@ -90,12 +90,25 @@ final class Pasteboard {
     func deliver(text bytes: [UInt8]) {
         let string = String(decoding: bytes, as: UTF8.self)
 
+        /*
+         * What is on the pasteboard now, kept so that a write which never
+         * succeeds can put it back.
+         *
+         * `prepareForNewContents` *clears* — that is how the host-only option
+         * is set — so the first failed attempt has already destroyed whatever
+         * the user had copied. Without this they would be left with an empty
+         * clipboard and a log line, having lost both the content that was
+         * arriving and the content they already had. Losing one of the two is
+         * the most this can cost.
+         */
+        let displaced = pasteboard.string(forType: .string)
+
         var delay = Self.firstRetryDelay
         for attempt in 1...Self.writeAttempts {
             /* Host-only: this is what keeps received content off Universal
-               Clipboard. `prepareForNewContents` clears the pasteboard as
-               `clearContents` does, and the option persists until the next
-               call — so it must be this call, not a later one. */
+               Clipboard. The option persists until the next
+               `prepareForNewContents` or `clearContents`, so it must be set by
+               the call that writes, not by an earlier one. */
             pasteboard.prepareForNewContents(with: .currentHostOnly)
             if pasteboard.setString(string, forType: .string) {
                 /* Read back rather than assumed. The change count our own write
@@ -111,7 +124,21 @@ final class Pasteboard {
                 delay *= 2
             }
         }
+
         log?("the pasteboard refused \(Self.writeAttempts) attempts to write \(bytes.count) "
              + "bytes; the content did not arrive")
+
+        /* Put back what was displaced. Host-only again: it may itself have
+           arrived from the other computer, and re-writing it as ordinary
+           content would put it on Universal Clipboard after all. */
+        guard let displaced else { return }
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        if pasteboard.setString(displaced, forType: .string) {
+            selfChangeCount = pasteboard.changeCount
+            lastChangeCount = selfChangeCount
+            log?("what was on the pasteboard before was put back")
+        } else {
+            log?("what was on the pasteboard before could not be put back; it is now empty")
+        }
     }
 }

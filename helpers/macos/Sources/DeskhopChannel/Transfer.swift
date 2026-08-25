@@ -121,6 +121,20 @@ public final class Transfer {
      */
     private var txStorage: UnsafeMutableBufferPointer<UInt8>?
 
+    /*
+     * The offer's metadata, held the same way and for the same reason: `dh_xfer`
+     * keeps `tx.meta` as a bare pointer for the whole transfer and hands it
+     * back from `dh_xfer_offer_info` on every re-offer, so a pointer borrowed
+     * for the duration of one `withUnsafeBufferPointer` call would dangle.
+     *
+     * Nothing in this slice offers metadata — text carries none — so today this
+     * is always empty. It is here rather than left as `nil, 0` because the
+     * dangling read would appear the moment #55 or #56 adds a field, and it
+     * would appear as a payload that is occasionally wrong rather than as a
+     * crash.
+     */
+    private var metaStorage: UnsafeMutableBufferPointer<UInt8>?
+
     /// `capacity` is the largest payload this helper will accept; a bigger
     /// offer is refused with a cancel by the core rather than truncated.
     public init(capacity: Int) {
@@ -147,11 +161,13 @@ public final class Transfer {
         _ = storage.initialize(from: data)
         txStorage = storage
 
+        let metaCopy = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: max(meta.count, 1))
+        _ = metaCopy.initialize(from: meta)
+        metaStorage = metaCopy
+
         return collect { acts, cap in
-            meta.withUnsafeBufferPointer { m in
-                dh_xfer_offer(machine, kind, m.baseAddress, UInt16(meta.count),
-                              storage.baseAddress, UInt64(data.count), acts, cap)
-            }
+            dh_xfer_offer(machine, kind, meta.isEmpty ? nil : metaCopy.baseAddress,
+                          UInt16(meta.count), storage.baseAddress, UInt64(data.count), acts, cap)
         }
     }
 
@@ -169,11 +185,14 @@ public final class Transfer {
      */
     public func reoffer() -> [TransferAction] {
         guard let storage = txStorage, let current = outgoingOffer() else { return [] }
+        /* `metaStorage` is the same buffer the core is already holding, so this
+           re-offers the metadata in place rather than handing over a pointer
+           that dies with this call. */
+        let meta = metaStorage
+        let metaLength = Int(current.meta.count)
         return collect { acts, cap in
-            current.meta.withUnsafeBufferPointer { m in
-                dh_xfer_offer(machine, current.kind, m.baseAddress, UInt16(current.meta.count),
-                              storage.baseAddress, current.total, acts, cap)
-            }
+            dh_xfer_offer(machine, current.kind, metaLength > 0 ? meta?.baseAddress : nil,
+                          UInt16(metaLength), storage.baseAddress, current.total, acts, cap)
         }
     }
 
@@ -290,6 +309,8 @@ public final class Transfer {
     private func releaseOutgoing() {
         txStorage?.deallocate()
         txStorage = nil
+        metaStorage?.deallocate()
+        metaStorage = nil
     }
 
     private func collect(

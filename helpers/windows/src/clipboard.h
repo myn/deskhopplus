@@ -89,6 +89,11 @@ class Clipboard {
        arrived from the other computer looks exactly like a fresh local copy,
        and the two helpers hand the same payload back and forth for ever. */
     DWORD self_sequence_{0};
+    /* The sequence number the last update was acted on at. WM_CLIPBOARDUPDATE
+       is posted, so by the time it is handled the number is whatever the
+       clipboard holds *now* — two messages queued behind one change would
+       otherwise both read the same clipboard and send the same payload twice. */
+    DWORD handled_sequence_{0};
 };
 
 } // namespace deskhop

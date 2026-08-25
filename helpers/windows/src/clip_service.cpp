@@ -354,6 +354,19 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
 }
 
 std::vector<ClipOutput> ClipService::on_chunk(const uint8_t *body, size_t len) {
+    /*
+     * Refused before the seal is opened, like the offer — the invariant is that
+     * a helper told not to receive never decrypts a payload it has already
+     * decided to refuse (docs/protocol.md).
+     *
+     * This is reachable in the ordinary way: turning the toggle off
+     * mid-transfer cancels the transfer, but the chunks already in flight
+     * behind that cancel keep arriving. Silent because the cancel already said
+     * why, and there are up to a credit window of these — a line each would
+     * bury the reason under its own consequences.
+     */
+    if (!may_receive_) return {};
+
     std::vector<uint8_t> plain(kMaxBody);
     dh_clip_chunk chunk{};
     const dh_seal_result rc = dh_seal_open_chunk(&seal_rx_, aead_, body, len, plain.data(),

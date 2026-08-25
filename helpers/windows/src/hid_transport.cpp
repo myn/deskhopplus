@@ -491,7 +491,7 @@ void HidTransport::pump_reads() {
     }
 }
 
-void HidTransport::send(const uint8_t *frame, size_t len) {
+bool HidTransport::send(const uint8_t *frame, size_t len) {
     /*
      * Session and control traffic goes on channel 0; bulk striping across the
      * rest is #47's and arrives with the relay.
@@ -505,7 +505,7 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
     }
     if (!channel) {
         note("dropped " + std::to_string(len) + " bytes: no channel held");
-        return;
+        return false;
     }
 
     /*
@@ -521,7 +521,7 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
                                    std::to_string(kReportSize) + "-byte report";
         note(reason);
         if (events_.transport_failed) events_.transport_failed(reason);
-        return;
+        return false;
     }
 
     /* A report carries no length of its own, so the tail of the last one is
@@ -540,7 +540,7 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
             const std::string reason = last_error("could not create a write event");
             note(reason);
             if (events_.transport_failed) events_.transport_failed(reason);
-            return;
+            return false;
         }
 
         DWORD written = 0;
@@ -574,9 +574,10 @@ void HidTransport::send(const uint8_t *frame, size_t len) {
             const std::string reason = last_error("report write failed");
             note(reason);
             if (events_.transport_failed) events_.transport_failed(reason);
-            return;
+            return false;
         }
     }
+    return true;
 }
 
 } // namespace deskhop

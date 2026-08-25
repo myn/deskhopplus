@@ -45,7 +45,10 @@ std::vector<uint8_t> wide_to_utf8(const wchar_t *text) {
 void Clipboard::attach(HWND window, Callbacks callbacks) {
     window_ = window;
     callbacks_ = std::move(callbacks);
+    /* Whatever is on the clipboard when the helper starts was not copied *now*
+       and is not this helper's to send. Both counters start there. */
     self_sequence_ = GetClipboardSequenceNumber();
+    handled_sequence_ = self_sequence_;
     listening_ = AddClipboardFormatListener(window) != FALSE;
     if (!listening_ && callbacks_.log)
         callbacks_.log("the clipboard listener could not be registered; copies made on this "
@@ -60,9 +63,21 @@ void Clipboard::detach() {
 
 bool Clipboard::handle(UINT message) {
     if (message != WM_CLIPBOARDUPDATE) return false;
+
+    /*
+     * The message is *posted*, so what it names is "something changed", not
+     * which change. By the time it is handled the sequence number is whatever
+     * the clipboard holds now — so two messages queued behind one change both
+     * read the same clipboard, and without this the same payload crosses the
+     * link twice.
+     */
+    const DWORD sequence = GetClipboardSequenceNumber();
+    if (sequence == handled_sequence_) return true;
+    handled_sequence_ = sequence;
+
     /* Our own write, echoing back. Without this the two helpers hand the same
        payload back and forth for ever. */
-    if (GetClipboardSequenceNumber() != self_sequence_) read_clipboard();
+    if (sequence != self_sequence_) read_clipboard();
     return true;
 }
 
@@ -165,14 +180,23 @@ void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
            free, and leaking it would leak every failed payload. */
         CloseClipboard();
         GlobalFree(block);
-        if (callbacks_.log) callbacks_.log("the clipboard refused an arriving payload");
+        /* EmptyClipboard has already run, so what the user had copied is gone
+           and the arriving payload was never written. Said plainly rather than
+           left to be discovered by pasting nothing. Unlike the macOS side there
+           is nothing to put back: emptying frees the handles it held. */
+        if (callbacks_.log)
+            callbacks_.log("the clipboard refused an arriving payload; it is now empty");
         return;
     }
-    CloseClipboard();
-
-    /* Read back rather than assumed: this is what stops our own write being
-       read as a fresh local copy on the update that follows it. */
+    /*
+     * Read *before* the clipboard is closed, deliberately. Nothing else can
+     * change it while this process holds it open, so the number read here is
+     * certainly the one our own write produced. Reading it after the close
+     * leaves a window in which a foreign copy lands first and gets recorded as
+     * ours — and that copy would then never cross the link.
+     */
     self_sequence_ = GetClipboardSequenceNumber();
+    CloseClipboard();
 }
 
 } // namespace deskhop

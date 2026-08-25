@@ -131,10 +131,31 @@ final class HelperRuntime {
         for output in session.handle(input, at: now) {
             apply(output)
         }
+
+        /*
+         * A session that has gone takes the seal and any transfer with it.
+         *
+         * Asked of `canSendBulk` — the *session's* answer — and on every input,
+         * not of the state the user is shown and not only when that state
+         * changes. `dh_helper_allows_bulk` counts `reconnectingRepeatedly` as
+         * allowing bulk, and that is precisely the state a teardown lands in
+         * once the flap rate has tripped: the session is gone, its keys are
+         * cleared, and the state reads `true` before and after. Worse, the core
+         * reports that state only on the transition, so the second and
+         * subsequent drops of a burst produce no state output at all. #107
+         * measured 586 teardowns in sixteen hours — the exact condition that
+         * trips the rate — so the edge that matters is the one this misses.
+         */
+        let live = session.canSendBulk
+        if bulkWasAllowed && !live {
+            emit(clipboard.sessionEnded())
+        }
+        bulkWasAllowed = live
+
         /* A chance to push the next credit-gated batch. On the tick as well as
            on arriving frames, so a transfer whose last credit grant was lost
            still finishes rather than sitting still. */
-        if session.canSendBulk {
+        if live {
             emit(clipboard.pump())
         }
         /* And a chance to give up on one that has stopped moving — the far
@@ -162,8 +183,13 @@ final class HelperRuntime {
                     Self.note("a clipboard frame could not be built; there is no session")
                     continue
                 }
-                transport.send(frame)
-                session.noteSent(at: now)
+                /* The idle timer is charged only for a frame the transport
+                   actually took. Charging for one it refused would suppress a
+                   beat that ADR-0004 owed the board — which is exactly what
+                   `HelperSession.emit` says not to do. */
+                if transport.send(frame) {
+                    session.noteSent(at: now)
+                }
 
             case .deliver(let kind, let bytes):
                 guard kind == ClipKind.text.rawValue else {
@@ -198,18 +224,6 @@ final class HelperRuntime {
 
         case .state(let state):
             Self.note("state: \(state.message ?? "(nothing to report)")")
-            /*
-             * A session that has gone takes the seal and any transfer with it.
-             * Told on the *edge*, not on every state: this arrives whenever
-             * anything the user is shown changes, and resetting a live seal
-             * because a listener alert expired would abandon a healthy
-             * transfer.
-             */
-            let allowed = state.allowsBulkTransfers
-            if bulkWasAllowed && !allowed {
-                emit(clipboard.sessionEnded())
-            }
-            bulkWasAllowed = allowed
 
         case .clipPolicy(let flags):
             emit(clipboard.policyChanged(flags: flags))

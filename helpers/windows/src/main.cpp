@@ -349,6 +349,24 @@ int Helper::run() {
 
 void Helper::feed(const std::vector<Output> &outputs) {
     for (const Output &output : outputs) apply(output);
+
+    /*
+     * A session that has gone takes the seal and any transfer with it.
+     *
+     * Asked of `can_send_bulk` — the *session's* answer — and after every batch
+     * of outputs, not of the state the user is shown and not only when that
+     * state changes. `dh_helper_allows_bulk` counts RECONNECTING_REPEATEDLY as
+     * allowing bulk, and that is precisely the state a teardown lands in once
+     * the flap rate has tripped: the session is gone, its keys are cleared, and
+     * the state reads true before and after. Worse, the core reports that state
+     * only on the transition, so the second and subsequent drops of a burst
+     * produce no state output at all. #107 measured 586 teardowns in sixteen
+     * hours — the exact condition that trips the rate — so the edge that
+     * matters is the one this misses.
+     */
+    const bool live = session_->can_send_bulk();
+    if (bulk_was_allowed_ && !live) emit(clipboard_service_->session_ended());
+    bulk_was_allowed_ = live;
 }
 
 void Helper::apply(const Output &output) {
@@ -379,17 +397,6 @@ void Helper::apply(const Output &output) {
                              ? std::string("(nothing to report)")
                              : words::state_message(output.state)));
         tray_.show(output.state);
-        /*
-         * A session that has gone takes the seal and any transfer with it.
-         * Acted on at the *edge*, not on every state: this arrives whenever
-         * anything the user is shown changes, and resetting a live seal
-         * because a listener alert expired would abandon a healthy transfer.
-         */
-        {
-            const bool allowed = dh_helper_allows_bulk(output.state);
-            if (bulk_was_allowed_ && !allowed) emit(clipboard_service_->session_ended());
-            bulk_was_allowed_ = allowed;
-        }
         break;
 
     case Output::Kind::ClipPolicy:
@@ -428,8 +435,11 @@ void Helper::emit(const std::vector<ClipOutput> &outputs) {
                 log("a clipboard frame could not be built; there is no session");
                 break;
             }
-            transport_.send(frame.data(), frame.size());
-            session_->note_sent(now_ms());
+            /* The idle timer is charged only for a frame the transport
+               actually took. Charging for one it refused would suppress a beat
+               that ADR-0004 owed the board — which is exactly what
+               HelperSession::emit says not to do. */
+            if (transport_.send(frame.data(), frame.size())) session_->note_sent(now_ms());
             break;
         }
 

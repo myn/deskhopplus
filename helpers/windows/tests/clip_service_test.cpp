@@ -416,6 +416,62 @@ void test_progress_keeps_a_transfer_alive() {
           "a finished transfer was reported as stalled");
 }
 
+/*
+ * A helper told not to receive never decrypts a payload it has already decided
+ * to refuse (docs/protocol.md) — and that has to hold for chunks, not only for
+ * the offer that introduced them. It is reachable in the ordinary way: turning
+ * the toggle off mid-transfer cancels the transfer, but up to a credit window
+ * of chunks is already in flight behind that cancel.
+ *
+ * What makes the refusal observable is the *silence*. A chunk that reached the
+ * seal under a key this end does not hold would come back as a SEAL_STALE; one
+ * refused ahead of it produces nothing at all.
+ */
+void test_chunks_are_refused_before_the_seal_is_opened() {
+    ClipService a(seal_aead(), counter_entropy(1));
+    ClipService b(seal_aead(), counter_entropy(2));
+
+    /* A real sealed chunk, built by A. */
+    std::vector<uint8_t> chunk;
+    std::vector<ClipOutput> queue =
+        a.local_copy(ClipKind::Text, bytes_of(std::string(4000, 'z')));
+    for (size_t i = 0; i < queue.size() && chunk.empty() && i < 1000; i++) {
+        if (queue[i].kind != ClipOutput::Kind::Send) continue;
+        if (queue[i].type == DH_MSG_CLIP_CHUNK) {
+            chunk = queue[i].bytes;
+            break;
+        }
+        for (const ClipOutput &reply :
+             b.received(queue[i].type, queue[i].bytes.data(), queue[i].bytes.size())) {
+            if (reply.kind != ClipOutput::Kind::Send) continue;
+            for (ClipOutput &back : a.received(reply.type, reply.bytes.data(), reply.bytes.size()))
+                queue.push_back(std::move(back));
+        }
+        for (ClipOutput &more : a.pump()) queue.push_back(std::move(more));
+    }
+    CHECK(!chunk.empty(), "no sealed chunk was produced to test with");
+    if (chunk.empty()) return;
+
+    /* A third helper, holding no seal at all and told not to receive. Without
+       the guard it would try to open the chunk, fail to find the seal, and
+       answer SEAL_STALE — which is the payload having reached the cipher. */
+    ClipService refusing(seal_aead(), counter_entropy(3));
+    (void)refusing.policy_changed(DH_CLIP_MAY_SEND);
+    CHECK(refusing.received(DH_MSG_CLIP_CHUNK, chunk.data(), chunk.size()).empty(),
+          "a chunk reached the seal on a helper that had already refused to receive");
+
+    /* And the control: with receiving allowed, the same chunk *does* reach the
+       seal, so the check above is measuring the guard rather than nothing. */
+    ClipService accepting(seal_aead(), counter_entropy(4));
+    bool answered = false;
+    for (const ClipOutput &output : accepting.received(DH_MSG_CLIP_CHUNK, chunk.data(),
+                                                       chunk.size()))
+        if (output.kind == ClipOutput::Kind::Send && output.type == DH_MSG_SEAL_STALE)
+            answered = true;
+    CHECK(answered,
+          "with receiving on, a chunk under an unknown seal was not answered with SEAL_STALE");
+}
+
 } // namespace
 
 int main() {
@@ -437,6 +493,7 @@ int main() {
     test_malformed_control_messages();
     test_a_stalled_transfer_is_abandoned();
     test_progress_keeps_a_transfer_alive();
+    test_chunks_are_refused_before_the_seal_is_opened();
 
     if (failures > 0) {
         std::printf("%d clipboard check(s) failed\n", failures);

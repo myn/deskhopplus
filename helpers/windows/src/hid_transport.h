@@ -66,7 +66,10 @@ class HidTransport {
     void release();
 
     /* One complete frame, packed into fixed-size reports with a padded tail. */
-    void send(const uint8_t *frame, size_t len);
+    /* Whether the frame actually went out. The answer matters to ADR-0004's
+       idle timer: a caller that charged it for a frame this refused would
+       suppress a heartbeat that was owed (HelperSession::emit). */
+    bool send(const uint8_t *frame, size_t len);
 
     /* The read completions the run loop waits on, alongside the message
        queue. Recomputed on demand: the set changes as channels come and go. */

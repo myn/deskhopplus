@@ -224,10 +224,14 @@ final class ChannelTransport {
      * rest is #47's and arrives with the relay. A report is a fixed 64 bytes
      * with a padded tail, since it carries no length of its own.
      */
-    func send(_ frameBytes: [UInt8]) {
+    /// Whether the frame actually went out. The answer matters to ADR-0004's
+    /// idle timer: a caller that charged it for a frame this refused would
+    /// suppress a heartbeat that was owed (`HelperSession.emit`).
+    @discardableResult
+    func send(_ frameBytes: [UInt8]) -> Bool {
         guard let channel = channels.first, channel.opened else {
             log?("dropped \(frameBytes.count) bytes: no channel held")
-            return
+            return false
         }
 
         let frame: Frame
@@ -235,10 +239,10 @@ final class ChannelTransport {
             frame = try FrameCodec.decode(frameBytes).frame
         } catch {
             log?("refusing to send bytes that are not a frame: \(error)")
-            return
+            return false
         }
 
-        guard let reports = try? FrameCodec.reports(for: [frame]) else { return }
+        guard let reports = try? FrameCodec.reports(for: [frame]) else { return false }
         for report in reports {
             let result = report.withUnsafeBufferPointer { buffer in
                 IOHIDDeviceSetReport(channel.device, kIOHIDReportTypeOutput, 0,
@@ -250,9 +254,10 @@ final class ChannelTransport {
                    next frame would be eaten as its tail. The connection goes. */
                 onEvent?(.transportFailed("report write failed: "
                                           + String(format: "0x%08x", result)))
-                return
+                return false
             }
         }
+        return true
     }
 
     var isHoldingChannels: Bool { channels.contains { $0.opened } }
