@@ -39,6 +39,17 @@ STATUS_ = [
     FormField(86, "", None, {}, "uint32", elem="helper_key_lo"),
     FormField(87, "", None, {}, "uint32", elem="helper_key_hi"),
     FormField(88, "Paired helper", None, {}, "uint8", elem="helper_paired"),
+
+    # What this board has dropped on the helper channel since boot (#52). Every
+    # one was already counted; none was readable, which made "counted rather
+    # than silently dropped" untrue in practice. Each names a different seam,
+    # and each seam has a different remedy — so they are four fields and not a
+    # total.
+    FormField(1005, "Channel drops", elem="label"),
+    FormField(91, "Reports not taken", None, {}, "uint32", elem="hex_info"),
+    FormField(92, "From peer board", None, {}, "uint32", elem="hex_info"),
+    FormField(93, "Outbound refused", None, {}, "uint32", elem="hex_info"),
+    FormField(94, "Inter-board refused", None, {}, "uint32", elem="hex_info"),
 ]
 
 CONFIG_ = [

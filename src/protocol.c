@@ -106,6 +106,28 @@ const field_map_t api_field_map[] = {
        which end of a direction it is standing at. */
     { 89, false, UINT8,  1, offsetof(device_t, config.clip_block_a_to_b) },
     { 90, false, UINT8,  1, offsetof(device_t, config.clip_block_b_to_a) },
+
+    /*
+     * What this board has dropped on the helper channel, since boot.
+     *
+     * Every one of these was already counted — #43 made "counted rather than
+     * silently dropped" the rule — but counted somewhere nobody can read is
+     * silent in practice, which is the mistake #94 cost two days to. #52's
+     * first hardware runs were spent guessing at exactly these four numbers
+     * from a helper log that cannot see them.
+     *
+     * Read-only, and diagnostic rather than behavioural: a non-zero value
+     * names which seam is losing frames, and each seam has a different remedy.
+     *
+     *   91  reports the USB callback could not hand to channel_task
+     *   92  frames the peer board sent that core 0 had not drained
+     *   93  frames the outbound queue to this helper refused (ADR-0005)
+     *   94  packets the inter-board link refused
+     */
+    { 91, true,  UINT32, 4, offsetof(device_t, _channel_reports_dropped) },
+    { 92, true,  UINT32, 4, offsetof(device_t, _channel_inbound_dropped) },
+    { 93, true,  UINT32, 4, offsetof(device_t, _channel_outq_refused) },
+    { 94, true,  UINT32, 4, offsetof(device_t, _channel_relay_dropped) },
 };
 
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave

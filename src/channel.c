@@ -685,6 +685,16 @@ void channel_task(device_t *state) {
     channel_pump_inbound();
 
     /*
+     * What this board has dropped, where the config API can read it (#52).
+     * Published every pass rather than on change: these are counters, and a
+     * page that reads one is asking what the total is now.
+     */
+    state->_channel_reports_dropped = channel.reports_dropped;
+    state->_channel_inbound_dropped = channel.inbound_dropped;
+    state->_channel_outq_refused = channel.out.refused;
+    state->_channel_relay_dropped = channel.tx.dropped;
+
+    /*
      * The clipboard's two direction toggles, as the two verbs this board's own
      * helper acts on (#52). Set every pass rather than watched for changes:
      * the session sends a frame only when the value it holds is no longer this

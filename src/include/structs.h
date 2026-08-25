@@ -113,6 +113,21 @@ typedef struct {
     fw_upgrade_state_t fw;           // State of the firmware upgrader
     firmware_metadata_t _running_fw; // RAM copy of running fw metadata
     peer_fw_t peer_fw;               // What the other board reports running (#89)
+
+    /*
+     * What the helper channel has dropped, since boot, published here by
+     * channel_task so the config API can read it (fields 91-94).
+     *
+     * The counters themselves live in channel.c, where the seams are. They are
+     * copied out rather than moved because each one belongs to the code that
+     * increments it — and every one of them was already counted (#43) but
+     * readable nowhere, which is the same "silent because nobody can see it"
+     * that #94 cost two days to.
+     */
+    uint32_t _channel_reports_dropped;
+    uint32_t _channel_inbound_dropped;
+    uint32_t _channel_outq_refused;
+    uint32_t _channel_relay_dropped;
     bool dev_build;                  // True when channel authentication is compiled out (#44)
     bool reboot_requested;           // If set, stop updating watchdog
     uint64_t config_mode_timer;      // Counts how long are we to remain in config mode

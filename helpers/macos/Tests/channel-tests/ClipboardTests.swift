@@ -31,6 +31,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a transfer that stops moving is abandoned and reported", testAStalledTransferIsAbandoned),
     ("a transfer that is still moving is left alone", testProgressKeepsATransferAlive),
     ("a chunk is not opened when receiving is off", testChunksAreRefusedBeforeTheSealIsOpened),
+    ("copy after copy after copy all arrive", testRepeatedCopiesAllArrive),
+    ("every payload size arrives intact", testEveryPayloadSizeArrives),
 ]
 
 /*
@@ -453,4 +455,45 @@ private func testChunksAreRefusedBeforeTheSealIsOpened() {
     Check.that(answered.contains { if case .send(let t, _) = $0 { return t == MessageType.sealStale }
                                    return false },
                "with receiving on, a chunk under an unknown seal was not answered with SEAL_STALE")
+}
+
+
+/*
+ * The desk case that the single-copy tests miss entirely: a user copies, then
+ * copies again, then again. Each one must arrive.
+ *
+ * Only the first copy of a session pays for the seal exchange; every one after
+ * it supersedes a transfer the far end has already delivered, which is a
+ * different path through both ends and one nothing here exercised.
+ */
+private func testRepeatedCopiesAllArrive() {
+    let pair = Pair()
+    let sent = ["first", "second", "third", "fourth", "fifth"]
+    for text in sent { pair.copyOnA(text) }
+
+    Check.equal(text(pair.deliveredToB), sent,
+                "copies made one after another did not all arrive, or arrived out of order")
+}
+
+/*
+ * Every length from empty to well past a chunk boundary. A payload is text,
+ * and text is whatever length the user selected — so any size that does not
+ * survive is a size that silently pastes the wrong thing.
+ */
+private func testEveryPayloadSizeArrives() {
+    var failures: [Int] = []
+    for size in 1...80 {
+        let pair = Pair()
+        let payload = String((0..<size).map { Character(UnicodeScalar(UInt8(65 + $0 % 26))) })
+        pair.copyOnA(payload)
+        if text(pair.deliveredToB) != [payload] { failures.append(size) }
+    }
+    /* A few sizes near a chunk boundary, where the arithmetic changes. */
+    for size in [1023, 1024, 1025, 2047, 2048, 2049] {
+        let pair = Pair()
+        let payload = String(repeating: "x", count: size)
+        pair.copyOnA(payload)
+        if text(pair.deliveredToB) != [payload] { failures.append(size) }
+    }
+    Check.equal(failures, [], "these payload sizes did not arrive intact")
 }
