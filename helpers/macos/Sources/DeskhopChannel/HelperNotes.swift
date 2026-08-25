@@ -89,11 +89,26 @@ enum HelperNotes {
             return "transport failed: \(transportReason ?? "no reason given")"
         case DH_NOTE_RECONNECTION_RATE:
             return "the last \(a) reconnections came inside \(span(b))"
+        case DH_NOTE_CLIP_POLICY:
+            return "the board's clipboard policy: " + clipPolicy(a)
         default:
             /* A code this helper has no words for. Printed rather than dropped:
                a note nobody can read still says something happened. */
             return "note \(note.rawValue) (\(a), \(b))"
         }
+    }
+
+    /*
+     * The two verbs, in words. Both are named either way round — "may send /
+     * may not send" rather than listing only what is allowed — because a line
+     * that says nothing about a direction reads as that direction being
+     * untouched, and the whole point of this note is to say what the board
+     * decided about each.
+     */
+    private static func clipPolicy(_ flags: Int32) -> String {
+        let send = (flags & Int32(DH_CLIP_MAY_SEND)) != 0 ? "may send" : "may not send"
+        let receive = (flags & Int32(DH_CLIP_MAY_RECEIVE)) != 0 ? "may receive" : "may not receive"
+        return "\(send), \(receive)"
     }
 
     private static func seconds(_ ms: Int32) -> String {

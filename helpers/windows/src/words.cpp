@@ -218,6 +218,15 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
                (transport_reason.empty() ? std::string("no reason given") : transport_reason);
     case DH_NOTE_RECONNECTION_RATE:
         return "the last " + std::to_string(a) + " reconnections came inside " + span(b);
+    case DH_NOTE_CLIP_POLICY:
+        /* Both verbs are named either way round — "may send / may not send"
+           rather than listing only what is allowed — because a line that says
+           nothing about a direction reads as that direction being untouched,
+           and the whole point of this note is to say what the board decided
+           about each. */
+        return std::string("the board's clipboard policy: ") +
+               ((a & DH_CLIP_MAY_SEND) ? "may send" : "may not send") + ", " +
+               ((a & DH_CLIP_MAY_RECEIVE) ? "may receive" : "may not receive");
     }
 
     /* A code this helper has no words for. Printed rather than dropped: a note
