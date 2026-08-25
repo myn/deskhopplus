@@ -128,6 +128,22 @@ const field_map_t api_field_map[] = {
     { 92, true,  UINT32, 4, offsetof(device_t, _channel_inbound_dropped) },
     { 93, true,  UINT32, 4, offsetof(device_t, _channel_outq_refused) },
     { 94, true,  UINT32, 4, offsetof(device_t, _channel_relay_dropped) },
+
+    /*
+     * The inter-board link's own three, and the reason this list grew twice.
+     * The first four are all about *this* board's seams, so a frame lost
+     * between the boards leaves every one of them reading zero on the board
+     * that sent it — which is exactly what #52's size-dependent fault looked
+     * like from the config page.
+     *
+     *   95  data packets that arrived with no start to attach to
+     *   96  frames abandoned because packets went missing — the size-dependent
+     *       one, since a longer payload is more packets and so more chances
+     *   97  frames the relay's own outbound queue refused
+     */
+    { 95, true,  UINT32, 4, offsetof(device_t, _channel_relay_orphans) },
+    { 96, true,  UINT32, 4, offsetof(device_t, _channel_relay_truncated) },
+    { 97, true,  UINT32, 4, offsetof(device_t, _channel_relay_refused) },
 };
 
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave

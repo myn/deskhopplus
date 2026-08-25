@@ -50,6 +50,9 @@ STATUS_ = [
     FormField(92, "From peer board", None, {}, "uint32", elem="hex_info"),
     FormField(93, "Outbound refused", None, {}, "uint32", elem="hex_info"),
     FormField(94, "Inter-board refused", None, {}, "uint32", elem="hex_info"),
+    FormField(95, "Peer orphan packets", None, {}, "uint32", elem="hex_info"),
+    FormField(96, "Peer frames truncated", None, {}, "uint32", elem="hex_info"),
+    FormField(97, "Relay queue refused", None, {}, "uint32", elem="hex_info"),
 ]
 
 CONFIG_ = [

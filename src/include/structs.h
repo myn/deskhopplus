@@ -128,6 +128,16 @@ typedef struct {
     uint32_t _channel_inbound_dropped;
     uint32_t _channel_outq_refused;
     uint32_t _channel_relay_dropped;
+    /*
+     * The inter-board reassembler's own two, and they are the ones that were
+     * missing when #52's first size-dependent fault had to be diagnosed. A
+     * longer payload is more packets, so it is more chances to lose one — and
+     * a frame that loses a packet is abandoned whole, silently, with every
+     * counter on the *sending* board still reading zero.
+     */
+    uint32_t _channel_relay_orphans;
+    uint32_t _channel_relay_truncated;
+    uint32_t _channel_relay_refused;
     bool dev_build;                  // True when channel authentication is compiled out (#44)
     bool reboot_requested;           // If set, stop updating watchdog
     uint64_t config_mode_timer;      // Counts how long are we to remain in config mode

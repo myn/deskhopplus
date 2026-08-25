@@ -693,6 +693,9 @@ void channel_task(device_t *state) {
     state->_channel_inbound_dropped = channel.inbound_dropped;
     state->_channel_outq_refused = channel.out.refused;
     state->_channel_relay_dropped = channel.tx.dropped;
+    state->_channel_relay_orphans = channel.relay_rx.orphans;
+    state->_channel_relay_truncated = channel.relay_rx.truncated;
+    state->_channel_relay_refused = channel.relay_tx.q.refused;
 
     /*
      * The clipboard's two direction toggles, as the two verbs this board's own
