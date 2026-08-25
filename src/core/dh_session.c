@@ -312,10 +312,11 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type) {
        nothing goes on believing whatever it last heard, and there is no second
        chance to notice — unlike the beat, nothing follows to correct it. */
     if (type == DH_MSG_CLIP_POLICY) s->clip_policy_owed = false;
-    /* And the drop totals, for the weakest of the three reasons: a reading the
-       queue refused is simply re-encoded next tick, because the values are
-       still there to read. Releasing it here rather than at encode time only
-       keeps a refusal from skipping a whole rate-limit interval. */
+    /* And the drop totals, for the weakest of the three reasons. A refused
+       reading is not lost — the values are still there to read — but the rate
+       limit is stamped at encode time, so the retry waits a full interval
+       rather than coming on the next tick. That is the whole cost of a
+       refusal here, and it is one a total can afford where a rate cannot. */
     if (type == DH_MSG_DEVICE_DROPS) s->drops_owed = false;
 }
 
@@ -786,6 +787,18 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
      * losing a frame per tick from putting a frame per tick into a queue
      * ADR-0005 keeps short. Skipping a reading costs nothing: these are totals,
      * so the next one carries everything the skipped one would have.
+     *
+     * **It does not charge the idle timer, and that is the one place this
+     * frame is deliberately unlike every other one the board sends.** Its rate
+     * limit is exactly the beat's interval, so charging the timer would mean a
+     * board whose counters move once a second never encodes a beat at all —
+     * and the helper's quiet detector keys on beats, not on traffic
+     * (dh_helper.c). The helper would log "the board's beat has gone quiet"
+     * for the whole duration of the fault this frame exists to report, which
+     * is a diagnostic manufacturing a false reading: #133's own mistake, one
+     * layer up. The cost of leaving the timer alone is one 28-byte beat a
+     * second beside the reading, and only while something is actually
+     * dropping.
      */
     if (s->drops_owed &&
         (!s->drops_ever_sent ||
@@ -799,7 +812,6 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
             s->tx_counter++;
             s->drops_sent_ms = now_ms;
             s->drops_ever_sent = true;
-            dh_session_note_sent(s, now_ms);
         }
         return rc;
     }

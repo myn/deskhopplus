@@ -667,10 +667,15 @@ arrives.
   refused anyway is self-correcting, because whatever displaced it refreshes the peer just as well.
   The beat rides the queue's priority band, so it is never stuck behind clipboard bulk that is
   merely waiting — only behind bulk already on the stream, which is bounded by one frame.
-- **A drop report is not a beat.** DEVICE_DROPS is sent on change, ahead of the beat and behind
-  the listener alert, and it charges the idle timer like any other traffic. It is not liveness in
-  its own right — a board with nothing to report sends none, and a helper must never read its
-  absence as anything but "nothing has moved".
+- **A drop report is not a beat, and does not displace one.** DEVICE_DROPS is sent on change,
+  ahead of the beat and behind the listener alert, and it is the one frame the device sends that
+  does **not** charge the idle timer. Its rate limit is exactly the beat's interval, so charging
+  the timer would mean a device whose counters move once a second never sends a beat at all — and
+  a helper's quiet detector keys on beats. It would report the beat gone for the whole duration of
+  the fault the frame exists to describe, which is a diagnostic manufacturing a false reading. So
+  the two travel together while something is dropping. A drop report is still liveness on arrival,
+  like any authenticated frame; it is not liveness in its own right, and a helper must never read
+  its absence as anything but "nothing has moved".
 - **SESSION_END is an optimisation, never the mechanism.** The device announces an eviction it
   knows about so the helper need not wait out a timeout. A device that reboots, wedges, or loses
   power announces nothing, so the timeout above is what must be correct.
@@ -725,7 +730,8 @@ fault is happening*.
   ([ADR-0005](adr/0005-bounded-outbound-queues.md)), and a seam losing a frame per tick would
   otherwise put a frame per tick into it. A diagnostic that crowds out the traffic it is measuring
   is worse than none. Skipping a reading costs nothing: these are totals, so the next one carries
-  everything the skipped one would have.
+  everything the skipped one would have. A reading the queue refuses waits out that interval like
+  any other; a total can afford that where a rate cannot.
 - **Seven totals, not one.** Each names a different seam and each seam has a different remedy. A
   sum would say only that something is wrong.
 - **Each device reports its own.** There is no proxied read: a device in config mode can forward an

@@ -211,8 +211,13 @@ static void settle_openers(dh_session *s, uint32_t now_ms) {
     uint8_t out[MAX_BYTES];
     for (int i = 0; i < 2; i++) {
         const size_t len = tick(s, now_ms, out, sizeof out);
-        if (len > 0 && (out[0] == DH_MSG_CLIP_POLICY || out[0] == DH_MSG_DEVICE_DROPS))
-            dh_session_note_owed_sent(s, out[0]);
+        /* Stop at anything else rather than ticking past it. A caller with an
+           alert already pending draws that instead, and it stays owed — but
+           settling blindly would encode and discard whatever the ladder put
+           first, so a reordering would be swallowed here instead of failing
+           in the test that cares. */
+        if (len == 0 || (out[0] != DH_MSG_CLIP_POLICY && out[0] != DH_MSG_DEVICE_DROPS)) break;
+        dh_session_note_owed_sent(s, out[0]);
     }
 }
 
@@ -1651,6 +1656,58 @@ static void test_a_session_is_told_what_the_board_has_dropped(void) {
 }
 
 /*
+ * A board that is dropping frames still beats.
+ *
+ * The drop reading's rate limit is exactly the beat's interval, so a reading
+ * that charged the idle timer would displace the beat for as long as anything
+ * kept moving — and the helper's quiet detector keys on beats, not on traffic.
+ * It would report the beat gone for the whole duration of the fault the
+ * reading exists to describe: a diagnostic manufacturing a false reading,
+ * which is #133's own mistake one layer up.
+ */
+static void test_a_board_that_is_dropping_frames_still_beats(void) {
+    const struct vector *hello_v = find("hello_mac");
+    if (!hello_v) return;
+
+    dh_session s;
+    a_paired_board(&s, DH_BUILD_RELEASE);
+    uint32_t now = 700000;
+    uint8_t reply[DH_SESSION_REPLY_MAX];
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "beat under drops",
+          "no session");
+    settle_openers(&s, now);
+
+    /* A seam losing a frame a second, for well past the helper's deadline. The
+       helper keeps beating throughout, so nothing here is an eviction. */
+    dh_device_drops moving = {0, 0, 0, 0, 0, 0, 0};
+    unsigned beats = 0;
+    uint64_t helper_counter = 0;
+    for (unsigned second = 0; second < 6; second++) {
+        moving.outq++;
+        dh_session_set_drops(&s, &moving);
+        now += DH_SESSION_HEARTBEAT_MS;
+
+        uint8_t from_helper[MAX_BYTES];
+        const size_t from_helper_len = make_tagged(DH_MSG_HEARTBEAT, k_h2b, helper_counter++, NULL,
+                                                   0, from_helper, sizeof from_helper);
+        CHECK(feed(&s, from_helper, from_helper_len, now, reply, sizeof reply) == 0,
+              "beat under drops", "a helper heartbeat drew a reply");
+
+        /* Two ticks in the same millisecond, because one pass emits one frame
+           and the board runs this loop at 1000 Hz. */
+        for (int i = 0; i < 2; i++) {
+            const size_t len = tick(&s, now, reply, sizeof reply);
+            if (len == 0) continue;
+            dh_session_note_owed_sent(&s, reply[0]);
+            if (reply[0] == DH_MSG_DEVICE_HEARTBEAT) beats++;
+        }
+    }
+
+    CHECK(beats == 6, "beat under drops",
+          "a board reporting drops every interval stopped beating");
+}
+
+/*
  * Two toggles named by direction, four helpers that only know "me" and "the
  * other computer". This is the whole of that translation, and getting it
  * backwards on one board would disable the wrong direction — visibly wrong at
@@ -1712,6 +1769,7 @@ int main(int argc, char **argv) {
     test_an_eviction_the_board_knows_about_is_announced();
     test_every_session_is_told_the_clipboard_policy();
     test_a_session_is_told_what_the_board_has_dropped();
+    test_a_board_that_is_dropping_frames_still_beats();
     test_the_direction_toggles_map_onto_each_board();
 
     if (failures) {

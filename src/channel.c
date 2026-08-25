@@ -738,9 +738,10 @@ void channel_task(device_t *state) {
     /*
      * Whichever the session owes its helper: the clipboard policy a fresh or
      * changed setting owes it, a listener alert that has been waiting for a
-     * session to tell, the beat that fills an idle direction, or the
-     * announcement that a silent helper has just been evicted. Never more than
-     * one, and nothing at all on the ordinary tick.
+     * session to tell, a fresh reading of the drop totals above, the beat that
+     * fills an idle direction, or the announcement that a silent helper has
+     * just been evicted. Never more than one, and nothing at all on the
+     * ordinary tick.
      */
     uint8_t owed[DH_SESSION_REPLY_MAX];
     size_t owed_len = 0;
