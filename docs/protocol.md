@@ -131,11 +131,31 @@ input rides HID and never this channel.
 One counter space **per key**, so per direction and per session. It starts at 0 for the first
 frame sent under a key and increases by at least 1 per frame.
 
-A receiver keeps the highest counter it has accepted for that key and **refuses anything not
-strictly greater**. Refusing anything not *exactly* one greater would be wrong: the device's
-outbound path is a short bounded queue ([ADR-0005](adr/0005-bounded-outbound-queues.md)) and a
-frame it cannot take is a silent loss, so gaps happen in normal operation and are not evidence
-of an attack.
+A receiver keeps the highest counter it has accepted for that key, plus a bitmask of the
+**64 counters ending at it**, and refuses a counter it has already accepted or one older than
+that window. Gaps ahead of the highest are ordinary and always accepted: the device's outbound
+path is a short bounded queue ([ADR-0005](adr/0005-bounded-outbound-queues.md)) and a frame it
+cannot take is a silent loss, so a gap is not evidence of an attack.
+
+**Why a window and not "strictly greater".** Counters rise, but frames do not arrive in the
+order they were tagged. The board tags a frame when it is *built* and the same outbound queue
+then reorders: a priority frame overtakes bulk that is merely queued, which is the entire point
+of the band split. So a clipboard frame tagged at N reaches the wire behind a heartbeat tagged
+at N+1, and a strictly-greater receiver drops it.
+
+Both rules were deliberate and they contradicted each other. Nothing could notice until
+something put a bulk frame in that queue, and the first payload to do so was
+[#52](https://github.com/myn/deskhopplus/issues/52)'s clipboard — where every transfer stalled
+in both directions while the session itself looked healthy. The helper log said it outright:
+*dropping a clip_offer with a counter already seen*. This is the shape IPsec and DTLS use, for
+the same reason.
+
+**What is not relaxed is replay.** A counter accepted once is refused for ever after — that is
+what the bitmask is for, and it is why tolerating a gap does not tolerate a replay into it. A
+counter older than the window is refused outright rather than searched for: past that distance
+the record no longer exists, and accepting on an absence of evidence is exactly what a replay
+window exists to prevent. The window is sized far above the real reorder distance, which is
+bounded by that queue — two staged frames behind one in flight.
 
 A counter that would wrap is not a case to handle. It is 64 bits wide and the keys do not
 outlive a session; #107 measured a session lasting about 98 seconds on average.

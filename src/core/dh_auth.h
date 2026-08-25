@@ -122,9 +122,41 @@ dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_
  *
  * Wrapping is not a case to handle — 64 bits wide, and the keys do not outlive
  * a session, which #107 measured at about 98 seconds.
+ *
+ * Counters rise but do not arrive in order. The board tags a frame when it is
+ * *built* and its outbound queue then reorders, because ADR-0005 lets a
+ * priority frame overtake bulk that is merely queued — so a clipboard frame
+ * tagged at N can reach the wire behind a heartbeat tagged at N+1. Under a
+ * strictly-greater rule the clipboard frame is dropped, which is what #52's
+ * first hardware run measured: every direction of the clipboard stalled while
+ * the session itself looked healthy.
+ *
+ * So this is a sliding window, the same shape IPsec and DTLS use for the same
+ * reason. What is *not* relaxed is replay: a counter seen once is refused for
+ * ever after, and one older than the window is refused outright.
  */
+/*
+ * How far behind the highest accepted counter a frame may still arrive.
+ *
+ * This is a **reordering** window, not a replay allowance: a counter already
+ * seen is refused whatever its position in it. Sized against the one thing
+ * that reorders on this path — the board's outbound queue, where a priority
+ * frame overtakes bulk that is merely queued (ADR-0005). That queue is two
+ * frames deep behind one in flight, so the real reorder distance is a handful;
+ * 64 is the width of the bitmask below and costs nothing more than the eight
+ * bytes already spent on it.
+ */
+#define DH_AUTH_WINDOW 64u
+
 typedef struct {
     uint64_t highest;
+    /*
+     * Which of the DH_AUTH_WINDOW counters ending at `highest` have been
+     * accepted. Bit 0 is `highest` itself, bit k is `highest - k`. This is what
+     * separates "arrived late" from "arrived twice": without it, tolerating a
+     * gap would tolerate a replay into that gap as well.
+     */
+    uint64_t seen;
     bool any; /* whether anything has been accepted yet, so counter 0 is usable */
 } dh_auth_counter;
 
@@ -135,6 +167,10 @@ void dh_auth_counter_init(dh_auth_counter *c);
    throw away. It is only a hint there: nothing is recorded until the tag has
    verified, which is what dh_auth_open does. */
 bool dh_auth_counter_ok(const dh_auth_counter *c, uint64_t counter);
+
+/* Record one counter as accepted. Only dh_auth_open should call this, and only
+   after the tag has verified — see the note on that function. */
+void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter);
 
 /*
  * Verify one received frame and hand back its body.

@@ -55,3 +55,36 @@ reader until the slot frees.
   not a device invention.
 - Because the primitive is shared, `dh_relay_tx`'s bulk slot and a new path-(a) module both drain
   through the same host-tested code, rather than two divergent implementations of the same shape.
+
+## Amendment, 2026-08-25 — the band split reorders, and the counter had to learn it
+
+Measured on hardware during [#52](https://github.com/myn/deskhopplus/issues/52)'s first run:
+every clipboard transfer stalled, in both directions, while the session itself stayed healthy.
+The Windows helper log named the cause without ambiguity — *dropping a clip_offer with a counter
+already seen*.
+
+The band split is what produced it, and it was working as designed. A priority frame overtakes
+bulk that is merely queued; the board tags every frame when it is **built**, not when it leaves.
+So a relayed clipboard frame tagged at N reaches the wire behind a heartbeat tagged at N+1, and
+[ADR-0008](0008-channel-identity-and-sealed-clipboard.md)'s receiver refused anything not
+strictly greater.
+
+Two decisions, each right on its own, that could not both hold. Neither could fire before: until
+a payload existed, nothing was ever *queued* behind anything, so the reorder never happened.
+[#96](https://github.com/myn/deskhopplus/issues/96) said this code had never met sustained load
+and named itself the least-exercised change in the 0.89 firmware. It was right.
+
+**Resolved in ADR-0008's half, not this one.** The receiver now keeps a 64-counter replay window
+rather than a high-water mark — the shape IPsec and DTLS use for exactly this. Replay protection
+is unchanged: a counter accepted once is refused for ever, and one older than the window is
+refused outright. Only the *ordering* requirement is relaxed, and it is relaxed to match what
+this queue actually does.
+
+The alternative was to tag at drain time instead, which keeps the strict rule by construction.
+Rejected as the larger change on the riskier side: `dh_outq` would have to hold untagged frames
+and call back for a tag on promotion, mixing the queue with the key material it is deliberately
+ignorant of. A receiver that tolerates the reordering its own transport performs is the smaller
+and more honest statement.
+
+Neither band's behaviour changes here. This queue still lets a session reply overtake bulk, and
+that is still the point.

@@ -425,18 +425,68 @@ static void test_counter(void) {
     /* Counter 0 is a real counter — the hello uses it — so an "unset" state
        cannot be represented by a zero. */
     CHECK(dh_auth_counter_ok(&c, 0), "counter", "0 refused on a fresh key");
-    c.highest = 0;
-    c.any = true;
+    dh_auth_counter_accept(&c, 0);
     CHECK(!dh_auth_counter_ok(&c, 0), "counter", "0 accepted twice");
     CHECK(dh_auth_counter_ok(&c, 1), "counter", "1 refused after 0");
 
     /* Gaps are ordinary: the device's outbound queue is bounded and a frame it
-       cannot take is a silent loss (ADR-0005). Only going backwards is an error. */
-    c.highest = 5;
+       cannot take is a silent loss (ADR-0005). */
+    dh_auth_counter_accept(&c, 5);
     CHECK(dh_auth_counter_ok(&c, 9), "counter", "a gap refused");
     CHECK(!dh_auth_counter_ok(&c, 5), "counter", "a repeat accepted");
-    CHECK(!dh_auth_counter_ok(&c, 4), "counter", "going backwards accepted");
     CHECK(dh_auth_counter_ok(&c, UINT64_MAX), "counter", "the top of the space refused");
+
+    /*
+     * Arriving late is not arriving twice, and this is the whole of the
+     * distinction. The board tags a frame when it is built and its outbound
+     * queue then reorders — a priority frame overtakes bulk that is merely
+     * queued (ADR-0005) — so 4 behind 5 is an ordinary event on this path and
+     * refusing it is what stalled every clipboard transfer on the first
+     * hardware run of #52.
+     */
+    CHECK(dh_auth_counter_ok(&c, 4), "counter", "a reordered frame was refused");
+    dh_auth_counter_accept(&c, 4);
+    CHECK(!dh_auth_counter_ok(&c, 4), "counter", "a reordered frame was accepted twice");
+    /* Its neighbours are untouched by it. */
+    CHECK(dh_auth_counter_ok(&c, 3), "counter", "accepting 4 refused 3");
+    CHECK(!dh_auth_counter_ok(&c, 5), "counter", "accepting 4 forgot 5");
+}
+
+/*
+ * The window's two edges. Both are refusals, and they refuse for different
+ * reasons: one because the counter has been through, one because the record of
+ * whether it has no longer exists. Accepting on an absence of evidence is
+ * exactly what a replay window exists to prevent.
+ */
+static void test_counter_window_edges(void) {
+    dh_auth_counter c;
+    dh_auth_counter_init(&c);
+    dh_auth_counter_accept(&c, 1000);
+
+    CHECK(dh_auth_counter_ok(&c, 1000 - (DH_AUTH_WINDOW - 1)), "window",
+          "the oldest counter still inside the window was refused");
+    CHECK(!dh_auth_counter_ok(&c, 1000 - DH_AUTH_WINDOW), "window",
+          "a counter past the window was accepted");
+    CHECK(!dh_auth_counter_ok(&c, 0), "window", "a counter far past the window was accepted");
+
+    /* A jump wider than the window clears the record rather than carrying bits
+       that no longer mean anything — and the new highest is itself seen. */
+    dh_auth_counter_accept(&c, 1000 + DH_AUTH_WINDOW + 5);
+    CHECK(!dh_auth_counter_ok(&c, 1000 + DH_AUTH_WINDOW + 5), "window",
+          "the counter that made the jump was accepted again");
+    CHECK(!dh_auth_counter_ok(&c, 1000), "window",
+          "a counter the jump left behind was accepted");
+
+    /* Every counter in one full window, delivered backwards, is accepted once
+       and only once — the strongest statement of "late is not twice". */
+    dh_auth_counter fresh;
+    dh_auth_counter_init(&fresh);
+    dh_auth_counter_accept(&fresh, DH_AUTH_WINDOW);
+    for (uint64_t n = DH_AUTH_WINDOW - 1; n > 0; n--) {
+        CHECK(dh_auth_counter_ok(&fresh, n), "window", "a counter in the window was refused");
+        dh_auth_counter_accept(&fresh, n);
+        CHECK(!dh_auth_counter_ok(&fresh, n), "window", "a counter was accepted twice");
+    }
 }
 
 static void test_wrap_buffer(const uint8_t key[DH_SESSION_KEY_SIZE]) {
@@ -519,6 +569,7 @@ int main(int argc, char **argv) {
     }
 
     test_counter();
+    test_counter_window_edges();
     test_peek_needs_only_the_counter();
     test_hkdf_output_limit();
     test_constant_time_compare();

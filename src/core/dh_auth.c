@@ -107,13 +107,49 @@ dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_
 
 void dh_auth_counter_init(dh_auth_counter *c) {
     c->highest = 0;
+    c->seen = 0;
     c->any = false;
 }
 
 bool dh_auth_counter_ok(const dh_auth_counter *c, uint64_t counter) {
     /* Counter 0 is a real counter — the hello is always 0 — so "nothing
        accepted yet" cannot be represented by a zero highest. */
-    return !c->any || counter > c->highest;
+    if (!c->any) return true;
+    /* Ahead of everything seen: the ordinary case, and the only one before a
+       reordering path existed. */
+    if (counter > c->highest) return true;
+    /* Older than the window. Refused outright rather than searched for: past
+       this distance the record of what was seen no longer exists, and
+       accepting on an absence of evidence is what a replay window is for
+       preventing. */
+    if (c->highest - counter >= DH_AUTH_WINDOW) return false;
+    /* Inside the window, and only if it has not already been through. */
+    return (c->seen & (UINT64_C(1) << (c->highest - counter))) == 0;
+}
+
+void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter) {
+    if (!c->any) {
+        c->any = true;
+        c->highest = counter;
+        c->seen = 1;
+        return;
+    }
+
+    if (counter > c->highest) {
+        const uint64_t shift = counter - c->highest;
+        /* A jump wider than the window leaves nothing worth carrying: every
+           bit would shift out. Said as a branch because shifting a uint64_t by
+           64 is undefined, not zero. */
+        c->seen = (shift >= DH_AUTH_WINDOW) ? UINT64_C(1)
+                                            : ((c->seen << shift) | UINT64_C(1));
+        c->highest = counter;
+        return;
+    }
+
+    /* Inside the window. dh_auth_counter_ok has already refused anything
+       older, so the shift is in range. */
+    if (c->highest - counter < DH_AUTH_WINDOW)
+        c->seen |= UINT64_C(1) << (c->highest - counter);
 }
 
 bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *out) {
@@ -160,8 +196,7 @@ dh_auth_result dh_auth_open(const uint8_t key[DH_SESSION_KEY_SIZE], const dh_fra
      */
     if (!dh_auth_counter_ok(counter, seen))
         return DH_AUTH_ERR_COUNTER;
-    counter->highest = seen;
-    counter->any = true;
+    dh_auth_counter_accept(counter, seen);
 
     *body = frame_body;
     *body_len = frame_body_len;

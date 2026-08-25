@@ -58,7 +58,7 @@ add_test(NAME session_test COMMAND session_test)
 # agreeing with a mock of the other.
 add_executable(helper_test helper_test.c ${CORE}/dh_helper.c ${CORE}/dh_session.c
                ${CORE}/dh_pair.c ${CORE}/dh_frame.c ${CORE}/dh_auth.c ${CORE}/dh_sha256.c
-               ${CORE}/dh_p256.c)
+               ${CORE}/dh_p256.c ${CORE}/dh_outq.c)
 target_include_directories(helper_test PRIVATE ${CORE})
 target_compile_definitions(helper_test PRIVATE DH_TEST_VECTORS="${VECTORS}"
                            DH_PRIMITIVE_VECTORS="${PRIMITIVE_VECTORS}")

@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "dh_helper.h"
+#include "dh_outq.h"
 
 static int failures = 0;
 
@@ -2034,6 +2035,93 @@ static void test_verified_bulk_reaches_the_platform(void) {
     no_overflow(name);
 }
 
+/*
+ * ADR-0005's two bands against ADR-0008's counter, on the path a real payload
+ * takes (#52, and the load #96 says has never met this code).
+ *
+ * The board tags every frame it sends its helper under one key, in one counter
+ * space, at the moment the frame is *built*. The outbound queue then reorders:
+ * a priority frame overtakes bulk that is merely queued, which is the whole
+ * point of the split. So a clipboard frame tagged at counter N can reach the
+ * wire after a heartbeat tagged at N+1 — and the helper refuses anything not
+ * strictly greater, so the clipboard frame is dropped.
+ *
+ * Both rules are deliberate and they contradict each other. Nothing could
+ * notice until something put a bulk frame in that queue, which is what the
+ * first real payload did.
+ */
+static void test_a_reordered_bulk_frame_survives_the_counter(void) {
+    const char *name = "a reordered bulk frame survives the counter";
+    dh_helper h;
+    a_live_session(&h);
+
+    dh_outq queue;
+    dh_outq_init(&queue);
+
+    /* A relayed clipboard frame, as the peer board hands one over: header and
+       body, no prefix — this board writes the tag. */
+    const uint8_t body[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    uint8_t relayed[DH_FRAME_MAX_SIZE];
+    size_t relayed_len = 0;
+    relayed[0] = DH_MSG_CLIP_OFFER;
+    relayed[1] = 0;
+    relayed[2] = (uint8_t)sizeof body;
+    relayed[3] = 0;
+    memcpy(relayed + DH_FRAME_HEADER_SIZE, body, sizeof body);
+
+    dh_frame_view view;
+    size_t consumed = 0;
+    CHECK(dh_frame_decode(relayed, DH_FRAME_HEADER_SIZE + sizeof body, &view, &consumed) ==
+              DH_FRAME_OK,
+          name, "the relayed frame is malformed");
+
+    uint8_t bulk[DH_FRAME_MAX_SIZE];
+    size_t bulk_len = 0;
+    CHECK(dh_session_emit_relayed(&board, &view, bulk, sizeof bulk, &bulk_len) == DH_FRAME_OK,
+          name, "the board would not tag a relayed frame");
+    CHECK(dh_outq_offer(&queue, bulk, bulk_len) == DH_OUTQ_OK, name,
+          "the queue refused the bulk frame");
+
+    /* Now the board's own beat, built *after* it and therefore tagged with a
+       higher counter. It goes in the priority band. */
+    uint8_t beat[DH_SESSION_REPLY_MAX];
+    size_t beat_len = 0;
+    dh_session_note_sent(&board, 0);
+    CHECK(dh_session_tick(&board, DH_SESSION_HEARTBEAT_MS, beat, sizeof beat, &beat_len) ==
+              DH_FRAME_OK,
+          name, "the board produced no beat");
+    CHECK(beat_len > 0, name, "an idle interval drew no beat");
+    CHECK(dh_outq_offer(&queue, beat, beat_len) == DH_OUTQ_OK, name,
+          "the queue refused the beat");
+
+    /* Drain the queue the way channel_pump_out does, and feed the helper in
+       exactly the order the wire would carry. */
+    uint8_t wire[DH_FRAME_MAX_SIZE * 2];
+    size_t wire_len = 0;
+    dh_outq_view owed;
+    while (dh_outq_peek(&queue, &owed)) {
+        const uint16_t take = owed.remaining;
+        memcpy(wire + wire_len, owed.at, take);
+        wire_len += take;
+        dh_outq_advance(&queue, &owed, take);
+    }
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, wire, wire_len, 2000, &out);
+
+    /*
+     * The check that matters. A clipboard frame the board tagged, queued and
+     * drained must reach the helper — whatever the beat behind it did to the
+     * order. `DH_NOTE_COUNTER_REPLAYED` here is the live defect, and it is the
+     * exact line a real Windows helper log showed: "dropping a clip_offer with
+     * a counter already seen".
+     */
+    CHECK(!saw_note(&out, DH_NOTE_COUNTER_REPLAYED), name,
+          "a clipboard frame was dropped as a replay because a beat overtook it");
+    CHECK(payloads.calls >= 1, name, "the clipboard frame never reached the platform");
+    no_overflow(name);
+}
+
 int main(int argc, char **argv) {
     const char *frames = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     const char *primitives = argc > 2 ? argv[2] : DH_PRIMITIVE_VECTORS;
@@ -2081,6 +2169,7 @@ int main(int argc, char **argv) {
     test_a_grant_answering_someone_elses_request_is_dropped();
     test_the_board_states_the_clipboard_policy();
     test_verified_bulk_reaches_the_platform();
+    test_a_reordered_bulk_frame_survives_the_counter();
 
     if (failures) {
         printf("%d helper check(s) failed\n", failures);

@@ -196,3 +196,27 @@ The analogy does not transfer whole, and the difference is the reason per-frame 
 here and not there: **they get one socket per client, so authenticating a connection authenticates a
 program.** We have one endpoint shared by every client, so "the session is authenticated" says nothing
 about who sent a given frame.
+
+## Amendment, 2026-08-25 — the counter is a replay window, not a high-water mark
+
+The per-frame counter above was enforced as "refuse anything not strictly greater". On hardware
+that turned out to refuse legitimate traffic: [ADR-0005](0005-bounded-outbound-queues.md)'s band
+split lets a priority frame overtake bulk that is merely queued, and the board tags a frame when
+it is **built**, so a clipboard frame tagged at N reaches the wire behind a heartbeat tagged at
+N+1. Every clipboard transfer in [#52](https://github.com/myn/deskhopplus/issues/52) stalled on
+it, in both directions, while the session looked healthy.
+
+A receiver now keeps the highest counter **plus a bitmask of the 64 counters ending at it**
+(`DH_AUTH_WINDOW`, `dh_auth.h`), and refuses a counter it has already accepted or one older than
+the window. This is the shape IPsec and DTLS use, and for the same reason: an authenticated
+datagram path that reorders cannot also demand strict ordering.
+
+**The security property is unchanged.** The threat this counter answers is a second writer on a
+shared endpoint replaying a captured frame (#95), and a replayed counter is still refused —
+that is what the bitmask is for. What was given up is only the claim that frames arrive in the
+order they were tagged, which was never true on this transport. A counter past the window is
+refused outright rather than searched for, because past that distance the record of whether it
+was seen no longer exists.
+
+The window is sized far above the real reorder distance, which the queue bounds at two staged
+frames behind one in flight. The cost is eight bytes per counter space.
