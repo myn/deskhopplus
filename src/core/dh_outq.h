@@ -59,8 +59,8 @@ extern "C" {
  * would cost four times the RAM to hold traffic that never arrives in bursts
  * (ADR-0005):
  *
- *   CLIP_CHUNK  4 + 24 + 12 (id, seq, crc32)       + 1024 (DH_XFER_CHUNK_SIZE) = 1064
- *   CLIP_OFFER  4 + 24 + 15 (id, kind, total, len) + 1024 (DH_XFER_META_MAX)   = 1067
+ *   CLIP_CHUNK  4 + 24 + 40 (DH_SEAL_CHUNK_OVERHEAD) + 1024 (DH_XFER_CHUNK_SIZE) = 1092
+ *   CLIP_OFFER  4 + 24 + 43 (DH_SEAL_OFFER_OVERHEAD) + 1024 (DH_XFER_META_MAX)   = 1095
  *
  * The 24 is v2's authentication prefix (#111): it sits inside the frame's
  * length, so every frame this band holds on the helper-facing side grew by it.
@@ -70,6 +70,15 @@ extern "C" {
  * this band exists. Frames crossing the inter-board link carry no prefix, so
  * they are 24 bytes smaller and comfortably inside the same bound.
  *
+ * The seal (#113) is inside these figures for the same reason the prefix is:
+ * what crosses this seam is the sealed body, not the clear one. This bound was
+ * stated for the clear sizes while the transfer core had yet to seal anything,
+ * and #52 made that untrue without moving it — so from then until #135 a
+ * full-size chunk was 24 bytes over the bound and could never queue behind
+ * anything at all. Small copies fitted in one short chunk and worked; a
+ * clipboard payload past DH_XFER_CHUNK_SIZE lost most of itself, silently,
+ * counted only in a field that cannot be read (#133).
+ *
  * The offer matters as much as the chunk and is the one that sets this bound.
  * A chunk lost here is re-requested end to end, but there is no retransmit for
  * an offer — its loss costs the whole transfer, out to the helper's timeout —
@@ -77,14 +86,11 @@ extern "C" {
  * carrying more metadata than DH_XFER_META_MAX is cancelled by the receiver on
  * arrival, so beyond this bound there is no frame worth reserving space for.
  *
- * The seal moves this again — docs/protocol.md puts a sealed chunk at 1092 —
- * but the transfer core does not produce one yet, and a bound stated for
- * traffic the tree cannot emit would be a guess rather than a measurement.
- *
- * outq_test.c pins both figures against the transfer machine's own constants,
- * so the firmware need not include it to state its own buffer size.
+ * outq_test.c pins both figures against the transfer machine's and the seal's
+ * own constants, so the firmware need not include either to state its own
+ * buffer size — and so that neither can move again without this failing.
  */
-#define DH_OUTQ_STAGE_MAX 1068u
+#define DH_OUTQ_STAGE_MAX 1095u
 
 /* Frames queued behind the one in flight. */
 #define DH_OUTQ_DEPTH 2u

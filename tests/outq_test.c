@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "dh_outq.h"
+#include "dh_seal.h"
 #include "dh_xfer.h"
 
 static int failures = 0;
@@ -457,13 +458,15 @@ static void test_the_preamble_is_owed_once_per_frame(void) {
 static void test_a_queued_slot_holds_the_largest_viable_bulk_frame(void) {
     /* The authentication prefix is inside the frame's length (#111), so it is
        part of what a slot has to hold — the omission would not fail loudly,
-       it would quietly stop anything queueing behind the frame in flight. */
+       it would quietly stop anything queueing behind the frame in flight.
+       So is the seal (#113). What crosses this seam is the *sealed* body, and
+       pinning the clear sizes here is exactly what let #135 through: a
+       full-size chunk was 24 bytes over the bound and could never queue behind
+       anything, so a clipboard payload past one chunk lost most of itself. */
     const size_t chunk_frame = DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE
-                               + 12u /* id, seq, crc32 */
-                               + DH_XFER_CHUNK_SIZE;
+                               + DH_SEAL_CHUNK_OVERHEAD + DH_XFER_CHUNK_SIZE;
     const size_t offer_frame = DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE
-                               + 15u /* id, kind, total, meta_len */
-                               + DH_XFER_META_MAX;
+                               + DH_SEAL_OFFER_OVERHEAD + DH_XFER_META_MAX;
 
     CHECK(DH_OUTQ_STAGE_MAX >= chunk_frame, "sizing",
           "a queued slot cannot hold a CLIP_CHUNK at the default chunk size");
@@ -479,10 +482,14 @@ static void test_a_full_size_offer_can_queue_behind_a_chunk(void) {
     dh_outq_init(&q);
 
     uint8_t chunk[DH_FRAME_MAX_SIZE], offer[DH_FRAME_MAX_SIZE];
-    const size_t chunk_len = make_frame(DH_MSG_CLIP_CHUNK, 1, DH_XFER_CHUNK_SIZE, chunk,
-                                        sizeof chunk);
+    const size_t chunk_len =
+        make_frame(DH_MSG_CLIP_CHUNK, 1,
+                   DH_FRAME_AUTH_PREFIX_SIZE + DH_SEAL_CHUNK_OVERHEAD + DH_XFER_CHUNK_SIZE,
+                   chunk, sizeof chunk);
     const size_t offer_len =
-        make_frame(DH_MSG_CLIP_OFFER, 5, 15u + DH_XFER_META_MAX, offer, sizeof offer);
+        make_frame(DH_MSG_CLIP_OFFER, 5,
+                   DH_FRAME_AUTH_PREFIX_SIZE + DH_SEAL_OFFER_OVERHEAD + DH_XFER_META_MAX,
+                   offer, sizeof offer);
 
     CHECK(dh_outq_offer(&q, chunk, chunk_len) == DH_OUTQ_OK, "offer-fit", "chunk refused");
     CHECK(dh_outq_offer(&q, offer, offer_len) == DH_OUTQ_OK, "offer-fit",

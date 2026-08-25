@@ -40,6 +40,10 @@ reader until the slot frees.
   ever un-carryable, while the queued slots behind it are bounded by the largest frame a transfer
   can complete with, to keep the RAM cost down against the ~68 KB SRAM headroom the current build
   leaves free. The measured cost is +4,088 bytes of SRAM (`data`+`bss`), leaving ~62 KB free.
+  ([#135](https://github.com/myn/deskhopplus/issues/135) later raised the queued-slot bound from
+  1068 to 1095 bytes, because the figure had been stated for the *clear* chunk and offer while
+  the clipboard had begun sealing them — so a full-size chunk could never queue. That adds
+  `DH_OUTQ_DEPTH × 27` = 54 bytes to the number above; it has not been re-measured.)
 - **Not every refused frame is equally recoverable, and that sets the queued-slot size.** A refused
   `CLIP_CHUNK` is re-requested by the receiving helper's chunk accounting. A refused `CLIP_OFFER`
   has no retransmit behind it at all — protocol.md leaves the loss of a message with no `CLIP_DONE`
