@@ -494,6 +494,10 @@ static void test_the_beat_only_fills_an_idle_direction(void) {
     dh_helper_outputs_reset(&out);
     dh_helper_tick(&h, DH_SESSION_HEARTBEAT_MS, &out);
     CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no beat after a full idle interval");
+    /* The platform's transport took it. The beat charges the idle timer the
+       same way every other frame does, and only once it has actually gone
+       out (#107). */
+    dh_helper_note_sent(&h, DH_SESSION_HEARTBEAT_MS);
 
     /* A transfer going out under the machine's feet. The next interval is
        measured from that, not from the last beat. */
@@ -505,6 +509,59 @@ static void test_the_beat_only_fills_an_idle_direction(void) {
     dh_helper_outputs_reset(&out);
     dh_helper_tick(&h, DH_SESSION_HEARTBEAT_MS + 500 + DH_SESSION_HEARTBEAT_MS, &out);
     CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "the beat did not resume when idle");
+    no_overflow(name);
+}
+
+/*
+ * A beat the transport would not take is owed again on the very next tick, not
+ * a full interval later (#107).
+ *
+ * The idle timer belongs to what actually went out — dh_helper_note_sent —
+ * and the beat is not exempt from the rule the clipboard path already follows.
+ * Charged at build time instead, a refused beat bought a whole interval of
+ * silence it had not earned, and the board evicts a helper after
+ * DH_SESSION_ABSENT_MS: three of those in a row and the session is gone, with
+ * the helper having no idea it was ever quiet.
+ *
+ * A platform that never charges the timer therefore beats every tick. That is
+ * the safe direction to fail in — noisy rather than silent — and it is the
+ * same contract dh_helper_note_sent already documents.
+ */
+static void test_a_beat_the_transport_refused_is_owed_again_at_once(void) {
+    const char *name = "a refused beat is owed again at once";
+    dh_helper h;
+    a_live_session(&h);
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, DH_SESSION_HEARTBEAT_MS, &out);
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no beat after a full idle interval");
+
+    /* The transport refused it, so nothing charges the timer. */
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, DH_SESSION_HEARTBEAT_MS + 1, &out);
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name,
+          "a refused beat bought an interval of silence it never earned");
+
+    /* Taken this time, and the interval resumes from there. */
+    dh_helper_note_sent(&h, DH_SESSION_HEARTBEAT_MS + 1);
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, DH_SESSION_HEARTBEAT_MS + 2, &out);
+    CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 0, name, "beat again after one was taken");
+
+    /*
+     * The whole point, stated as the board sees it: across a full eviction
+     * window with every beat refused, the helper keeps offering one on each
+     * tick rather than falling silent.
+     */
+    unsigned offered = 0;
+    for (uint32_t t = DH_SESSION_HEARTBEAT_MS + 2;
+         t <= DH_SESSION_HEARTBEAT_MS + 2 + DH_SESSION_ABSENT_MS; t += 250) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_tick(&h, t, &out);
+        offered += count_of(&out, DH_HELPER_OUT_SEND);
+    }
+    CHECK(offered >= DH_SESSION_ABSENT_MS / DH_SESSION_HEARTBEAT_MS, name,
+          "a helper whose beats are all refused stops offering them");
     no_overflow(name);
 }
 
@@ -1255,6 +1312,18 @@ static void test_a_session_end_is_acted_on(void) {
     CHECK(note != NULL, name, "the end was not reported");
     CHECK(note != NULL && note->a == DH_SESSION_END_UNPAIRED, name, "the reason was lost");
     CHECK(!dh_helper_can_send_bulk(&h), name, "an ended session still carried bulk");
+
+    /*
+     * And this end's own silence beside the board's reason (#107). On a
+     * liveness end the board is saying "you were silent"; without this there
+     * is nothing that can say whether this end agrees, and the two disagreeing
+     * is what separates frames lost between the ends from a stalled helper.
+     *
+     * The session was established at 0 and the end arrives at 100, with
+     * nothing sent in between, so the answer is the whole 100 ms.
+     */
+    CHECK(note != NULL && note->b == 100, name,
+          "the end did not say how long this helper had been silent");
     no_overflow(name);
 }
 
@@ -2192,6 +2261,7 @@ int main(int argc, char **argv) {
     test_the_hello_matches_the_golden_frame();
     test_negotiation_comes_from_the_reply();
     test_the_beat_only_fills_an_idle_direction();
+    test_a_beat_the_transport_refused_is_owed_again_at_once();
     test_the_board_is_absent_only_after_the_window();
     test_an_unpaired_helper_is_told_so_and_waits();
     test_a_refused_open_is_an_unusable_device();

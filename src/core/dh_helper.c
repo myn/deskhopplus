@@ -342,6 +342,9 @@ static bool build_pair_request(dh_helper *h, uint32_t now_ms, uint8_t *out, size
     h->pair_correlation = request.correlation;
     h->pairing_requested = true;
     h->pairing_requested_at = now_ms;
+    /* Charged when built, unlike the beat (#107): pairing_requested_at above
+       re-sends this on its own timer, so a refused one costs a retry rather
+       than silence. */
     h->last_sent_at = now_ms;
     return true;
 }
@@ -451,6 +454,9 @@ void dh_helper_channels_acquired(dh_helper *h, uint8_t count, uint32_t now_ms,
     h->holding_channels = true;
     h->phase = DH_HELPER_PHASE_AWAITING_ACK;
     h->hello_sent_at = now_ms;
+    /* Charged when built, unlike the beat (#107): hello_sent_at above times
+       this out and re-sends, so a refused one costs a retry rather than
+       silence. */
     h->last_sent_at = now_ms;
     h->last_device_frame_at = now_ms;
 
@@ -770,6 +776,7 @@ static void on_pair_grant(dh_helper *h, const dh_frame_view *f, uint32_t now_ms,
 
     h->pairing_requested = false;
     h->hello_sent_at = now_ms;
+    /* Charged when built, unlike the beat (#107) — see the hello above. */
     h->last_sent_at = now_ms;
     h->phase = DH_HELPER_PHASE_AWAITING_ACK;
 
@@ -829,7 +836,20 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
         return;
     }
     const int32_t reason = body_len > 0 ? body[0] : DH_SESSION_END_UNSPECIFIED;
-    drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason, 0);
+    /*
+     * How long this helper had gone without getting a frame out, reported
+     * beside the board's reason (#107).
+     *
+     * On a liveness end the board is saying "you were silent"; this is the
+     * only place that can say whether this end agrees. They disagreeing is the
+     * finding — a helper that believes it beat a moment ago, against a board
+     * that heard nothing for DH_SESSION_ABSENT_MS, means the frames are being
+     * lost between the two rather than never written, and that is a different
+     * fault from a stalled helper. Neither could be told apart from the logs
+     * before, which is why this ticket ran for six days on the wrong shape.
+     */
+    drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason,
+                    (int32_t)(now_ms - h->last_sent_at));
 }
 
 /*
@@ -1108,7 +1128,24 @@ void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
         if (dh_auth_frame(DH_MSG_HEARTBEAT, 0, h->k_h2b, h->tx_counter, NULL, 0, frame,
                           sizeof frame, &len) == DH_FRAME_OK) {
             h->tx_counter++;
-            h->last_sent_at = now_ms;
+            /*
+             * The idle timer is **not** charged here, and that is the whole of
+             * #107's fix. It belongs to what actually went out — the platform
+             * calls dh_helper_note_sent when its transport took the frame,
+             * exactly as it already does for a clipboard frame.
+             *
+             * Charged at build time, a beat the transport refused bought a
+             * full interval of silence it had not earned. The board evicts a
+             * helper after DH_SESSION_ABSENT_MS, so three of those in a row
+             * ends the session — and the beat is the one frame here with no
+             * retry of its own to cover it. The hello and the pair request
+             * still charge at build time, deliberately: each has its own
+             * timeout and re-sends itself.
+             *
+             * A platform that never charges the timer beats on every tick.
+             * That is the safe direction to fail in, and it is why this is a
+             * removal rather than a callback.
+             */
             put_bytes(o, DH_HELPER_OUT_SEND, frame, len);
         }
     }

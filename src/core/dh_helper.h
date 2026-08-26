@@ -293,7 +293,8 @@ typedef enum {
     DH_NOTE_FIRST_BEAT = 22,
     DH_NOTE_BEAT_RESUMED = 23,        /* a = ms since the last beat */
     DH_NOTE_BEAT_QUIET = 24,          /* a = ms since the last beat */
-    DH_NOTE_SESSION_ENDED = 25,       /* a = dh_session_end_reason */
+    DH_NOTE_SESSION_ENDED = 25,       /* a = dh_session_end_reason,
+                                         b = ms since this helper last got a frame out */
     DH_NOTE_LISTENER_DETECTED = 26,   /* a = refused frames, b = window ms */
     DH_NOTE_NO_ACK = 27,              /* a = ms waited */
     DH_NOTE_DEVICE_SILENT = 28,       /* a = ms of silence */
@@ -613,10 +614,21 @@ dh_frame_result dh_helper_emit(dh_helper *h, uint8_t type, uint8_t flags, const 
                                size_t body_len, uint8_t *out, size_t cap, size_t *out_len);
 
 /*
- * The platform wrote a frame this machine did not produce — a bulk chunk, a
- * cursor placement. ADR-0004's heartbeat fills a direction that has carried
- * *nothing* for a full interval, and traffic the machine never saw would
- * otherwise have it beating into a direction that is far from idle.
+ * A frame this helper actually got out, whoever produced it — a bulk chunk, a
+ * cursor placement, or the beat this machine built a moment ago. ADR-0004's
+ * heartbeat fills a direction that has carried *nothing* for a full interval,
+ * so anything that did carry has to say so.
+ *
+ * **This is the only thing that charges the idle timer for a beat**, and the
+ * platform calls it once the transport has taken the frame — never before.
+ * dh_helper_tick charging at build time is what #107 was: a beat the transport
+ * refused bought a full interval of silence it had not earned, and the board
+ * evicts after three of them. A platform that never calls this beats on every
+ * tick, which is the safe direction to fail in.
+ *
+ * The hello and the pair request are the exception and still charge when they
+ * are built: each has its own timeout and re-sends itself, where the beat has
+ * nothing behind it.
  */
 void dh_helper_note_sent(dh_helper *h, uint32_t now_ms);
 

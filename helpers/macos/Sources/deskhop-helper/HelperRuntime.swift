@@ -232,7 +232,18 @@ final class HelperRuntime {
             transport.release()
 
         case .send(let bytes):
-            transport.send(bytes)
+            /* The same rule as a clipboard frame below, and #107 is what it
+               cost to have it in only one of the two places: the idle timer is
+               charged for what the transport actually took. A beat charged for
+               one it refused bought a full interval of silence, and three of
+               those has the board evict this helper. Said out loud too — a
+               refusal here used to be indistinguishable from a healthy quiet
+               link. */
+            if transport.send(bytes) {
+                session.noteSent(at: now)
+            } else {
+                Self.note("a session frame was not taken by the transport and is lost")
+            }
 
         case .state(let state):
             Self.note("state: \(state.message ?? "(nothing to report)")")

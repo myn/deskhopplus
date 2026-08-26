@@ -227,7 +227,9 @@ final class ChannelTransport {
     /// Whether the frame actually went out. The answer matters to ADR-0004's
     /// idle timer: a caller that charged it for a frame this refused would
     /// suppress a heartbeat that was owed (`HelperSession.emit`).
-    @discardableResult
+    /* Deliberately not @discardableResult: every caller has to decide what a
+       refusal means, because a caller that ignores it charges ADR-0004's idle
+       timer for a frame that never went out. That is exactly what #107 was. */
     func send(_ frameBytes: [UInt8]) -> Bool {
         guard let channel = channels.first, channel.opened else {
             log?("dropped \(frameBytes.count) bytes: no channel held")

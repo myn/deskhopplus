@@ -130,10 +130,13 @@ class HelperSession {
      */
     bool emit(uint8_t type, const std::vector<uint8_t> &body, std::vector<uint8_t> &out);
 
-    /* The transport wrote a frame this machine did not produce. ADR-0004's
-       heartbeat fills a direction that has carried *nothing* for a full
-       interval, and traffic the core never saw would otherwise have it beating
-       into a direction that is far from idle. */
+    /* A frame this helper actually got out, whoever produced it — including
+       the beat the core built a moment ago. ADR-0004's heartbeat fills a
+       direction that has carried *nothing* for a full interval, so anything
+       that did carry has to say so. Called once the transport has taken the
+       frame, never before: charging for a refused one buys an interval of
+       silence the helper has not earned, and the board evicts after three
+       (#107). See dh_helper.h for the hello and pair-request exception. */
     void note_sent(uint32_t now_ms);
 
     /*

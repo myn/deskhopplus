@@ -121,3 +121,37 @@ broken sessions — and only once #52 landed, which is the deadline it was writt
 - The glossary (`CONTEXT.md`) now separates **Link**, **Connection** and **Session**. Having one
   word for all three is why this defect was invisible: a dead session and a live connection look
   identical when you cannot name the difference.
+
+## Amendment, 2026-08-25 — the idle timer belongs to what actually went out
+
+The rule above says a heartbeat is emitted only when that direction has been idle for a full
+interval. It did not say *who decides the direction carried something*, and the two ends of the
+helper answered differently.
+
+The clipboard path charged the idle timer only for a frame the transport had taken, and said so at
+the call site: *"Charging for one it refused would suppress a beat that ADR-0004 owed the board."*
+The session path — which is where the beat itself is — charged it at **build** time, inside
+`dh_helper_tick`, before the platform had been asked. Both helpers then discarded their transport's
+answer for session frames, so a refused beat was silently lost **and** bought a full interval of
+silence it had not earned.
+
+The board evicts a helper after `DH_SESSION_ABSENT_MS`, which is three intervals. Three refusals in
+a row therefore ends the session, with nothing at either end able to say why — the symptom
+[#107](https://github.com/myn/deskhopplus/issues/107) carries.
+
+**One rule now, in one place:** `dh_helper_note_sent` is what charges the timer, and the beat is not
+exempt. `dh_helper_tick` builds the beat and stops there. The hello and the pair request still
+charge at build time, deliberately — each has its own timeout and re-sends itself, where the beat
+has nothing behind it.
+
+A platform that never charges the timer beats on every tick. That is the safe direction to fail
+in — noisy rather than silent — and it is why this is a removal rather than a callback. On macOS
+`ChannelTransport.send` also loses its `@discardableResult`, so the compiler now refuses a caller
+that ignores whether a frame went out.
+
+**This does not close #107 on its own.** The measured symptom is the board timing the helper out at
+irregular intervals, and nothing yet shows this defect firing on hardware. What ships beside the fix
+is the reading that would show it: `DH_NOTE_SESSION_ENDED` now carries how long this helper had gone
+without getting a frame out, so a liveness end says whether the two ends agree about the silence.
+They disagreeing means frames are being lost between them; they agreeing means the helper really did
+stall, and those are different faults.

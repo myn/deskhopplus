@@ -392,7 +392,16 @@ void Helper::apply(const Output &output) {
         break;
 
     case Output::Kind::Send:
-        transport_.send(output.bytes.data(), output.bytes.size());
+        /* The same rule as a clipboard frame in emit(), and #107 is what it
+           cost to have it in only one of the two places: the idle timer is
+           charged for what the transport actually took. A beat charged for one
+           it refused bought a full interval of silence, and three of those has
+           the board evict this helper. Said out loud too — a refusal here used
+           to be indistinguishable from a healthy quiet link. */
+        if (transport_.send(output.bytes.data(), output.bytes.size()))
+            session_->note_sent(now_ms());
+        else
+            log("a session frame was not taken by the transport and is lost");
         break;
 
     case Output::Kind::State:

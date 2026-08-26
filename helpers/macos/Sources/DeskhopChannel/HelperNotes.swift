@@ -77,8 +77,11 @@ enum HelperNotes {
         case DH_NOTE_BEAT_QUIET:
             return "device heartbeat quiet for \(seconds(a))"
         case DH_NOTE_SESSION_ENDED:
+            /* This end's own silence goes beside the board's reason, because
+               on a liveness end the two disagreeing is the finding (#107). */
             return "the device ended the session: "
                  + "\(SessionEndReason(wire: UInt8(truncatingIfNeeded: a)))"
+                 + "; this helper last got a frame out \(seconds(b)) ago"
         case DH_NOTE_LISTENER_DETECTED:
             return "listener detected: \(a) refused frames in \(b)ms"
         case DH_NOTE_NO_ACK:

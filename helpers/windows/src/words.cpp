@@ -205,7 +205,10 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
     case DH_NOTE_BEAT_QUIET:
         return "device heartbeat quiet for " + seconds(a);
     case DH_NOTE_SESSION_ENDED:
-        return "the device ended the session: " + session_end(a);
+        /* This end's own silence goes beside the board's reason, because on a
+           liveness end the two disagreeing is the finding (#107). */
+        return "the device ended the session: " + session_end(a) +
+               "; this helper last got a frame out " + seconds(b) + " ago";
     case DH_NOTE_LISTENER_DETECTED:
         return "listener detected: " + std::to_string(a) + " refused frames in " +
                std::to_string(b) + "ms";
