@@ -148,6 +148,13 @@ final class HelperRuntime {
          */
         let live = session.canSendBulk
         if bulkWasAllowed && !live {
+            /* The board's own view, at the moment it stopped hearing this
+               helper. It was printed only when a *transfer* was abandoned,
+               which is never the same instant — and the instant is the whole
+               question (#107). */
+            if let drops = session.boardDrops {
+                Self.note("at the end: " + drops.line)
+            }
             emit(clipboard.sessionEnded())
         }
         bulkWasAllowed = live
