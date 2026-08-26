@@ -93,6 +93,11 @@ add_executable(outq_test outq_test.c ${CORE}/dh_outq.c ${CORE}/dh_frame.c)
 target_include_directories(outq_test PRIVATE ${CORE})
 add_test(NAME outq_test COMMAND outq_test)
 
+# The other side of the same board: what core 1 reassembles from the peer board
+# and parks for core 0 to re-tag (#139).
+add_executable(inq_test inq_test.c ${CORE}/dh_inq.c ${CORE}/dh_frame.c)
+target_include_directories(inq_test PRIVATE ${CORE})
+add_test(NAME inq_test COMMAND inq_test)
 
 # The transfer machine, with every message crossing the real codecs — which
 # since #113 means crossing the real seal too. aes_gcm_ref.c is the suite's own

@@ -8,6 +8,7 @@
 #include <pico/critical_section.h>
 #include <pico/rand.h>
 
+#include "dh_inq.h"
 #include "dh_outq.h"
 #include "dh_pair.h"
 #include "dh_relay.h"
@@ -68,8 +69,8 @@ static struct {
     uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
 
     /*
-     * One frame reassembled from the peer board, waiting for core 0 to write
-     * this board's tag over it.
+     * Frames reassembled from the peer board, waiting for core 0 to write this
+     * board's tag over them.
      *
      * The tag is per hop, so a frame arriving from the peer board has to be
      * authenticated under *this* board's k_b2h with *this* board's counter —
@@ -78,15 +79,13 @@ static struct {
      * one core and used on the other can emit out of order, which the far end
      * refuses as a replay. So the frame is handed over and core 0 tags it.
      *
-     * Same shape, and the same reason, as config_wiped below. One slot,
-     * because a frame takes about 4 ms to arrive over a 3.6 Mbaud link and
-     * core 0 drains at 1000 Hz — a second slot would hold something that is
-     * never there.
+     * Same shape, and the same reason, as config_wiped below. This was one
+     * slot on the argument that "a frame takes about 4 ms to arrive over a
+     * 3.6 Mbaud link and core 0 drains at 1000 Hz", which is true of a
+     * full-size chunk and of nothing else — see dh_inq.h, and #139 for what it
+     * measured on both boards.
      */
-    uint8_t inbound[DH_FRAME_MAX_SIZE];
-    uint16_t inbound_len;
-    volatile bool inbound_full;
-    uint32_t inbound_dropped;
+    dh_inq inbound;
 
     /*
      * The same frame with this board's prefix written in front of it, on its
@@ -216,7 +215,11 @@ static void channel_reset_link(void) {
 
     channel.report_head = 0;
     channel.report_used = 0;
-    channel.inbound_full = false;
+
+    /* Whatever is parked was reassembled under the session that just ended.
+       The drop counter is not: it is a since-boot total the helper reads to
+       find out how often this seam overruns (#133). */
+    dh_inq_reset(&channel.inbound);
 
     critical_section_enter_blocking(&channel.out_lock);
     dh_outq_init(&channel.out);
@@ -534,51 +537,75 @@ void handle_channel_relay_msg(uart_packet_t *packet, device_t *state) {
     if (dh_relay_rx_push(&channel.relay_rx, &relayed, &frame) != DH_RELAY_OK)
         return; /* incomplete, or a loss the reassembler has already counted */
 
-    if (channel.inbound_full) {
-        /* Core 0 has not taken the previous one. Counted, and the receiving
-           helper re-requests the chunk — a frame takes about 4 ms to arrive
-           here and core 0 drains at 1000 Hz, so this is the link having
-           outrun a stalled loop rather than the ordinary case. */
-        channel.inbound_dropped++;
-        return;
-    }
-
+    /* Refused when core 0 is more than a pump batch behind, or when the frame
+       is longer than any a transfer completes with. Counted either way, and
+       the receiving helper re-requests a chunk — but not an offer, a done or a
+       credit, which is why the ring is sized to make this rare (dh_inq.h). */
     const size_t total = DH_FRAME_HEADER_SIZE + frame.hdr.len;
-    memcpy(channel.inbound, frame.payload - DH_FRAME_HEADER_SIZE, total);
-    channel.inbound_len = (uint16_t)total;
+    if (!dh_inq_stage(&channel.inbound, frame.payload - DH_FRAME_HEADER_SIZE, (uint16_t)total))
+        return;
 
-    /* The flag is what core 0 reads, so the bytes must be visible before it
-       is set. Cortex-M0+ retires in order, but the compiler is under no such
-       obligation. */
+    /* The published slot is what core 0 reads, so the bytes must be visible
+       before it moves. Cortex-M0+ retires in order, but the compiler is under
+       no such obligation. */
     __dmb();
-    channel.inbound_full = true;
+    dh_inq_publish(&channel.inbound);
 }
 
-/* Whatever the peer board handed over, tagged for this board's helper. */
+/*
+ * Whatever the peer board handed over, tagged for this board's helper.
+ *
+ * Drained to exhaustion rather than one frame per pass. One per pass caps this
+ * seam at 1000 frames a second, which sounds ample and is not: the burst that
+ * overruns it is short frames — a relayed CLIP_CREDIT is ten bytes — and a
+ * batch of those crosses the link inside a fraction of one pass. The ring
+ * parks them; taking only one of them per pass would simply move where they
+ * are lost (#139).
+ *
+ * The loop stops on a refused enqueue instead of running the ring dry into a
+ * full queue. The frames behind it stay parked and go out on a later pass,
+ * which is the back-pressure this seam otherwise has none of.
+ *
+ * What this costs per pass is a tag per frame, and that cost is not yet
+ * measured (#115). It is bounded by DH_INQ_DEPTH and, in the traffic that
+ * fills the ring, small: the ring fills with short frames, because a full
+ * chunk takes about 4 ms to cross the link and is drained long before a second
+ * one lands. A ring full of full-size chunks is not reachable at the rate the
+ * link delivers them — if #115 finds otherwise, this is the loop to bound.
+ */
 static void channel_pump_inbound(void) {
-    if (!channel.inbound_full)
-        return;
+    const uint8_t *at = NULL;
+    uint16_t len = 0;
 
-    dh_frame_view frame;
-    size_t consumed = 0;
-    if (dh_frame_decode(channel.inbound, channel.inbound_len, &frame, &consumed) == DH_FRAME_OK) {
-        /*
-         * The same gate as the outbound direction, and for the sharper reason:
-         * without it, a local process that holds this board's channel and never
-         * authenticates is still handed everything the *other* computer's
-         * paired helper sends. That is precisely the cross-machine path #34
-         * exists to close, and it is not closed by refusing to relay outward
-         * alone. dh_session_emit_relayed refuses outright when there is no
-         * session, because without one there is no key to tag under either.
-         */
+    while (dh_inq_peek(&channel.inbound, &at, &len)) {
+        dh_frame_view frame;
+        size_t consumed = 0;
         size_t tagged_len = 0;
-        if (dh_session_emit_relayed(&channel.session, &frame, channel.tagged,
-                                    sizeof channel.tagged, &tagged_len) == DH_FRAME_OK)
-            (void)channel_queue_frame(channel.tagged, tagged_len);
-    }
 
-    __dmb();
-    channel.inbound_full = false;
+        const bool tagged =
+            dh_frame_decode(at, len, &frame, &consumed) == DH_FRAME_OK &&
+            /*
+             * The same gate as the outbound direction, and for the sharper
+             * reason: without it, a local process that holds this board's
+             * channel and never authenticates is still handed everything the
+             * *other* computer's paired helper sends. That is precisely the
+             * cross-machine path #34 exists to close, and it is not closed by
+             * refusing to relay outward alone. dh_session_emit_relayed refuses
+             * outright when there is no session, because without one there is
+             * no key to tag under either.
+             */
+            dh_session_emit_relayed(&channel.session, &frame, channel.tagged,
+                                    sizeof channel.tagged, &tagged_len) == DH_FRAME_OK;
+
+        /* Read before the slot goes back to core 1. */
+        __dmb();
+        dh_inq_release(&channel.inbound);
+
+        /* A frame the queue refused is lost and counted there, as it always
+           was. What is new is that the rest of the ring is not lost with it. */
+        if (tagged && !channel_queue_frame(channel.tagged, tagged_len))
+            break;
+    }
 }
 
 /* Drain what the relay owes into the shared inter-board queue. The burst cap
@@ -705,7 +732,7 @@ void channel_task(device_t *state) {
      * itself whether a fresh reading is worth a frame.
      */
     state->_channel_reports_dropped = channel.reports_dropped;
-    state->_channel_inbound_dropped = channel.inbound_dropped;
+    state->_channel_inbound_dropped = channel.inbound.dropped;
     state->_channel_outq_refused = channel.out.refused;
     state->_channel_relay_dropped = channel.tx.dropped;
     state->_channel_relay_orphans = channel.relay_rx.orphans;
@@ -714,7 +741,7 @@ void channel_task(device_t *state) {
 
     const dh_device_drops drops = {
         .reports = channel.reports_dropped,
-        .inbound = channel.inbound_dropped,
+        .inbound = channel.inbound.dropped,
         .outq = channel.out.refused,
         .unsent = channel.tx.dropped,
         .orphans = channel.relay_rx.orphans,

@@ -130,3 +130,40 @@ than merely climb slower; it is readable live in the helper logs since
 [#133](https://github.com/myn/deskhopplus/issues/133). `outq_test` now asserts the honest bound —
 `DH_XFER_CREDIT_WINDOW + 1 <= 1 + DH_OUTQ_DEPTH` — so the two constants cannot drift apart again.
 
+## Amendment, 2026-08-25 — the same fault, at the inbound seam this ADR never covered
+
+This ADR names *two* seams, and both are outbound. There is a third, and it had the identical
+defect: the slot where core 1 parks a frame reassembled from the peer board for core 0 to re-tag.
+It held one frame and refused the next outright, on this reasoning — *"a frame takes about 4 ms to
+arrive over a 3.6 Mbaud link and core 0 drains at 1000 Hz, so a second slot would hold something
+that is never there."*
+
+True of a full-size `CLIP_CHUNK` and of nothing else. A relayed `CLIP_CREDIT` is ten bytes — three
+inter-board packets, roughly 100 µs — and since the credit window was sized against the outbound
+queue the receiver grants one credit per chunk rather than one per eight, so the reverse path
+carries short frames in batches. Several land inside one of core 0's 1 ms passes and only the first
+survives. Measured on both boards under nothing more than a few clipboard copies, and by
+[#139](https://github.com/myn/deskhopplus/issues/139)'s readings it was the dominant loss on the
+board by an order of magnitude. No core-0 stall is needed to explain it, and none was found.
+
+Given the same shape, it gets the same answer: a bounded ring, `src/core/dh_inq.{h,c}`, host-tested
+in `tests/inq_test.c`, four slots of `DH_OUTQ_STAGE_MAX`. Four is one pump batch — what actually
+arrives back to back in either direction. Core 0 now drains the ring to exhaustion on each pass
+rather than taking one frame, since taking one per pass would only move where the batch is lost;
+the drain stops on a refused enqueue and leaves the rest parked, which is back-pressure this seam
+previously had none of.
+
+It is a ring rather than a fourth `dh_outq`. `dh_outq` tracks a frame's progress through a drain
+that takes bytes in small fixed units; here a frame is taken whole, and the only thing that has to
+be right is that one core writes while the other reads. The memory barriers stay in `channel.c`,
+because a barrier is a platform instruction and `src/core` has no platform.
+
+**One narrowing.** A slot is `DH_OUTQ_STAGE_MAX` where the old one was `DH_FRAME_MAX_SIZE`, so a
+relayed frame longer than the largest a transfer can complete with is now refused and counted
+rather than carried. Nothing `dh_xfer` emits is that long and the negotiated chunk size is clamped
+below it, and a frame past that bound could never queue behind anything on the far board's outbound
+queue either — it was only ever carried when that queue happened to be idle.
+
+**Measured cost**: SRAM `data`+`bss` 186,724 → 187,012 bytes — 288 for the ring, on top of the
+2,200 the amendment above cost. It replaces a 4 KiB slot, so four slots of 1,095 bytes are nearly
+free. ~73 KB of SRAM is left.
