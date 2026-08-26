@@ -507,9 +507,17 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
         (void)channel_queue_frame(reply, reply_len);
 }
 
-/* Drain the reports the USB callback left, decoding frames out of the stream. */
-static void channel_drain_reports(device_t *state) {
-    const uint32_t now = channel_now_ms();
+/*
+ * Drain the reports the USB callback left, decoding frames out of the stream.
+ *
+ * `now` is the caller's, never a fresh read. This read the clock for itself
+ * once, and stamped the session's liveness deadline with a value *later* than
+ * the one channel_task then judged that deadline against — so a millisecond
+ * turning over between the two reads, while a frame happened to arrive, left
+ * the stamp one ahead of the clock and the difference wrapped. The board then
+ * evicted a helper it had heard from that instant (#107).
+ */
+static void channel_drain_reports(device_t *state, uint32_t now) {
 
     while (channel.report_used > 0) {
         const uint8_t slot = channel.report_head;
@@ -724,7 +732,7 @@ void channel_task(device_t *state) {
         dh_session_stage_nonce(&channel.session, nonce);
     }
 
-    channel_drain_reports(state);
+    channel_drain_reports(state, now);
 
     /* Written after the grant is already in the outbound queue, because a
        grant the helper never receives is a pairing neither end holds — and

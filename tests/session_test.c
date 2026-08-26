@@ -371,6 +371,39 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
      * across the eviction, so this is the board's side of that disagreement,
      * and it is the number that says whether the silence was real.
      */
+    /*
+     * A deadline stamped one millisecond *after* the clock the tick is judged
+     * on must read as no time elapsed, never as 49 days (#107).
+     *
+     * This is what the fault was. channel_task read the clock at the top and
+     * channel_drain_reports read it again, later, to stamp last_seen_ms — so a
+     * frame arriving as the millisecond turned over left the stamp one ahead
+     * of the tick's `now`. The unsigned difference wrapped to 0xFFFFFFFF,
+     * which is >= DH_SESSION_ABSENT_MS, and the board evicted a helper it had
+     * heard from moments earlier. It printed as "heard nothing for -1ms" on
+     * every eviction, on both boards.
+     *
+     * The firmware now reads the clock once a pass. This is the second half:
+     * the rule itself must not turn one millisecond of skew into an eviction,
+     * whatever a caller does.
+     */
+    if (find("hello_mac")) {
+        const struct vector *hv = find("hello_mac");
+        dh_session skew;
+        a_paired_board(&skew, DH_BUILD_RELEASE);
+        const uint32_t at = 400000;
+        uint8_t out_buf[DH_SESSION_REPLY_MAX];
+        CHECK(feed(&skew, hv->f[0], hv->len[0], at, out_buf, sizeof out_buf) > 0, "skew",
+              "no session");
+        settle_openers(&skew, at);
+        /* The stamp is one ahead of the clock the tick is given — the shape a
+           second, later clock read produced in channel_task. */
+        skew.last_seen_ms = at + 1;
+        CHECK(tick(&skew, at, out_buf, sizeof out_buf) == 0, "skew",
+              "a stamp one millisecond ahead of the tick evicted the helper");
+        CHECK(skew.present, "skew", "the session was dropped by one millisecond of skew");
+    }
+
     if (find("hello_mac")) {
         const struct vector *hv = find("hello_mac");
         dh_session s;

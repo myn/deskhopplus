@@ -750,9 +750,28 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
 
     if (!s->present) return DH_FRAME_OK;
 
-    /* Unsigned difference throughout, so a wrapping millisecond counter is
-       just arithmetic rather than a session dropped once every 49 days. */
-    if ((uint32_t)(now_ms - s->last_seen_ms) >= (uint32_t)DH_SESSION_ABSENT_MS)
+    /*
+     * A **signed** difference, which is the wrap-safe idiom this needs and the
+     * unsigned one is not.
+     *
+     * Unsigned handles the 49-day wrap, which is what the old comment here
+     * claimed and was true. What it cannot handle is a stamp that is *ahead*
+     * of the clock this tick was handed: the subtraction underflows to
+     * ~4.29e9, which is comfortably >= DH_SESSION_ABSENT_MS, and the board
+     * evicts a helper it heard from a moment ago.
+     *
+     * That was not hypothetical. channel_task read the clock at the top and
+     * channel_drain_reports read it again, later, to stamp last_seen_ms — so
+     * one millisecond turning over between the two reads while a frame arrived
+     * was enough. It printed as "heard nothing for -1ms" on every eviction, on
+     * both boards, which is 0xFFFFFFFF wearing its true face (#107).
+     *
+     * The firmware now reads the clock once a pass. This is the half that does
+     * not depend on it: a stamp in the future reads as no time elapsed, which
+     * is the only honest answer, and the 49-day wrap is still just arithmetic
+     * so long as an interval stays under ~24 days.
+     */
+    if ((int32_t)(now_ms - s->last_seen_ms) >= (int32_t)DH_SESSION_ABSENT_MS)
         return dh_session_end(s, DH_SESSION_END_LIVENESS_TIMEOUT,
                               (uint32_t)(now_ms - s->last_seen_ms), out, out_cap, out_len);
 
