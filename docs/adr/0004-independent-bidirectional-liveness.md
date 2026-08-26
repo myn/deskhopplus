@@ -136,8 +136,14 @@ answer for session frames, so a refused beat was silently lost **and** bought a 
 silence it had not earned.
 
 The board evicts a helper after `DH_SESSION_ABSENT_MS`, which is three intervals. Three refusals in
-a row therefore ends the session, with nothing at either end able to say why — the symptom
-[#107](https://github.com/myn/deskhopplus/issues/107) carries.
+a row therefore ends the session, with nothing at either end able to say why.
+
+**That is a defect in its own right and is not claimed to be
+[#107](https://github.com/myn/deskhopplus/issues/107)'s cause.** #107's evictions run from 0.2 s to
+6,811 s apart, and the low end of that cannot be an idle timeout at all: `DH_SESSION_ABSENT_MS` is a
+3,000 ms floor, `last_seen_ms` is set where the session is established and only one code path sets
+`present`, so no idle timer can evict a session younger than three seconds. Two in the current log
+were evicted at 1.2 s and 2.0 s of age. Whatever that is, it is not this.
 
 **One rule now, in one place:** `dh_helper_note_sent` is what charges the timer, and the beat is not
 exempt. `dh_helper_tick` builds the beat and stops there. The hello and the pair request still
