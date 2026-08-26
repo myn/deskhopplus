@@ -497,6 +497,24 @@ typedef struct {
        board's measurement, not the session's, and a total that restarts on
        every reconnect cannot answer how much this seam heard (#107). */
     uint32_t frames_in;
+    /*
+     * Sessions this board has established since boot, so a caller can see that
+     * the one it holds is not the one it held a moment ago (#143).
+     *
+     * Only a hello that authenticated moves it — a listener cannot make the
+     * board discard a live session's work by writing at the endpoint (#34).
+     *
+     * The board's outbound queue is what needs this. A helper that drops its
+     * connection reopens its handles, so its frame reader restarts mid-stream;
+     * everything the board still owed the old session is then either the
+     * leftover of a half-drained frame or a whole frame tagged under keys that
+     * no longer exist, and both drop the new session as fast as it was made.
+     * The board cannot see the reopen, so it acts on the hello instead.
+     *
+     * Read the way channel.c already reads dh_pair.registrations: sampled
+     * before dh_session_on_frame and compared after.
+     */
+    uint32_t sessions;
     /* Frames that reached authentication and failed it, since boot. The
        listener window below counts the same events to fire an alert at a
        *rate*; this is the total, and survives a drop for the same reason. */

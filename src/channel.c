@@ -490,8 +490,30 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
     size_t reply_len = 0;
 
     const uint32_t registrations = channel.pair.registrations;
+    const uint32_t sessions = channel.session.sessions;
     const dh_frame_result rc = dh_session_on_frame(&channel.session, &channel.pair, frame, now,
                                                   reply, sizeof reply, &reply_len);
+
+    /*
+     * A new session begins with an empty stream to this helper.
+     *
+     * The helper that just said hello reopened its handles to say it — every
+     * teardown closes them — so its frame reader is starting from nothing.
+     * What this queue still held belongs to the session that went, and both
+     * halves of it break the new one: the unsent tail of a half-drained frame,
+     * which a fresh reader takes for a header and follows into garbage, and
+     * whole frames tagged under keys that no longer exist, which fail their
+     * tag. Both drop the session as fast as it was made, and the board is then
+     * mid-frame again on the next attempt — the flap #143's log ends on.
+     *
+     * Ahead of the ack, so the ack's first byte is the stream's first byte.
+     * The refusal totals survive, as they do on every other reset (#142).
+     */
+    if (channel.session.sessions != sessions) {
+        critical_section_enter_blocking(&channel.out_lock);
+        dh_outq_reset(&channel.out);
+        critical_section_exit(&channel.out_lock);
+    }
 
     /* A registration is the one thing here that has to outlive a power cut. */
     if (channel.pair.registrations != registrations) {

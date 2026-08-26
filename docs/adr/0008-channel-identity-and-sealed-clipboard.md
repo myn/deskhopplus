@@ -218,5 +218,6 @@ order they were tagged, which was never true on this transport. A counter past t
 refused outright rather than searched for, because past that distance the record of whether it
 was seen no longer exists.
 
-The window is sized far above the real reorder distance, which the queue bounds at two staged
-frames behind one in flight. The cost is eight bytes per counter space.
+The window is sized far above the real reorder distance, which the queue bounds at **two** staged
+frames behind one in flight (three since #141 — see the amendment on
+[ADR-0005](0005-bounded-outbound-queues.md); the window is far above either). The cost is eight bytes per counter space.

@@ -560,6 +560,9 @@ static dh_frame_result answer_hello(dh_session *s, dh_pair *pair, const dh_frame
     s->tx_counter = 0;
 
     s->present = true;
+    /* Saturating, and a board reaching four billion sessions has a fault this
+       counter is not the reading for. */
+    if (s->sessions != UINT32_MAX) s->sessions++;
     s->peer_os = hello.os;
     s->channel_count = ack.channel_count;
     s->max_chunk = ack.max_chunk;

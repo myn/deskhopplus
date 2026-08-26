@@ -1634,6 +1634,62 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
 }
 
 /*
+ * A fresh session is a fresh byte stream, and the board has to be able to say
+ * where one ends (#143).
+ *
+ * A helper that drops its connection closes its handles and reopens them, so
+ * its frame reader restarts mid-stream. Whatever the board still owes the old
+ * session is then two kinds of wrong at once: the leftover of a half-drained
+ * frame, which a fresh reader reads as a header, and whole frames tagged under
+ * keys that no longer exist. Either drops the new session as fast as it was
+ * made, which is the flap the ticket's log ends on.
+ *
+ * The board cannot see the reopen. What it can see is a hello it accepted, and
+ * this is the count that lets it — the same shape as dh_pair.registrations,
+ * which channel.c already reads this way to know a registration was written.
+ */
+static void test_a_new_session_is_countable(void) {
+    const struct vector *hello_v = find("hello_mac");
+    if (!hello_v) return;
+
+    dh_session s;
+    a_paired_board(&s, DH_BUILD_RELEASE);
+    CHECK(s.sessions == 0, "sessions", "a board that has held no session counts one");
+
+    uint32_t now = 400000;
+    uint8_t reply[DH_SESSION_REPLY_MAX];
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "sessions",
+          "no session");
+    CHECK(s.sessions == 1, "sessions", "an established session was not counted");
+
+    /* An ordinary frame inside it is not a new session. */
+    const size_t len = tick(&s, now, reply, sizeof reply);
+    CHECK(len > 0, "sessions", "the fresh session owed nothing at all");
+    CHECK(s.sessions == 1, "sessions", "traffic inside a session counted as a new one");
+
+    /* The helper drops and comes back. That is a second session, and the count
+       is what channel.c reads to drop what it still owed the first. */
+    dh_session_drop(&s);
+    dh_session_stage_nonce(&s, board_nonce);
+    now += 1000;
+    CHECK(feed(&s, hello_v->f[0], hello_v->len[0], now, reply, sizeof reply) > 0, "sessions",
+          "no second session");
+    CHECK(s.sessions == 2, "sessions", "a reconnect was not counted as a new session");
+
+    /* A hello that does not authenticate establishes nothing, so it counts
+       nothing — otherwise anything writing into a shared endpoint could make
+       the board discard a live session's queue (#34). */
+    uint8_t bad[DH_FRAME_MAX_SIZE];
+    memcpy(bad, hello_v->f[0], hello_v->len[0]);
+    bad[hello_v->len[0] - 1] ^= 0x01u;
+    dh_session_drop(&s);
+    dh_session_stage_nonce(&s, board_nonce);
+    now += 1000;
+    (void)feed(&s, bad, hello_v->len[0], now, reply, sizeof reply);
+    CHECK(s.sessions == 2, "sessions", "a hello that failed its tag started a session");
+}
+
+/*
  * The seven drop totals reach the helper over the channel, which is the whole
  * point of #133: on the config page they could only ever read zero, because
  * the page is reachable only in config mode and config mode is entered by
@@ -1841,6 +1897,7 @@ int main(int argc, char **argv) {
     test_a_pair_grant_does_not_fit_the_buffer_v1_used();
     test_an_eviction_the_board_knows_about_is_announced();
     test_every_session_is_told_the_clipboard_policy();
+    test_a_new_session_is_countable();
     test_a_session_is_told_what_the_board_has_dropped();
     test_a_board_that_is_dropping_frames_still_beats();
     test_the_direction_toggles_map_onto_each_board();

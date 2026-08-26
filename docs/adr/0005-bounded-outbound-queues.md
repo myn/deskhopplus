@@ -167,3 +167,36 @@ queue either — it was only ever carried when that queue happened to be idle.
 **Measured cost**: SRAM `data`+`bss` 186,724 → 187,012 bytes — 288 for the ring, on top of the
 2,200 the amendment above cost. It replaces a 4 KiB slot, so four slots of 1,095 bytes are nearly
 free. ~73 KB of SRAM is left.
+
+## Amendment, 2026-08-26 — a new session empties the queue
+
+This queue had no rule for what happens when the session it was filled for ends.
+
+Nothing here is wrong on its own terms: a bounded queue holds frames, and a frame it holds is a
+frame the transport still owes. What was missing is that the *reader* on the far end of that
+transport does not survive a teardown. Every helper teardown closes its handles and reopens them,
+so its `dh_frame_reader` restarts from nothing — and what this queue still held was then two
+kinds of wrong at once. The unsent tail of a half-drained frame, which a fresh reader takes for a
+header and follows into garbage. And whole frames tagged under keys that no longer exist, which
+fail their tag. Both drop the session as fast as it was made, and the board is mid-frame again on
+the next attempt, so one teardown became a flap.
+
+**`channel.c` now calls `dh_outq_reset` when `dh_session.sessions` moves**, ahead of queueing the
+`HELLO_ACK` — so the ack's first byte is the new stream's first byte. `dh_outq_reset` already
+existed and already said this was its purpose ("what is queued was built for a session that no
+longer exists"); it had no caller on this path. The four refusal totals survive the reset, as they
+do everywhere else (#142).
+
+Only a hello that authenticated moves the count, so a second writer on a shared endpoint cannot
+make the board discard a live session's queue (#34). `dh_pair.registrations` is the same idiom,
+sampled before `dh_session_on_frame` and compared after, in the same function.
+
+The frames dropped here are a real loss with no retransmit, and that is the right trade: they were
+addressed to a session that has gone, and delivering them costs the session that replaced it.
+
+**Measured cost**: SRAM `data`+`bss` 188,100 → 188,108 bytes — eight, for a four-byte counter
+that lands on an eight-byte boundary.
+
+Found by [#143](https://github.com/myn/deskhopplus/issues/143), where it is the tail of the log
+rather than the head — the first loss was a report the Windows HID class driver dropped, and this
+is what turned that one desync into three teardowns.
