@@ -133,6 +133,16 @@ class ClipService {
     bool may_send() const { return may_send_; }
     bool may_receive() const { return may_receive_; }
 
+    /* Every seam the board says has lost something, named, plus the inbound
+       chain that is not a loss at all. Seams that have lost nothing are left
+       out, so the ordinary line says so in three words and a line with
+       anything in it is all signal.
+
+       Public, and static, because the eviction path in main.cpp quotes it at
+       the instant a session ends — the counterpart of macOS's BoardDrops.line,
+       which is public for the same reason (#107). */
+    static std::string drops_line(const dh_device_drops *drops);
+
   private:
     std::vector<ClipOutput> on_seal_offered(const uint8_t *body, size_t len);
     std::vector<ClipOutput> on_seal_accepted(const uint8_t *body, size_t len);
@@ -158,11 +168,6 @@ class ClipService {
        cannot tell a transfer whose chunks never arrived from one whose chunks
        all arrived and were refused, and those have nothing in common. */
     std::string progress_line() const;
-
-    /* Every seam the board says has lost something, named. Seams that have
-       lost nothing are left out, so the ordinary line says so in three words
-       and a line with anything in it is all signal. */
-    static std::string drops_line(const dh_device_drops *drops);
 
     const dh_seal_aead *aead_;
     std::function<void(uint8_t *, size_t)> entropy_;
