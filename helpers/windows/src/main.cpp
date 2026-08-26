@@ -371,15 +371,7 @@ void Helper::feed(const std::vector<Output> &outputs) {
      * matters is the one this misses.
      */
     const bool live = session_->can_send_bulk();
-    if (bulk_was_allowed_ && !live) {
-        /* The board's own view, at the moment it stopped hearing this helper.
-           It was printed only when a *transfer* was abandoned, which is never
-           the same instant — and the instant is the whole question (#107). */
-        dh_device_drops ended{};
-        if (session_->device_drops(&ended))
-            log("at the end: " + ClipService::drops_line(&ended));
-        emit(clipboard_service_->session_ended());
-    }
+    if (bulk_was_allowed_ && !live) emit(clipboard_service_->session_ended());
     bulk_was_allowed_ = live;
 }
 

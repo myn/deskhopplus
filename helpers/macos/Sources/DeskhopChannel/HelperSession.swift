@@ -411,12 +411,19 @@ public final class HelperSession {
 
     private func collect(transportReason: String?) -> [SessionOutput] {
         var result: [SessionOutput] = []
+        var sessionEnded = false
         let count = min(outputs.pointee.count, Int(DH_HELPER_OUTPUTS_MAX))
 
         withUnsafePointer(to: &outputs.pointee.items) { tuple in
             tuple.withMemoryRebound(to: dh_helper_output.self,
                                     capacity: Int(DH_HELPER_OUTPUTS_MAX)) { items in
                 for index in 0..<count {
+                    /* Read off the note *kind*, never the rendered wording —
+                       the words are the log's, and a log line is not an API. */
+                    if items[index].kind == UInt8(DH_HELPER_OUT_NOTE.rawValue),
+                       items[index].note == UInt8(DH_NOTE_SESSION_ENDED.rawValue) {
+                        sessionEnded = true
+                    }
                     result.append(translate(items[index], transportReason: transportReason))
                 }
             }
@@ -430,6 +437,22 @@ public final class HelperSession {
          */
         if outputs.pointee.overflow > 0 {
             result.append(.note("\(outputs.pointee.overflow) output(s) did not fit and were lost"))
+        }
+
+        /*
+         * The board's own totals, at the instant it stopped hearing this
+         * helper — which is the question #107 is open on, and never the same
+         * instant as a transfer being abandoned.
+         *
+         * Hung off the session-end *note*, deliberately. It was hung off the
+         * `canSendBulk` edge in HelperRuntime first and never fired once:
+         * `dh_helper_allows_bulk` counts `reconnectingRepeatedly` as allowing
+         * bulk, so that edge stops firing exactly when the flap rate has
+         * tripped — which is the state every one of these teardowns lands in.
+         * The comment beside that edge says so; this is what it warns about.
+         */
+        if sessionEnded, let drops = boardDrops {
+            result.append(.note("at the end: " + drops.line))
         }
         return result
     }

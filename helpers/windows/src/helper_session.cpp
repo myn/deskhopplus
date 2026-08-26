@@ -3,6 +3,7 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "clip_service.h"
 #include "words.h"
 
 namespace deskhop {
@@ -127,6 +128,7 @@ std::vector<Output> HelperSession::tick(uint32_t now_ms) {
 }
 
 std::vector<Output> HelperSession::collect(const std::string &transport_reason) {
+    bool session_ended = false;
     std::vector<Output> result;
     const size_t count = outputs_->count < DH_HELPER_OUTPUTS_MAX ? outputs_->count
                                                                  : DH_HELPER_OUTPUTS_MAX;
@@ -161,6 +163,9 @@ std::vector<Output> HelperSession::collect(const std::string &transport_reason) 
             out.kind = Output::Kind::Note;
             out.note = words::note_line(static_cast<dh_helper_note>(item.note), item.a, item.b,
                                         transport_reason);
+            /* Read off the note *kind*, never the rendered wording — the words
+               are the log's, and a log line is not an API (#107). */
+            if (item.note == DH_NOTE_SESSION_ENDED) session_ended = true;
             break;
         case DH_HELPER_OUT_CLIP_POLICY:
             out.kind = Output::Kind::ClipPolicy;
@@ -189,6 +194,25 @@ std::vector<Output> HelperSession::collect(const std::string &transport_reason) 
         lost.kind = Output::Kind::Note;
         lost.note = std::to_string(outputs_->overflow) + " output(s) did not fit and were lost";
         result.push_back(std::move(lost));
+    }
+
+    /*
+     * The board's own totals, at the instant it stopped hearing this helper —
+     * the question #107 is open on, and never the same instant as a transfer
+     * being abandoned.
+     *
+     * Hung off the session-end note, deliberately. It was hung off the
+     * can_send_bulk edge in main.cpp first and never fired once:
+     * dh_helper_allows_bulk counts reconnectingRepeatedly as allowing bulk, so
+     * that edge stops firing exactly when the flap rate has tripped, which is
+     * the state every one of these teardowns lands in.
+     */
+    dh_device_drops ended{};
+    if (session_ended && device_drops(&ended)) {
+        Output at_end;
+        at_end.kind = Output::Kind::Note;
+        at_end.note = "at the end: " + ClipService::drops_line(&ended);
+        result.push_back(std::move(at_end));
     }
     return result;
 }
