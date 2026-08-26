@@ -81,7 +81,14 @@ enum HelperNotes {
                on a liveness end the two disagreeing is the finding (#107). */
             return "the device ended the session: "
                  + "\(SessionEndReason(wire: UInt8(truncatingIfNeeded: a)))"
-                 + "; this helper last got a frame out \(seconds(b)) ago"
+                 /* Milliseconds, not seconds: the three answers this has to
+                    separate are a few ms (the helper sent in this same turn,
+                    so the reading says nothing), a few hundred ms (it was
+                    beating healthily and the board heard none of it) and
+                    3000+ (it really was silent). One decimal place of seconds
+                    collapses the first two into "0.0s", which is exactly what
+                    the first hardware reading did. */
+                 + "; this helper last got a frame out \(b)ms ago"
         case DH_NOTE_LISTENER_DETECTED:
             return "listener detected: \(a) refused frames in \(b)ms"
         case DH_NOTE_NO_ACK:

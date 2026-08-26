@@ -207,8 +207,14 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
     case DH_NOTE_SESSION_ENDED:
         /* This end's own silence goes beside the board's reason, because on a
            liveness end the two disagreeing is the finding (#107). */
+        /* Milliseconds, not seconds: the three answers this has to separate
+           are a few ms (the helper sent in this same turn, so the reading says
+           nothing), a few hundred ms (it was beating healthily and the board
+           heard none of it) and 3000+ (it really was silent). One decimal
+           place of seconds collapses the first two into "0.0s", which is
+           exactly what the first hardware reading did. */
         return "the device ended the session: " + session_end(a) +
-               "; this helper last got a frame out " + seconds(b) + " ago";
+               "; this helper last got a frame out " + std::to_string(b) + "ms ago";
     case DH_NOTE_LISTENER_DETECTED:
         return "listener detected: " + std::to_string(a) + " refused frames in " +
                std::to_string(b) + "ms";
