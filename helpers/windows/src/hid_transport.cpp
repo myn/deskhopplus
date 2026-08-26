@@ -42,6 +42,28 @@ namespace {
    slow is a dropped connection either way. */
 constexpr DWORD kWriteTimeoutMs = 250;
 
+/*
+ * How many input reports hidclass.sys buffers for this handle.
+ *
+ * The default is 32, and 32 is what #143 desynchronised on. The ring is
+ * overwritten rather than stalled when it fills, so a helper that falls behind
+ * loses reports with nothing said anywhere — and one report lost out of the
+ * middle of a frame is not a lost frame, it is a reader that reads the next
+ * frame's header as the tail of this one and every byte after it wrongly.
+ *
+ * The board emits one 64-byte report per millisecond, so 32 buffers is 32ms of
+ * slack on a single-threaded loop that also pumps window messages, owns the
+ * clipboard and seals a 1 KiB chunk per frame. 512 is the maximum hidclass
+ * accepts and buys about half a second, which is longer than anything on this
+ * thread blocks for.
+ *
+ * Not the whole of the fix — pump_reads draining the ring rather than one
+ * report per pass is the other half — and not a guarantee either: this is a
+ * deeper bucket, not back-pressure. DH_NOTE_BOARD_SENDS is what says
+ * whether it was deep enough.
+ */
+constexpr ULONG kInputBuffers = 512;
+
 std::string narrow(const std::wstring &text) {
     if (text.empty()) return {};
     const int needed = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr,
@@ -364,6 +386,13 @@ void HidTransport::acquire() {
             channel.handle = INVALID_HANDLE_VALUE;
             break;
         }
+        /* Best effort: an older hidclass refuses a count this high, and the
+           default it keeps is workable rather than good. Worth a line in the
+           log either way, because it changes how much of a stall this helper
+           survives. */
+        if (!HidD_SetNumInputBuffers(channel.handle, kInputBuffers))
+            note(last_error("could not deepen the input report buffer"));
+
         channel.buffer.assign(channel.input_report_len, uint8_t{0});
         channel.opened = true;
         if (!start_read(channel)) break;
@@ -464,30 +493,50 @@ std::vector<HANDLE> HidTransport::wait_handles() const {
     return handles;
 }
 
+/*
+ * Everything the driver is holding, not one report of it.
+ *
+ * One read per channel per pass caps this seam at one report per turn of the
+ * run loop, and the loop also pumps window messages, owns the clipboard and
+ * runs a tick. A pass that takes longer than a millisecond therefore falls
+ * permanently behind a board emitting a report per millisecond, and the
+ * driver's ring — see kInputBuffers — drops the overflow silently. Catching up
+ * is the half of #143 that deepening the ring cannot do on its own.
+ *
+ * Bounded, because a channel delivering without pause must not hold the
+ * message queue. The bound is the deepest the ring can be, so it is a ceiling
+ * in every case rather than a target — the loop stops on an empty ring long
+ * before it, and stops there whether or not HidD_SetNumInputBuffers took.
+ */
 void HidTransport::pump_reads() {
     for (Channel &channel : channels_) {
-        if (!channel.opened || !channel.read_pending) continue;
-        if (WaitForSingleObject(channel.read_event, 0) != WAIT_OBJECT_0) continue;
+        for (ULONG taken = 0; taken < kInputBuffers; taken++) {
+            if (!channel.opened || !channel.read_pending) break;
+            if (WaitForSingleObject(channel.read_event, 0) != WAIT_OBJECT_0) break;
 
-        DWORD read = 0;
-        const BOOL ok = GetOverlappedResult(channel.handle, &channel.overlapped, &read, FALSE);
-        channel.read_pending = false;
-        if (!ok) {
-            const std::string reason = last_error("read completion failed");
-            note(reason);
-            if (events_.transport_failed) events_.transport_failed(reason);
-            continue;
+            DWORD read = 0;
+            const BOOL ok = GetOverlappedResult(channel.handle, &channel.overlapped, &read, FALSE);
+            channel.read_pending = false;
+            if (!ok) {
+                const std::string reason = last_error("read completion failed");
+                note(reason);
+                if (events_.transport_failed) events_.transport_failed(reason);
+                break;
+            }
+
+            /*
+             * Byte 0 is the report ID Windows prepends to every buffer, even on
+             * a collection that declares none. It is not part of the frame
+             * stream — handing it to the reader would put a stray DH_FRAME_PAD
+             * in front of every report, which the reader skips, and a stray
+             * anything else would desynchronise it.
+             */
+            if (read > 1 && events_.received) events_.received(channel.buffer.data() + 1, read - 1);
+
+            /* Re-armed inside the loop, so the next queued report is picked up
+               on this pass. A refused re-arm has already reported itself. */
+            if (!start_read(channel)) break;
         }
-
-        /*
-         * Byte 0 is the report ID Windows prepends to every buffer, even on a
-         * collection that declares none. It is not part of the frame stream —
-         * handing it to the reader would put a stray DH_FRAME_PAD in front of
-         * every report, which the reader skips, and a stray anything else
-         * would desynchronise it.
-         */
-        if (read > 1 && events_.received) events_.received(channel.buffer.data() + 1, read - 1);
-        start_read(channel);
     }
 }
 
