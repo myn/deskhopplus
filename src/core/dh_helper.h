@@ -308,6 +308,17 @@ typedef enum {
      * a = frames the transport took since boot, b = frames it refused.
      */
     DH_NOTE_LOCAL_SENDS = 32,
+    /*
+     * The board's own totals at the eviction, said by the core because no
+     * platform can read them by then (#107).
+     *
+     * drop_connection calls forget_session, which clears the cached totals —
+     * correctly, since they belong to the board that session was with (#133).
+     * Three attempts to log them from the platform side printed nothing for
+     * exactly that reason. a = frames the board took and authenticated,
+     * b = reports its USB callback delivered.
+     */
+    DH_NOTE_BOARD_AT_END = 33,
 } dh_helper_note;
 
 /*

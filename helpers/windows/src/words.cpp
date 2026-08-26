@@ -204,6 +204,9 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
         return "device heartbeat resumed after " + seconds(a);
     case DH_NOTE_BEAT_QUIET:
         return "device heartbeat quiet for " + seconds(a);
+    case DH_NOTE_BOARD_AT_END:
+        return "at the end the board had accepted " + std::to_string(a) + " frame(s) from " +
+               std::to_string(b) + " report(s)";
     case DH_NOTE_LOCAL_SENDS:
         return "this helper has written " + std::to_string(a) + " frame(s) since boot, " +
                std::to_string(b) + " refused by the transport";

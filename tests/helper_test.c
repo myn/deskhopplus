@@ -1330,6 +1330,65 @@ static void test_a_session_end_is_acted_on(void) {
 }
 
 /*
+ * The board's own totals, captured at the eviction rather than read after it.
+ *
+ * Three attempts to log these from the platform side all printed nothing, for
+ * a reason that is correct and was in the code the whole time: drop_connection
+ * calls forget_session, which clears the cached totals because they belong to
+ * the board that session was with (#133). By the time any platform sees the
+ * outputs they are gone. So the core has to say it, before it forgets.
+ */
+static void test_a_session_end_carries_the_boards_own_totals(void) {
+    const char *name = "a session end carries the board's own totals";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* The board states its totals, as it does once per session and on change. */
+    /* Packed by hand, in the wire order dh_session.h declares: the encoder is
+       the board's and is not exported. frames_in is the eighth field and
+       reports_in the ninth. */
+    uint8_t drops_body[DH_DEVICE_DROPS_LEN] = {0};
+    const uint32_t frames_in = 4242, reports_in = 51000;
+    for (unsigned i = 0; i < 4; i++) {
+        drops_body[36 + i] = (uint8_t)(frames_in >> (8 * i));
+        drops_body[40 + i] = (uint8_t)(reports_in >> (8 * i));
+    }
+
+    uint8_t drops_frame[DH_FRAME_MAX_SIZE];
+    size_t drops_len = 0;
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_DROPS, 0, k_b2h, 1, drops_body, sizeof drops_body,
+                        drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
+          name, "the drop totals would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, drops_frame, drops_len, 50, &out);
+
+    uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_auth_frame(DH_MSG_SESSION_END, 0, k_b2h, 2, body, sizeof body, frame, sizeof frame,
+                        &len) == DH_FRAME_OK,
+          name, "the session end would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+
+    const dh_helper_output *note = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_BOARD_AT_END)
+            note = &out.items[i];
+    CHECK(note != NULL, name, "the end did not carry the board's totals");
+    CHECK(note != NULL && note->a == (int32_t)frames_in && note->b == (int32_t)reports_in, name,
+          "the board's totals were not the ones it had stated");
+
+    /* And the cache really is gone by then, which is what defeated three
+       platform-side attempts at this. */
+    dh_device_drops after;
+    CHECK(!dh_helper_device_drops(&h, &after), name,
+          "the totals outlived the session, so the core need not have said them");
+    no_overflow(name);
+}
+
+/*
  * The count is what separates "the board heard nothing because there was
  * nothing" from "the board heard nothing while this end was talking" (#107).
  *
@@ -2345,6 +2404,7 @@ int main(int argc, char **argv) {
     test_a_bad_tag_drops_the_session_and_a_replay_does_not();
     test_a_session_end_is_acted_on();
     test_a_session_end_says_how_much_this_end_got_out();
+    test_a_session_end_carries_the_boards_own_totals();
     test_the_policy_predicates_are_decided_once();
     test_an_incompatible_board_refuses_bulk();
     test_an_unanswered_hello_is_a_dead_session();
