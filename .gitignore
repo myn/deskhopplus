@@ -19,3 +19,9 @@ tools/windows-checks/deskhopplus-*.json
 
 # The measure-only ECDH image (#110, tools/board-checks/README.md)
 build-bench/
+
+# clangd (local dev): index cache, generated compile db symlink,
+# and a config holding a machine-specific ARM toolchain path.
+.cache/
+compile_commands.json
+.clangd
