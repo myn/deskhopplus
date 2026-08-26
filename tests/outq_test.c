@@ -500,27 +500,25 @@ static void test_the_credit_window_fits_the_queue_it_bursts_into(void) {
     const unsigned in_flight = 1u;
     const unsigned queue_holds = in_flight + DH_OUTQ_DEPTH;
 
-    CHECK(DH_XFER_CREDIT_WINDOW <= queue_holds, "credit",
-          "the credit window grants more chunks than the outbound queue can hold, "
-          "so a burst is refused rather than paced");
-
     /*
-     * **This is one short of the whole truth, and the shortfall is #141.**
-     * dh_xfer_pump emits the last chunks and the CLIP_DONE behind them in the
-     * same batch, and the DONE is not credit-gated — so the worst-case
-     * loss-free burst is DH_XFER_CREDIT_WINDOW + 1, and the frame that does
-     * not fit is the DONE, the one nothing retransmits.
+     * The window **plus one**, because dh_xfer_pump emits the last chunks and
+     * the CLIP_DONE behind them in the same batch and the DONE is not
+     * credit-gated (#141). The frame that overflows a queue sized to the
+     * window alone is therefore always the DONE — the one frame nothing
+     * retransmits, whose loss costs the whole transfer out to the
+     * thirty-second timeout (#78).
      *
-     * Asserting the honest bound here would fail, and the two ways to satisfy
-     * it both make things worse: a window of 2 stalls double-loss recovery
-     * outright (xfer_test's "did not converge"), and so does capping the
-     * accumulated credit, because the covering grants that pay for
-     * retransmissions are exactly what gets discarded. The remedy is a deeper
-     * queue, which costs board RAM and a flash.
-     *
-     * So this pins what is true and safe today and no more. Do not tighten it
-     * without reading #141.
+     * The three ways to close this from the helper side were each tried and
+     * each breaks recovery outright, failing xfer_test's double-loss case: a
+     * window of 2, capping the accumulated credit at the window, and capping
+     * the pump batch at 2. The covering grants that pay for retransmissions
+     * are exactly what a cap discards, and docs/protocol.md says why that
+     * inflation is deliberate — bounded and harmless, where draining is fatal.
+     * So the queue is what moved: DH_OUTQ_DEPTH 2 -> 3 (ADR-0005).
      */
+    CHECK(DH_XFER_CREDIT_WINDOW + 1u <= queue_holds, "credit",
+          "the outbound queue cannot hold one pump batch — the window's chunks "
+          "and the ungated CLIP_DONE behind them — so the DONE is refused");
 
     /*
      * **This bounds the loss-free burst and nothing more.** Credit accumulates
@@ -528,7 +526,7 @@ static void test_the_credit_window_fits_the_queue_it_bursts_into(void) {
      * retransmit request, deliberately, because draining the window is fatal
      * where inflating it is not. So after a lossy round the sender can hold
      * more credit than the window names and pump all of it — up to
-     * DH_XFER_BATCH_MAX — into a queue sized for the window.
+     * DH_XFER_BATCH_MAX — into a queue sized for one batch.
      *
      * That gap is open. Capping the running total at the window was tried and
      * it breaks recovery: a double loss never converges, because the grants

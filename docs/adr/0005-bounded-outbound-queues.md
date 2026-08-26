@@ -9,7 +9,8 @@
 Both of the device's single-frame outbound seams — the slot feeding this board's helper
 (`channel.out`) and the bulk slot feeding the peer board (`dh_relay_tx`'s bulk slot) — grow a small
 bounded queue: the existing single slot stays as the head, sized `DH_FRAME_MAX_SIZE` so any legal
-bulk frame is still accepted, and **two** slots of `DH_OUTQ_STAGE_MAX` (1044B) queue behind it —
+bulk frame is still accepted, and **two** slots of `DH_OUTQ_STAGE_MAX` (1044B) queue behind it
+(three since #141 — see the amendment below) —
 sized to the largest bulk frame a transfer can actually *complete* with, which is a full-metadata
 `CLIP_OFFER` (1043B) rather than a `CLIP_CHUNK` (1040B). `channel.out` additionally splits into a
 priority slot (session replies, single-buffered as today) and this bulk queue, mirroring the
@@ -92,3 +93,40 @@ and more honest statement.
 
 Neither band's behaviour changes here. This queue still lets a session reply overtake bulk, and
 that is still the point.
+
+## Amendment, 2026-08-25 — the queued slots go from two to three
+
+`DH_OUTQ_DEPTH` was 2, so the queue held three bulk frames: one in flight and two behind it.
+[#137](https://github.com/myn/deskhopplus/issues/137) then sized `DH_XFER_CREDIT_WINDOW` against
+that figure and cut it from 16 to 3. The two numbers matched — and the match was one frame short
+of the truth.
+
+`dh_xfer_pump` emits the batch's chunks and the `CLIP_DONE` behind them **in the same batch**, and
+the DONE is not credit-gated. So the worst-case loss-free burst is the window *plus one*, and the
+frame that overflowed a queue sized to the window alone was always the DONE: the one bulk frame
+with no retransmit behind it, whose loss costs the whole transfer out to the helper's thirty-second
+timeout. #137 turned a guaranteed thirteen-frame overrun into an occasional one-frame one, and the
+one frame was the expensive kind.
+
+**Depth is now 3, so the queue holds four bulk frames** — one pump batch, whole.
+
+Fixed here rather than in the credit window, because every helper-side remedy breaks recovery.
+A window of 2, a ceiling on accumulated credit, and a pump batch capped at 2 were each tried, and
+each stalls `xfer_test`'s double-loss case. The reason is the same in all three: a covering grant
+rides every `CLIP_RETRANSMIT`, and those grants are exactly what a cap discards. `docs/protocol.md`
+already states why that inflation is deliberate — bounded and harmless, where draining is fatal.
+
+This does not reopen the "short queue" decision above. The argument there is against absorbing a
+**sustained** overrun, which is still the credit window's job and still something the firmware may
+not read (ADR-0003). Holding one batch is what a bounded queue is for. The cost is one more
+`DH_OUTQ_STAGE_MAX` slot per queue — 1,095 bytes each, against the ~62 KB of SRAM this build
+leaves free.
+
+**Measured cost**: SRAM `data`+`bss` grows by 2,200 bytes (184,524 → 186,724) — one more `DH_OUTQ_STAGE_MAX` slot in
+each of the two queues.
+
+**Verification is on hardware, not here.** `outbound refused` should stop climbing entirely rather
+than merely climb slower; it is readable live in the helper logs since
+[#133](https://github.com/myn/deskhopplus/issues/133). `outq_test` now asserts the honest bound —
+`DH_XFER_CREDIT_WINDOW + 1 <= 1 + DH_OUTQ_DEPTH` — so the two constants cannot drift apart again.
+

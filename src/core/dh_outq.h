@@ -92,8 +92,25 @@ extern "C" {
  */
 #define DH_OUTQ_STAGE_MAX 1095u
 
-/* Frames queued behind the one in flight. */
-#define DH_OUTQ_DEPTH 2u
+/*
+ * Frames queued behind the one in flight, so the queue holds four bulk frames
+ * in total.
+ *
+ * Sized to one whole pump batch, which is DH_XFER_CREDIT_WINDOW chunks **plus
+ * one**: dh_xfer_pump emits the CLIP_DONE in the same batch as the last chunks
+ * and does not credit-gate it. At a depth of two the frame that overflowed was
+ * therefore always the DONE, the one frame nothing retransmits, whose loss
+ * costs the whole transfer out to the helper's thirty-second timeout (#141).
+ *
+ * Closing that from the helper side was tried three ways and each broke
+ * recovery outright, so the queue is what moved. ADR-0005 keeps this queue
+ * deliberately short, and it still is: the argument there is against absorbing
+ * a *sustained* overrun, which is the credit window's job, not against holding
+ * one batch of it.
+ *
+ * outq_test pins this against DH_XFER_CREDIT_WINDOW so the two cannot drift.
+ */
+#define DH_OUTQ_DEPTH 3u
 
 typedef enum {
     DH_OUTQ_OK = 0,

@@ -820,14 +820,21 @@ between the helpers**; the firmware relays its messages opaquely.
   whole transfer. `outq_test` pins the two constants against each other so they cannot
   drift apart again, and raising the window means deepening that queue first.
 
-  **Two gaps remain open, both in [#141](https://github.com/myn/deskhopplus/issues/141).**
-  CLIP_DONE is not credit-gated and rides the same pump batch as the last chunks, so the
-  worst-case loss-free burst is the window *plus one* and the frame that overflows is the
-  one with no retransmit behind it. And credit accumulates without a ceiling — the covering
-  grant on every CLIP_RETRANSMIT is deliberate and load-bearing, so a lossy round can leave
-  the sender holding more credit than the window names. Both are fixed by a deeper queue,
-  not by a smaller window: a window of 2, and capping the accumulated credit, each break
-  double-loss recovery outright.
+  **The burst is the window plus one, and the queue is sized for that**
+  ([#141](https://github.com/myn/deskhopplus/issues/141)). CLIP_DONE is not credit-gated
+  and rides the same pump batch as the last chunks, so the worst-case loss-free burst is
+  the window *plus one* — and the frame that overflowed a queue sized to the window alone
+  was always the DONE, the one with no retransmit behind it. `DH_OUTQ_DEPTH` is 3, so the
+  queue holds four bulk frames: the window's chunks and the DONE behind them.
+
+  Fixed by the deeper queue rather than a smaller window, because every helper-side remedy
+  breaks double-loss recovery: a window of 2, capping the accumulated credit at the window,
+  and capping the pump batch at 2 were each tried and each stalls it. Credit still
+  accumulates without a ceiling, deliberately — the covering grant riding every
+  CLIP_RETRANSMIT is what pays for the retransmission, and that inflation is bounded and
+  harmless where draining is fatal. So a lossy round can leave the sender holding more
+  credit than the window names, and the queue absorbs the batch rather than the window
+  policing it.
 - **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
   paste side discards its partial payload — never delivering it as complete — and its
   helper deletes any partial file and reports the failure. No resumption.

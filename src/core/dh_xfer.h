@@ -46,6 +46,15 @@ extern "C" {
  * hardware 2026-08-25: 16 refusals on the receiving board across a handful of
  * copies, once #133 made that counter readable.
  *
+ * The queue holds the window **plus one**, not the window: dh_xfer_pump emits
+ * the CLIP_DONE in the same batch as the last chunks and does not credit-gate
+ * it, so a queue sized to the window alone refuses exactly the frame nothing
+ * retransmits. DH_OUTQ_DEPTH is 3 for that reason (#141), and closing the gap
+ * from this side instead was tried three ways — a window of 2, a ceiling on
+ * accumulated credit, a pump batch capped at 2 — each of which stalls
+ * double-loss recovery, because the covering grants that pay for
+ * retransmissions are what a cap discards.
+ *
  * Three is not a throughput figure either. The drain is the bottleneck at
  * ~64 KB/s, and three chunks outstanding covers about 48 ms of it — more than
  * a credit's round trip, so the sender still never waits. What it stops is the
