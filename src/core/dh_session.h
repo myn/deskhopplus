@@ -333,9 +333,39 @@ typedef struct {
     uint32_t orphans;   /* peer data packets with no start to attach to */
     uint32_t truncated; /* peer frames abandoned because packets went missing */
     uint32_t relay_q;   /* frames the relay's own outbound queue refused */
+    /*
+     * Two of `outq`'s three causes, so a reader can subtract and get the
+     * third (#142).
+     *
+     * `outq` is a total over a queue with two bands and a parse check, and
+     * #141 deepened exactly one of them. Read alone it cannot say whether that
+     * change worked: a total still climbing is equally consistent with the
+     * bulk queue being fixed and the single-frame priority band refusing, and
+     * with the bulk queue still overflowing. These two say which.
+     *
+     * Appended rather than inserted, so the seven fields ahead of them keep
+     * their offsets and an older helper reading this frame simply finds it a
+     * length it does not know — which costs it the reading and nothing else
+     * (`on_device_drops` notes it undecodable; it is not a protocol error and
+     * does not end the session).
+     */
+    uint32_t outq_priority;   /* refused because the priority band held one already */
+    uint32_t outq_bad_header; /* refused because the header did not parse: version skew */
+    /*
+     * `relay_q` above has the same three causes and the board tracks all three
+     * of them — dh_relay_tx routes through the same dh_outq — but they are
+     * deliberately not sent.
+     *
+     * It has read zero at every sitting, and the two fields would cost the
+     * last of this frame's headroom: the body may not push the frame past
+     * DH_SESSION_REPLY_MAX, which the pairing grant also has to fit. Spending
+     * that on a seam nothing has ever been lost at is the wrong trade. If
+     * relay_q ever starts moving, the counters are already there and appending
+     * them is a small change (#142).
+     */
 } dh_device_drops;
 
-#define DH_DEVICE_DROPS_LEN 28u
+#define DH_DEVICE_DROPS_LEN 36u
 
 /* Whether two readings say the same thing — the whole of what decides that a
    fresh one is worth a frame. */

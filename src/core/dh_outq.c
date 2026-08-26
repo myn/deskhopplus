@@ -63,13 +63,32 @@ static void promote(dh_outq *q) {
     q->stage_used--;
 }
 
-static void refuse(dh_outq *q) {
+/* Every refusal is counted twice: once in the total the wire has always
+   carried, and once against the cause, which is what a reader needs to know
+   which seam to act on (#142). */
+static void refuse(dh_outq *q, uint32_t *cause) {
     if (q->refused < UINT32_MAX)
         q->refused++;
+    if (*cause < UINT32_MAX)
+        (*cause)++;
 }
 
 void dh_outq_init(dh_outq *q) {
     memset(q, 0, sizeof *q);
+}
+
+void dh_outq_reset(dh_outq *q) {
+    const uint32_t refused = q->refused;
+    const uint32_t priority = q->refused_priority;
+    const uint32_t bulk = q->refused_bulk;
+    const uint32_t frame = q->refused_bad_header;
+
+    dh_outq_init(q);
+
+    q->refused = refused;
+    q->refused_priority = priority;
+    q->refused_bulk = bulk;
+    q->refused_bad_header = frame;
 }
 
 dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len) {
@@ -82,17 +101,17 @@ dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len) {
            does not know drops every frame here, and a counter that stayed at
            zero through that would hide exactly the version skew it should
            make obvious. */
-        refuse(q);
+        refuse(q, &q->refused_bad_header);
         return DH_OUTQ_ERR_FRAME;
     }
 
     if (!dh_msg_is_bulk(hdr.type)) {
         if (len > DH_OUTQ_PRIORITY_MAX) {
-            refuse(q);
+            refuse(q, &q->refused_priority);
             return DH_OUTQ_ERR_OVERSIZE;
         }
         if (q->priority.len > 0) {
-            refuse(q);
+            refuse(q, &q->refused_priority);
             return DH_OUTQ_ERR_BUSY;
         }
         memcpy(q->priority_buf, frame, len);
@@ -117,7 +136,7 @@ dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len) {
        for one is refused as busy, not oversize: it fits the moment the
        in-flight buffer is free, so the caller's remedy is to retry. */
     if (len > DH_OUTQ_STAGE_MAX || q->stage_used >= DH_OUTQ_DEPTH) {
-        refuse(q);
+        refuse(q, &q->refused_bulk);
         return DH_OUTQ_ERR_BUSY;
     }
 

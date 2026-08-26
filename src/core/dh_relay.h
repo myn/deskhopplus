@@ -84,6 +84,10 @@ typedef struct {
 
 void dh_relay_tx_init(dh_relay_tx *t);
 
+/* Drop everything owed, and keep the refusal totals — the link's state goes,
+   the since-boot measurement does not (dh_outq_reset, #142). */
+void dh_relay_tx_reset(dh_relay_tx *t);
+
 /*
  * Take a complete frame for relaying. The band comes from one comparison on
  * the type byte. Refuses rather than truncates: a malformed header, or a band
@@ -127,6 +131,10 @@ typedef struct {
 } dh_relay_rx;
 
 void dh_relay_rx_init(dh_relay_rx *r, uint8_t *buf, uint16_t cap);
+
+/* Abandon the frame being reassembled, and keep the buffer and the two totals.
+   Same rule as dh_outq_reset (#142). */
+void dh_relay_rx_reset(dh_relay_rx *r);
 
 /*
  * Feed one inter-board packet. On DH_RELAY_OK a complete frame is in *out,

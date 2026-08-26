@@ -154,10 +154,42 @@ typedef struct {
     uint8_t stage_first; /* the oldest queued frame */
     uint8_t stage_used;
 
-    uint32_t refused; /* frames the queue could not take; saturates */
+    /*
+     * Frames the queue could not take, split by why. All saturate.
+     *
+     * One number was not enough. #141 deepened the bulk band and its criterion
+     * was read against the total, which also carries a band #141 never touched
+     * and a cause that is not congestion at all — so a total that kept
+     * climbing could not say whether the change had worked (#142).
+     *
+     * `refused` is the sum, kept because it is what the wire and the config
+     * page have published since #133 and because "how much is this seam losing"
+     * is still a fair question. The parts are what answer "which seam".
+     */
+    uint32_t refused;
+    uint32_t refused_priority; /* the single-frame band was already holding one */
+    uint32_t refused_bulk;     /* in flight busy and every queued slot full */
+    /*
+     * Not congestion: a header this build cannot parse, which on this seam
+     * means a peer emitting a type it does not know — version skew. Counted
+     * apart so it cannot be read as an overrun and answered with a deeper
+     * queue, which would fix nothing.
+     */
+    uint32_t refused_bad_header;
 } dh_outq;
 
 void dh_outq_init(dh_outq *q);
+
+/*
+ * Drop everything queued, and keep the refusal totals.
+ *
+ * For the caller whose link has just gone: what is queued was built for a
+ * session that no longer exists. The totals are not the link's to take — the
+ * config page heads them "since this boot" and the helper reads them as a rate
+ * (#133), and a total that restarts on every reconnect can answer neither.
+ * Same rule, and the same reasoning, as dh_inq_reset (#139, #142).
+ */
+void dh_outq_reset(dh_outq *q);
 
 /*
  * Take a complete frame. Refuses rather than truncates, and counts every

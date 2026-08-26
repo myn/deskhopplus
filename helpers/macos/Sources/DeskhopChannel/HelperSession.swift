@@ -82,7 +82,7 @@ public struct Negotiated: Equatable {
 /*
  * What the board says it has dropped on the channel, since it booted (#133).
  *
- * Seven totals rather than one, because each names a different seam and each
+ * Nine totals rather than one, because each names a different seam and each
  * seam has a different remedy. Read live: these used to be readable only from
  * the config page, which is reachable only in config mode, which is entered by
  * rebooting the board that holds them — so they could only ever read zero, and
@@ -97,6 +97,22 @@ public struct BoardDrops: Equatable {
     public let truncated: UInt32
     public let relayQueue: UInt32
 
+    /// Why the outbound queue refused, which the total alone cannot say (#142).
+    /// The queue has two bands and #141 deepened only one of them, so a total
+    /// still climbing was equally consistent with that change having worked
+    /// and with it not having.
+    public let outboundPriority: UInt32
+    public let outboundBadHeader: UInt32
+
+    /// The band #141 deepened. Derived, because the board sends the total and
+    /// the two parts that are not it — appending two fields rather than three
+    /// keeps the frame inside the board's reply buffer.
+    public var outboundBulk: UInt32 {
+        outbound >= outboundPriority + outboundBadHeader
+            ? outbound - outboundPriority - outboundBadHeader
+            : 0
+    }
+
     public init(_ d: dh_device_drops) {
         reports = d.reports
         inbound = d.inbound
@@ -105,6 +121,8 @@ public struct BoardDrops: Equatable {
         orphans = d.orphans
         truncated = d.truncated
         relayQueue = d.relay_q
+        outboundPriority = d.outq_priority
+        outboundBadHeader = d.outq_bad_header
     }
 
     /// Every seam that has lost something, named. Seams that have lost nothing
@@ -120,7 +138,15 @@ public struct BoardDrops: Equatable {
             ("peer frames truncated", truncated),
             ("relay queue refused", relayQueue),
         ]
-        let lost = seams.filter { $0.1 > 0 }.map { "\($0.0) \($0.1)" }
+        let lost = seams.filter { $0.1 > 0 }.map { seam -> String in
+            /* The outbound total carries its breakdown, because which band
+               refused decides what to do about it and the total says only
+               that something did (#142). Printed whole, zeros included: a
+               zero here is the finding, not an absence. */
+            guard seam.0 == "outbound refused" else { return "\(seam.0) \(seam.1)" }
+            return "\(seam.0) \(seam.1) (priority \(outboundPriority), bulk \(outboundBulk)"
+                + ", bad header \(outboundBadHeader))"
+        }
         return lost.isEmpty ? "board reports no drops" : "board drops: " + lost.joined(separator: ", ")
     }
 }

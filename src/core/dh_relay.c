@@ -11,6 +11,14 @@ void dh_relay_tx_init(dh_relay_tx *t) {
     dh_outq_init(&t->q);
 }
 
+void dh_relay_tx_reset(dh_relay_tx *t) {
+    /* Field by field, not memset-and-restore: dh_outq is 7.5 KB and holding a
+       copy of one would put it on core 0's 2 KB stack — the same overrun
+       channel.c keeps its relayed-frame buffer static to avoid. */
+    t->burst = 0;
+    dh_outq_reset(&t->q);
+}
+
 void dh_relay_tx_yield(dh_relay_tx *t) {
     t->burst = 0;
 }
@@ -90,6 +98,15 @@ void dh_relay_rx_init(dh_relay_rx *r, uint8_t *buf, uint16_t cap) {
     memset(r, 0, sizeof *r);
     r->buf = buf;
     r->cap = cap;
+}
+
+void dh_relay_rx_reset(dh_relay_rx *r) {
+    /* Abandon the frame in progress, keep the buffer it was using and the two
+       totals. Not dh_relay_rx_init with the same arguments, because a caller
+       that had to hand the buffer back would be a caller that could hand back
+       the wrong one. */
+    r->expected = 0;
+    r->have = 0;
 }
 
 dh_relay_result dh_relay_rx_push(dh_relay_rx *r, const dh_relay_packet *packet,

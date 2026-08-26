@@ -540,6 +540,77 @@ static void test_the_credit_window_fits_the_queue_it_bursts_into(void) {
           "a pump cannot emit the window it was granted");
 }
 
+/*
+ * One number could not say which seam refused, and #141's criterion was read
+ * against it and could not be answered (#142).
+ *
+ * Three causes fed `refused`: the bulk queue full, the single-frame priority
+ * band busy, and a header this build cannot parse. Deepening the bulk queue
+ * moves only one of them, so a total that keeps climbing is equally consistent
+ * with the change having worked and with it not having.
+ */
+static void test_a_refusal_says_which_band_turned_it_away(void) {
+    dh_outq q;
+    dh_outq_init(&q);
+
+    uint8_t beat[DH_FRAME_MAX_SIZE], chunk[DH_FRAME_MAX_SIZE];
+    const size_t beat_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 0, 0, beat, sizeof beat);
+    const size_t chunk_len = make_frame(DH_MSG_CLIP_CHUNK, 1, 512, chunk, sizeof chunk);
+
+    /* The priority band holds one, and DH_OUTQ_DEPTH did not change that. */
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "bands", "first beat refused");
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "bands",
+          "the priority band took a second frame");
+    CHECK(q.refused_priority == 1 && q.refused_bulk == 0 && q.refused_bad_header == 0, "bands",
+          "a priority refusal was not attributed to the priority band");
+
+    /* One in flight plus DH_OUTQ_DEPTH behind it, then one too many. */
+    for (unsigned i = 0; i < 1u + DH_OUTQ_DEPTH; i++)
+        CHECK(dh_outq_offer(&q, chunk, chunk_len) == DH_OUTQ_OK, "bands",
+              "a frame within the queue's depth was refused");
+    CHECK(dh_outq_offer(&q, chunk, chunk_len) == DH_OUTQ_ERR_BUSY, "bands",
+          "the bulk band took more than it can hold");
+    CHECK(q.refused_bulk == 1 && q.refused_priority == 1, "bands",
+          "a bulk refusal was not attributed to the bulk band");
+
+    /* Not congestion at all: a type this build does not know, which is version
+       skew and wants reading as such rather than as an overrun. */
+    const uint8_t unknown[] = {0xEE, 0x00, 0x00, 0x00};
+    CHECK(dh_outq_offer(&q, unknown, sizeof unknown) == DH_OUTQ_ERR_FRAME, "bands",
+          "an unknown type was queued");
+    CHECK(q.refused_bad_header == 1, "bands", "a malformed header was counted as congestion");
+
+    CHECK(q.refused == q.refused_priority + q.refused_bulk + q.refused_bad_header, "bands",
+          "the total is not the sum of its parts");
+}
+
+/*
+ * A link reset drops what is queued and keeps what was counted.
+ *
+ * The config page heads these "since this boot" and three of the seven were
+ * not, because `channel_reset_link` re-inits the queues and the counter went
+ * with the state (#142). #139 settled the rule for the inbound ring — a total
+ * that restarts on every reconnect cannot answer "how often does this seam
+ * overrun" — and it is the same rule here.
+ */
+static void test_a_reset_drops_the_queue_and_keeps_the_counts(void) {
+    dh_outq q;
+    dh_outq_init(&q);
+
+    uint8_t beat[DH_FRAME_MAX_SIZE];
+    const size_t beat_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 0, 0, beat, sizeof beat);
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "reset", "first beat refused");
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "reset", "second beat queued");
+
+    dh_outq_reset(&q);
+
+    CHECK(!dh_outq_busy(&q), "reset", "a reset left a frame owed");
+    CHECK(q.refused == 1 && q.refused_priority == 1, "reset",
+          "a reset cleared the since-boot refusal totals");
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "reset",
+          "the queue refused a frame after a reset");
+}
+
 /* An offer at that bound queues like anything else, rather than needing an
    idle queue the way a genuinely outsized frame does. */
 static void test_a_full_size_offer_can_queue_behind_a_chunk(void) {
@@ -584,6 +655,8 @@ int main(void) {
     test_the_preamble_is_owed_once_per_frame();
     test_a_queued_slot_holds_the_largest_viable_bulk_frame();
     test_the_credit_window_fits_the_queue_it_bursts_into();
+    test_a_refusal_says_which_band_turned_it_away();
+    test_a_reset_drops_the_queue_and_keeps_the_counts();
     test_a_full_size_offer_can_queue_behind_a_chunk();
 
     if (failures) {

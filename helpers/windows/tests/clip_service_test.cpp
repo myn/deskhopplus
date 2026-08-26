@@ -454,6 +454,22 @@ void test_a_stall_says_what_the_board_has_dropped() {
           "a stall did not name the seam the board says is losing frames");
     CHECK(named.find("orphan") == std::string::npos,
           "a stall listed a seam that had lost nothing");
+
+    /*
+     * The outbound total is three causes in one number, and which of them is
+     * moving decides what to do about it — a deeper bulk queue fixes nothing
+     * if the single-frame priority band is what refused, and a bad header is
+     * version skew rather than congestion at all (#142).
+     *
+     * The exact reading this was written for: the total climbing while the
+     * bulk band, the one #141 deepened, is clean.
+     */
+    dh_device_drops split{};
+    split.outq = 7;
+    split.outq_priority = 7;
+    CHECK(stall_note(&split).find("outbound refused 7 (priority 7, bulk 0, bad header 0)") !=
+              std::string::npos,
+          "a stall did not say which band of the outbound queue refused");
 }
 
 /*

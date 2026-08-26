@@ -210,19 +210,18 @@ static void channel_load_registration(const device_t *state) {
 static void channel_reset_link(void) {
     dh_session_drop(&channel.session);
     dh_frame_reader_init(&channel.reader);
-    dh_relay_tx_init(&channel.relay_tx);
-    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
+    dh_relay_tx_reset(&channel.relay_tx);
+    dh_relay_rx_reset(&channel.relay_rx);
 
     channel.report_head = 0;
     channel.report_used = 0;
-
-    /* Whatever is parked was reassembled under the session that just ended.
-       The drop counter is not: it is a since-boot total the helper reads to
-       find out how often this seam overruns (#133). */
     dh_inq_reset(&channel.inbound);
 
+    /* Reset, never init: what is queued belonged to the link that just went,
+       and the drop totals did not (#142). */
+
     critical_section_enter_blocking(&channel.out_lock);
-    dh_outq_init(&channel.out);
+    dh_outq_reset(&channel.out);
     critical_section_exit(&channel.out_lock);
 }
 
@@ -234,6 +233,22 @@ void channel_init(device_t *state) {
 
     dh_session_init(&channel.session, CHANNEL_BUILD_TYPE);
     dh_pair_init(&channel.pair);
+
+    /*
+     * The one place the queues are built, and so the one place the drop totals
+     * start from zero. Everything after this resets them and keeps the counts,
+     * which is what makes "since this boot" true of all seven rather than four
+     * (#142) — this runs once, from setup.c, at boot.
+     *
+     * dh_relay_rx_init is also the only call that installs the reassembly
+     * buffer, which is why it belongs here and not in the reset beside it.
+     */
+    critical_section_enter_blocking(&channel.out_lock);
+    dh_outq_init(&channel.out);
+    critical_section_exit(&channel.out_lock);
+    dh_relay_tx_init(&channel.relay_tx);
+    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
+    dh_inq_init(&channel.inbound);
 
     channel_load_identity(state);
     channel_load_registration(state);
@@ -747,6 +762,8 @@ void channel_task(device_t *state) {
         .orphans = channel.relay_rx.orphans,
         .truncated = channel.relay_rx.truncated,
         .relay_q = channel.relay_tx.q.refused,
+        .outq_priority = channel.out.refused_priority,
+        .outq_bad_header = channel.out.refused_bad_header,
     };
     dh_session_set_drops(&channel.session, &drops);
 

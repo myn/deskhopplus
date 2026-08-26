@@ -430,6 +430,22 @@ private func testAStallSaysWhatTheBoardHasDropped() {
                "a stall did not name the seam the board says is losing frames")
     Check.that(!named.contains("orphan"),
                "a stall listed a seam that had lost nothing")
+
+    /*
+     * The outbound total is three causes in one number, and which of them is
+     * moving decides what to do about it — a deeper bulk queue fixes nothing
+     * if the single-frame priority band is what refused, and a bad header is
+     * version skew rather than congestion at all (#142).
+     *
+     * The exact reading this was written for: the total climbing while the
+     * bulk band, the one #141 deepened, is clean.
+     */
+    var split = dh_device_drops()
+    split.outq = 7
+    split.outq_priority = 7
+    let bands = stallNote(BoardDrops(split))
+    Check.that(bands.contains("outbound refused 7 (priority 7, bulk 0, bad header 0)"),
+               "a stall did not say which band of the outbound queue refused")
 }
 
 /*

@@ -332,10 +332,12 @@ def build():
     v.append(("clip_policy_both", frame(0x04, bytes([0x03]), K_B2H, 8)))
     v.append(("clip_policy_receive_only", frame(0x04, bytes([0x02]), K_B2H, 9)))
 
-    # The seven drop totals (#133), each a different value so that a field read
-    # in the wrong order cannot pass. Order is docs/protocol.md's, which is the
-    # order the config page's fields 91-97 already used.
-    v.append(("device_drops", frame(0x10, struct.pack("<7I", 1, 2, 3, 4, 5, 6, 7), K_B2H, 10)))
+    # The nine drop totals (#133, #142), each a different value so that a field
+    # read in the wrong order cannot pass. The first seven are in the order the
+    # config page's fields 91-97 already used; the two added by #142 are
+    # appended, so those seven keep their offsets.
+    v.append(("device_drops",
+              frame(0x10, struct.pack("<9I", 1, 2, 3, 4, 5, 6, 7, 8, 9), K_B2H, 10)))
 
     # --- pairing and refusal, the untagged band ----------------------------
     v.append(("pair_request", frame(0x08, struct.pack("<Q", CORRELATION) + HELPER_PUB)))

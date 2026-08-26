@@ -177,24 +177,43 @@ std::string ClipService::progress_line() const {
 std::string ClipService::drops_line(const dh_device_drops *drops) {
     if (drops == nullptr) return "the board has stated no drop totals";
 
+    /*
+     * The outbound total carries its breakdown, because which band refused
+     * decides what to do about it and the total says only that something did
+     * (#142). The queue has two bands and #141 deepened one of them.
+     *
+     * The bulk figure is derived: the board sends the total and the two parts
+     * that are not it, because appending two fields rather than three keeps
+     * the frame inside the board's reply buffer. Printed whole, zeros
+     * included — a zero here is the finding, not an absence.
+     */
+    const uint32_t named = drops->outq_priority + drops->outq_bad_header;
+    const uint32_t outq_bulk = drops->outq >= named ? drops->outq - named : 0;
+    const std::string outq_detail =
+        "outbound refused " + std::to_string(drops->outq) + " (priority " +
+        std::to_string(drops->outq_priority) + ", bulk " + std::to_string(outq_bulk) +
+        ", bad header " + std::to_string(drops->outq_bad_header) + ")";
+
     const struct {
         const char *name;
         uint32_t count;
+        const std::string *detail; /* printed instead of "name count" when set */
     } seams[] = {
-        {"reports not taken", drops->reports},
-        {"from peer board", drops->inbound},
-        {"outbound refused", drops->outq},
-        {"not handed on", drops->unsent},
-        {"peer orphan packets", drops->orphans},
-        {"peer frames truncated", drops->truncated},
-        {"relay queue refused", drops->relay_q},
+        {"reports not taken", drops->reports, nullptr},
+        {"from peer board", drops->inbound, nullptr},
+        {"outbound refused", drops->outq, &outq_detail},
+        {"not handed on", drops->unsent, nullptr},
+        {"peer orphan packets", drops->orphans, nullptr},
+        {"peer frames truncated", drops->truncated, nullptr},
+        {"relay queue refused", drops->relay_q, nullptr},
     };
 
     std::string out;
     for (const auto &seam : seams) {
         if (seam.count == 0) continue;
         if (!out.empty()) out += ", ";
-        out += std::string(seam.name) + " " + std::to_string(seam.count);
+        out += seam.detail != nullptr ? *seam.detail
+                                      : std::string(seam.name) + " " + std::to_string(seam.count);
     }
     return out.empty() ? std::string("board reports no drops") : "board drops: " + out;
 }

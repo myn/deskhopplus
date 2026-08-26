@@ -201,10 +201,11 @@ bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags) {
 bool dh_device_drops_equal(const dh_device_drops *a, const dh_device_drops *b) {
     return a->reports == b->reports && a->inbound == b->inbound && a->outq == b->outq &&
            a->unsent == b->unsent && a->orphans == b->orphans && a->truncated == b->truncated &&
-           a->relay_q == b->relay_q;
+           a->relay_q == b->relay_q && a->outq_priority == b->outq_priority &&
+           a->outq_bad_header == b->outq_bad_header;
 }
 
-/* The seven, in the order the struct declares them. Written out rather than
+/* The nine, in the order the struct declares them. Written out rather than
    looped over the struct's memory: a loop would make the wire layout depend on
    this compiler's padding, and the vector file is the gate for three
    implementations, one of which is not C. */
@@ -216,6 +217,8 @@ static void drops_write(const dh_device_drops *d, uint8_t *body) {
     wr_u32(body + 16, d->orphans);
     wr_u32(body + 20, d->truncated);
     wr_u32(body + 24, d->relay_q);
+    wr_u32(body + 28, d->outq_priority);
+    wr_u32(body + 32, d->outq_bad_header);
 }
 
 bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *out) {
@@ -227,6 +230,8 @@ bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *ou
     out->orphans = rd_u32(body + 16);
     out->truncated = rd_u32(body + 20);
     out->relay_q = rd_u32(body + 24);
+    out->outq_priority = rd_u32(body + 28);
+    out->outq_bad_header = rd_u32(body + 32);
     return true;
 }
 

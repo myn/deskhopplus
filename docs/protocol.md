@@ -480,7 +480,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x09 | PAIR_GRANT | d→h | — | `correlation:u64` (echoed) `board_pubkey:64`. Nothing secret; the shared secret is computed independently at each end. |
 | 0x0A | PAIR_REFUSED | d→h | — | `correlation:u64` (echoed) `reason:u8` (0=no_window, 1=already_registered — the single-shot window closed on someone else). |
 | 0x0B | HELLO_REFUSED | d→h | — | `correlation:u64` (echoed) `proto_version:u16` (the board's own) `status:u8` (1=**reserved**, never sent — it was v1's `auth_failed`; 2=version_incompatible; 3=unpaired). |
-| 0x10 | DEVICE_DROPS | d→h | `k_b2h` | Seven `u32` totals, since the board booted, in this order: `reports` (reports the USB callback could not hand to the channel task) `inbound` (frames from the peer board the channel task had not drained) `outq` (frames the outbound queue to this helper refused) `unsent` (frames this board could not hand on, to its helper or to the peer board — the sum of `outq` and `relay_q`, not a third seam) `orphans` (peer data packets with no start to attach to) `truncated` (peer frames abandoned because packets went missing) `relay_q` (frames the relay's own outbound queue refused). 28 bytes. Sent once per session and again whenever a total moves — see Reporting what the device has dropped. |
+| 0x10 | DEVICE_DROPS | d→h | `k_b2h` | Nine `u32` totals, since the board booted, in this order: `reports` (reports the USB callback could not hand to the channel task) `inbound` (frames from the peer board the channel task had not drained) `outq` (frames the outbound queue to this helper refused, **all bands**) `unsent` (frames this board could not hand on, to its helper or to the peer board — the sum of `outq` and `relay_q`, not a third seam) `orphans` (peer data packets with no start to attach to) `truncated` (peer frames abandoned because packets went missing) `relay_q` (frames the relay's own outbound queue refused) `outq_priority` (of `outq`, those the single-frame priority band turned away) `outq_bad_header` (of `outq`, those whose header did not parse — version skew, not congestion). 36 bytes. The bulk figure is `outq − outq_priority − outq_bad_header`, derived rather than sent so the frame stays inside the board's reply buffer. Sent once per session and again whenever a total moves — see Reporting what the device has dropped. |
 | 0x20 | PLACE | d→h | `k_b2h` | `chain_index:u8` `border_direction:u8` (which side of the output the seam was crossed from) `entry_pos:u16` (0–65535 normalized along the seam segment). Fire-and-forget; no reply path. Authenticated, **not** sealed — coordinates cross in the clear. |
 | 0x21 | POS_QUERY | d→h | `k_b2h` | empty |
 | 0x22 | POS_RESPONSE | h→d | `k_h2b` | `chain_index:u8` `x:u16` `y:u16` (0–65535 normalized within that output; layout may be amended by #51/#53 with vectors in the same change) |
@@ -732,8 +732,21 @@ fault is happening*.
   is worse than none. Skipping a reading costs nothing: these are totals, so the next one carries
   everything the skipped one would have. A reading the queue refuses waits out that interval like
   any other; a total can afford that where a rate cannot.
-- **Seven totals, not one.** Each names a different seam and each seam has a different remedy. A
-  sum would say only that something is wrong.
+- **Nine totals, not one.** Each names a different seam and each seam has a different remedy. A
+  sum would say only that something is wrong — which is exactly what `outq` was on its own until
+  [#142](https://github.com/myn/deskhopplus/issues/142). That one field covers a queue with two
+  bands and a header check, and [#141](https://github.com/myn/deskhopplus/issues/141) deepened one
+  band; a total still climbing was equally consistent with that change having worked and with it
+  not having. `outq_priority` and `outq_bad_header` are what make the third figure derivable, so a
+  reader can say which seam to act on.
+- **`relay_q` is not split, deliberately.** It has the same three causes and the board tracks all
+  three, but sending them would cost the last of this frame's headroom — the body may not push the
+  frame past `DH_SESSION_REPLY_MAX`, which the pairing grant also has to fit — and that seam has
+  read zero at every sitting. The counters exist, so appending them later is a small change.
+- **Fields are appended, never inserted.** A helper built before a field existed sees a body length
+  it does not know and loses the reading — `on_device_drops` notes it undecodable, which is not a
+  protocol error and does not end the session. Inserting a field instead would silently renumber
+  every seam after it, and the helper would go on printing confident names for the wrong counters.
 - **Each device reports its own.** There is no proxied read: a device in config mode can forward an
   API GET over the inter-board link, but the answering device drops the response because *it* is
   not in config mode. So both ends of a pair need the firmware before both ends can be read.

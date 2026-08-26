@@ -372,7 +372,12 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
         CHECK(dh_device_drops_decode(body, body_len, &d), "device_drops", "decode failed");
         CHECK(d.reports == 1 && d.inbound == 2 && d.outq == 3 && d.unsent == 4 && d.orphans == 5 &&
                   d.truncated == 6 && d.relay_q == 7,
-              "device_drops", "the seven totals decoded in the wrong order");
+              "device_drops", "the first seven totals decoded in the wrong order");
+        /* #142's two are appended, so the seven above keep their offsets and an
+           older helper reading this frame loses the reading rather than the
+           session. Pinned here so a later field cannot be slipped in front. */
+        CHECK(d.outq_priority == 8 && d.outq_bad_header == 9, "device_drops",
+              "the band split did not decode at the end of the body");
     }
 
     /* The untagged band: pairing and the two refusals. */
@@ -1611,14 +1616,14 @@ static void test_a_session_is_told_what_the_board_has_dropped(void) {
 
     /* Setting the same reading again is not a change, so it is not traffic. A
        board calls this every pass at 1000 Hz. */
-    const dh_device_drops zero = {0, 0, 0, 0, 0, 0, 0};
+    const dh_device_drops zero = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     dh_session_set_drops(&s, &zero);
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "drops",
           "an unchanged reading was sent anyway");
 
     /* A seam loses a frame. The helper hears about it — but not before the
        rate limit allows, because the outbound queue is short on purpose. */
-    const dh_device_drops one = {0, 0, 0, 0, 0, 1, 0};
+    const dh_device_drops one = {0, 0, 0, 0, 0, 1, 0, 0, 0};
     dh_session_set_drops(&s, &one);
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "drops",
           "a second reading went out inside one interval");
@@ -1679,7 +1684,7 @@ static void test_a_board_that_is_dropping_frames_still_beats(void) {
 
     /* A seam losing a frame a second, for well past the helper's deadline. The
        helper keeps beating throughout, so nothing here is an eviction. */
-    dh_device_drops moving = {0, 0, 0, 0, 0, 0, 0};
+    dh_device_drops moving = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     unsigned beats = 0;
     uint64_t helper_counter = 0;
     for (unsigned second = 0; second < 6; second++) {
