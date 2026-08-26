@@ -319,6 +319,14 @@ typedef enum {
      * b = reports its USB callback delivered.
      */
     DH_NOTE_BOARD_AT_END = 33,
+    /*
+     * How long the board says it heard nothing, from the liveness end itself
+     * (#107). The board is the only end that can state this, and it is the
+     * whole of what such an end asserts — a helper whose own counters say it
+     * was talking across the eviction cannot otherwise tell a real silence
+     * from a deadline that fired against a refreshed clock. a = ms.
+     */
+    DH_NOTE_BOARD_SILENT_FOR = 34,
 } dh_helper_note;
 
 /*

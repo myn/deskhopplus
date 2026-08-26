@@ -143,7 +143,18 @@ _Static_assert(DH_SESSION_MAX_CHUNK <= DH_SESSION_CHUNK_CEILING,
 #define DH_HELLO_LEN 39u
 #define DH_HELLO_ACK_LEN 30u
 #define DH_LISTENER_ALERT_LEN 8u
-#define DH_SESSION_END_LEN 1u
+/*
+ * A reason byte, then how many milliseconds the board had gone without hearing
+ * anything, u32 LE (#107).
+ *
+ * The board is the only end that can state that figure, and it is the whole of
+ * what a liveness end is asserting. Without it a helper whose own counters say
+ * it was talking across the eviction — which hardware shows — has no way to
+ * tell a real silence from a deadline that fired against a refreshed clock.
+ * Meaningful only for DH_SESSION_END_LIVENESS_TIMEOUT; zero on the others,
+ * which end for reasons that have nothing to do with a clock.
+ */
+#define DH_SESSION_END_LEN 5u
 #define DH_PAIR_REQUEST_LEN (8u + DH_P256_PUBLIC_SIZE)
 #define DH_PAIR_GRANT_LEN (8u + DH_P256_PUBLIC_SIZE)
 #define DH_PAIR_REFUSED_LEN 9u
@@ -688,8 +699,8 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
  * A session that was never established emits nothing (*out_len is 0): a helper
  * that never had one must not be told that one of its ended.
  */
-dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint8_t *out, size_t out_cap,
-                               size_t *out_len);
+dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint32_t silent_ms, uint8_t *out,
+                               size_t out_cap, size_t *out_len);
 
 /*
  * The link dropped underneath us — no timeout needs to elapse, and no

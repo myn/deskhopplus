@@ -842,6 +842,15 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
         return;
     }
     const int32_t reason = body_len > 0 ? body[0] : DH_SESSION_END_UNSPECIFIED;
+
+    /* The board's own figure, when it sent one. Length-tolerant on purpose: a
+       board older than #107 sends a one-byte body, and losing the reason over
+       a missing field would be a worse trade than losing the field. */
+    if (reason == DH_SESSION_END_LIVENESS_TIMEOUT && body_len >= DH_SESSION_END_LEN) {
+        const uint32_t silent = (uint32_t)body[1] | ((uint32_t)body[2] << 8) |
+                                ((uint32_t)body[3] << 16) | ((uint32_t)body[4] << 24);
+        put_note(o, DH_NOTE_BOARD_SILENT_FOR, (int32_t)silent, 0);
+    }
     /*
      * How much this helper got out over the window the board judged it on,
      * reported beside the board's reason (#107).

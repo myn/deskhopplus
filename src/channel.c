@@ -373,7 +373,9 @@ static bool channel_queue_frame(const uint8_t *frame, size_t len) {
 static void channel_end_session(uint8_t reason) {
     uint8_t frame[DH_SESSION_REPLY_MAX];
     size_t len = 0;
-    if (dh_session_end(&channel.session, reason, frame, sizeof frame, &len) == DH_FRAME_OK &&
+    /* Zero for every reason but a liveness timeout, which is the one that is
+       asserting something about a clock and the one #107 needs to read. */
+    if (dh_session_end(&channel.session, reason, 0, frame, sizeof frame, &len) == DH_FRAME_OK &&
         len > 0)
         (void)channel_queue_frame(frame, len);
 }

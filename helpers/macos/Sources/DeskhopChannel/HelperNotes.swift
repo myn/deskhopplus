@@ -99,6 +99,8 @@ enum HelperNotes {
             return "transport failed: \(transportReason ?? "no reason given")"
         case DH_NOTE_RECONNECTION_RATE:
             return "the last \(a) reconnections came inside \(span(b))"
+        case DH_NOTE_BOARD_SILENT_FOR:
+            return "the board says it heard nothing for \(a)ms"
         case DH_NOTE_BOARD_AT_END:
             return "at the end the board had accepted \(a) frame(s) from \(b) report(s)"
         case DH_NOTE_LOCAL_SENDS:

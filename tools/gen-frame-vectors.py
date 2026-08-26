@@ -316,12 +316,15 @@ def build():
     v.append(("heartbeat", frame(0x05, b"", K_H2B, 0)))
     v.append(("device_heartbeat", frame(0x06, b"", K_B2H, 1)))
 
-    for name, reason, counter in [
-        ("session_end_liveness", 1, 2),
-        ("session_end_protocol_error", 2, 3),
-        ("session_end_unpaired", 3, 4),
+    # A reason byte then how long the board had gone unheard, u32 LE (#107).
+    # Only a liveness end is asserting anything about a clock, so only it
+    # carries a figure; the others are zero.
+    for name, reason, counter, silent in [
+        ("session_end_liveness", 1, 2, 3000),
+        ("session_end_protocol_error", 2, 3, 0),
+        ("session_end_unpaired", 3, 4, 0),
     ]:
-        v.append((name, frame(0x07, bytes([reason]), K_B2H, counter)))
+        v.append((name, frame(0x07, struct.pack("<BI", reason, silent), K_B2H, counter)))
 
     # 4 refused frames in a 10 s window: a rate, not an event.
     v.append(("listener_alert", frame(0x03, struct.pack("<II", 10000, 4), K_B2H, 5)))

@@ -365,6 +365,38 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
        round-trip against. Each value in the vector differs, so a field read
        out of order names the wrong seam — and naming the wrong seam sends
        whoever reads it to fix the wrong thing. */
+    /*
+     * A liveness end says how long the board had actually gone without
+     * hearing anything (#107). The helper's own counters say it was talking
+     * across the eviction, so this is the board's side of that disagreement,
+     * and it is the number that says whether the silence was real.
+     */
+    if (find("hello_mac")) {
+        const struct vector *hv = find("hello_mac");
+        dh_session s;
+        a_paired_board(&s, DH_BUILD_RELEASE);
+        const uint32_t began = 400000;
+        uint8_t reply[DH_SESSION_REPLY_MAX];
+        CHECK(feed(&s, hv->f[0], hv->len[0], began, reply, sizeof reply) > 0, "end_silence",
+              "no session");
+        settle_openers(&s, began);
+
+        /* Nothing heard since the session began, so the answer is the gap. */
+        const size_t len = tick(&s, began + DH_SESSION_ABSENT_MS + 7, reply, sizeof reply);
+        dh_frame_view v;
+        const uint8_t *body = NULL;
+        size_t body_len = 0;
+        CHECK(len > 0 && decoded_body(reply, len, &v, &body, &body_len) &&
+                  v.hdr.type == DH_MSG_SESSION_END,
+              "end_silence", "no session end after the absent window");
+        CHECK(body_len == DH_SESSION_END_LEN, "end_silence", "the body is the wrong length");
+        CHECK(body[0] == DH_SESSION_END_LIVENESS_TIMEOUT, "end_silence", "the reason was lost");
+        const uint32_t silent = (uint32_t)body[1] | ((uint32_t)body[2] << 8) |
+                                ((uint32_t)body[3] << 16) | ((uint32_t)body[4] << 24);
+        CHECK(silent == DH_SESSION_ABSENT_MS + 7, "end_silence",
+              "the end did not carry how long the board had gone unheard");
+    }
+
     const struct vector *drops_v = find("device_drops");
     if (drops_v && decoded_body(drops_v->f[0], drops_v->len[0], &v, &body, &body_len)) {
         CHECK(v.hdr.type == DH_MSG_DEVICE_DROPS, "device_drops", "wrong message type");
@@ -1006,7 +1038,7 @@ static void test_only_authenticated_traffic_is_liveness(void) {
     size_t body_len = 0;
     CHECK(decoded_body(reply, end_len, &v, &body, &body_len), "liveness",
           "the timeout announced nothing");
-    CHECK(v.hdr.type == DH_MSG_SESSION_END && body_len == 1 &&
+    CHECK(v.hdr.type == DH_MSG_SESSION_END && body_len == DH_SESSION_END_LEN &&
               body[0] == DH_SESSION_END_LIVENESS_TIMEOUT,
           "liveness", "the timeout did not announce the eviction");
     CHECK(!s.present, "liveness", "still present after the timeout");
@@ -1470,7 +1502,7 @@ static void test_an_eviction_the_board_knows_about_is_announced(void) {
           "no session");
 
     size_t out_len = 0;
-    CHECK(dh_session_end(&s, DH_SESSION_END_UNPAIRED, reply, sizeof reply, &out_len) ==
+    CHECK(dh_session_end(&s, DH_SESSION_END_UNPAIRED, 0, reply, sizeof reply, &out_len) ==
               DH_FRAME_OK,
           "end", "ending on a wipe failed");
 
@@ -1478,7 +1510,8 @@ static void test_an_eviction_the_board_knows_about_is_announced(void) {
     const uint8_t *body = NULL;
     size_t body_len = 0;
     CHECK(decoded_body(reply, out_len, &v, &body, &body_len), "end", "the announcement is not a frame");
-    CHECK(v.hdr.type == DH_MSG_SESSION_END && body_len == 1 && body[0] == DH_SESSION_END_UNPAIRED,
+    CHECK(v.hdr.type == DH_MSG_SESSION_END && body_len == DH_SESSION_END_LEN &&
+              body[0] == DH_SESSION_END_UNPAIRED,
           "end", "a wipe did not announce the end");
     /* Tagged under the key the session had, which is why the frame is built
        before the session is dropped. */
@@ -1487,7 +1520,7 @@ static void test_an_eviction_the_board_knows_about_is_announced(void) {
 
     /* Nothing to end, nothing to say. */
     out_len = 0;
-    CHECK(dh_session_end(&s, DH_SESSION_END_PROTOCOL_ERROR, reply, sizeof reply, &out_len) ==
+    CHECK(dh_session_end(&s, DH_SESSION_END_PROTOCOL_ERROR, 0, reply, sizeof reply, &out_len) ==
               DH_FRAME_OK,
           "end", "ending a session that never started was an error");
     CHECK(out_len == 0, "end", "announced the end of a session that never started");

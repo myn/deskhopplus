@@ -32,9 +32,9 @@ hello_mac                    | 01 00 3f 00 00 00 00 00 00 00 00 00 19 86 c3 f8 f
 hello_ack_ok                 | 02 00 36 00 00 00 00 00 00 00 00 00 25 48 a1 b1 81 ba 76 5e c7 4d 4f 68 04 9c 90 71 0d f0 fe ca ef be ad de 02 00 00 01 00 04 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
 heartbeat                    | 05 00 18 00 00 00 00 00 00 00 00 00 27 16 96 9c e0 28 51 ef ab 46 6e 40 24 8b e1 81
 device_heartbeat             | 06 00 18 00 01 00 00 00 00 00 00 00 da 4c 18 18 29 fa 74 4f 99 61 11 71 63 3a 68 6a
-session_end_liveness         | 07 00 19 00 02 00 00 00 00 00 00 00 61 23 e5 ba 39 fc 7d d0 97 45 a8 39 7c ac 3a 20 01
-session_end_protocol_error   | 07 00 19 00 03 00 00 00 00 00 00 00 4d 9c 94 81 c5 2d c7 c8 46 08 d0 80 2a c0 3c 78 02
-session_end_unpaired         | 07 00 19 00 04 00 00 00 00 00 00 00 0e 7d 4d 8a 37 80 f3 62 f7 64 4f 67 ee cc 1a 3f 03
+session_end_liveness         | 07 00 1d 00 02 00 00 00 00 00 00 00 65 b3 b7 45 91 e8 c0 2a 30 fe 33 dd 5e a1 ec 8e 01 b8 0b 00 00
+session_end_protocol_error   | 07 00 1d 00 03 00 00 00 00 00 00 00 11 c7 f2 86 2e 1d 18 31 d5 63 b3 48 96 37 68 1c 02 00 00 00 00
+session_end_unpaired         | 07 00 1d 00 04 00 00 00 00 00 00 00 e1 0e b5 73 43 93 e9 7e ee 8a 4d 01 eb c2 79 c5 03 00 00 00 00
 listener_alert               | 03 00 20 00 05 00 00 00 00 00 00 00 09 87 32 90 7d 53 b9 82 73 f4 8f 54 47 65 55 d7 10 27 00 00 04 00 00 00
 clip_policy_both             | 04 00 19 00 08 00 00 00 00 00 00 00 e5 65 a4 56 c9 8c 92 0d f0 95 88 2b 38 52 2b a7 03
 clip_policy_receive_only     | 04 00 19 00 09 00 00 00 00 00 00 00 25 4e 76 75 42 2c fd b0 cc a4 93 d6 81 6b 6a e6 02

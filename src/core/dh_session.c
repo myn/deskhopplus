@@ -724,12 +724,13 @@ dh_frame_result dh_session_emit_relayed(dh_session *s, const dh_frame_view *f, u
     return rc;
 }
 
-dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint8_t *out, size_t out_cap,
-                               size_t *out_len) {
+dh_frame_result dh_session_end(dh_session *s, uint8_t reason, uint32_t silent_ms, uint8_t *out,
+                               size_t out_cap, size_t *out_len) {
     *out_len = 0;
     if (!s->present) return DH_FRAME_OK;
 
-    const uint8_t body[DH_SESSION_END_LEN] = {reason};
+    uint8_t body[DH_SESSION_END_LEN] = {reason};
+    wr_u32(body + 1, silent_ms);
     const dh_frame_result rc = encode_tagged(DH_MSG_SESSION_END, 0, s->k_b2h, s->tx_counter, body,
                                              sizeof body, out, out_cap, out_len);
 
@@ -752,7 +753,8 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
     /* Unsigned difference throughout, so a wrapping millisecond counter is
        just arithmetic rather than a session dropped once every 49 days. */
     if ((uint32_t)(now_ms - s->last_seen_ms) >= (uint32_t)DH_SESSION_ABSENT_MS)
-        return dh_session_end(s, DH_SESSION_END_LIVENESS_TIMEOUT, out, out_cap, out_len);
+        return dh_session_end(s, DH_SESSION_END_LIVENESS_TIMEOUT,
+                              (uint32_t)(now_ms - s->last_seen_ms), out, out_cap, out_len);
 
     /*
      * Ahead of everything else this tick can produce, because until a helper
