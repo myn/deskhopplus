@@ -858,6 +858,7 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
      * ordering rather than the link. A count over the window has nothing to
      * trip on that way.
      */
+    put_note(o, DH_NOTE_LOCAL_SENDS, (int32_t)h->sends_total, (int32_t)h->sends_refused);
     drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason,
                     (int32_t)sends_in_window(h));
 }
@@ -1073,6 +1074,11 @@ void dh_helper_note_sent(dh_helper *h, uint32_t now_ms) {
         h->send_window_started_at = now_ms;
     }
     if (h->sends_this_window != UINT32_MAX) h->sends_this_window++;
+    if (h->sends_total != UINT32_MAX) h->sends_total++;
+}
+
+void dh_helper_note_send_refused(dh_helper *h) {
+    if (h->sends_refused != UINT32_MAX) h->sends_refused++;
 }
 
 /* ----------------------------------------------------------------------- tick */

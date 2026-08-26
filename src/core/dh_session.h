@@ -349,6 +349,39 @@ typedef struct {
      * (`on_device_drops` notes it undecodable; it is not a protocol error and
      * does not end the session).
      */
+    /*
+     * **Not a drop.** Frames this board took from its helper and authenticated
+     * — counted on the very line that refreshes the liveness deadline, which
+     * is what makes it worth carrying here (#107).
+     *
+     * The board evicts a helper it has not heard from for
+     * DH_SESSION_ABSENT_MS. Hardware shows helpers writing 89 to 246 frames
+     * into that window and being evicted anyway, so either those frames are
+     * not arriving or the deadline is not being refreshed by the ones that
+     * do. This is the only number that can tell those apart: it moves in
+     * lockstep with `last_seen_ms`, so a count that climbs across an eviction
+     * makes the eviction impossible, and one that sits still says the frames
+     * never reached this seam.
+     *
+     * It rides the drop report because that is the frame the helper already
+     * reads live, and a diagnostic nobody can read is what #133 was.
+     */
+    uint32_t frames_in;
+    /*
+     * The rest of the same chain, so a loss can be *located* rather than
+     * inferred (#107). Every report the USB callback delivered, and every
+     * frame that reached authentication and failed it.
+     *
+     *   reports_in flat                          -> nothing arrived over USB
+     *   reports_in climbing, the two below flat  -> the frame reader ate them
+     *   frames_refused climbing                  -> arriving but not trusted
+     *   frames_in climbing, still evicted        -> the eviction is wrong
+     *
+     * `reports` above is the same chain's *loss* — reports that arrived and
+     * did not fit — so it sits with the drops and these do not.
+     */
+    uint32_t reports_in;
+    uint32_t frames_refused;
     uint32_t outq_priority;   /* refused because the priority band held one already */
     uint32_t outq_bad_header; /* refused because the header did not parse: version skew */
     /*
@@ -365,7 +398,14 @@ typedef struct {
      */
 } dh_device_drops;
 
-#define DH_DEVICE_DROPS_LEN 36u
+#define DH_DEVICE_DROPS_LEN 48u
+
+/*
+ * This body is now exactly the largest one the board's reply buffer can carry:
+ * DH_SESSION_REPLY_MAX (76) less the 4-byte header and the 24-byte prefix.
+ * The assertion below is what holds that, and a thirteenth field cannot be
+ * added without raising the reply buffer first.
+ */
 
 /* Whether two readings say the same thing — the whole of what decides that a
    fresh one is worth a frame. */
@@ -441,6 +481,15 @@ typedef struct {
     uint8_t channel_count; /* effective, negotiated; 0 until a session exists */
     uint16_t max_chunk;    /* effective, negotiated */
     uint32_t last_seen_ms;
+    /* Frames accepted since boot, moved on the same line as last_seen_ms
+       above. Survives dh_session_drop like the drop totals do — it is the
+       board's measurement, not the session's, and a total that restarts on
+       every reconnect cannot answer how much this seam heard (#107). */
+    uint32_t frames_in;
+    /* Frames that reached authentication and failed it, since boot. The
+       listener window below counts the same events to fire an alert at a
+       *rate*; this is the total, and survives a drop for the same reason. */
+    uint32_t frames_refused;
     /* When this board last had something to say. The beat fills the gaps
        between real traffic rather than adding to it. */
     uint32_t last_sent_ms;

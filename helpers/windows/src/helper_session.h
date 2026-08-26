@@ -139,6 +139,10 @@ class HelperSession {
        (#107). See dh_helper.h for the hello and pair-request exception. */
     void note_sent(uint32_t now_ms);
 
+    /* The transport would not take a frame. Counted, so "writing" and "being
+       refused" are different readings rather than the same silence (#107). */
+    void note_send_refused();
+
     /*
      * Where verified bulk and placement frames go (#52). Everything upstream —
      * decode, tag, replay counter — has already happened by the time a body

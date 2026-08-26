@@ -199,6 +199,7 @@ final class HelperRuntime {
                 if transport.send(frame) {
                     session.noteSent(at: now)
                 } else {
+                    session.noteSendRefused()
                     Self.note("a clipboard frame of type \(type) was not taken by the "
                               + "transport and is lost")
                 }
@@ -242,6 +243,7 @@ final class HelperRuntime {
             if transport.send(bytes) {
                 session.noteSent(at: now)
             } else {
+                session.noteSendRefused()
                 Self.note("a session frame was not taken by the transport and is lost")
             }
 

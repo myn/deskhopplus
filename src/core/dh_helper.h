@@ -302,6 +302,12 @@ typedef enum {
     DH_NOTE_TRANSPORT_FAILED = 29,
     DH_NOTE_RECONNECTION_RATE = 30,   /* a = drops counted, b = ms they spanned */
     DH_NOTE_CLIP_POLICY = 31,         /* a = DH_CLIP_MAY_* flags the board stated */
+    /*
+     * This end's side of the inbound chain, reported beside every session end
+     * so it can be read against the board's own totals in one place (#107).
+     * a = frames the transport took since boot, b = frames it refused.
+     */
+    DH_NOTE_LOCAL_SENDS = 32,
 } dh_helper_note;
 
 /*
@@ -467,6 +473,10 @@ typedef struct {
     uint32_t sends_this_window;
     uint32_t sends_last_window;
     uint32_t send_window_started_at;
+    /* Since boot, so this end's totals can be set against the board's own
+       without waiting for another round of rebuilding (#107). */
+    uint32_t sends_total;
+    uint32_t sends_refused;
     uint32_t last_device_frame_at;
     uint32_t last_device_beat_at;
     bool have_device_beat;
@@ -644,6 +654,11 @@ dh_frame_result dh_helper_emit(dh_helper *h, uint8_t type, uint8_t flags, const 
  * nothing behind it.
  */
 void dh_helper_note_sent(dh_helper *h, uint32_t now_ms);
+
+/* The mirror of the above: the transport would not take the frame. Counted so
+   a helper that is writing and a helper that is being refused are different
+   readings rather than the same silence (#107). */
+void dh_helper_note_send_refused(dh_helper *h);
 
 void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *out);
 

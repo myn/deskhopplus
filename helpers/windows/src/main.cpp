@@ -400,8 +400,10 @@ void Helper::apply(const Output &output) {
            to be indistinguishable from a healthy quiet link. */
         if (transport_.send(output.bytes.data(), output.bytes.size()))
             session_->note_sent(now_ms());
-        else
+        else {
+            session_->note_send_refused();
             log("a session frame was not taken by the transport and is lost");
+        }
         break;
 
     case Output::Kind::State:
@@ -454,7 +456,18 @@ void Helper::emit(const std::vector<ClipOutput> &outputs) {
                actually took. Charging for one it refused would suppress a beat
                that ADR-0004 owed the board — which is exactly what
                HelperSession::emit says not to do. */
-            if (transport_.send(frame.data(), frame.size())) session_->note_sent(now_ms());
+            if (transport_.send(frame.data(), frame.size())) {
+                session_->note_sent(now_ms());
+            } else {
+                /* Counted and said out loud, as the session path above does
+                   and as macOS already did here. Dropped in silence, a frame
+                   the transport would not take is indistinguishable from one
+                   lost on the wire, and the two have nothing in common to fix
+                   (#132, #107). */
+                session_->note_send_refused();
+                log("a clipboard frame of type " + std::to_string(output.type) +
+                    " was not taken by the transport and is lost");
+            }
             break;
         }
 

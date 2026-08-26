@@ -202,10 +202,11 @@ bool dh_device_drops_equal(const dh_device_drops *a, const dh_device_drops *b) {
     return a->reports == b->reports && a->inbound == b->inbound && a->outq == b->outq &&
            a->unsent == b->unsent && a->orphans == b->orphans && a->truncated == b->truncated &&
            a->relay_q == b->relay_q && a->outq_priority == b->outq_priority &&
-           a->outq_bad_header == b->outq_bad_header;
+           a->outq_bad_header == b->outq_bad_header && a->frames_in == b->frames_in &&
+           a->reports_in == b->reports_in && a->frames_refused == b->frames_refused;
 }
 
-/* The nine, in the order the struct declares them. Written out rather than
+/* The twelve, in the order the struct declares them. Written out rather than
    looped over the struct's memory: a loop would make the wire layout depend on
    this compiler's padding, and the vector file is the gate for three
    implementations, one of which is not C. */
@@ -219,6 +220,9 @@ static void drops_write(const dh_device_drops *d, uint8_t *body) {
     wr_u32(body + 24, d->relay_q);
     wr_u32(body + 28, d->outq_priority);
     wr_u32(body + 32, d->outq_bad_header);
+    wr_u32(body + 36, d->frames_in);
+    wr_u32(body + 40, d->reports_in);
+    wr_u32(body + 44, d->frames_refused);
 }
 
 bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *out) {
@@ -232,6 +236,9 @@ bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *ou
     out->relay_q = rd_u32(body + 24);
     out->outq_priority = rd_u32(body + 28);
     out->outq_bad_header = rd_u32(body + 32);
+    out->frames_in = rd_u32(body + 36);
+    out->reports_in = rd_u32(body + 40);
+    out->frames_refused = rd_u32(body + 44);
     return true;
 }
 
@@ -302,7 +309,11 @@ void dh_session_set_drops(dh_session *s, const dh_device_drops *drops) {
    helper that already has a session — silence is what ends one, and a stray
    frame must not start one. */
 static void note_received(dh_session *s, uint32_t now_ms) {
-    if (s->present) s->last_seen_ms = now_ms;
+    if (!s->present) return;
+    s->last_seen_ms = now_ms;
+    /* Counted here and nowhere else, so the number and the deadline can never
+       disagree about what this board heard (#107). */
+    if (s->frames_in != UINT32_MAX) s->frames_in++;
 }
 
 void dh_session_note_sent(dh_session *s, uint32_t now_ms) {
@@ -344,6 +355,11 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type) {
  * unauthenticated frame causes*, says what is given up and why it is worth it.
  */
 static void note_refused(dh_session *s, uint32_t now_ms, bool as_registered) {
+    /* A since-boot total beside the listener window below. The window exists to
+       fire an alert at a rate; this exists to be read, and the two answer
+       different questions (#107). */
+    if (s->frames_refused != UINT32_MAX) s->frames_refused++;
+
     if (!s->window_started) {
         s->window_started = true;
         s->window_started_ms = now_ms;

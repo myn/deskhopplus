@@ -53,6 +53,10 @@ static struct {
     uint8_t report_head; /* next to drain */
     uint8_t report_used;
     uint32_t reports_dropped;
+    /* Every report the USB callback delivered, dropped ones included. The head
+       of the inbound chain, so a helper writing frames the board never accepts
+       can be told apart from one whose frames never arrived (#107). */
+    uint32_t reports_in;
 
     /*
      * Outbound to this board's helper, emitted a report per tick. Session
@@ -389,6 +393,10 @@ static void channel_end_session(uint8_t reason) {
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
     if (bufsize == 0)
         return;
+
+    /* Before the backlog check, so this is what arrived rather than what fitted. */
+    if (channel.reports_in != UINT32_MAX)
+        channel.reports_in++;
 
     if (channel.report_used >= CHANNEL_REPORT_BACKLOG) {
         /* Counted, never silent (#43). A lost report loses a frame, which the
@@ -762,6 +770,9 @@ void channel_task(device_t *state) {
         .orphans = channel.relay_rx.orphans,
         .truncated = channel.relay_rx.truncated,
         .relay_q = channel.relay_tx.q.refused,
+        .reports_in = channel.reports_in,
+        .frames_in = channel.session.frames_in,
+        .frames_refused = channel.session.frames_refused,
         .outq_priority = channel.out.refused_priority,
         .outq_bad_header = channel.out.refused_bad_header,
     };

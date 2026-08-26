@@ -81,6 +81,7 @@ bool HelperSession::emit(uint8_t type, const std::vector<uint8_t> &body,
 }
 
 void HelperSession::note_sent(uint32_t now_ms) { dh_helper_note_sent(machine_.get(), now_ms); }
+void HelperSession::note_send_refused() { dh_helper_note_send_refused(machine_.get()); }
 
 std::vector<Output> HelperSession::device_appeared(dh_device_identity which, uint32_t now_ms) {
     dh_helper_outputs_reset(outputs_.get());

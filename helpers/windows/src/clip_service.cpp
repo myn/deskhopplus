@@ -215,7 +215,16 @@ std::string ClipService::drops_line(const dh_device_drops *drops) {
         out += seam.detail != nullptr ? *seam.detail
                                       : std::string(seam.name) + " " + std::to_string(seam.count);
     }
-    return out.empty() ? std::string("board reports no drops") : "board drops: " + out;
+    /* The accepted-frame count rides along whatever the losses say, and is
+       never one of them: on a liveness eviction it is the number that decides
+       whether the board was hearing this helper at all (#107). */
+    /* The inbound chain, head to tail, so a loss can be located in one reading
+       instead of one per rebuild (#107). */
+    const std::string heard =
+        "; board inbound: " + std::to_string(drops->reports_in) + " report(s) in, " +
+        std::to_string(drops->frames_in) + " frame(s) accepted, " +
+        std::to_string(drops->frames_refused) + " refused";
+    return (out.empty() ? std::string("board reports no drops") : "board drops: " + out) + heard;
 }
 
 std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops *drops) {

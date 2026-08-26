@@ -104,6 +104,16 @@ public struct BoardDrops: Equatable {
     public let outboundPriority: UInt32
     public let outboundBadHeader: UInt32
 
+    /// **Not a drop.** Frames the board took from this helper and
+    /// authenticated, counted on the line that refreshes the liveness
+    /// deadline (#107). Rendered separately below, because a stall note that
+    /// listed it among the losses would be naming a seam that is working.
+    public let framesIn: UInt32
+    /// The rest of the same chain: reports the board's USB callback took, and
+    /// frames that reached authentication and failed it (#107).
+    public let reportsIn: UInt32
+    public let framesRefused: UInt32
+
     /// The band #141 deepened. Derived, because the board sends the total and
     /// the two parts that are not it — appending two fields rather than three
     /// keeps the frame inside the board's reply buffer.
@@ -123,6 +133,9 @@ public struct BoardDrops: Equatable {
         relayQueue = d.relay_q
         outboundPriority = d.outq_priority
         outboundBadHeader = d.outq_bad_header
+        framesIn = d.frames_in
+        reportsIn = d.reports_in
+        framesRefused = d.frames_refused
     }
 
     /// Every seam that has lost something, named. Seams that have lost nothing
@@ -147,7 +160,15 @@ public struct BoardDrops: Equatable {
             return "\(seam.0) \(seam.1) (priority \(outboundPriority), bulk \(outboundBulk)"
                 + ", bad header \(outboundBadHeader))"
         }
-        return lost.isEmpty ? "board reports no drops" : "board drops: " + lost.joined(separator: ", ")
+        /* The accepted-frame count rides along whatever the losses say, and
+           is never one of them: on a liveness eviction it is the number that
+           decides whether the board was hearing this helper at all (#107). */
+        /* The inbound chain, head to tail, so a loss can be located in one
+           reading instead of one per rebuild (#107). */
+        let heard = "board inbound: \(reportsIn) report(s) in, \(framesIn) frame(s) accepted, "
+                  + "\(framesRefused) refused"
+        return (lost.isEmpty ? "board reports no drops" : "board drops: " + lost.joined(separator: ", "))
+             + "; " + heard
     }
 }
 
@@ -369,6 +390,12 @@ public final class HelperSession {
     /// the hello and pair-request exception.
     public func noteSent(at now: TimeInterval) {
         dh_helper_note_sent(machine, Self.milliseconds(now))
+    }
+
+    /// The transport would not take a frame. Counted, so "writing" and "being
+    /// refused" are different readings rather than the same silence (#107).
+    public func noteSendRefused() {
+        dh_helper_note_send_refused(machine)
     }
 
     // MARK: - Crossing the seam
