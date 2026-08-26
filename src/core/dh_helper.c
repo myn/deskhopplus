@@ -114,6 +114,12 @@ static void forget_crypto_state(dh_helper *h) {
     dh_auth_counter_init(&h->rx);
 }
 
+/* Frames out over at least the last DH_SESSION_ABSENT_MS — see the two
+   buckets in dh_helper.h. */
+static uint32_t sends_in_window(const dh_helper *h) {
+    return h->sends_this_window + h->sends_last_window;
+}
+
 static void forget_beat_trace(dh_helper *h) {
     h->have_device_beat = false;
     h->beat_quiet_noted = false;
@@ -837,19 +843,23 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
     }
     const int32_t reason = body_len > 0 ? body[0] : DH_SESSION_END_UNSPECIFIED;
     /*
-     * How long this helper had gone without getting a frame out, reported
-     * beside the board's reason (#107).
+     * How much this helper got out over the window the board judged it on,
+     * reported beside the board's reason (#107).
      *
      * On a liveness end the board is saying "you were silent"; this is the
-     * only place that can say whether this end agrees. They disagreeing is the
-     * finding — a helper that believes it beat a moment ago, against a board
-     * that heard nothing for DH_SESSION_ABSENT_MS, means the frames are being
-     * lost between the two rather than never written, and that is a different
-     * fault from a stalled helper. Neither could be told apart from the logs
-     * before, which is why this ticket ran for six days on the wrong shape.
+     * only place that can say whether this end agrees. Zero means it does — a
+     * genuinely stalled helper. A large number means it does not, and that the
+     * frames are being lost between the two rather than never written. Those
+     * are different faults and nothing in either log could tell them apart.
+     *
+     * A *count*, after "ms since the last send" was shipped first and failed
+     * on hardware: it read 0-3 ms on every sample, because the helper sends in
+     * the same turn it processes the session end, so the reading described the
+     * ordering rather than the link. A count over the window has nothing to
+     * trip on that way.
      */
     drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason,
-                    (int32_t)(now_ms - h->last_sent_at));
+                    (int32_t)sends_in_window(h));
 }
 
 /*
@@ -1056,6 +1066,13 @@ dh_frame_result dh_helper_emit(dh_helper *h, uint8_t type, uint8_t flags, const 
 void dh_helper_note_sent(dh_helper *h, uint32_t now_ms) {
     note_started(h, now_ms);
     h->last_sent_at = now_ms;
+
+    if (elapsed(now_ms, h->send_window_started_at, DH_SESSION_ABSENT_MS)) {
+        h->sends_last_window = h->sends_this_window;
+        h->sends_this_window = 0;
+        h->send_window_started_at = now_ms;
+    }
+    if (h->sends_this_window != UINT32_MAX) h->sends_this_window++;
 }
 
 /* ----------------------------------------------------------------------- tick */

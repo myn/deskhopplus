@@ -294,7 +294,8 @@ typedef enum {
     DH_NOTE_BEAT_RESUMED = 23,        /* a = ms since the last beat */
     DH_NOTE_BEAT_QUIET = 24,          /* a = ms since the last beat */
     DH_NOTE_SESSION_ENDED = 25,       /* a = dh_session_end_reason,
-                                         b = ms since this helper last got a frame out */
+                                         b = frames this helper got out over the
+                                             eviction window it was judged on */
     DH_NOTE_LISTENER_DETECTED = 26,   /* a = refused frames, b = window ms */
     DH_NOTE_NO_ACK = 27,              /* a = ms waited */
     DH_NOTE_DEVICE_SILENT = 28,       /* a = ms of silence */
@@ -454,6 +455,18 @@ typedef struct {
     uint32_t backoff_ms;
     uint32_t hello_sent_at;
     uint32_t last_sent_at;
+    /*
+     * Frames this helper got out, over the window the board judges it on
+     * (#107). Two buckets rather than a ring of timestamps: under load there
+     * are thousands of them and the question — was this end talking while the
+     * board heard nothing — needs an order of magnitude, not a history.
+     * Rolling one into the other keeps the reported total covering at least a
+     * full DH_SESSION_ABSENT_MS, so it can never read low merely because a
+     * window had just restarted.
+     */
+    uint32_t sends_this_window;
+    uint32_t sends_last_window;
+    uint32_t send_window_started_at;
     uint32_t last_device_frame_at;
     uint32_t last_device_beat_at;
     bool have_device_beat;

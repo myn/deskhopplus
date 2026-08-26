@@ -1314,16 +1314,78 @@ static void test_a_session_end_is_acted_on(void) {
     CHECK(!dh_helper_can_send_bulk(&h), name, "an ended session still carried bulk");
 
     /*
-     * And this end's own silence beside the board's reason (#107). On a
-     * liveness end the board is saying "you were silent"; without this there
-     * is nothing that can say whether this end agrees, and the two disagreeing
-     * is what separates frames lost between the ends from a stalled helper.
+     * And **how much this end got out** over the window the board judged it
+     * on (#107). Nothing was sent here, so the answer is zero.
      *
-     * The session was established at 0 and the end arrives at 100, with
-     * nothing sent in between, so the answer is the whole 100 ms.
+     * "ms since the last send" was tried first and could not answer the
+     * question: it read 0-3 ms on every hardware sample, because the helper
+     * sends in the same turn it processes the session end. A count over the
+     * eviction window has no such ordering to trip on — a helper that sent a
+     * hundred frames while the board heard nothing reads a hundred, whenever
+     * in the turn the reading is taken.
      */
-    CHECK(note != NULL && note->b == 100, name,
-          "the end did not say how long this helper had been silent");
+    CHECK(note != NULL && note->b == 0, name,
+          "the end did not say how much this helper had got out");
+    no_overflow(name);
+}
+
+/*
+ * The count is what separates "the board heard nothing because there was
+ * nothing" from "the board heard nothing while this end was talking" (#107).
+ *
+ * Two buckets rather than a ring of timestamps: under load the helper sends
+ * thousands of frames in the window, and the question only needs an order of
+ * magnitude. Rolling one bucket into the other keeps the answer covering at
+ * least a full eviction window, so it can never read low merely because a
+ * window had just restarted.
+ */
+static void test_a_session_end_says_how_much_this_end_got_out(void) {
+    const char *name = "a session end says how much this end got out";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* A transfer's worth of frames, well inside one eviction window. */
+    for (unsigned i = 0; i < 200; i++) dh_helper_note_sent(&h, 100 + i);
+
+    uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_auth_frame(DH_MSG_SESSION_END, 0, k_b2h, 1, body, sizeof body, frame, sizeof frame,
+                        &len) == DH_FRAME_OK,
+          name, "the session end would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 400, &out);
+
+    const dh_helper_output *note = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_SESSION_ENDED)
+            note = &out.items[i];
+    CHECK(note != NULL && note->b == 200, name,
+          "a helper that sent 200 frames into the eviction window did not say so");
+
+    /*
+     * And it still says so a full window later, when the older bucket is what
+     * carries the count — the case a single resetting counter would get wrong
+     * by reading zero at exactly the moment the answer matters most.
+     *
+     * A fresh session, because the end above dropped the last one and a
+     * session end outside a session is ignored rather than reported.
+     */
+    dh_helper h2;
+    a_live_session(&h2);
+    for (unsigned i = 0; i < 200; i++) dh_helper_note_sent(&h2, 100 + i);
+    dh_helper_note_sent(&h2, 100 + DH_SESSION_ABSENT_MS); /* rolls the bucket */
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h2, frame, len, 100 + DH_SESSION_ABSENT_MS, &out);
+
+    note = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_SESSION_ENDED)
+            note = &out.items[i];
+    CHECK(note != NULL && note->b == 201, name,
+          "the count fell to nothing the moment its window rolled");
     no_overflow(name);
 }
 
@@ -2282,6 +2344,7 @@ int main(int argc, char **argv) {
     test_the_listener_alert_expires_like_a_rate();
     test_a_bad_tag_drops_the_session_and_a_replay_does_not();
     test_a_session_end_is_acted_on();
+    test_a_session_end_says_how_much_this_end_got_out();
     test_the_policy_predicates_are_decided_once();
     test_an_incompatible_board_refuses_bulk();
     test_an_unanswered_hello_is_a_dead_session();
