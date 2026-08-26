@@ -1389,6 +1389,167 @@ static void test_a_session_end_carries_the_boards_own_totals(void) {
 }
 
 /*
+ * The board→helper direction's own reading, which is the seam #143 found had
+ * no counter at all.
+ *
+ * The board tags a frame when it builds it and spends one counter per frame,
+ * so the highest counter that arrives says how many it built. Everything this
+ * end accepted says how many arrived. The difference is the loss — the number
+ * that would have named a desynchronised reader the moment it happened,
+ * instead of leaving a failed tag to imply it.
+ */
+static void test_a_teardown_says_what_the_board_sent_and_never_arrived(void) {
+    const char *name = "a teardown says what the board sent and never arrived";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* Counters 1 to 4 never arrive. The board's beat is the ordinary frame to
+       lose a run of, and one at 5 is what tells this end they existed. */
+    uint8_t beat[DH_FRAME_MAX_SIZE];
+    size_t beat_len = 0;
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 5, NULL, 0, beat, sizeof beat,
+                        &beat_len) == DH_FRAME_OK,
+          name, "the beat would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, beat, beat_len, 50, &out);
+
+    uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_auth_frame(DH_MSG_SESSION_END, 0, k_b2h, 6, body, sizeof body, frame, sizeof frame,
+                        &len) == DH_FRAME_OK,
+          name, "the session end would not encode");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 100, &out);
+
+    const dh_helper_output *note = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE &&
+            out.items[i].note == DH_NOTE_BOARD_SENDS)
+            note = &out.items[i];
+    /* The ack, the beat and the end arrived; 1 to 4 did not. Seven built. */
+    CHECK(note != NULL, name, "the teardown said nothing about the inbound direction");
+    CHECK(note != NULL && note->a == 7 && note->b == 4, name,
+          "the board sent seven frames and lost four, and the reading disagrees");
+    no_overflow(name);
+}
+
+/*
+ * The fault #143 is about, reproduced: one report lost out of the middle of a
+ * frame.
+ *
+ * The board writes one frame per run of 64-byte reports and pads the last
+ * one's tail. Drop a report and the frame completes a report late, having
+ * eaten the head of the next one — so it fails its tag, and the reader is
+ * wrong for every byte after it. Everything with a counter reads clean, which
+ * is why this took three sessions on hardware to even locate.
+ *
+ * What must be true is the ordering: the stream reading comes out *before* the
+ * failed tag, because the tag failure ends the session and takes the reader
+ * with it.
+ */
+/*
+ * The carrier unit both platforms deliver, stated here because the core does
+ * not know it — the check under test is "whatever follows a frame in this call
+ * is padding" and never reads a width. The firmware's TEST_REPORT_SIZE and
+ * the two helpers' own copies are the same 64, which #120 exists to unify.
+ */
+#define TEST_REPORT_SIZE 64u
+
+static void test_a_lost_report_is_named_before_the_tag_fails(void) {
+    const char *name = "a lost report is named before the tag fails";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* Two beats, each a frame the board would pad out to one whole report. */
+    uint8_t first[DH_FRAME_MAX_SIZE], second[DH_FRAME_MAX_SIZE];
+    size_t first_len = 0, second_len = 0;
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 1, NULL, 0, first, sizeof first,
+                        &first_len) == DH_FRAME_OK,
+          name, "the first beat would not encode");
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 2, NULL, 0, second, sizeof second,
+                        &second_len) == DH_FRAME_OK,
+          name, "the second beat would not encode");
+    CHECK(first_len < TEST_REPORT_SIZE, name, "a beat no longer fits one report");
+
+    /*
+     * The first frame arrives one byte short — the shape a lost report leaves,
+     * scaled to a frame that fits in a single report — so the head of the
+     * second frame lands where this frame's padding belongs.
+     */
+    uint8_t report[TEST_REPORT_SIZE];
+    memset(report, DH_FRAME_PAD, sizeof report);
+    memcpy(report, first, first_len - 1);
+    memcpy(report + first_len - 1, second, TEST_REPORT_SIZE - (first_len - 1));
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, report, sizeof report, 50, &out);
+
+    /* The reading, and before the verdict on the frame that carried it. */
+    size_t misaligned = out.count, failed = out.count;
+    for (size_t i = 0; i < out.count; i++) {
+        if (out.items[i].kind != DH_HELPER_OUT_NOTE) continue;
+        if (out.items[i].note == DH_NOTE_STREAM_MISALIGNED && misaligned == out.count)
+            misaligned = i;
+        if (out.items[i].note == DH_NOTE_TAG_FAILED && failed == out.count) failed = i;
+    }
+    CHECK(misaligned < out.count, name, "a lost report was not named at all");
+    CHECK(failed < out.count, name, "the frame it broke did not fail its tag");
+    CHECK(misaligned < failed, name, "the cause was said after the symptom");
+    CHECK(misaligned < out.count && out.items[misaligned].a == 1, name,
+          "the first break of the session did not count as one");
+    no_overflow(name);
+}
+
+/*
+ * The ordinary case says nothing, which is the whole value of the reading
+ * above: a padded tail is what an intact stream looks like, and a note on
+ * every report would be noise nobody reads.
+ */
+static void test_a_padded_tail_is_silent(void) {
+    const char *name = "a padded tail is silent";
+    dh_helper h;
+    a_live_session(&h);
+
+    uint8_t beat[DH_FRAME_MAX_SIZE];
+    size_t beat_len = 0;
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 1, NULL, 0, beat, sizeof beat,
+                        &beat_len) == DH_FRAME_OK,
+          name, "the beat would not encode");
+
+    uint8_t report[TEST_REPORT_SIZE];
+    memset(report, DH_FRAME_PAD, sizeof report);
+    memcpy(report, beat, beat_len);
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, report, sizeof report, 50, &out);
+    CHECK(!saw_note(&out, DH_NOTE_STREAM_MISALIGNED), name,
+          "an intact report was reported as a lost one");
+    no_overflow(name);
+}
+
+/*
+ * A teardown with no session behind it has nothing to read, and saying "0 of 0
+ * arrived" beside every refused open would be noise standing where a real
+ * measurement goes.
+ */
+static void test_a_teardown_with_no_session_reads_nothing(void) {
+    const char *name = "a teardown with no session reads nothing";
+    dh_helper h;
+    a_helper_with_the_hello_sent(&h);
+
+    /* No ack ever comes, so the hello times out and the connection drops. */
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, DH_HELPER_HELLO_TIMEOUT_MS + 1, &out);
+
+    CHECK(saw_note(&out, DH_NOTE_NO_ACK), name, "the hello did not time out");
+    CHECK(!saw_note(&out, DH_NOTE_BOARD_SENDS), name,
+          "a session that never existed was given a reading");
+    no_overflow(name);
+}
+
+/*
  * The count is what separates "the board heard nothing because there was
  * nothing" from "the board heard nothing while this end was talking" (#107).
  *
@@ -2309,7 +2470,6 @@ static void test_a_reordered_bulk_frame_survives_the_counter(void) {
        body, no prefix — this board writes the tag. */
     const uint8_t body[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     uint8_t relayed[DH_FRAME_MAX_SIZE];
-    size_t relayed_len = 0;
     relayed[0] = DH_MSG_CLIP_OFFER;
     relayed[1] = 0;
     relayed[2] = (uint8_t)sizeof body;
@@ -2341,20 +2501,26 @@ static void test_a_reordered_bulk_frame_survives_the_counter(void) {
     CHECK(dh_outq_offer(&queue, beat, beat_len) == DH_OUTQ_OK, name,
           "the queue refused the beat");
 
-    /* Drain the queue the way channel_pump_out does, and feed the helper in
-       exactly the order the wire would carry. */
-    uint8_t wire[DH_FRAME_MAX_SIZE * 2];
-    size_t wire_len = 0;
+    /*
+     * Drain the queue the way channel_pump_out does — one report per pass, the
+     * tail padded — and hand each to the helper on its own. Concatenating the
+     * two frames into one buffer instead would be a stream the wire never
+     * carries, and the helper reads a frame followed by anything but padding
+     * as a lost report (DH_NOTE_STREAM_MISALIGNED).
+     */
+    dh_helper_outputs_reset(&out);
     dh_outq_view owed;
     while (dh_outq_peek(&queue, &owed)) {
-        const uint16_t take = owed.remaining;
-        memcpy(wire + wire_len, owed.at, take);
-        wire_len += take;
+        uint8_t report[TEST_REPORT_SIZE];
+        const uint16_t take = owed.remaining < TEST_REPORT_SIZE ? owed.remaining
+                                                                : (uint16_t)TEST_REPORT_SIZE;
+        memset(report, DH_FRAME_PAD, sizeof report);
+        memcpy(report, owed.at, take);
         dh_outq_advance(&queue, &owed, take);
+        dh_helper_received(&h, report, sizeof report, 2000, &out);
     }
-
-    dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, wire, wire_len, 2000, &out);
+    CHECK(!saw_note(&out, DH_NOTE_STREAM_MISALIGNED), name,
+          "a faithfully padded drain was read as a lost report");
 
     /*
      * The check that matters. A clipboard frame the board tagged, queued and
@@ -2405,6 +2571,10 @@ int main(int argc, char **argv) {
     test_a_session_end_is_acted_on();
     test_a_session_end_says_how_much_this_end_got_out();
     test_a_session_end_carries_the_boards_own_totals();
+    test_a_teardown_says_what_the_board_sent_and_never_arrived();
+    test_a_lost_report_is_named_before_the_tag_fails();
+    test_a_padded_tail_is_silent();
+    test_a_teardown_with_no_session_reads_nothing();
     test_the_policy_predicates_are_decided_once();
     test_an_incompatible_board_refuses_bulk();
     test_an_unanswered_hello_is_a_dead_session();

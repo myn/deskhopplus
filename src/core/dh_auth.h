@@ -141,7 +141,7 @@ dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_
  * This is a **reordering** window, not a replay allowance: a counter already
  * seen is refused whatever its position in it. Sized against the one thing
  * that reorders on this path — the board's outbound queue, where a priority
- * frame overtakes bulk that is merely queued (ADR-0005). That queue is two
+ * frame overtakes bulk that is merely queued (ADR-0005). That queue is three
  * frames deep behind one in flight, so the real reorder distance is a handful;
  * 64 is the width of the bitmask below and costs nothing more than the eight
  * bytes already spent on it.
@@ -157,6 +157,15 @@ typedef struct {
      * gap would tolerate a replay into that gap as well.
      */
     uint64_t seen;
+    /*
+     * How many counters have been recorded under this key. With `highest` it
+     * is the whole of what a receiver can say about what the sender emitted:
+     * a sender's counters are consecutive from zero inside one session — both
+     * dh_session and dh_helper start at 0 and spend exactly one per frame
+     * built — so `highest + 1` is what it built and this is what arrived.
+     * See dh_auth_counter_missed.
+     */
+    uint64_t accepted;
     bool any; /* whether anything has been accepted yet, so counter 0 is usable */
 } dh_auth_counter;
 
@@ -186,6 +195,30 @@ void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter);
 dh_auth_result dh_auth_open(const uint8_t key[DH_SESSION_KEY_SIZE], const dh_frame_header *hdr,
                             const uint8_t *payload, dh_auth_counter *counter,
                             const uint8_t **body, size_t *body_len);
+
+/*
+ * The pair a receiver reads the other end's losses from. Together they are the
+ * whole of what this state can say about the sender, and the reason both are
+ * functions rather than fields: "how many were built" is arithmetic on
+ * `highest`, and a caller doing that arithmetic for itself is a caller that
+ * has to know the counter space starts at zero.
+ *
+ * The board→helper direction had no count of any kind, which is why a
+ * desynchronised reader there took a failed tag to notice (#143) — the state
+ * above already held both halves of the answer and nothing asked it.
+ *
+ * `missed` does not separate the two ways a frame goes missing, because from
+ * this end they are identical: the sender's own bounded outbound queue
+ * refusing it before it reached the wire (ADR-0005), and a report lost between
+ * the two. That is what makes the sender's published refusal totals worth
+ * reading beside it — this number minus those is what the transport lost.
+ *
+ * Both are zero before anything has been accepted, and `missed` reads zero
+ * rather than a wrapped figure at the top of the counter space, which no
+ * session reaches.
+ */
+uint64_t dh_auth_counter_built(const dh_auth_counter *c);
+uint64_t dh_auth_counter_missed(const dh_auth_counter *c);
 
 /* The counter a received frame carries, before anything about it is trusted.
    Needs the 8 counter bytes and no more, which is what lets a board call it

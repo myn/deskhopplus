@@ -133,6 +133,7 @@ static void forget_session(dh_helper *h) {
        in the first moments of a new session quoting the last board's (#133). */
     h->have_device_drops = false;
     dh_frame_reader_init(&h->reader);
+    h->stream_breaks = 0;
     forget_beat_trace(h);
     forget_crypto_state(h);
 }
@@ -251,6 +252,22 @@ static void drop_connection(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o,
     if (record_drop(h, now_ms) && alone)
         push_time(h->recent_session_losses, &h->session_loss_count, DH_HELPER_SESSION_LOSS_LIMIT,
                   now_ms);
+
+    /*
+     * The inbound direction's reading, before forget_session clears the
+     * counter it is read from — the same ordering DH_NOTE_BOARD_AT_END needs,
+     * and for the same reason (#107).
+     *
+     * Here rather than beside the session end alone, because the teardowns
+     * worth measuring are the ones the board never asked for: a failed tag and
+     * a protocol error are what a desynchronised reader produces, and they
+     * arrive through this function too (#143). A helper with no session behind
+     * it has nothing to read and says nothing.
+     */
+    if (h->rx.any)
+        put_note(o, DH_NOTE_BOARD_SENDS, (int32_t)dh_auth_counter_built(&h->rx),
+                 (int32_t)dh_auth_counter_missed(&h->rx));
+
     forget_session(h);
     h->holding_channels = false;
     h->have_deferred = true;
@@ -1036,6 +1053,19 @@ static void on_unauthenticated(dh_helper *h, const dh_frame_view *f, uint32_t no
     }
 }
 
+/* Whether every byte left in this carrier unit is inter-frame padding. */
+static bool only_padding(const uint8_t *at, size_t len) {
+    for (size_t i = 0; i < len; i++)
+        if (at[i] != DH_FRAME_PAD) return false;
+    return true;
+}
+
+/*
+ * PRECONDITION: one carrier unit per call — one 64-byte HID report, as both
+ * platforms deliver them. The stream-alignment reading above is what needs it:
+ * two reports in one call would put a legitimate second frame where this
+ * expects padding.
+ */
 void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t now_ms,
                         dh_helper_outputs *o) {
     note_started(h, now_ms);
@@ -1052,6 +1082,22 @@ void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t 
         if (rc != DH_FRAME_OK) {
             drop_connection(h, now_ms, o, DH_NOTE_PROTOCOL_ERROR, (int32_t)rc, 0);
             return;
+        }
+
+        /*
+         * Before the frame is judged, because judging it destroys the evidence:
+         * a failed tag tears the session down and the reader with it, and this
+         * is the reading that says the tag failed because a report went
+         * missing rather than because the board is not the board (#143).
+         *
+         * The rule is channel_pump_out's: one frame per run of reports, the
+         * last one's tail padded. So whatever follows a completed frame inside
+         * the same carrier unit is padding, always. Anything else means the
+         * run was short and this frame has eaten the head of the next.
+         */
+        if (!only_padding(data + offset, len - offset)) {
+            if (h->stream_breaks != UINT32_MAX) h->stream_breaks++;
+            put_note(o, DH_NOTE_STREAM_MISALIGNED, (int32_t)h->stream_breaks, 0);
         }
 
         if (dh_msg_is_authenticated(f.hdr.type))

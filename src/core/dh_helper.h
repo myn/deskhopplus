@@ -327,6 +327,45 @@ typedef enum {
      * from a deadline that fired against a refreshed clock. a = ms.
      */
     DH_NOTE_BOARD_SILENT_FOR = 34,
+    /*
+     * What the board got out to this helper, said on every teardown (#143).
+     *
+     * The mirror of DH_NOTE_BOARD_AT_END, which reads the *inbound* chain from
+     * the board's own totals. Outbound had no counter anywhere: everything a
+     * seam could count was clean while large transfers still failed, and the
+     * one thing on that path nobody counted was the frames themselves. So a
+     * lost report showed up only as the tag failure of the frame it truncated,
+     * two events after the fact.
+     *
+     * Read off the authentication counter, which already carried it: the board
+     * spends one counter per frame it builds, so the highest that arrives says
+     * how many it built and the tally says how many got here. a = frames the
+     * board built, b = frames that never arrived.
+     *
+     * `b` is not all transport loss. A frame the board's own outbound queue
+     * refused was tagged and never sent, and from this end looks the same —
+     * which is why the board publishes its refusal totals (#142) and why the
+     * two are read together: b minus those is what the wire lost.
+     */
+    DH_NOTE_BOARD_SENDS = 35,
+    /*
+     * A report went missing between the board and here, said the moment it
+     * shows (#143). a = how many times this session.
+     *
+     * The one thing on this path that nothing could count, and the reason the
+     * fault took a failed tag to notice. The board writes one frame per run of
+     * reports and pads the last one's tail (channel_pump_out), so a frame
+     * always ends with padding behind it inside the same report. Lose a report
+     * out of the middle and the frame completes a report late, eating the head
+     * of the next one — so what sits behind it is a header rather than
+     * padding, and that is visible here one frame *before* the tag fails.
+     *
+     * Counted, never acted on: the frame it rides in is already failing on its
+     * own merits and this only says why. DH_NOTE_BOARD_SENDS cannot say it —
+     * the counter of a frame whose tag failed is never recorded, so the run
+     * reads as complete right up to the frame that broke it.
+     */
+    DH_NOTE_STREAM_MISALIGNED = 36,
 } dh_helper_note;
 
 /*
@@ -476,6 +515,13 @@ typedef struct {
 
     uint8_t phase; /* dh_helper_phase */
     dh_frame_reader reader;
+    /*
+     * Times this session's byte stream did not resume on a report boundary —
+     * see DH_NOTE_STREAM_MISALIGNED. Per session, not since boot: it is the
+     * session that a broken stream kills, and the reader restarts with it, so
+     * a total carried across reconnects would answer a question nobody asks.
+     */
+    uint32_t stream_breaks;
 
     uint32_t backoff_ms;
     uint32_t hello_sent_at;

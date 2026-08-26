@@ -453,6 +453,76 @@ static void test_counter(void) {
 }
 
 /*
+ * What the far end tagged against what got here. The board→helper direction
+ * had no counter of any kind until #143, which is why a desynchronised reader
+ * took a failed tag to notice; the counter state already held both halves of
+ * the answer and nothing asked it.
+ */
+static void test_counter_missed(void) {
+    dh_auth_counter c;
+    dh_auth_counter_init(&c);
+    CHECK(dh_auth_counter_missed(&c) == 0, "missed", "a fresh key has already lost something");
+
+    /* The hello is 0, and a session that has only had its hello has lost
+       nothing. */
+    dh_auth_counter_accept(&c, 0);
+    CHECK(dh_auth_counter_missed(&c) == 0, "missed", "the first counter reads as a loss");
+
+    dh_auth_counter_accept(&c, 1);
+    dh_auth_counter_accept(&c, 2);
+    CHECK(dh_auth_counter_missed(&c) == 0, "missed", "a consecutive run reads as a loss");
+
+    /* 3 and 4 never arrived. */
+    dh_auth_counter_accept(&c, 5);
+    CHECK(dh_auth_counter_missed(&c) == 2, "missed", "a gap of two was not counted as two");
+
+    /* One of them was merely late, not lost — the reorder ADR-0005 permits.
+       Arriving closes the gap rather than widening it. */
+    dh_auth_counter_accept(&c, 4);
+    CHECK(dh_auth_counter_missed(&c) == 1, "missed", "a late frame did not close its own gap");
+
+    /* A replay is refused before it is recorded, so it cannot flatter this
+       number. dh_auth_open asks first; asking here is the same contract. */
+    if (!dh_auth_counter_ok(&c, 4)) {
+        CHECK(dh_auth_counter_missed(&c) == 1, "missed", "a replay moved the reading");
+    } else {
+        CHECK(0, "missed", "a replay was not refused");
+    }
+}
+
+/* A frame that fails its tag never reaches the counter, so it is not a loss
+   this reading may claim: dh_auth_open verifies before it records. */
+static void test_missed_ignores_a_failed_tag(const uint8_t key[DH_SESSION_KEY_SIZE]) {
+    uint8_t frame[128];
+    size_t len = 0;
+    const uint8_t body[4] = {9, 9, 9, 9};
+    CHECK(dh_auth_frame(DH_MSG_PLACE, 0, key, 0, body, sizeof body, frame, sizeof frame, &len)
+              == DH_FRAME_OK,
+          "missed", "the frame would not build");
+
+    dh_auth_counter c;
+    dh_auth_counter_init(&c);
+
+    dh_frame_header hdr;
+    CHECK(dh_frame_header_parse(frame, len, &hdr) == DH_FRAME_OK, "missed",
+          "the frame would not parse");
+
+    const uint8_t *out_body = NULL;
+    size_t out_len = 0;
+    CHECK(dh_auth_open(key, &hdr, frame + DH_FRAME_HEADER_SIZE, &c, &out_body, &out_len)
+              == DH_AUTH_OK,
+          "missed", "a good frame would not open");
+    CHECK(dh_auth_counter_missed(&c) == 0, "missed", "an accepted frame reads as a loss");
+
+    /* The same frame with one tag byte turned over. */
+    frame[DH_FRAME_HEADER_SIZE + DH_FRAME_COUNTER_SIZE] ^= 0x01u;
+    CHECK(dh_auth_open(key, &hdr, frame + DH_FRAME_HEADER_SIZE, &c, &out_body, &out_len)
+              == DH_AUTH_ERR_TAG,
+          "missed", "a broken tag was accepted");
+    CHECK(dh_auth_counter_missed(&c) == 0, "missed", "a failed tag moved the reading");
+}
+
+/*
  * The window's two edges. Both are refusals, and they refuse for different
  * reasons: one because the counter has been through, one because the record of
  * whether it has no longer exists. Accepting on an absence of evidence is
@@ -566,9 +636,11 @@ int main(int argc, char **argv) {
         test_frame_tags(frames, nf, (const uint8_t (*)[DH_SESSION_KEY_SIZE])keys);
         test_rejection(keys[0], find(frames, nf, "hello_mac"));
         test_wrap_buffer(keys[1]);
+        test_missed_ignores_a_failed_tag(keys[1]);
     }
 
     test_counter();
+    test_counter_missed();
     test_counter_window_edges();
     test_peek_needs_only_the_counter();
     test_hkdf_output_limit();

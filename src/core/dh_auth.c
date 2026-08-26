@@ -108,6 +108,7 @@ dh_frame_result dh_auth_frame(uint8_t type, uint8_t flags, const uint8_t key[DH_
 void dh_auth_counter_init(dh_auth_counter *c) {
     c->highest = 0;
     c->seen = 0;
+    c->accepted = 0;
     c->any = false;
 }
 
@@ -132,6 +133,7 @@ void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter) {
         c->any = true;
         c->highest = counter;
         c->seen = 1;
+        c->accepted = 1;
         return;
     }
 
@@ -143,13 +145,33 @@ void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter) {
         c->seen = (shift >= DH_AUTH_WINDOW) ? UINT64_C(1)
                                             : ((c->seen << shift) | UINT64_C(1));
         c->highest = counter;
+        c->accepted++;
         return;
     }
 
     /* Inside the window. dh_auth_counter_ok has already refused anything
-       older, so the shift is in range. */
-    if (c->highest - counter < DH_AUTH_WINDOW)
+       older, so the shift is in range. The tally moves with the bitmask and
+       only with it — a counter this branch declines to record is one
+       dh_auth_counter_missed must go on calling missing. */
+    if (c->highest - counter < DH_AUTH_WINDOW) {
         c->seen |= UINT64_C(1) << (c->highest - counter);
+        c->accepted++;
+    }
+}
+
+uint64_t dh_auth_counter_built(const dh_auth_counter *c) {
+    /* Counters are consecutive from zero, so the highest one seen names the
+       whole run behind it — including the ones that never arrived. */
+    return c->any ? c->highest + 1u : 0;
+}
+
+uint64_t dh_auth_counter_missed(const dh_auth_counter *c) {
+    const uint64_t built = dh_auth_counter_built(c);
+    /* Clamped at zero rather than wrapped: at the very top of the counter
+       space `built` turns over and the subtraction would read as everything
+       missing. No session comes near it (see the header), and zero is the
+       honest answer if one ever did. */
+    return built > c->accepted ? built - c->accepted : 0;
 }
 
 bool dh_auth_peek_counter(const uint8_t *payload, size_t payload_len, uint64_t *out) {

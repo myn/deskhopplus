@@ -155,10 +155,44 @@ what the bitmask is for, and it is why tolerating a gap does not tolerate a repl
 counter older than the window is refused outright rather than searched for: past that distance
 the record no longer exists, and accepting on an absence of evidence is exactly what a replay
 window exists to prevent. The window is sized far above the real reorder distance, which is
-bounded by that queue — two staged frames behind one in flight.
+bounded by that queue — three staged frames behind one in flight.
 
 A counter that would wrap is not a case to handle. It is 64 bits wide and the keys do not
 outlive a session; #107 measured a session lasting about 98 seconds on average.
+
+**The counter is also the only end-to-end measurement of the direction it runs in.** A sender
+spends one counter per frame it builds, so the highest counter a receiver has accepted says how
+many the sender built, and the receiver's own tally says how many arrived. The difference is
+the loss, and it costs nothing to keep: `dh_auth_counter_missed`.
+
+It does not separate a frame the sender's own outbound queue refused from one the wire lost:
+both were tagged and neither arrived. The board publishes its refusal totals for exactly this
+reason — the loss minus those refusals is what the transport lost.
+
+**And it cannot see a lost report at all.** The counter is recorded only after the tag verifies,
+so a frame broken by a missing report never records its own counter and the run reads as complete
+right up to the frame that broke it. That is a different fault and it needs the rule below.
+
+### The report carrier, and what it makes checkable
+
+The channel's frames travel in fixed 64-byte HID reports that carry no length of their own. The
+board writes **one frame per run of reports and pads the last one's tail** with `DH_FRAME_PAD`
+(`channel_pump_out`); both helpers pad the same way on the way back. A frame therefore never
+shares a report with another frame, and **whatever follows a completed frame inside the same
+report is padding**.
+
+That rule is the only thing on this path that can see a lost report, and it is why
+[#143](https://github.com/myn/deskhopplus/issues/143) took three sessions on hardware to locate.
+Every seam with a counter read clean while large transfers kept failing, because the loss was
+between the seams — a report the board handed to USB and the helper never read. One report lost
+out of the middle of a frame does not lose a frame: the frame completes a report late, having
+eaten the head of the next one, so it fails its tag and the reader is wrong for every byte after
+it. The first symptom is two events removed from the cause.
+
+A receiver checks the rule on every report and counts a break, saying so *before* it judges the
+frame that carried it — because judging that frame ends the session and takes the reader with it.
+It is counted and never acted on: the frame is already failing on its own merits, and this only
+says why.
 
 ### What an unauthenticated frame causes
 

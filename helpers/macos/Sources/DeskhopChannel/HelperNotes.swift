@@ -103,6 +103,17 @@ enum HelperNotes {
             return "the board says it heard nothing for \(a)ms"
         case DH_NOTE_BOARD_AT_END:
             return "at the end the board had accepted \(a) frame(s) from \(b) report(s)"
+        case DH_NOTE_BOARD_SENDS:
+            /* Printed whole, zeros included. A zero is not proof the stream was
+               intact — a frame whose tag failed never records its counter, so a
+               desync reads as a complete run right up to the frame that broke
+               it. DH_NOTE_STREAM_MISALIGNED is the reading for that; this one
+               names whole frames lost, which is mostly the board's queue
+               refusing them (its own refusal totals say how many). */
+            return "the board built \(a) frame(s) for this helper; \(b) never arrived"
+        case DH_NOTE_STREAM_MISALIGNED:
+            return "a report from the board went missing: a frame ended with a header behind "
+                 + "it where padding belongs (\(a) this session)"
         case DH_NOTE_LOCAL_SENDS:
             return "this helper has written \(a) frame(s) since boot, \(b) refused by the transport"
         case DH_NOTE_CLIP_POLICY:
