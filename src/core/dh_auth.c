@@ -160,8 +160,18 @@ void dh_auth_counter_accept(dh_auth_counter *c, uint64_t counter) {
 }
 
 uint64_t dh_auth_counter_built(const dh_auth_counter *c) {
-    /* Counters are consecutive from zero, so the highest one seen names the
-       whole run behind it — including the ones that never arrived. */
+    /*
+     * Counters are consecutive from zero, so the highest one *accepted* names
+     * the whole run behind it — including the ones that never arrived.
+     *
+     * Accepted is the load-bearing word. Nothing here is recorded until the
+     * tag verifies, so this reads what the sender built only while the reader
+     * is still aligned. Once a lost report has broken the byte stream, the
+     * frame that discovers it fails its tag and never records its own counter,
+     * and this stops at the last good frame with `missed` reading zero — see
+     * the header, and DH_NOTE_STREAM_MISALIGNED for the reading that does see
+     * that case.
+     */
     return c->any ? c->highest + 1u : 0;
 }
 
