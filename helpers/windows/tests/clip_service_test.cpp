@@ -145,6 +145,9 @@ struct Pair {
             case ClipOutput::Kind::Note:
                 notes.push_back(output.note);
                 break;
+            case ClipOutput::Kind::ProtocolError:
+                notes.push_back("protocol error: " + output.note);
+                break;
             }
         }
     }
@@ -403,8 +406,12 @@ void test_a_stalled_transfer_is_abandoned() {
     /* Well inside the timeout, nothing happens: abandoning a healthy transfer
        is the worse of the two mistakes. */
     CHECK(a.tick(1).empty(), "a transfer was abandoned on its first tick");
-    CHECK(a.tick(ClipService::kStallTimeoutMs - 1).empty(),
-          "a transfer was abandoned before the timeout elapsed");
+    bool early_abandon = false;
+    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs - 1))
+        if (output.kind == ClipOutput::Kind::Note &&
+            output.note.find("abandoned") != std::string::npos)
+            early_abandon = true;
+    CHECK(!early_abandon, "a transfer was abandoned before the timeout elapsed");
 
     bool reported = false;
     for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs + 1))
@@ -659,6 +666,89 @@ void test_a_superseded_receive_resets_the_deadline() {
               "a transfer seconds old was abandoned on the deadline of the one it replaced");
 }
 
+void test_a_lost_offer_retries_without_extending_the_deadline() {
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+    pair.drop_next[DH_MSG_CLIP_OFFER] = 1;
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of("recovered offer")), Side::A);
+    CHECK(pair.delivered_to_b.size() == 1, "the deliberately lost offer arrived");
+    pair.settle(pair.a.tick(0), Side::A);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+    CHECK(pair.delivered_to_b.size() == 2, "the lost offer was not retried");
+    CHECK(pair.saw_note("retry action(s) were produced"),
+          "successful offer recovery was not diagnosed");
+    size_t recovery_notes = 0;
+    for (const std::string &note : pair.notes)
+        if (note.find("retry action(s) were produced") != std::string::npos) recovery_notes++;
+    CHECK(recovery_notes == 1, "offer recovery was diagnosed more than once");
+    bool retried_after_request = false;
+    for (const ClipOutput &output : pair.a.tick(2 * ClipService::kSweepDelayMs))
+        if (output.kind == ClipOutput::Kind::Send && output.type == DH_MSG_CLIP_OFFER)
+            retried_after_request = true;
+    CHECK(!retried_after_request, "offer retry continued after the request");
+
+    Pair dead;
+    dead.copy_on_a("warm the seal");
+    dead.drop_next[DH_MSG_CLIP_OFFER] = 10000;
+    dead.settle(dead.a.local_copy(ClipKind::Text, bytes_of("unanswered")), Side::A);
+    for (uint32_t now = 0; now <= ClipService::kStallTimeoutMs; now += ClipService::kSweepDelayMs)
+        dead.settle(dead.a.tick(now), Side::A);
+    CHECK(dead.saw_note("was abandoned"), "offer retries extended the terminal deadline");
+
+    Pair duplicate;
+    duplicate.copy_on_a("warm the seal");
+    duplicate.drop_next[DH_MSG_CLIP_REQUEST] = 10000;
+    duplicate.settle(duplicate.a.local_copy(ClipKind::Text, bytes_of("duplicate")), Side::A);
+    for (uint32_t now = 0; now <= ClipService::kStallTimeoutMs;
+         now += ClipService::kSweepDelayMs) {
+        duplicate.settle(duplicate.a.tick(now), Side::A);
+        duplicate.settle(duplicate.b.tick(now), Side::B);
+    }
+    CHECK(duplicate.saw_note("was abandoned") && duplicate.saw_note("duplicate offers"),
+          "duplicate arrivals moved or hid the receive deadline");
+}
+
+void test_a_conflicting_authenticated_offer_ends_the_local_session() {
+    ClipService service(seal_aead(), counter_entropy(1));
+    dh_seal_tx sender{};
+    dh_seal_tx_init(&sender);
+    uint8_t private_key[DH_P256_PRIVATE_SIZE], nonce[DH_NONCE_SIZE];
+    for (size_t i = 0; i < sizeof private_key; i++) private_key[i] = static_cast<uint8_t>(i + 3);
+    for (size_t i = 0; i < sizeof nonce; i++) nonce[i] = static_cast<uint8_t>(i + 33);
+    uint8_t exchange[DH_SEAL_EXCHANGE_LEN];
+    size_t exchange_len = 0;
+    CHECK(dh_seal_tx_offer(&sender, 77, private_key, nonce, exchange, sizeof exchange,
+                           &exchange_len) == DH_SEAL_OK,
+          "the test seal could not be offered");
+    std::vector<ClipOutput> accepted =
+        service.received(DH_MSG_SEAL_OFFER, exchange, exchange_len);
+    const ClipOutput *reply = nullptr;
+    for (const ClipOutput &output : accepted)
+        if (output.kind == ClipOutput::Kind::Send && output.type == DH_MSG_SEAL_ACCEPT)
+            reply = &output;
+    CHECK(reply != nullptr, "the service did not accept the test seal");
+    if (reply == nullptr) return;
+    CHECK(dh_seal_tx_accepted(&sender, reply->bytes.data(), reply->bytes.size()) == DH_SEAL_OK,
+          "the test seal accept was refused");
+
+    uint8_t body[DH_FRAME_MAX_PAYLOAD];
+    size_t body_len = 0;
+    dh_clip_offer offer{9, 0, 1, nullptr, 0};
+    CHECK(dh_seal_encode_offer(&sender, seal_aead(), &offer, body, sizeof body, &body_len) ==
+              DH_SEAL_OK,
+          "the first identity could not be sealed");
+    (void)service.received(DH_MSG_CLIP_OFFER, body, body_len);
+    offer.total = 2;
+    CHECK(dh_seal_encode_offer(&sender, seal_aead(), &offer, body, sizeof body, &body_len) ==
+              DH_SEAL_OK,
+          "the conflicting identity could not be sealed");
+    const std::vector<ClipOutput> outputs = service.received(DH_MSG_CLIP_OFFER, body, body_len);
+    bool protocol_error = false;
+    for (const ClipOutput &output : outputs)
+        if (output.kind == ClipOutput::Kind::ProtocolError) protocol_error = true;
+    CHECK(protocol_error, "an authenticated offer identity conflict did not end the local session");
+}
+
 } // namespace
 
 int main() {
@@ -685,6 +775,8 @@ int main() {
     test_a_stalled_receive_asks_again();
     test_a_swept_receive_is_still_abandoned();
     test_a_superseded_receive_resets_the_deadline();
+    test_a_lost_offer_retries_without_extending_the_deadline();
+    test_a_conflicting_authenticated_offer_ends_the_local_session();
 
     if (failures > 0) {
         std::printf("%d clipboard check(s) failed\n", failures);

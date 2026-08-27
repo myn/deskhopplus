@@ -214,6 +214,9 @@ final class HelperRuntime {
 
             case .note(let note):
                 Self.note(note)
+            case .protocolError(let note):
+                Self.note("clipboard protocol error: \(note); dropping the connection")
+                transport.release()
             }
         }
     }

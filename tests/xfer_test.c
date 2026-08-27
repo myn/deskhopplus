@@ -150,7 +150,8 @@ static int lossy_drop(uint8_t type) {
 static int encode_action(struct side *from, const dh_xfer_action *a, struct wire_msg *m) {
     int n = -1;
     switch (a->type) {
-    case DH_XFER_ACT_SEND_OFFER: {
+    case DH_XFER_ACT_SEND_OFFER:
+    case DH_XFER_ACT_SEND_OFFER_RETRY: {
         dh_clip_offer offer;
         CHECK(dh_xfer_offer_info(&from->x, &offer), "wire", "offer_info failed");
         m->type = DH_MSG_CLIP_OFFER;
@@ -237,6 +238,8 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         return 0;
     case DH_XFER_ACT_NEED_DATA:
         return 0; /* scenario answers explicitly */
+    case DH_XFER_ACT_PROTOCOL_ERROR:
+        return 0; /* local session-ending result, asserted directly */
     default:
         CHECK(0, "wire", "unknown action type");
         return 0;
@@ -961,6 +964,122 @@ int main(void) {
         CHECK(sweep_until_delivered(&A, 4000) >= 0, "sweep-big", "B to A never finished");
         CHECK(A.delivered == 1 && A.delivered_len == len, "sweep-big", "B to A not delivered");
         CHECK(memcmp(A.rx_buf, big_payload, len) == 0, "sweep-big", "B to A bytes differ");
+    }
+
+    /* A lost original offer is recoverable from the sender, without making
+       retry activity look like streaming progress. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_OFFER, "offer-retry",
+              "the original offer was not produced");
+        n = dh_xfer_retry_offer(&A.x, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_OFFER_RETRY, "offer-retry",
+              "an unanswered offer was not retried");
+        CHECK(dh_xfer_tx_offer_retries(&A.x) == 1, "offer-retry", "retry was not counted");
+        enqueue_actions(&A, &B, acts, n);
+        run_until_quiet();
+        CHECK(B.delivered == 1, "offer-retry", "the retry did not recover the transfer");
+        CHECK(dh_xfer_retry_offer(&A.x, acts, ACTS_CAP) == 0, "offer-retry",
+              "a requested offer remained retryable");
+
+        reset_scenario();
+        (void)dh_xfer_offer(&A.x, 2, NULL, 0, NULL, 10, acts, ACTS_CAP);
+        (void)dh_xfer_handle_request(&A.x, A.x.tx.id, acts, ACTS_CAP);
+        CHECK(A.x.tx.lazy_pending && dh_xfer_retry_offer(&A.x, acts, ACTS_CAP) == 0,
+              "offer-retry", "lazy data-pending state remained retryable");
+    }
+
+    /* Identical retries preserve receive state: before data they repeat one
+       opening request/window, after data and completion they are silent. */
+    {
+        reset_scenario();
+        dh_clip_offer offer = {7, 0, 2 * DH_XFER_CHUNK_SIZE, NULL, 0};
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+        CHECK(n == 2, "offer-idempotent", "the original did not open the receive");
+        n = dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+        CHECK(n == 2 && acts[0].type == DH_XFER_ACT_SEND_REQUEST &&
+                  acts[1].type == DH_XFER_ACT_SEND_CREDIT,
+              "offer-idempotent", "an empty receive did not repeat its opening window");
+        dh_clip_chunk first = {7, 0, dh_crc32(payload, DH_XFER_CHUNK_SIZE), payload,
+                               DH_XFER_CHUNK_SIZE};
+        (void)dh_xfer_handle_chunk(&B.x, &first, acts, ACTS_CAP);
+        n = dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+        CHECK(n == 0 && dh_xfer_rx_received(&B.x) == 1, "offer-idempotent",
+              "a retry erased partial receive state");
+        CHECK(dh_xfer_rx_duplicate_offers(&B.x) == 2, "offer-idempotent",
+              "duplicates observed were not counted");
+
+        reset_scenario();
+        offer_and_run(&A, payload, 10);
+        dh_clip_offer completed;
+        CHECK(dh_xfer_offer_info(&A.x, &completed), "offer-idempotent",
+              "completed sender identity was unavailable");
+        n = dh_xfer_handle_offer(&B.x, &completed, acts, ACTS_CAP);
+        CHECK(n == 0 && B.delivered == 1, "offer-idempotent",
+              "a completed duplicate recreated or delivered a receive");
+    }
+
+    /* Ordered identity makes stale offers silent, newer unacceptable offers
+       supersede, conflicts end the local session, and zero is never issued. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        dh_clip_offer current = {UINT32_MAX, 0, 10, NULL, 0};
+        CHECK(dh_xfer_handle_offer(&B.x, &current, acts, ACTS_CAP) == 2, "offer-order",
+              "the first identity was not accepted");
+        dh_clip_offer wrapped = {1, 0, RX_CAP + 1, NULL, 0};
+        size_t n = dh_xfer_handle_offer(&B.x, &wrapped, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_CANCEL && !B.x.rx.active,
+              "offer-order", "a newer unacceptable offer did not supersede and cancel");
+        uint8_t large_meta[DH_XFER_META_MAX + 1] = {0};
+        dh_clip_offer large = {2, 2, 10, large_meta, sizeof large_meta};
+        n = dh_xfer_handle_offer(&B.x, &large, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_CANCEL, "offer-order",
+              "oversized metadata was not refused");
+        CHECK(dh_xfer_handle_offer(&B.x, &large, acts, ACTS_CAP) == 0, "offer-order",
+              "an identical retry of a refused offer became a conflict");
+        CHECK(dh_xfer_handle_offer(&B.x, &current, acts, ACTS_CAP) == 0, "offer-order",
+              "an older offer was not ignored");
+        dh_clip_offer conflict = large;
+        conflict.kind = 1;
+        n = dh_xfer_handle_offer(&B.x, &conflict, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_PROTOCOL_ERROR, "offer-order",
+              "conflicting immutable content was not a protocol error");
+        dh_clip_offer zero = {0, 0, 10, NULL, 0};
+        n = dh_xfer_handle_offer(&A.x, &zero, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_PROTOCOL_ERROR, "offer-order",
+              "the non-transfer sentinel was accepted as an offer id");
+
+        A.x.next_id = UINT32_MAX;
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        CHECK(A.x.tx.id == UINT32_MAX, "offer-order", "the last id changed");
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        CHECK(A.x.tx.id == 1, "offer-order", "sender issued zero at wrap");
+
+        dh_xfer_link_down(&B.x, acts, ACTS_CAP);
+        dh_clip_offer after_link = {1, 0, 10, NULL, 0};
+        CHECK(dh_xfer_handle_offer(&B.x, &after_link, acts, ACTS_CAP) == 2, "offer-order",
+              "offer ordering did not reset with the link");
+    }
+
+    /* Offer recovery state is per direction: simultaneous copies can both
+       lose their opening announcement and recover independently. */
+    {
+        reset_scenario();
+        dh_xfer_action aacts[ACTS_CAP], bacts[ACTS_CAP];
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 20, aacts, ACTS_CAP);
+        (void)dh_xfer_offer(&B.x, 0, NULL, 0, payload + 20, 30, bacts, ACTS_CAP);
+        size_t an = dh_xfer_retry_offer(&A.x, aacts, ACTS_CAP);
+        size_t bn = dh_xfer_retry_offer(&B.x, bacts, ACTS_CAP);
+        enqueue_actions(&A, &B, aacts, an);
+        enqueue_actions(&B, &A, bacts, bn);
+        run_until_quiet();
+        CHECK(A.delivered == 1 && A.delivered_len == 30 && B.delivered == 1 &&
+                  B.delivered_len == 20,
+              "offer-bidirectional", "one direction disturbed the other's recovery");
     }
 
     if (failures == 0)

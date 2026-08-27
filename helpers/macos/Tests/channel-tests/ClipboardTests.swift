@@ -37,6 +37,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a receive the link starved recovers on its own", testAStalledReceiveAsksAgain),
     ("sweeping does not keep a dead receive alive", testASweptReceiveIsStillAbandoned),
     ("a superseding offer gets its own deadline", testASupersededReceiveResetsTheDeadline),
+    ("a lost offer retries without extending its deadline", testALostOfferRetries),
+    ("a conflicting authenticated offer ends the local session", testConflictingOfferEndsSession),
 ]
 
 /*
@@ -115,6 +117,8 @@ private final class Pair {
                 else { deliveredToB.append((kind, bytes)) }
             case .note(let note):
                 notes.append("\(side): \(note)")
+            case .protocolError(let note):
+                notes.append("\(side): protocol error: \(note)")
             }
         }
     }
@@ -382,7 +386,10 @@ private func testAStalledTransferIsAbandoned() {
     /* Well inside the timeout, nothing happens: abandoning a healthy transfer
        is the worse of the two mistakes. */
     Check.that(a.tick(at: 1).isEmpty, "a transfer was abandoned on its first tick")
-    Check.that(a.tick(at: ClipboardService.stallTimeout - 1).isEmpty,
+    Check.that(!a.tick(at: ClipboardService.stallTimeout - 1).contains {
+                   if case .note(let n) = $0 { return n.contains("abandoned") }
+                   return false
+               },
                "a transfer was abandoned before the timeout elapsed")
 
     let abandoned = a.tick(at: ClipboardService.stallTimeout + 1)
@@ -678,4 +685,69 @@ private func testASupersededReceiveResetsTheDeadline() {
     Check.that(!late.contains { if case .note(let n) = $0 { return n.contains("was abandoned") }
                                 return false },
                "a transfer seconds old was abandoned on the deadline of the one it replaced")
+}
+
+private func testALostOfferRetries() {
+    let pair = Pair()
+    pair.copyOnA("warm the seal")
+    pair.dropNext[MessageType.clipOffer] = 1
+    pair.settle(pair.a.localCopy(kind: .text, bytes: Array("recovered offer".utf8)), from: .a)
+    Check.equal(pair.deliveredToB.count, 1, "the deliberately lost offer arrived")
+    pair.settle(pair.a.tick(at: 0), from: .a)
+    pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
+    Check.equal(pair.deliveredToB.count, 2, "the lost offer was not retried")
+    Check.that(pair.sawNote(containing: "retry action(s) were produced"),
+               "successful offer recovery was not diagnosed")
+    Check.equal(pair.notes.filter { $0.contains("retry action(s) were produced") }.count, 1,
+                "offer recovery was diagnosed more than once")
+    Check.that(!pair.a.tick(at: 2 * ClipboardService.sweepDelay).contains {
+                   if case .send(let type, _) = $0 { return type == MessageType.clipOffer }
+                   return false
+               }, "offer retry continued after the request")
+
+    let dead = Pair()
+    dead.copyOnA("warm the seal")
+    dead.dropNext[MessageType.clipOffer] = 10_000
+    dead.settle(dead.a.localCopy(kind: .text, bytes: Array("unanswered".utf8)), from: .a)
+    var now: TimeInterval = 0
+    while now <= ClipboardService.stallTimeout {
+        dead.settle(dead.a.tick(at: now), from: .a)
+        now += ClipboardService.sweepDelay
+    }
+    Check.that(dead.sawNote(containing: "was abandoned"),
+               "offer retries extended the terminal deadline")
+
+    let duplicate = Pair()
+    duplicate.copyOnA("warm the seal")
+    duplicate.dropNext[MessageType.clipRequest] = 10_000
+    duplicate.settle(duplicate.a.localCopy(kind: .text, bytes: Array("duplicate".utf8)), from: .a)
+    now = 0
+    while now <= ClipboardService.stallTimeout {
+        duplicate.settle(duplicate.a.tick(at: now), from: .a)
+        duplicate.settle(duplicate.b.tick(at: now), from: .b)
+        now += ClipboardService.sweepDelay
+    }
+    Check.that(duplicate.sawNote(containing: "was abandoned")
+               && duplicate.sawNote(containing: "duplicate offers"),
+               "duplicate arrivals moved or hid the receive deadline")
+}
+
+private func testConflictingOfferEndsSession() throws {
+    let service = ClipboardService(entropy: counterEntropy(1))
+    let sender = ClipboardSeal(entropy: counterEntropy(2))
+    let offered = try sender.offer()
+    let accepted = service.received(type: MessageType.sealOffer, body: offered).compactMap {
+        if case .send(let type, let body) = $0, type == MessageType.sealAccept { return body }
+        return nil
+    }
+    Check.equal(accepted.count, 1, "the service did not accept the test seal")
+    guard let accept = accepted.first else { return }
+    try sender.accepted(accept)
+
+    let first = try sender.seal(ClipOffer(id: 9, kind: 0, total: 1))
+    _ = service.received(type: MessageType.clipOffer, body: first)
+    let conflict = try sender.seal(ClipOffer(id: 9, kind: 0, total: 2))
+    let outputs = service.received(type: MessageType.clipOffer, body: conflict)
+    Check.that(outputs.contains { if case .protocolError = $0 { return true }; return false },
+               "an authenticated offer identity conflict did not end the local session")
 }

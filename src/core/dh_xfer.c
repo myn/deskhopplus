@@ -59,6 +59,10 @@ static void rx_reset(dh_xfer *x) {
     x->rx.active = false;
 }
 
+static bool serial_newer(uint32_t candidate, uint32_t current) {
+    return candidate != current && (uint32_t)(candidate - current) < UINT32_C(0x80000000);
+}
+
 void dh_xfer_init(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap) {
     memset(x, 0, sizeof *x);
     x->rx_buf = rx_buf;
@@ -75,6 +79,8 @@ size_t dh_xfer_offer(dh_xfer *x, uint8_t kind, const uint8_t *meta, uint16_t met
     tx_reset(x); /* a newer offer supersedes whatever was in flight */
     x->tx.active = true;
     x->tx.id = x->next_id++;
+    if (x->next_id == 0)
+        x->next_id = 1;
     x->tx.kind = kind;
     x->tx.meta = meta;
     x->tx.meta_len = meta_len;
@@ -85,6 +91,19 @@ size_t dh_xfer_offer(dh_xfer *x, uint8_t kind, const uint8_t *meta, uint16_t met
     if (a) {
         a->type = DH_XFER_ACT_SEND_OFFER;
         a->id = x->tx.id;
+    }
+    return n;
+}
+
+size_t dh_xfer_retry_offer(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
+    if (!x->tx.active || x->tx.streaming || x->tx.lazy_pending)
+        return 0;
+    size_t n = 0;
+    dh_xfer_action *a = emit(acts, &n, acts_cap);
+    if (a) {
+        a->type = DH_XFER_ACT_SEND_OFFER_RETRY;
+        a->id = x->tx.id;
+        x->tx.offer_retries++;
     }
     return n;
 }
@@ -271,8 +290,53 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
                             size_t acts_cap) {
     size_t n = 0;
     const uint32_t nchunks = chunk_count(offer->total);
-    /* A newer offer supersedes an incomplete incoming transfer. */
+    if (offer->id == 0) {
+        dh_xfer_action *a = emit(acts, &n, acts_cap);
+        if (a) a->type = DH_XFER_ACT_PROTOCOL_ERROR;
+        return n;
+    }
+    if (x->rx.seen_offer && offer->id == x->rx.id) {
+        const bool same = offer->meta_len <= DH_XFER_IDENTITY_META_MAX &&
+                          offer->kind == x->rx.kind && offer->total == x->rx.total &&
+                          offer->meta_len == x->rx.meta_len &&
+                          (offer->meta_len == 0 ||
+                           memcmp(offer->meta, x->rx.meta, offer->meta_len) == 0);
+        if (!same) {
+            dh_xfer_action *a = emit(acts, &n, acts_cap);
+            if (a) {
+                a->type = DH_XFER_ACT_PROTOCOL_ERROR;
+                a->id = offer->id;
+            }
+            return n;
+        }
+        x->rx.duplicate_offers++;
+        if (!x->rx.active || x->rx.any_seen)
+            return 0;
+        dh_xfer_action *a = emit(acts, &n, acts_cap);
+        if (a) {
+            a->type = DH_XFER_ACT_SEND_REQUEST;
+            a->id = offer->id;
+        }
+        a = emit(acts, &n, acts_cap);
+        if (a) {
+            a->type = DH_XFER_ACT_SEND_CREDIT;
+            a->id = offer->id;
+            a->credits = DH_XFER_CREDIT_WINDOW;
+        }
+        return n;
+    }
+    if (x->rx.seen_offer && !serial_newer(offer->id, x->rx.id))
+        return 0;
+    /* A genuinely newer offer supersedes an incomplete incoming transfer. */
     memset(&x->rx, 0, sizeof x->rx);
+    x->rx.seen_offer = true;
+    x->rx.id = offer->id;
+    x->rx.kind = offer->kind;
+    x->rx.total = offer->total;
+    x->rx.nchunks = nchunks;
+    x->rx.meta_len = offer->meta_len;
+    if (offer->meta_len <= DH_XFER_IDENTITY_META_MAX && offer->meta_len > 0)
+        memcpy(x->rx.meta, offer->meta, offer->meta_len);
     if (offer->total > x->rx_cap || nchunks > DH_XFER_MAX_CHUNKS ||
         offer->meta_len > DH_XFER_META_MAX) {
         dh_xfer_action *a = emit(acts, &n, acts_cap);
@@ -283,13 +347,6 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
         return n;
     }
     x->rx.active = true;
-    x->rx.id = offer->id;
-    x->rx.kind = offer->kind;
-    x->rx.total = offer->total;
-    x->rx.nchunks = nchunks;
-    x->rx.meta_len = offer->meta_len;
-    if (offer->meta_len > 0)
-        memcpy(x->rx.meta, offer->meta, offer->meta_len);
     dh_xfer_action *a = emit(acts, &n, acts_cap);
     if (a) {
         a->type = DH_XFER_ACT_SEND_REQUEST;
@@ -568,15 +625,18 @@ size_t dh_xfer_handle_cancel(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size
 
 size_t dh_xfer_link_down(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
+    const uint32_t rx_id = x->rx.id;
     if (x->rx.active) {
-        rx_reset(x); /* the partial payload is never delivered */
         dh_xfer_action *a = emit(acts, &n, acts_cap);
         if (a) {
             a->type = DH_XFER_ACT_FAILED;
-            a->id = x->rx.id;
+            a->id = rx_id;
             a->reason = DH_XFER_FAIL_LINK_DROP;
         }
     }
+    /* Offer ordering belongs to the session. Even a completed identity must
+       not make the first offer of the next session look stale. */
+    memset(&x->rx, 0, sizeof x->rx);
     if (x->tx.active) {
         uint32_t id = x->tx.id;
         tx_reset(x);

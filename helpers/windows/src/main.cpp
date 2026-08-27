@@ -484,6 +484,10 @@ void Helper::emit(const std::vector<ClipOutput> &outputs) {
         case ClipOutput::Kind::Note:
             log(output.note);
             break;
+        case ClipOutput::Kind::ProtocolError:
+            log("clipboard protocol error: " + output.note + "; dropping the connection");
+            transport_.release();
+            break;
         }
     }
 }

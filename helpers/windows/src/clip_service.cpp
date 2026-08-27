@@ -169,6 +169,8 @@ std::string ClipService::progress_line() const {
         out += "sending " + std::to_string(dh_xfer_tx_next_seq(xfer_.get())) + "/" +
                std::to_string(dh_xfer_tx_chunks(xfer_.get())) + " chunks";
         if (!dh_xfer_tx_streaming(xfer_.get())) out += ", never requested";
+        out += ", produced " + std::to_string(dh_xfer_tx_offer_retries(xfer_.get())) +
+               " offer retries";
         out += ", asked for " + std::to_string(dh_xfer_tx_retx_asked(xfer_.get())) +
                " again and sent " + std::to_string(dh_xfer_tx_retx_sent(xfer_.get()));
     }
@@ -177,7 +179,9 @@ std::string ClipService::progress_line() const {
         out += "receiving " + std::to_string(dh_xfer_rx_received(xfer_.get())) + "/" +
                std::to_string(dh_xfer_rx_chunks(xfer_.get())) + " chunks, asked for " +
                std::to_string(dh_xfer_rx_retx_asked(xfer_.get())) + " again and got " +
-               std::to_string(dh_xfer_rx_retx_answered(xfer_.get())) + " back";
+               std::to_string(dh_xfer_rx_retx_answered(xfer_.get())) + " back, observed " +
+               std::to_string(dh_xfer_rx_duplicate_offers(xfer_.get())) +
+               " duplicate offers";
     }
     return out.empty() ? std::string("nothing in flight") : out;
 }
@@ -266,6 +270,7 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
     } else if (!sending_timed_ || sending_mark_ != tx_progress_) {
         sending_timed_ = true;
         sending_since_ = now_ms;
+        offer_retry_since_ = now_ms;
         sending_mark_ = tx_progress_;
     } else if (now_ms - sending_since_ >= kStallTimeoutMs) {
         const std::string line = progress_line();
@@ -278,6 +283,11 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
                                std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
                                line + "; " + board +
                                "); the other computer's helper is not answering"));
+    } else if (dh_xfer_tx_awaiting_request(xfer_.get()) &&
+               now_ms - offer_retry_since_ >= kSweepDelayMs) {
+        offer_retry_since_ = now_ms;
+        append(outputs, render(actions, dh_xfer_retry_offer(xfer_.get(), actions,
+                                                            kActionCapacity)));
     }
 
     if (!dh_xfer_is_receiving(xfer_.get())) {
@@ -324,10 +334,17 @@ std::vector<ClipOutput> ClipService::received(uint8_t type, const uint8_t *body,
 
     case DH_MSG_CLIP_REQUEST:
         if (!dh_clip_decode_id(body, len, &id)) break;
+        {
+        const bool awaiting = dh_xfer_tx_awaiting_request(xfer_.get());
+        const uint32_t retries = dh_xfer_tx_offer_retries(xfer_.get());
         outputs = render(actions, dh_xfer_handle_request(xfer_.get(), id, actions,
                                                          kActionCapacity));
         append(outputs, pump());
+        if (awaiting && !dh_xfer_tx_awaiting_request(xfer_.get()) && retries > 0)
+            outputs.push_back(note("an offer succeeded after " + std::to_string(retries) +
+                                   " retry action(s) were produced"));
         return outputs;
+        }
 
     case DH_MSG_CLIP_DONE:
         if (!dh_clip_decode_id(body, len, &id)) break;
@@ -460,11 +477,14 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
      * thirty seconds and is abandoned seconds old (#145). No clock is read
      * here, which is what keeps one out of every path that produces an action.
      */
-    receiving_timed_ = false;
-
     dh_xfer_action actions[kActionCapacity];
-    return render(actions,
-                  dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
+    const bool had_offer = dh_xfer_rx_has_offer(xfer_.get());
+    const uint32_t previous_id = dh_xfer_rx_offer_id(xfer_.get());
+    std::vector<ClipOutput> outputs =
+        render(actions, dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
+    if (!had_offer || dh_xfer_rx_offer_id(xfer_.get()) != previous_id)
+        receiving_timed_ = false;
+    return outputs;
 }
 
 std::vector<ClipOutput> ClipService::on_chunk(const uint8_t *body, size_t len) {
@@ -589,6 +609,9 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             tx_progress_++;
             append(outputs, sealed_offer());
             break;
+        case DH_XFER_ACT_SEND_OFFER_RETRY:
+            append(outputs, sealed_offer());
+            break;
         case DH_XFER_ACT_SEND_CHUNK:
             tx_progress_++;
             append(outputs, sealed_chunk(action.seq));
@@ -620,12 +643,24 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             out.bytes.assign(rx_buffer_.begin(),
                              rx_buffer_.begin() + static_cast<ptrdiff_t>(bounded));
             outputs.push_back(std::move(out));
+            if (dh_xfer_rx_duplicate_offers(xfer_.get()) > 0)
+                outputs.push_back(note("a transfer completed after " +
+                                       std::to_string(dh_xfer_rx_duplicate_offers(xfer_.get())) +
+                                       " duplicate offer(s) were observed"));
             break;
         }
         case DH_XFER_ACT_FAILED:
             outputs.push_back(note("transfer " + std::to_string(action.id) + " was abandoned: " +
                                    fail_reason(action.reason)));
             break;
+        case DH_XFER_ACT_PROTOCOL_ERROR: {
+            ClipOutput out;
+            out.kind = ClipOutput::Kind::ProtocolError;
+            out.note = "offer " + std::to_string(action.id) +
+                       " reused immutable identity with different content";
+            outputs.push_back(std::move(out));
+            break;
+        }
         case DH_XFER_ACT_NEED_DATA: {
             /* Nothing here offers lazily, so this is the core asking for a
                payload that was never promised. Refused rather than left as a

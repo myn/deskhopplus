@@ -33,6 +33,7 @@ public enum ClipboardOutput: Equatable {
     case deliver(kind: UInt8, bytes: [UInt8])
     /// Diagnostics, never shown to the user.
     case note(String)
+    case protocolError(String)
 }
 
 public final class ClipboardService {
@@ -121,6 +122,7 @@ public final class ClipboardService {
     private var txProgress = 0
     private var sendingSince: TimeInterval?
     private var sendingMark = 0
+    private var offerRetrySince: TimeInterval?
     private var receivingSince: TimeInterval?
     private var receivingMark: UInt32 = 0
     private var sweptSince: TimeInterval?
@@ -218,8 +220,10 @@ public final class ClipboardService {
 
         if !transfer.isSending {
             sendingSince = nil
+            offerRetrySince = nil
         } else if sendingSince == nil || sendingMark != txProgress {
             sendingSince = now
+            offerRetrySince = now
             sendingMark = txProgress
         } else if now - sendingSince! >= Self.stallTimeout {
             let line = transfer.progressLine
@@ -230,6 +234,9 @@ public final class ClipboardService {
             outputs.append(.note("a transfer made no progress for \(Int(Self.stallTimeout))s and "
                                  + "was abandoned (\(line); \(drops)); the other computer's "
                                  + "helper is not answering"))
+        } else if transfer.isAwaitingRequest && now - (offerRetrySince ?? now) >= Self.sweepDelay {
+            offerRetrySince = now
+            outputs += render(transfer.retryOffer())
         }
 
         if !transfer.isReceiving {
@@ -289,7 +296,13 @@ public final class ClipboardService {
             return onChunk(body)
         case MessageType.clipRequest:
             guard let id = ClipCodec.decodeID(body) else { return [malformed(type)] }
-            return render(transfer.handleRequest(id: id)) + pump()
+            let awaiting = transfer.isAwaitingRequest
+            let retries = transfer.offerRetries
+            var outputs = render(transfer.handleRequest(id: id)) + pump()
+            if awaiting && !transfer.isAwaitingRequest && retries > 0 {
+                outputs.append(.note("an offer succeeded after \(retries) retry action(s) were produced"))
+            }
+            return outputs
         case MessageType.clipDone:
             guard let id = ClipCodec.decodeID(body) else { return [malformed(type)] }
             return render(transfer.handleDone(id: id))
@@ -394,9 +407,13 @@ public final class ClipboardService {
              * is abandoned seconds old (#145). No clock is read here, which is
              * what keeps one out of every path that produces an action.
              */
-            receivingSince = nil
-            sweptSince = nil
-            return render(transfer.handle(offer: offer))
+            let previousID = transfer.receivedOfferID
+            let outputs = render(transfer.handle(offer: offer))
+            if transfer.receivedOfferID != previousID {
+                receivingSince = nil
+                sweptSince = nil
+            }
+            return outputs
         } catch SealError.unknownSeal {
             return staleReply(for: MessageType.clipOffer, body: body)
         } catch {
@@ -480,6 +497,8 @@ public final class ClipboardService {
             case DH_XFER_ACT_SEND_OFFER:
                 txProgress += 1
                 outputs += sealedOffer()
+            case DH_XFER_ACT_SEND_OFFER_RETRY:
+                outputs += sealedOffer()
             case DH_XFER_ACT_SEND_CHUNK:
                 txProgress += 1
                 outputs += sealedChunk(seq: action.seq)
@@ -500,9 +519,17 @@ public final class ClipboardService {
             case DH_XFER_ACT_DELIVERED:
                 let payload = transfer.delivered()
                 outputs.append(.deliver(kind: payload.kind, bytes: payload.bytes))
+                if transfer.duplicateOffers > 0 {
+                    outputs.append(.note("a transfer completed after "
+                                         + "\(transfer.duplicateOffers) duplicate offer(s) "
+                                         + "were observed"))
+                }
             case DH_XFER_ACT_FAILED:
                 outputs.append(.note("transfer \(action.id) was abandoned: "
                                      + Self.reason(action.reason)))
+            case DH_XFER_ACT_PROTOCOL_ERROR:
+                outputs.append(.protocolError("offer \(action.id) reused immutable identity "
+                                              + "with different content"))
             case DH_XFER_ACT_NEED_DATA:
                 /* Nothing here offers lazily, so this is the core asking for a
                    payload that was never promised. Refused rather than left as

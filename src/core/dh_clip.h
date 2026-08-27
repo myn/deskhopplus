@@ -27,6 +27,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "dh_auth.h"
+#include "dh_frame.h"
+
 /* C++ links these symbols too — the Windows helper is C++ (#49). */
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +41,11 @@ extern "C" {
 
 /* What a sealed plaintext costs before its variable part. */
 #define DH_CLIP_OFFER_PLAIN_FIXED 11u /* kind + total + meta_len */
+/* Largest metadata an authenticated, sealed offer can carry. The seal adds
+   one 16-byte tag beyond the clear and plaintext fixed fields. */
+#define DH_CLIP_OFFER_META_WIRE_MAX                                                        \
+    (DH_FRAME_MAX_PAYLOAD - DH_FRAME_AUTH_PREFIX_SIZE - DH_CLIP_OFFER_HEAD_LEN -          \
+     DH_CLIP_OFFER_PLAIN_FIXED - 16u)
 #define DH_CLIP_CHUNK_PLAIN_FIXED 4u  /* crc32 */
 
 /* CLIP_OFFER head: id:u32 seal_id:u32 seal_counter:u64 */

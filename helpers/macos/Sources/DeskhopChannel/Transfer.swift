@@ -216,6 +216,7 @@ public final class Transfer {
         if isSending {
             parts.append("sending \(dh_xfer_tx_next_seq(machine))/\(dh_xfer_tx_chunks(machine)) "
                          + "chunks" + (dh_xfer_tx_streaming(machine) ? "" : ", never requested")
+                         + ", produced \(dh_xfer_tx_offer_retries(machine)) offer retries"
                          + ", asked for \(dh_xfer_tx_retx_asked(machine)) again and sent "
                          + "\(dh_xfer_tx_retx_sent(machine))")
         }
@@ -223,7 +224,8 @@ public final class Transfer {
             parts.append("receiving \(dh_xfer_rx_received(machine))/"
                          + "\(dh_xfer_rx_chunks(machine)) chunks, asked for "
                          + "\(dh_xfer_rx_retx_asked(machine)) again and got "
-                         + "\(dh_xfer_rx_retx_answered(machine)) back")
+                         + "\(dh_xfer_rx_retx_answered(machine)) back, observed "
+                         + "\(dh_xfer_rx_duplicate_offers(machine)) duplicate offers")
         }
         return parts.isEmpty ? "nothing in flight" : parts.joined(separator: ", ")
     }
@@ -244,6 +246,17 @@ public final class Transfer {
     /// clock, so the caller's tick decides when — see `dh_xfer_sweep_rx`.
     public func sweepReceive() -> [TransferAction] {
         collect { acts, cap in dh_xfer_sweep_rx(machine, acts, cap) }
+    }
+
+    public func retryOffer() -> [TransferAction] {
+        collect { acts, cap in dh_xfer_retry_offer(machine, acts, cap) }
+    }
+
+    public var isAwaitingRequest: Bool { dh_xfer_tx_awaiting_request(machine) }
+    public var offerRetries: UInt32 { dh_xfer_tx_offer_retries(machine) }
+    public var duplicateOffers: UInt32 { dh_xfer_rx_duplicate_offers(machine) }
+    public var receivedOfferID: UInt32? {
+        dh_xfer_rx_has_offer(machine) ? dh_xfer_rx_offer_id(machine) : nil
     }
 
     /// Answer NEED_DATA with a refusal. Nothing in this slice offers lazily, so

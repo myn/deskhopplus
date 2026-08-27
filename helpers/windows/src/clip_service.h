@@ -42,6 +42,7 @@ struct ClipOutput {
         Send,    /* a frame body for the session to authenticate and send */
         Deliver, /* a complete payload, for this computer's clipboard */
         Note,    /* diagnostics, never shown to the user */
+        ProtocolError, /* authenticated identity conflict: drop connection */
     };
 
     Kind kind{Kind::Note};
@@ -243,6 +244,7 @@ class ClipService {
     bool sending_timed_{false};
     uint32_t sending_since_{0};
     uint32_t sending_mark_{0};
+    uint32_t offer_retry_since_{0};
     bool receiving_timed_{false};
     uint32_t receiving_since_{0};
     uint32_t receiving_mark_{0};

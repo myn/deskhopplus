@@ -69,6 +69,9 @@ extern "C" {
 #define DH_XFER_RETX_MAX 64u    /* pending retransmit requests held by the sender */
 #define DH_XFER_MAX_CHUNKS 65536u /* received-set bound: 64 MiB at 1 KiB chunks */
 #define DH_XFER_META_MAX 1024u  /* copied offer metadata the receiver retains */
+/* Immutable identity also covers refused metadata across the codec's complete
+   uint16_t namespace, so an identical retry can be distinguished from conflict. */
+#define DH_XFER_IDENTITY_META_MAX DH_CLIP_OFFER_META_WIRE_MAX
 
 typedef enum {
     DH_XFER_ACT_SEND_OFFER,      /* sender: send the offer (dh_xfer_offer_at) */
@@ -81,6 +84,8 @@ typedef enum {
     DH_XFER_ACT_SEND_CANCEL,     /* either side: cancel .id */
     DH_XFER_ACT_DELIVERED,       /* receiver: payload complete in rx_buf */
     DH_XFER_ACT_FAILED,          /* transfer abandoned; .reason says why */
+    DH_XFER_ACT_SEND_OFFER_RETRY, /* sender: repeat immutable current offer */
+    DH_XFER_ACT_PROTOCOL_ERROR,  /* authenticated offer identity conflict */
 } dh_xfer_action_type;
 
 typedef enum {
@@ -120,10 +125,12 @@ typedef struct {
            (#145): the receiver asked, and this end did or did not act on it. */
         uint32_t retx_asked;
         uint32_t retx_sent;
+        uint32_t offer_retries;
     } tx;
     /* incoming transfer */
     struct {
         bool active;
+        bool seen_offer; /* identity remains after completion/refusal */
         uint32_t id;
         uint8_t kind;
         uint64_t total;
@@ -138,8 +145,9 @@ typedef struct {
            that is not acting on what it was asked (#145). */
         uint32_t retx_asked;
         uint32_t retx_answered;
+        uint32_t duplicate_offers;
         uint16_t meta_len;
-        uint8_t meta[DH_XFER_META_MAX]; /* copied: the offer's view is transient */
+        uint8_t meta[DH_XFER_IDENTITY_META_MAX]; /* copied: offer view is transient */
         uint8_t received[DH_XFER_MAX_CHUNKS / 8];
         /* seqs re-requested and still outstanding, with a one-round age bit:
            a DONE sweep skips-but-ages a fresh request (its retransmission is
@@ -181,6 +189,8 @@ size_t dh_xfer_provide_fail(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* Emit the next credit-gated batch of chunk actions (retransmits first).
    Call whenever the bulk band has room; empty when nothing is owed. */
 size_t dh_xfer_pump(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
+/* Caller-timed recovery for an offer still awaiting its first request. */
+size_t dh_xfer_retry_offer(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* Cancel the outgoing transfer locally (user abort on the copy side). */
 size_t dh_xfer_cancel_tx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* Cancel the incoming transfer locally (user abort on the paste side). */
@@ -275,8 +285,17 @@ static inline uint32_t dh_xfer_rx_retx_asked(const dh_xfer *x) { return x->rx.re
 static inline uint32_t dh_xfer_rx_retx_answered(const dh_xfer *x) { return x->rx.retx_answered; }
 static inline uint32_t dh_xfer_tx_retx_asked(const dh_xfer *x) { return x->tx.retx_asked; }
 static inline uint32_t dh_xfer_tx_retx_sent(const dh_xfer *x) { return x->tx.retx_sent; }
+static inline uint32_t dh_xfer_tx_offer_retries(const dh_xfer *x) { return x->tx.offer_retries; }
+static inline uint32_t dh_xfer_rx_duplicate_offers(const dh_xfer *x) {
+    return x->rx.duplicate_offers;
+}
 static inline uint32_t dh_xfer_tx_next_seq(const dh_xfer *x) { return x->tx.next_seq; }
 static inline bool dh_xfer_tx_streaming(const dh_xfer *x) { return x->tx.streaming; }
+static inline bool dh_xfer_tx_awaiting_request(const dh_xfer *x) {
+    return x->tx.active && !x->tx.streaming && !x->tx.lazy_pending;
+}
+static inline bool dh_xfer_rx_has_offer(const dh_xfer *x) { return x->rx.seen_offer; }
+static inline uint32_t dh_xfer_rx_offer_id(const dh_xfer *x) { return x->rx.id; }
 
 /* Fill in the wire form of the current outgoing offer / one of its chunks
    (computing the chunk's CRC32). False when there is no such transfer. */
