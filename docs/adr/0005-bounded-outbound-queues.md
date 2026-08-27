@@ -200,3 +200,31 @@ that lands on an eight-byte boundary.
 Found by [#143](https://github.com/myn/deskhopplus/issues/143), where it is the tail of the log
 rather than the head — the first loss was a report the Windows HID class driver dropped, and this
 is what turned that one desync into three teardowns.
+
+## Amendment, 2026-08-26 — the priority band gets one queued slot
+
+The priority band was still single-buffered. That was enough while priority traffic was rare, but
+not once the board began reporting `DEVICE_DROPS` beside its heartbeat. During a sustained transfer,
+an in-flight bulk frame must finish before priority can start — the byte-stream framing invariant
+above — so the first priority frame occupies the band for the rest of that drain. A second priority
+frame in the same window was refused outright, with no retransmit beneath the queue.
+
+Measured on board A in [#144](https://github.com/myn/deskhopplus/issues/144): all 108 outbound
+refusals were priority, bulk was zero, and the helper reported repeated heartbeat gaps during an
+otherwise healthy transfer. The refusal rate matches the short window in which a sealed chunk is
+mid-drain and the beat and rate-limited drop report collide.
+
+**The priority band now holds one frame plus one queued behind it.** This is the same bounded-queue
+answer as the bulk amendment for #141, at the other band and at its natural size: one additional
+`DH_OUTQ_PRIORITY_MAX` slot. It preserves both existing ordering rules. Bulk already in flight
+finishes first; then both priority frames leave in arrival order ahead of bulk that has not started.
+The third priority frame is still refused and still increments `outq_priority`, so the reading added
+by #142 remains the honest indicator that this bound was exceeded.
+
+Re-owing a refused heartbeat was not added. That would change ADR-0004's timer ownership and answer
+a broader retry question when the measured ordinary-load collision needs only one bounded slot.
+If traffic can fill three priority positions before the drain catches up, `outq_priority` will say
+so and provide evidence for revisiting that separately.
+
+**Measured cost**: SRAM `data`+`bss` 188,108 → 188,372 bytes — 264 bytes for one 128-byte slot and
+its bookkeeping in each of the two outbound queues. ~68 KB of SRAM remains free.

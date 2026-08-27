@@ -348,16 +348,38 @@ static void test_a_frame_in_flight_is_never_interrupted(void) {
     CHECK(memcmp(s.bytes + bulk_len, beat, beat_len) == 0, "atomic", "the beat never went out");
 }
 
-static void test_the_priority_band_stays_single_buffered(void) {
+static void test_two_priority_frames_wait_behind_bulk_without_a_refusal(void) {
     dh_outq q;
     dh_outq_init(&q);
 
-    uint8_t beat[DH_FRAME_MAX_SIZE];
+    uint8_t bulk[DH_FRAME_MAX_SIZE], beat[DH_FRAME_MAX_SIZE], drops[DH_FRAME_MAX_SIZE];
+    const size_t bulk_len = make_frame(DH_MSG_CLIP_CHUNK, 1, 1024, bulk, sizeof bulk);
     const size_t beat_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 0, 0, beat, sizeof beat);
+    const size_t drops_len = make_frame(DH_MSG_DEVICE_DROPS, 2, 0, drops, sizeof drops);
 
-    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "single", "first beat refused");
-    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "single",
-          "a second session frame was accepted while one was in flight");
+    CHECK(dh_outq_offer(&q, bulk, bulk_len) == DH_OUTQ_OK, "priority-burst", "bulk refused");
+
+    sink s;
+    sink_init(&s);
+    CHECK(drain_once(&q, &s, 64) == 64, "priority-burst", "bulk did not start");
+
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "priority-burst", "beat refused");
+    CHECK(dh_outq_offer(&q, drops, drops_len) == DH_OUTQ_OK, "priority-burst",
+          "the second priority frame was refused");
+    CHECK(q.refused_priority == 0, "priority-burst",
+          "an ordinary two-frame priority burst raised the readable refusal counter");
+
+    drain_all(&q, &s, 64);
+
+    CHECK(s.errors == 0, "priority-burst", "the stream desynchronised the reader");
+    CHECK(s.frames == 3, "priority-burst", "not every accepted frame arrived");
+    CHECK(s.frame_len[0] == bulk_len && memcmp(s.bytes, bulk, bulk_len) == 0,
+          "priority-burst", "the in-flight bulk frame was interrupted");
+    CHECK(s.frame_len[1] == beat_len && memcmp(s.bytes + bulk_len, beat, beat_len) == 0,
+          "priority-burst", "the first priority frame did not arrive next");
+    CHECK(s.frame_len[2] == drops_len &&
+              memcmp(s.bytes + bulk_len + beat_len, drops, drops_len) == 0,
+          "priority-burst", "the queued priority frame did not arrive whole and in order");
 }
 
 /*
@@ -557,10 +579,13 @@ static void test_a_refusal_says_which_band_turned_it_away(void) {
     const size_t beat_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 0, 0, beat, sizeof beat);
     const size_t chunk_len = make_frame(DH_MSG_CLIP_CHUNK, 1, 512, chunk, sizeof chunk);
 
-    /* The priority band holds one, and DH_OUTQ_DEPTH did not change that. */
+    /* One in flight plus DH_OUTQ_PRIORITY_DEPTH behind it, then one too many. */
     CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "bands", "first beat refused");
+    for (unsigned i = 0; i < DH_OUTQ_PRIORITY_DEPTH; i++)
+        CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "bands",
+              "a frame within the priority queue's depth was refused");
     CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "bands",
-          "the priority band took a second frame");
+          "the priority band took more than it can hold");
     CHECK(q.refused_priority == 1 && q.refused_bulk == 0 && q.refused_bad_header == 0, "bands",
           "a priority refusal was not attributed to the priority band");
 
@@ -600,7 +625,8 @@ static void test_a_reset_drops_the_queue_and_keeps_the_counts(void) {
     uint8_t beat[DH_FRAME_MAX_SIZE];
     const size_t beat_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 0, 0, beat, sizeof beat);
     CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "reset", "first beat refused");
-    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "reset", "second beat queued");
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_OK, "reset", "second beat refused");
+    CHECK(dh_outq_offer(&q, beat, beat_len) == DH_OUTQ_ERR_BUSY, "reset", "third beat queued");
 
     dh_outq_reset(&q);
 
@@ -649,7 +675,7 @@ int main(void) {
     test_a_sustained_overrun_truncates_nothing();
     test_priority_overtakes_queued_bulk();
     test_a_frame_in_flight_is_never_interrupted();
-    test_the_priority_band_stays_single_buffered();
+    test_two_priority_frames_wait_behind_bulk_without_a_refusal();
     test_an_outsized_frame_rides_the_in_flight_buffer();
     test_malformed_frames_are_refused();
     test_the_preamble_is_owed_once_per_frame();

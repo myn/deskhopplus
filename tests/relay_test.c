@@ -349,9 +349,11 @@ static void test_priority_goes_ahead_of_queued_bulk(void) {
     const uint16_t first_len = (uint16_t)(packet.data[0] | (packet.data[1] << 8));
     CHECK(first_len == place_len, "priority", "bulk went out ahead of placement");
 
-    /* And the two bands do not contend for one slot. */
+    /* And the two bands do not contend: one more priority frame can wait. */
+    CHECK(dh_relay_tx_offer(&tx, place, place_len) == DH_RELAY_OK, "priority",
+          "a second placement was refused while one was in flight");
     CHECK(dh_relay_tx_offer(&tx, place, place_len) == DH_RELAY_ERR_BUSY, "priority",
-          "a second placement was accepted while one was in flight");
+          "the priority band accepted more than its bounded pair");
 }
 
 static void test_bulk_in_flight_is_not_interrupted(void) {

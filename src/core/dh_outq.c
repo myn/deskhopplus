@@ -63,6 +63,19 @@ static void promote(dh_outq *q) {
     q->stage_used--;
 }
 
+static void promote_priority(dh_outq *q) {
+    band_clear(&q->priority);
+    if (q->priority_stage_used == 0)
+        return;
+
+    const uint16_t len = q->priority_stage_len[q->priority_stage_first];
+    memcpy(q->priority_buf, q->priority_stage[q->priority_stage_first], len);
+    q->priority.len = len;
+    q->priority_stage_first =
+        (uint8_t)((q->priority_stage_first + 1u) % DH_OUTQ_PRIORITY_DEPTH);
+    q->priority_stage_used--;
+}
+
 /* Every refusal is counted twice: once in the total the wire has always
    carried, and once against the cause, which is what a reader needs to know
    which seam to act on (#142). */
@@ -111,8 +124,16 @@ dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len) {
             return DH_OUTQ_ERR_OVERSIZE;
         }
         if (q->priority.len > 0) {
-            refuse(q, &q->refused_priority);
-            return DH_OUTQ_ERR_BUSY;
+            if (q->priority_stage_used >= DH_OUTQ_PRIORITY_DEPTH) {
+                refuse(q, &q->refused_priority);
+                return DH_OUTQ_ERR_BUSY;
+            }
+            const uint8_t at = (uint8_t)((q->priority_stage_first + q->priority_stage_used) %
+                                         DH_OUTQ_PRIORITY_DEPTH);
+            memcpy(q->priority_stage[at], frame, len);
+            q->priority_stage_len[at] = (uint16_t)len;
+            q->priority_stage_used++;
+            return DH_OUTQ_OK;
         }
         memcpy(q->priority_buf, frame, len);
         band_clear(&q->priority);
@@ -190,7 +211,7 @@ void dh_outq_advance(dh_outq *q, const dh_outq_view *view, uint16_t n) {
     if (view->bulk)
         promote(q);
     else
-        band_clear(b);
+        promote_priority(q);
 }
 
 void dh_outq_note_preamble(dh_outq *q, const dh_outq_view *view) {

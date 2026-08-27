@@ -46,12 +46,14 @@ extern "C" {
 #endif
 
 /*
- * The priority band holds one frame. Session, placement and pairing frames are
- * small — the largest the board emits is a 76-byte pairing grant
- * (DH_SESSION_REPLY_MAX) — and rare enough that two in flight at once has
- * never been reachable.
+ * Priority frames are small — the largest the board emits is a 76-byte pairing
+ * grant (DH_SESSION_REPLY_MAX). The band holds one frame plus one queued behind
+ * it: under sustained bulk the heartbeat and rate-limited DEVICE_DROPS can land
+ * while the in-flight bulk frame must finish, and neither has retransmit beneath
+ * this queue (#144).
  */
 #define DH_OUTQ_PRIORITY_MAX 128u
+#define DH_OUTQ_PRIORITY_DEPTH 1u
 
 /*
  * A frame waiting behind the one in flight. Sized for the largest bulk frame a
@@ -145,6 +147,10 @@ typedef struct {
 typedef struct {
     dh_outq_band priority;
     uint8_t priority_buf[DH_OUTQ_PRIORITY_MAX];
+    uint8_t priority_stage[DH_OUTQ_PRIORITY_DEPTH][DH_OUTQ_PRIORITY_MAX];
+    uint16_t priority_stage_len[DH_OUTQ_PRIORITY_DEPTH];
+    uint8_t priority_stage_first;
+    uint8_t priority_stage_used;
 
     /* The bulk frame in flight, then the ring of frames waiting to become it. */
     dh_outq_band bulk;
