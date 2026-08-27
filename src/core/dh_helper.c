@@ -1006,6 +1006,22 @@ static void on_authenticated(dh_helper *h, const dh_frame_view *f, uint32_t now_
 
     h->last_device_frame_at = now_ms;
 
+    /*
+     * ADR-0004 makes authenticated traffic stand in for the idle-gated beat.
+     * Keep the beat trace on that same clock once its first literal beat has
+     * established the diagnostic: otherwise a busy, healthy direction is
+     * reported as heartbeat-quiet precisely because its traffic correctly
+     * suppressed the filler (#144).
+     *
+     * A replacement also ends any already-noted gap without a "resumed"
+     * message. The device did resume proving liveness, but not from a fault;
+     * the heartbeat simply was not owed while the direction carried traffic.
+     */
+    if (h->have_device_beat && f->hdr.type != DH_MSG_DEVICE_HEARTBEAT) {
+        h->last_device_beat_at = now_ms;
+        h->beat_quiet_noted = false;
+    }
+
     switch (f->hdr.type) {
     case DH_MSG_SESSION_END:
         on_session_end(h, f, body, body_len, now_ms, o);

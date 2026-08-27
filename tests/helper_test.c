@@ -1924,17 +1924,16 @@ static void test_the_machine_owns_the_counter_bulk_goes_out_under(void) {
 
 /*
  * ADR-0004 gates the device's beat on an idle direction, so beats stopping
- * during a transfer is the design working — and it looks identical in a log to
- * a device that has stalled. #88 had to tell those apart on hardware, and the
- * helper had no surface for it at all: the beat arrived and was dropped on the
- * floor.
+ * during a transfer is the design working. Authenticated traffic replaces the
+ * beat as proof of liveness; reporting that interval as heartbeat-quiet makes
+ * healthy traffic look identical to a stalled device (#144).
  *
  * Traced at the edges rather than per beat. A line per arrival would be a line
  * a second, which is precisely the log that hid a live defect for two days
  * during that sitting (#94, #98).
  */
-static void test_the_device_beat_is_traced_where_it_changes(void) {
-    const char *name = "the device beat is traced where it changes";
+static void test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet(void) {
+    const char *name = "healthy device traffic is not reported as heartbeat quiet";
     dh_helper h;
     a_live_session(&h);
 
@@ -1961,8 +1960,6 @@ static void test_the_device_beat_is_traced_where_it_changes(void) {
         CHECK(count_of(&out, DH_HELPER_OUT_NOTE) == 0, name, "a beat arriving on time was traced");
         no_overflow(name);
     }
-    const uint32_t last_beat = t;
-
     /*
      * A transfer: the device keeps sending, so the session holds while the
      * idle-gated beat correctly stops. The placement frames are what keep
@@ -1970,35 +1967,29 @@ static void test_the_device_beat_is_traced_where_it_changes(void) {
      * whole of ADR-0004.
      */
     const uint8_t place[4] = {1, 0, 0, 0x80};
-    unsigned quiet_notes = 0;
     for (unsigned i = 0; i < 4; i++) {
         t += DH_SESSION_HEARTBEAT_MS;
         dh_helper_outputs_reset(&out);
         dh_helper_tick(&h, t, &out);
-        if (saw_note(&out, DH_NOTE_BEAT_QUIET)) quiet_notes++;
+        CHECK(!saw_note(&out, DH_NOTE_BEAT_QUIET), name,
+              "healthy traffic was reported as heartbeat silence");
         CHECK(board_frame(DH_MSG_PLACE, place, sizeof place, frame, sizeof frame, &len), name,
               "the placement would not encode");
         dh_helper_received(&h, frame, len, t, &out);
         no_overflow(name);
     }
     CHECK(h.state == DH_HELPER_CONNECTED, name, "a transfer without beats dropped the session");
-    CHECK(quiet_notes == 1, name, "the beat falling silent was not traced exactly once");
 
-    /* And the far side of it, with the measurement attached — a note that says
-       a gap without saying how long it was is the note #94 cost two days to. */
+    /* The filler returning after traffic becomes idle is not a resumption from
+       a fault: the direction was live for the whole interval. */
     t += DH_SESSION_HEARTBEAT_MS;
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
     dh_helper_received(&h, frame, len, t, &out);
 
-    const dh_helper_output *resumed = NULL;
-    for (size_t i = 0; i < out.count; i++)
-        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_BEAT_RESUMED)
-            resumed = &out.items[i];
-    CHECK(resumed != NULL, name, "the beat coming back was not traced");
-    CHECK(resumed != NULL && (uint32_t)resumed->a == t - last_beat, name,
-          "the resumption was traced without saying how long the gap was");
+    CHECK(!saw_note(&out, DH_NOTE_BEAT_RESUMED), name,
+          "an idle filler returning after healthy traffic was reported as recovery");
     no_overflow(name);
 }
 
@@ -2582,7 +2573,7 @@ int main(int argc, char **argv) {
     test_a_hello_that_cannot_be_built_is_still_reported();
     test_a_grant_nobody_asked_for_is_ignored();
     test_the_machine_owns_the_counter_bulk_goes_out_under();
-    test_the_device_beat_is_traced_where_it_changes();
+    test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet();
     test_the_beat_trace_does_not_outlive_its_session();
     test_the_beat_trace_starts_afresh_after_a_hello_is_refused();
     test_an_ack_for_someone_elses_hello_is_dropped();

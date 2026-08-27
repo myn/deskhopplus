@@ -161,3 +161,22 @@ is the reading that would show it: `DH_NOTE_SESSION_ENDED` now carries how long 
 without getting a frame out, so a liveness end says whether the two ends agree about the silence.
 They disagreeing means frames are being lost between them; they agreeing means the helper really did
 stall, and those are different faults.
+
+## Amendment, 2026-08-27 — the heartbeat trace follows liveness evidence
+
+The helper's diagnostic originally timed the gap since the last literal `DEVICE_HEARTBEAT`. That
+contradicted the decision above: authenticated traffic deliberately suppresses the idle filler and
+replaces it as proof of liveness. A sustained transfer therefore produced `device heartbeat quiet`
+and `resumed` lines while the device was continuously proving that it was alive. Hardware validation
+for [#144](https://github.com/myn/deskhopplus/issues/144) reproduced the false pair on both helpers
+with zero outbound refusals and no session loss; the same pair also appeared during ordinary idle
+use when other authenticated traffic crossed the channel.
+
+Once the first literal beat establishes the trace, **any authenticated device frame advances its
+evidence clock**, exactly as it advances the session's liveness clock. A later idle filler is not a
+resumption from a fault: the direction remained live, and the filler was not owed while traffic
+crossed it. Unauthenticated traffic still advances neither clock.
+
+This does not weaken the silence detector. `last_device_frame_at` remains the authoritative timeout,
+and a direction carrying neither traffic nor its idle filler still ends the connection after
+`DH_SESSION_ABSENT_MS`.
