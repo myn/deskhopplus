@@ -632,8 +632,13 @@ int main(void) {
         size_t n = dh_xfer_offer(&A.x, 0, NULL, 0, payload, len, acts, ACTS_CAP);
         (void)n;
         size_t rn = dh_xfer_handle_request(&A.x, A.x.tx.id, acts, ACTS_CAP);
-        rn += dh_xfer_handle_credit(&A.x, A.x.tx.id, 64, acts + rn, ACTS_CAP - rn);
+        rn += dh_xfer_handle_credit(&A.x, A.x.tx.id, DH_XFER_CREDIT_WINDOW, acts + rn,
+                                    ACTS_CAP - rn);
         CHECK(rn == 0, "batch", "handlers emitted chunks directly");
+        n = dh_xfer_pump(&A.x, acts, ACTS_CAP);
+        CHECK(n == DH_XFER_CREDIT_WINDOW, "batch", "opening batch did not spend its window");
+        rn = dh_xfer_handle_credit(&A.x, A.x.tx.id, 64, acts, ACTS_CAP);
+        CHECK(rn == 0, "batch", "streaming credit emitted chunks directly");
         n = dh_xfer_pump(&A.x, acts, ACTS_CAP);
         CHECK(n == DH_XFER_BATCH_MAX, "batch", "batch not capped at DH_XFER_BATCH_MAX");
         for (size_t i = 0; i < n; i++)
@@ -1020,6 +1025,92 @@ int main(void) {
         n = dh_xfer_handle_offer(&B.x, &completed, acts, ACTS_CAP);
         CHECK(n == 0 && B.delivered == 1, "offer-idempotent",
               "a completed duplicate recreated or delivered a receive");
+    }
+
+    /* Multiple delayed copies of one offer can make all of their response
+       pairs arrive before the sender gets a chance to pump. Requests and
+       credits are separate frames, so deliver the requests first and the
+       covering grants afterwards: the first emitted batch is still exactly
+       one opening window, not one window per duplicate (#150). */
+    {
+        reset_scenario();
+        dh_xfer_action offer_acts[ACTS_CAP];
+        dh_xfer_action response_acts[3][ACTS_CAP];
+        size_t response_counts[3];
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10 * DH_XFER_CHUNK_SIZE,
+                            offer_acts, ACTS_CAP);
+        dh_clip_offer offer;
+        CHECK(dh_xfer_offer_info(&A.x, &offer), "offer-opening-credit",
+              "sender offer unavailable");
+        for (size_t i = 0; i < 3; i++)
+            response_counts[i] = dh_xfer_handle_offer(&B.x, &offer, response_acts[i], ACTS_CAP);
+
+        for (size_t i = 0; i < 3; i++) {
+            CHECK(response_counts[i] == 2 &&
+                      response_acts[i][0].type == DH_XFER_ACT_SEND_REQUEST &&
+                      response_acts[i][1].type == DH_XFER_ACT_SEND_CREDIT,
+                  "offer-opening-credit", "duplicate response pair was incomplete");
+            (void)dh_xfer_handle_request(&A.x, response_acts[i][0].id, offer_acts, ACTS_CAP);
+        }
+        (void)dh_xfer_handle_credit(&A.x, response_acts[0][1].id,
+                                    response_acts[0][1].credits, offer_acts, ACTS_CAP);
+
+        size_t n = dh_xfer_pump(&A.x, offer_acts, ACTS_CAP);
+        size_t chunks = 0;
+        for (size_t i = 0; i < n; i++)
+            if (offer_acts[i].type == DH_XFER_ACT_SEND_CHUNK)
+                chunks++;
+        CHECK(chunks == DH_XFER_CREDIT_WINDOW, "offer-opening-credit",
+              "duplicate offers inflated the first emitted batch");
+
+        /* The remaining opening grants can also trail the first pump. They
+           cannot refill the one opening window the transfer already spent. */
+        for (size_t i = 1; i < 3; i++)
+            (void)dh_xfer_handle_credit(&A.x, response_acts[i][1].id,
+                                        response_acts[i][1].credits, offer_acts, ACTS_CAP);
+        n = dh_xfer_pump(&A.x, offer_acts, ACTS_CAP);
+        chunks = 0;
+        for (size_t i = 0; i < n; i++)
+            if (offer_acts[i].type == DH_XFER_ACT_SEND_CHUNK)
+                chunks++;
+        CHECK(chunks == 0, "offer-opening-credit",
+              "late duplicate-offer credits refilled the spent opening window");
+
+        reset_scenario();
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, NULL, 0, offer_acts, ACTS_CAP);
+        CHECK(dh_xfer_offer_info(&A.x, &offer), "offer-opening-credit",
+              "zero-length offer unavailable");
+        for (size_t i = 0; i < 3; i++) {
+            size_t rn = dh_xfer_handle_offer(&B.x, &offer, response_acts[i], ACTS_CAP);
+            CHECK(rn == 2, "offer-opening-credit", "zero-length response pair incomplete");
+            (void)dh_xfer_handle_request(&A.x, response_acts[i][0].id, offer_acts, ACTS_CAP);
+            (void)dh_xfer_handle_credit(&A.x, response_acts[i][1].id,
+                                        response_acts[i][1].credits, offer_acts, ACTS_CAP);
+        }
+        n = dh_xfer_pump(&A.x, offer_acts, ACTS_CAP);
+        CHECK(n == 1 && offer_acts[0].type == DH_XFER_ACT_SEND_DONE,
+              "offer-opening-credit", "zero-length transfer did not start normally");
+
+        reset_scenario();
+        (void)dh_xfer_offer(&A.x, 2, NULL, 0, NULL, 10 * DH_XFER_CHUNK_SIZE,
+                            offer_acts, ACTS_CAP);
+        CHECK(dh_xfer_offer_info(&A.x, &offer), "offer-opening-credit",
+              "lazy offer unavailable");
+        for (size_t i = 0; i < 3; i++) {
+            size_t rn = dh_xfer_handle_offer(&B.x, &offer, response_acts[i], ACTS_CAP);
+            CHECK(rn == 2, "offer-opening-credit", "lazy response pair incomplete");
+            (void)dh_xfer_handle_request(&A.x, response_acts[i][0].id, offer_acts, ACTS_CAP);
+            (void)dh_xfer_handle_credit(&A.x, response_acts[i][1].id,
+                                        response_acts[i][1].credits, offer_acts, ACTS_CAP);
+        }
+        (void)dh_xfer_provide(&A.x, payload, offer_acts, ACTS_CAP);
+        n = dh_xfer_pump(&A.x, offer_acts, ACTS_CAP);
+        chunks = 0;
+        for (size_t i = 0; i < n; i++)
+            if (offer_acts[i].type == DH_XFER_ACT_SEND_CHUNK)
+                chunks++;
+        CHECK(chunks == DH_XFER_CREDIT_WINDOW, "offer-opening-credit",
+              "duplicate offers inflated a lazy transfer's opening batch");
     }
 
     /* Ordered identity makes stale offers silent, newer unacceptable offers

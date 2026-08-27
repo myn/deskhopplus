@@ -121,6 +121,8 @@ typedef struct {
         uint32_t credits;
         uint32_t retx[DH_XFER_RETX_MAX]; /* ring of re-requested seqs */
         uint32_t retx_head, retx_count;
+        bool opening_credit_accepted; /* this transfer spent its one opening grant */
+        bool recovery_credit_due; /* a retransmit request's covering grant is expected */
         /* What this end was asked to send again, and what it sent again. Read
            together they answer the question a stall could not answer before
            (#145): the receiver asked, and this end did or did not act on it. */

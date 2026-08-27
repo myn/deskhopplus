@@ -154,6 +154,7 @@ static void tx_start_streaming(dh_xfer *x) {
     x->tx.need_done = true;
     if (x->tx.credits > DH_XFER_CREDIT_WINDOW)
         x->tx.credits = DH_XFER_CREDIT_WINDOW;
+    x->tx.opening_credit_accepted = x->tx.credits > 0;
 }
 
 size_t dh_xfer_provide(dh_xfer *x, const uint8_t *data, dh_xfer_action *acts, size_t acts_cap) {
@@ -262,6 +263,9 @@ size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_
     (void)acts_cap;
     if (!x->tx.active || x->tx.id != id || seq >= x->tx.nchunks)
         return 0;
+    /* Its covering grant is recovery credit even when this sequence is ahead
+       of the sender's frontier and therefore is not queued as a retransmit. */
+    x->tx.recovery_credit_due = true;
     /*
      * A chunk this end has not sent yet is not a retransmission: a stall sweep
      * names the chunks the receiver is *waiting on*, which past the frontier
@@ -284,7 +288,27 @@ size_t dh_xfer_handle_credit(dh_xfer *x, uint32_t id, uint16_t credits, dh_xfer_
     (void)acts_cap;
     if (!x->tx.active || x->tx.id != id)
         return 0; /* stale grant for a superseded or finished transfer */
-    x->tx.credits += credits;
+    /*
+     * A full-window grant with no retransmission request behind it can belong
+     * to another delayed copy of the same offer's opening response. Requests
+     * and credits are separate frames, so tx_start_streaming cannot know that
+     * more opening grants are still in flight, even after its first pump.
+     * Accept only one such grant for the transfer. Credit covering an observed
+     * retransmission request still accumulates without a ceiling (ADR-0005,
+     * #145), as do the ordinary per-chunk replenishment grants.
+     */
+    const bool opening_grant = x->tx.streaming && credits == DH_XFER_CREDIT_WINDOW &&
+                               !x->tx.recovery_credit_due;
+    if (opening_grant && !x->tx.opening_credit_accepted) {
+        const uint32_t room = x->tx.credits < DH_XFER_CREDIT_WINDOW
+                                  ? DH_XFER_CREDIT_WINDOW - x->tx.credits
+                                  : 0;
+        x->tx.credits += credits < room ? credits : room;
+        x->tx.opening_credit_accepted = true;
+    } else if (!opening_grant) {
+        x->tx.credits += credits;
+    }
+    x->tx.recovery_credit_due = false;
     return 0;
 }
 
