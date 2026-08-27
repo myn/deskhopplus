@@ -821,13 +821,50 @@ between the helpers**; the firmware relays its messages opaquely.
   every board counter reading zero. CLIP_DONE keeps its other job, the retransmit sweep for an
   *incomplete* receive, and is still sent on every transfer.
 
-  Two cases this does **not** cover, both still resolved by the helper's transfer timeout. If the
-  same burst eats the *last chunk* as well as the DONE behind it, nothing completes the set and no
-  DONE arrives to drive a sweep. And a zero-length payload has no chunks at all, so it can only
-  ever complete at CLIP_DONE — reachable in `dh_xfer` but not from either helper, which refuse an
-  empty copy before offering it.
+  A zero-length payload has no chunks at all, so it can only ever complete at CLIP_DONE —
+  reachable in `dh_xfer` but not from either helper, which refuse an empty copy before offering it.
+- **A receive that stops moving asks again for what it is waiting on**
+  ([#145](https://github.com/myn/deskhopplus/issues/145)). Completing on the last chunk closed the
+  hole a lost CLIP_DONE left; it did not close the hole every *other* lost control message leaves.
+  A credit grant, a retransmit request, and the CLIP_DONE that drives the sweep above all cross the
+  same seams the payload does, and a seam that refuses one has no retransmit beneath it
+  ([ADR-0005](adr/0005-bounded-outbound-queues.md)). Lose a grant and the sender stops at zero
+  credit with nothing to prompt it; lose the last chunk *and* the DONE behind it and the receiver
+  holds an incomplete set with nothing to prompt it either. Measured across one day on board A,
+  every size above a few chunks stalled this way at some point, at no consistent fraction and no
+  consistent count, with every board counter reading zero.
+
+  So the paste side stops depending on being told. `dh_xfer_sweep_rx` asks again, and the helper's
+  tick decides when: a receive that has made no progress for **two seconds** — well over a round
+  trip, well under the thirty-second deadline — sweeps once and says what it asked for. In one
+  batch it sends
+  - CLIP_REQUEST again, when nothing has arrived at all. The request may have been lost, or the
+    grant covering it, or the opening burst of chunks itself, and the paste side cannot tell which
+    from its end — so it covers all three and a copy side already streaming ignores the repeat.
+  - CLIP_RETRANSMIT for every hole below the highest seq it has seen. The sender has been past
+    them, so each one is a loss.
+  - CLIP_RETRANSMIT for up to a window's worth at and above that seq — or from seq 0, when there is
+    no frontier yet. Past the frontier the sender may simply not have got there, so asking for the
+    whole tail would be one request per remaining chunk; a window is what it could have had in
+    flight when everything stopped.
+
+  Every request carries its covering credit as at any other seam, so a sender stopped by a lost
+  grant is paid to start again. **A request for a chunk the sender has not yet reached is not a
+  retransmission**: it never enters the retransmit ring, and is sent in the sender's own order
+  instead, or the chunk would go twice. What crosses in that case is the credit.
+
+  Three consequences worth stating. The stall deadline counts *arrivals* — chunks assembled — and
+  not the messages the paste side emits, or a receive whose far helper has gone would reset its own
+  deadline for ever and never be reported. A **new offer disarms that deadline outright**, because
+  the count is zero both for the transfer being superseded and for the one superseding it, and the
+  transfer id cannot separate them either — ids are per far-helper *process* and start again at one
+  when that process restarts, so a second transfer would otherwise inherit whatever is left of the
+  first one's thirty seconds and be abandoned seconds old. And a sweep is said out loud on every
+  round rather than counted quietly, because a stall that recovers is otherwise invisible; both
+  progress lines now carry how much was asked for again and how much came back, zeros included.
 - **The transfer timeout is a *progress* deadline, not a duration.** Each helper's clipboard
-  service gives up on a direction that has produced nothing for 30 seconds and reports it. It
+  service gives up on a direction that has produced nothing for 30 seconds and reports it — after
+  the two-second sweeps above have had fifteen chances to recover it. It
   cannot live in `dh_xfer`, which has no clock and must not gain one — and a deadline on the
   whole transfer would abandon healthy ones, because a large payload legitimately takes minutes
   on this link. This is what covers the third interruption in
@@ -877,11 +914,18 @@ between the helpers**; the firmware relays its messages opaquely.
   Fixed by the deeper queue rather than a smaller window, because every helper-side remedy
   breaks double-loss recovery: a window of 2, capping the accumulated credit at the window,
   and capping the pump batch at 2 were each tried and each stalls it. Credit still
-  accumulates without a ceiling, deliberately — the covering grant riding every
+  accumulates without a ceiling **once streaming**, deliberately — the covering grant riding every
   CLIP_RETRANSMIT is what pays for the retransmission, and that inflation is bounded and
   harmless where draining is fatal. So a lossy round can leave the sender holding more
   credit than the window names, and the queue absorbs the batch rather than the window
   policing it.
+
+  **Streaming starts from one window, however many rounds it took to start.** A paste side that has
+  heard nothing repeats its CLIP_REQUEST every two seconds and a fresh window with it, so a copy
+  side whose request was lost several times over would otherwise begin holding the sum of every
+  grant sent while it had nothing to spend one on — a first pump several windows deep, which is
+  precisely the burst no queue on the path is sized for. The credit it holds is therefore trimmed
+  to one window at the moment it starts, and never again.
 - **Failure is abandonment.** A link drop mid-transfer abandons both directions: the
   paste side discards its partial payload — never delivering it as complete — and its
   helper deletes any partial file and reports the failure. No resumption.

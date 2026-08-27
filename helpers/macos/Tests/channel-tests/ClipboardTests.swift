@@ -34,6 +34,9 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a chunk is not opened when receiving is off", testChunksAreRefusedBeforeTheSealIsOpened),
     ("copy after copy after copy all arrive", testRepeatedCopiesAllArrive),
     ("every payload size arrives intact", testEveryPayloadSizeArrives),
+    ("a receive the link starved recovers on its own", testAStalledReceiveAsksAgain),
+    ("sweeping does not keep a dead receive alive", testASweptReceiveIsStillAbandoned),
+    ("a superseding offer gets its own deadline", testASupersededReceiveResetsTheDeadline),
 ]
 
 /*
@@ -66,6 +69,14 @@ private final class Pair {
     var notes: [String] = []
     /// Frames carried across the link, so a test can count what a direction cost.
     var carried = 0
+    /*
+     * Frames the link loses before they reach the far end, counted down by
+     * message type. This is the seam ADR-0005 describes — a bounded queue
+     * refusing a frame with no retransmit beneath it — and it is the only way
+     * to reach the failure #145 reports, because on a healthy link nothing is
+     * ever lost.
+     */
+    var dropNext: [UInt8: Int] = [:]
 
     init(capacity: Int = 64 * 1024) {
         a = ClipboardService(entropy: counterEntropy(1), capacity: capacity)
@@ -87,13 +98,18 @@ private final class Pair {
             switch output {
             case .send(let type, let body):
                 carried += 1
+                /* A frame going out is a chance to push the next credit-gated
+                   batch, which is what the runtime does on the same seam — and
+                   it happens whether or not the link carries this one. */
+                let near = side == .a ? a : b
+                queue += near.pump().map { (side, $0) }
+                if let left = dropNext[type], left > 0 {
+                    dropNext[type] = left - 1
+                    continue /* refused at a seam with no retransmit beneath it */
+                }
                 let far = side == .a ? b : a
                 let farSide: Side = side == .a ? .b : .a
                 queue += far.received(type: type, body: body).map { (farSide, $0) }
-                /* A frame going out is a chance to push the next credit-gated
-                   batch, which is what the runtime does on the same seam. */
-                let near = side == .a ? a : b
-                queue += near.pump().map { (side, $0) }
             case .deliver(let kind, let bytes):
                 if side == .a { deliveredToA.append((kind, bytes)) }
                 else { deliveredToB.append((kind, bytes)) }
@@ -563,4 +579,103 @@ private func testEveryPayloadSizeArrives() {
         if text(pair.deliveredToB) != [payload] { failures.append(size) }
     }
     Check.equal(failures, [], "these payload sizes did not arrive intact")
+}
+
+/*
+ * A receive the link starved gets itself going again (#145).
+ *
+ * Every credit grant the first chunks earn is lost. The sender stops at zero
+ * credit and nothing message-driven can fire on either end: no chunk arrives
+ * to prompt the receiver, and no CLIP_DONE arrives to drive the sweep that
+ * CLIP_DONE used to be the only way to reach. Before this the transfer sat
+ * there until the thirty-second deadline reported it lost — at no consistent
+ * size and no consistent fraction, which is exactly what the log showed.
+ */
+private func testAStalledReceiveAsksAgain() {
+    let pair = Pair()
+    pair.copyOnA("warm the seal")
+
+    pair.dropNext[MessageType.clipCredit] = 6
+    let long = String(repeating: "z", count: 40_000)
+    pair.settle(pair.a.localCopy(kind: .text, bytes: Array(long.utf8)), from: .a)
+    Check.equal(pair.deliveredToB.count, 1, "the transfer was expected to stall and did not")
+
+    /* The receiving end's tick, at its own cadence and nothing else's. */
+    var now = ClipboardService.sweepDelay
+    var ticks = 0
+    while pair.deliveredToB.count < 2 && now < ClipboardService.stallTimeout {
+        pair.settle(pair.b.tick(at: now), from: .b)
+        now += ClipboardService.sweepDelay
+        ticks += 1
+    }
+    Check.equal(pair.deliveredToB.count, 2, "the starved receive never recovered")
+    Check.equal(text(pair.deliveredToB).last, long, "the recovered payload is not the one sent")
+    Check.that(pair.sawNote(containing: "asked for again"),
+               "the receive recovered without saying it had stalled")
+    Check.that(ticks > 0, "the recovery did not come from a tick")
+}
+
+/*
+ * Sweeping must not keep a dead receive alive.
+ *
+ * The stall deadline counts *arrivals*, not the messages this end emits — and
+ * a sweep emits messages. Counting those would let a receive whose far helper
+ * has gone reset its own deadline for ever, turning the fix for #145 into a
+ * transfer that is never reported at all.
+ */
+private func testASweptReceiveIsStillAbandoned() {
+    let pair = Pair()
+    pair.copyOnA("warm the seal")
+
+    /* The far end never hears a request, so it never sends a chunk. */
+    pair.dropNext[MessageType.clipRequest] = 10_000
+    pair.settle(pair.a.localCopy(kind: .text, bytes: Array("into the void".utf8)), from: .a)
+    Check.equal(pair.deliveredToB.count, 1, "the second copy was expected to stall")
+
+    var abandoned: String?
+    var now: TimeInterval = 0
+    while now <= ClipboardService.stallTimeout + 1 {
+        for output in pair.b.tick(at: now) {
+            if case .note(let n) = output, n.contains("was abandoned") { abandoned = n }
+        }
+        now += ClipboardService.sweepDelay
+    }
+    guard let note = abandoned else {
+        Check.that(false, "a receive that swept for the whole timeout was never abandoned")
+        return
+    }
+    /* And the abandonment says what it asked for and what came back, which is
+       the reading neither end produced before. */
+    Check.that(note.contains("asked for") && note.contains("back"),
+               "the abandonment did not say whether a retransmit was asked for: \(note)")
+}
+
+/*
+ * A newer offer supersedes an incomplete receive, and the transfer that
+ * replaces it is entitled to the whole deadline — not to whatever is left of
+ * the one it displaced.
+ *
+ * The reset event for this timer is "something arrived for the transfer being
+ * timed", and a supersede changes *which* transfer is being timed without
+ * changing how much of it has arrived: both counts are zero. So the count
+ * alone cannot see it, and the transfer that arrives second is abandoned for
+ * the sins of the first — reported as thirty seconds of silence when it is
+ * seconds old.
+ */
+private func testASupersededReceiveResetsTheDeadline() {
+    let pair = Pair()
+    pair.copyOnA("warm the seal")
+
+    /* The far end never hears a request, so nothing ever arrives. */
+    pair.dropNext[MessageType.clipRequest] = 10_000
+    pair.settle(pair.a.localCopy(kind: .text, bytes: Array("the first copy".utf8)), from: .a)
+    _ = pair.b.tick(at: 1) /* arms the deadline on the first transfer */
+
+    /* A second copy supersedes it, most of the way through that deadline. */
+    pair.settle(pair.a.localCopy(kind: .text, bytes: Array("the second copy".utf8)), from: .a)
+
+    let late = pair.b.tick(at: ClipboardService.stallTimeout + 1)
+    Check.that(!late.contains { if case .note(let n) = $0 { return n.contains("was abandoned") }
+                                return false },
+               "a transfer seconds old was abandoned on the deadline of the one it replaced")
 }

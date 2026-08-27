@@ -6,9 +6,13 @@
  *
  * Chunk emission happens only in dh_xfer_pump — handlers record state and
  * emit control actions. Callers pump after handling each message and
- * whenever the bulk band has room. Recovery from a lost *control* message
- * (a retransmit request, a credit grant) is the helper's timeout, not this
- * machine's: it has no clock, and an interrupted transfer abandons.
+ * whenever the bulk band has room.
+ *
+ * There is still no clock in here. Recovery from a lost *control* message (a
+ * retransmit request, a credit grant, the CLIP_DONE that drives a sweep) is
+ * therefore the caller's to time: it calls dh_xfer_sweep_rx on a receive that
+ * has stopped moving, and this machine works out what to ask for (#145).
+ * Before that, every one of those losses cost the whole transfer.
  */
 
 #include "dh_xfer.h"
@@ -85,6 +89,28 @@ size_t dh_xfer_offer(dh_xfer *x, uint8_t kind, const uint8_t *meta, uint16_t met
     return n;
 }
 
+/*
+ * The transfer starts flowing.
+ *
+ * A receiver that has heard nothing sends its CLIP_REQUEST again every couple
+ * of seconds, and a window's worth of covering credit with it
+ * (dh_xfer_sweep_rx). A transfer that took several rounds to start would
+ * therefore begin holding the sum of every grant sent while there was nothing
+ * to spend one on — a first pump several windows deep, which is exactly the
+ * burst no outbound queue on the path is sized for (ADR-0005). Streaming
+ * starts from one window instead, however many rounds it took.
+ *
+ * Once streaming, credit accumulates without a ceiling as before: the covering
+ * grants that pay for retransmissions are what a ceiling would discard, and
+ * that is measured (docs/protocol.md, "Flow control").
+ */
+static void tx_start_streaming(dh_xfer *x) {
+    x->tx.streaming = true;
+    x->tx.need_done = true;
+    if (x->tx.credits > DH_XFER_CREDIT_WINDOW)
+        x->tx.credits = DH_XFER_CREDIT_WINDOW;
+}
+
 size_t dh_xfer_provide(dh_xfer *x, const uint8_t *data, dh_xfer_action *acts, size_t acts_cap) {
     (void)acts;
     (void)acts_cap;
@@ -92,8 +118,7 @@ size_t dh_xfer_provide(dh_xfer *x, const uint8_t *data, dh_xfer_action *acts, si
         return 0;
     x->tx.data = data;
     x->tx.lazy_pending = false;
-    x->tx.streaming = true;
-    x->tx.need_done = true;
+    tx_start_streaming(x);
     return 0; /* chunks flow from the next pump */
 }
 
@@ -133,6 +158,7 @@ size_t dh_xfer_pump(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
             seq = x->tx.retx[x->tx.retx_head];
             x->tx.retx_head = (x->tx.retx_head + 1) % DH_XFER_RETX_MAX;
             x->tx.retx_count--;
+            x->tx.retx_sent++;
         } else {
             seq = x->tx.next_seq++;
         }
@@ -181,8 +207,7 @@ size_t dh_xfer_handle_request(dh_xfer *x, uint32_t id, dh_xfer_action *acts, siz
         }
         return n;
     }
-    x->tx.streaming = true;
-    x->tx.need_done = true;
+    tx_start_streaming(x);
     return n; /* chunks flow from the next pump */
 }
 
@@ -192,7 +217,18 @@ size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_
     (void)acts_cap;
     if (!x->tx.active || x->tx.id != id || seq >= x->tx.nchunks)
         return 0;
-    tx_queue_retransmit(x, seq);
+    /*
+     * A chunk this end has not sent yet is not a retransmission: a stall sweep
+     * names the chunks the receiver is *waiting on*, which past the frontier
+     * are ones the sender simply has not reached (dh_xfer_sweep_rx). Queueing
+     * one would send it twice, once from the ring and once from next_seq. What
+     * restarts the sender there is the covering credit that came with the
+     * request, not the request itself.
+     */
+    if (seq < x->tx.next_seq) {
+        tx_queue_retransmit(x, seq);
+        x->tx.retx_asked++;
+    }
     x->tx.need_done = true; /* repeat DONE after servicing */
     return 0;
 }
@@ -282,6 +318,7 @@ static void rx_request_chunk(dh_xfer *x, uint32_t seq, bool stale, dh_xfer_actio
     a->id = x->rx.id;
     a->seq = seq;
     bit_set(x->rx.requested, seq);
+    x->rx.retx_asked++;
     if (stale)
         bit_set(x->rx.requested_stale, seq);
     else
@@ -350,6 +387,8 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
     memcpy(x->rx_buf + (uint64_t)chunk->seq * DH_XFER_CHUNK_SIZE, chunk->data,
            chunk->data_len);
     bit_set(x->rx.received, chunk->seq);
+    if (bit_get(x->rx.requested, chunk->seq))
+        x->rx.retx_answered++;
     bit_clear(x->rx.requested, chunk->seq);
     x->rx.nreceived++;
 
@@ -382,30 +421,101 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
     return n;
 }
 
+/*
+ * Ask again for the chunks missing below `limit`, each with its covering
+ * credit. Shared by the two sweeps, which differ in exactly two ways.
+ *
+ * `aged` is the DONE sweep's discipline: a chunk asked for since the last
+ * round is left alone once, because its retransmission is behind that DONE in
+ * the FIFO, and asked for again only if it survives a whole round. What it
+ * asks for it also marks as already a round old, so the next DONE may repeat
+ * it. The stall sweep does not age, because it runs only after a whole quiet
+ * interval in which nothing arrived at all — there is nothing still in flight
+ * to leave alone.
+ *
+ * `limit` is how far the sweep may look. At a DONE the sender has emitted
+ * everything, so every hole is a loss and the limit is the whole payload. On a
+ * stall it is the *frontier* — the highest seq that has arrived — because past
+ * that the sender may simply not have got there, and asking would be one
+ * request per remaining chunk. A stall with no frontier yet does not come here
+ * at all.
+ */
+static void rx_sweep_range(dh_xfer *x, uint32_t limit, bool aged, dh_xfer_action *acts, size_t *n,
+                           size_t acts_cap, uint16_t *credits) {
+    for (uint32_t m = 0; m < limit; m++) {
+        if (bit_get(x->rx.received, m))
+            continue;
+        if (aged && bit_get(x->rx.requested, m) && !bit_get(x->rx.requested_stale, m)) {
+            bit_set(x->rx.requested_stale, m); /* skip once, age */
+            continue;
+        }
+        bit_clear(x->rx.requested, m);
+        rx_request_chunk(x, m, aged, acts, n, acts_cap, credits);
+    }
+}
+
+size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
+    size_t n = 0;
+    uint16_t credits = 0;
+    if (!x->rx.active)
+        return 0;
+
+    /*
+     * Nothing has arrived at all. This end cannot tell whether the sender ever
+     * started — its CLIP_REQUEST may have been lost, or the window covering
+     * it, or the whole opening burst of chunks — so the request goes again and
+     * the chunks below are named as well. A sender already streaming ignores
+     * the repeated request; one that never started acts on it and begins from
+     * a single window however many times this repeats (tx_start_streaming).
+     *
+     * Otherwise there is a frontier, and below it the sender has been and
+     * gone: every hole down there is a loss.
+     */
+    if (!x->rx.any_seen) {
+        dh_xfer_action *a = emit(acts, &n, acts_cap);
+        if (a) {
+            a->type = DH_XFER_ACT_SEND_REQUEST;
+            a->id = x->rx.id;
+        }
+    } else {
+        rx_sweep_range(x, x->rx.max_seq_seen, false, acts, &n, acts_cap, &credits);
+    }
+
+    /*
+     * At and above the frontier — or from the very start, when nothing has
+     * arrived — a window's worth and no more. A window is what the sender
+     * could have had in flight when everything stopped, and the covering
+     * credits are what pay a sender stopped by a lost grant to start again.
+     * The sender ignores a request for a chunk it has not reached and sends it
+     * in its own order (dh_xfer_handle_retransmit); what crosses there is the
+     * credit.
+     */
+    uint32_t named = 0;
+    const uint32_t from = x->rx.any_seen ? x->rx.max_seq_seen : 0;
+    for (uint32_t m = from; m < x->rx.nchunks && named < DH_XFER_CREDIT_WINDOW; m++) {
+        if (bit_get(x->rx.received, m))
+            continue;
+        bit_clear(x->rx.requested, m);
+        rx_request_chunk(x, m, false, acts, &n, acts_cap, &credits);
+        named++;
+    }
+    rx_grant(x->rx.id, acts, &n, acts_cap, credits);
+    return n;
+}
+
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     uint16_t credits = 0;
     if (!x->rx.active || x->rx.id != id)
         return 0;
     if (x->rx.nreceived < x->rx.nchunks) {
-        /* DONE ends a round: the copy side has sent everything asked of it
-           so far. A missing chunk with a fresh outstanding request is left
-           alone once — its retransmission is behind this DONE in the FIFO —
-           but aged, so if it is still missing at the next DONE its
-           retransmission was itself lost and it is asked for again. Every
-           retransmit round ends in another DONE, so the exchange converges;
-           only a request with no DONE behind it is left to the helper's
-           transfer timeout. */
-        for (uint32_t m = 0; m < x->rx.nchunks; m++) {
-            if (bit_get(x->rx.received, m))
-                continue;
-            if (bit_get(x->rx.requested, m) && !bit_get(x->rx.requested_stale, m)) {
-                bit_set(x->rx.requested_stale, m); /* skip once, age */
-                continue;
-            }
-            bit_clear(x->rx.requested, m);
-            rx_request_chunk(x, m, true, acts, &n, acts_cap, &credits);
-        }
+        /* DONE ends a round: the copy side has sent everything asked of it so
+           far, so every hole in the payload is a loss and is asked for again,
+           subject to the one-round ageing above. A round that ages every hole
+           and so asks for nothing ends the exchange — there is no request for
+           a DONE to come back behind — and that, like every other lost control
+           message, is what dh_xfer_sweep_rx picks up. */
+        rx_sweep_range(x, x->rx.nchunks, true, acts, &n, acts_cap, &credits);
         rx_grant(x->rx.id, acts, &n, acts_cap, credits);
         return n;
     }

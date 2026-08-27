@@ -206,15 +206,24 @@ public final class Transfer {
     /// How far each direction has got, for a stall that has to say more than
     /// "no progress" — which covers a transfer whose chunks never arrived and
     /// one whose chunks all arrived and were refused.
+    ///
+    /// The re-request pair is on both directions and always printed, zeros
+    /// included: a stall where nothing was ever asked for again is a different
+    /// fault from one where it was asked for and nothing came back, and
+    /// neither end said which before #145.
     public var progressLine: String {
         var parts: [String] = []
         if isSending {
             parts.append("sending \(dh_xfer_tx_next_seq(machine))/\(dh_xfer_tx_chunks(machine)) "
-                         + "chunks" + (dh_xfer_tx_streaming(machine) ? "" : ", never requested"))
+                         + "chunks" + (dh_xfer_tx_streaming(machine) ? "" : ", never requested")
+                         + ", asked for \(dh_xfer_tx_retx_asked(machine)) again and sent "
+                         + "\(dh_xfer_tx_retx_sent(machine))")
         }
         if isReceiving {
             parts.append("receiving \(dh_xfer_rx_received(machine))/"
-                         + "\(dh_xfer_rx_chunks(machine)) chunks")
+                         + "\(dh_xfer_rx_chunks(machine)) chunks, asked for "
+                         + "\(dh_xfer_rx_retx_asked(machine)) again and got "
+                         + "\(dh_xfer_rx_retx_answered(machine)) back")
         }
         return parts.isEmpty ? "nothing in flight" : parts.joined(separator: ", ")
     }
@@ -229,6 +238,12 @@ public final class Transfer {
     /// which is the ordinary answer.
     public func pump() -> [TransferAction] {
         collect { acts, cap in dh_xfer_pump(machine, acts, cap) }
+    }
+
+    /// Ask again for what an arriving transfer is waiting on. The core has no
+    /// clock, so the caller's tick decides when — see `dh_xfer_sweep_rx`.
+    public func sweepReceive() -> [TransferAction] {
+        collect { acts, cap in dh_xfer_sweep_rx(machine, acts, cap) }
     }
 
     /// Answer NEED_DATA with a refusal. Nothing in this slice offers lazily, so

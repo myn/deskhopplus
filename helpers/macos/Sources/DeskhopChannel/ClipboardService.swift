@@ -54,6 +54,24 @@ public final class ClipboardService {
      */
     public static let stallTimeout: TimeInterval = 30
 
+    /*
+     * How long an arriving transfer may make no progress before this end asks
+     * again for what it is waiting on.
+     *
+     * Well over a round trip on this link — a credit grant and the chunk it
+     * pays for cross in tens of milliseconds — and well under `stallTimeout`,
+     * so a receive that can be recovered is recovered long before the deadline
+     * that reports it lost.
+     *
+     * A receiver has to be able to prompt itself. Every message that would
+     * otherwise restart it — a credit grant, a retransmit request, the
+     * CLIP_DONE that drives a sweep — crosses the same seams the payload does,
+     * and a seam that refuses one has no retransmit beneath it (ADR-0005).
+     * Before #145 losing any of them cost the whole transfer, at no consistent
+     * size and no consistent fraction.
+     */
+    public static let sweepDelay: TimeInterval = 2
+
     private let seal: ClipboardSeal
     private let transfer: Transfer
 
@@ -87,17 +105,25 @@ public final class ClipboardService {
     private var reofferWhenSealed = false
 
     /*
-     * The stall timeout's bookkeeping. `txProgress` and `rxProgress` count what
-     * each direction has actually done; the `…Since` stamps say when that count
-     * last moved. Counting rather than time-stamping inside `render` is what
-     * keeps a clock out of every code path that produces an action.
+     * The stall timeout's bookkeeping. The marks are what each direction has
+     * actually done; the `…Since` stamps say when that count last moved.
+     * Counting rather than time-stamping inside `render` is what keeps a clock
+     * out of every code path that produces an action.
+     *
+     * The receiving side counts *arrivals* — chunks assembled — and not the
+     * messages this end emits. A sweep emits messages, so counting those would
+     * let a receive whose far end is gone reset its own deadline for ever
+     * (#145). The count alone cannot see a *supersede*, though — a newer offer
+     * replaces an incomplete transfer and resets the count to zero, leaving the
+     * mark unchanged — so `onOffer` disarms the deadline outright and the next
+     * tick arms a fresh one.
      */
     private var txProgress = 0
-    private var rxProgress = 0
     private var sendingSince: TimeInterval?
     private var sendingMark = 0
     private var receivingSince: TimeInterval?
-    private var receivingMark = 0
+    private var receivingMark: UInt32 = 0
+    private var sweptSince: TimeInterval?
 
     public init(entropy: @escaping (Int) -> [UInt8], capacity: Int = ClipboardService.defaultCapacity) {
         seal = ClipboardSeal(entropy: entropy)
@@ -208,18 +234,43 @@ public final class ClipboardService {
 
         if !transfer.isReceiving {
             receivingSince = nil
-        } else if receivingSince == nil || receivingMark != rxProgress {
+            sweptSince = nil
+        } else if receivingSince == nil || receivingMark != transfer.receivedChunks {
             receivingSince = now
-            receivingMark = rxProgress
+            sweptSince = now
+            receivingMark = transfer.receivedChunks
         } else if now - receivingSince! >= Self.stallTimeout {
             let line = transfer.progressLine
             receivingSince = nil
+            sweptSince = nil
             outputs += render(transfer.cancelIncoming())
             outputs.append(.note("an arriving transfer made no progress for "
                                  + "\(Int(Self.stallTimeout))s and was abandoned (\(line); "
                                  + "\(drops)); nothing partial is ever written"))
+        } else if now - sweptSince! >= Self.sweepDelay {
+            sweptSince = now
+            outputs += sweep()
         }
         return outputs
+    }
+
+    /*
+     * Ask again for what a stopped receive is waiting on, and say so.
+     *
+     * Said out loud on every round rather than counted quietly, because a
+     * stall that recovers is otherwise invisible: the transfer completes and
+     * nothing in the log says the link lost anything. A stall that does not
+     * recover then reads as the same line repeating, which is the finding.
+     */
+    private func sweep() -> [ClipboardOutput] {
+        let actions = transfer.sweepReceive()
+        let restarted = actions.contains { $0.type == DH_XFER_ACT_SEND_REQUEST }
+        let named = actions.filter { $0.type == DH_XFER_ACT_SEND_RETRANSMIT }.count
+        return render(actions)
+            + [.note("an arriving transfer made no progress for \(Int(Self.sweepDelay))s; "
+                     + (restarted ? "nothing has arrived at all, so it was asked for again"
+                                  : "\(named) chunk(s) asked for again")
+                     + " (\(transfer.progressLine))")]
     }
 
     // MARK: - What the far helper says
@@ -332,6 +383,19 @@ public final class ClipboardService {
 
         do {
             let offer = try seal.openOffer(body)
+            /*
+             * A new offer starts a new deadline. Disarmed here rather than
+             * inferred in the tick, because what the tick can see — the
+             * received count — is zero for the transfer being replaced and zero
+             * for the one replacing it, and the transfer id cannot separate
+             * them either: ids are per far-helper *process* and start again at
+             * one when that process restarts. Without this the second transfer
+             * inherits whatever is left of the first one's thirty seconds and
+             * is abandoned seconds old (#145). No clock is read here, which is
+             * what keeps one out of every path that produces an action.
+             */
+            receivingSince = nil
+            sweptSince = nil
             return render(transfer.handle(offer: offer))
         } catch SealError.unknownSeal {
             return staleReply(for: MessageType.clipOffer, body: body)
@@ -423,14 +487,11 @@ public final class ClipboardService {
                 txProgress += 1
                 outputs.append(.send(type: MessageType.clipDone, body: ClipCodec.id(action.id)))
             case DH_XFER_ACT_SEND_REQUEST:
-                rxProgress += 1
                 outputs.append(.send(type: MessageType.clipRequest, body: ClipCodec.id(action.id)))
             case DH_XFER_ACT_SEND_RETRANSMIT:
-                rxProgress += 1
                 outputs.append(.send(type: MessageType.clipRetransmit,
                                      body: ClipCodec.retransmit(id: action.id, seq: action.seq)))
             case DH_XFER_ACT_SEND_CREDIT:
-                rxProgress += 1
                 outputs.append(.send(type: MessageType.clipCredit,
                                      body: ClipCodec.credit(id: action.id,
                                                             credits: action.credits)))

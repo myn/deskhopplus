@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -89,6 +90,14 @@ struct Pair {
     std::vector<std::string> notes;
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
+    /*
+     * Frames the link loses before they reach the far end, counted down by
+     * message type. This is the seam ADR-0005 describes — a bounded queue
+     * refusing a frame with no retransmit beneath it — and it is the only way
+     * to reach the failure #145 reports, because on a healthy link nothing is
+     * ever lost.
+     */
+    std::map<uint8_t, int> drop_next;
 
     /*
      * Carry every frame to its far end, and everything that answers, until the
@@ -113,15 +122,21 @@ struct Pair {
             switch (output.kind) {
             case ClipOutput::Kind::Send: {
                 carried++;
+                /* A frame going out is a chance to push the next credit-gated
+                   batch, which is what the run loop does on the same seam — and
+                   it happens whether or not the link carries this one. */
+                ClipService &near = side == Side::A ? a : b;
+                for (ClipOutput &item : near.pump()) queue.emplace_back(side, std::move(item));
+                auto lost = drop_next.find(output.type);
+                if (lost != drop_next.end() && lost->second > 0) {
+                    lost->second--; /* refused at a seam with no retransmit beneath it */
+                    break;
+                }
                 ClipService &far = side == Side::A ? b : a;
                 const Side far_side = side == Side::A ? Side::B : Side::A;
                 for (ClipOutput &item :
                      far.received(output.type, output.bytes.data(), output.bytes.size()))
                     queue.emplace_back(far_side, std::move(item));
-                /* A frame going out is a chance to push the next credit-gated
-                   batch, which is what the run loop does on the same seam. */
-                ClipService &near = side == Side::A ? a : b;
-                for (ClipOutput &item : near.pump()) queue.emplace_back(side, std::move(item));
                 break;
             }
             case ClipOutput::Kind::Deliver:
@@ -548,6 +563,102 @@ void test_chunks_are_refused_before_the_seal_is_opened() {
           "with receiving on, a chunk under an unknown seal was not answered with SEAL_STALE");
 }
 
+/*
+ * A receive the link starved gets itself going again (#145).
+ *
+ * Every credit grant the first chunks earn is lost. The sender stops at zero
+ * credit and nothing message-driven can fire on either end: no chunk arrives
+ * to prompt the receiver, and no CLIP_DONE arrives to drive the sweep that
+ * CLIP_DONE used to be the only way to reach. Before this the transfer sat
+ * there until the thirty-second deadline reported it lost — at no consistent
+ * size and no consistent fraction, which is exactly what the log showed.
+ */
+void test_a_stalled_receive_asks_again() {
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+
+    pair.drop_next[DH_MSG_CLIP_CREDIT] = 6;
+    const std::string long_text(40000, 'z');
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of(long_text)), Side::A);
+    CHECK(pair.delivered_to_b.size() == 1, "the transfer was expected to stall and did not");
+
+    /* The receiving end's tick, at its own cadence and nothing else's. */
+    uint32_t now = ClipService::kSweepDelayMs;
+    while (pair.delivered_to_b.size() < 2 && now < ClipService::kStallTimeoutMs) {
+        pair.settle(pair.b.tick(now), Side::B);
+        now += ClipService::kSweepDelayMs;
+    }
+    CHECK(pair.delivered_to_b.size() == 2, "the starved receive never recovered");
+    CHECK(pair.delivered_to_b.back() == bytes_of(long_text),
+          "the recovered payload is not the one that was sent");
+    CHECK(pair.saw_note("asked for again"),
+          "the receive recovered without saying it had stalled");
+}
+
+/*
+ * Sweeping must not keep a dead receive alive.
+ *
+ * The stall deadline counts *arrivals*, not the messages this end emits — and
+ * a sweep emits messages. Counting those would let a receive whose far helper
+ * has gone reset its own deadline for ever, turning the fix for #145 into a
+ * transfer that is never reported at all.
+ */
+void test_a_swept_receive_is_still_abandoned() {
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+
+    /* The far end never hears a request, so it never sends a chunk. */
+    pair.drop_next[DH_MSG_CLIP_REQUEST] = 10000;
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of("into the void")), Side::A);
+    CHECK(pair.delivered_to_b.size() == 1, "the second copy was expected to stall");
+
+    std::string abandoned;
+    for (uint32_t now = 0; now <= ClipService::kStallTimeoutMs + 1;
+         now += ClipService::kSweepDelayMs) {
+        for (const ClipOutput &output : pair.b.tick(now))
+            if (output.kind == ClipOutput::Kind::Note &&
+                output.note.find("was abandoned") != std::string::npos)
+                abandoned = output.note;
+    }
+    CHECK(!abandoned.empty(),
+          "a receive that swept for the whole timeout was never abandoned");
+    /* And the abandonment says what it asked for and what came back, which is
+       the reading neither end produced before. */
+    CHECK(abandoned.find("asked for") != std::string::npos &&
+              abandoned.find("back") != std::string::npos,
+          "the abandonment did not say whether a retransmit was asked for");
+}
+
+/*
+ * A newer offer supersedes an incomplete receive, and the transfer that
+ * replaces it is entitled to the whole deadline — not to whatever is left of
+ * the one it displaced.
+ *
+ * The reset event for this timer is "something arrived for the transfer being
+ * timed", and a supersede changes *which* transfer is being timed without
+ * changing how much of it has arrived: both counts are zero. So the count
+ * alone cannot see it, and the transfer that arrives second is abandoned for
+ * the sins of the first — reported as thirty seconds of silence when it is
+ * seconds old.
+ */
+void test_a_superseded_receive_resets_the_deadline() {
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+
+    /* The far end never hears a request, so nothing ever arrives. */
+    pair.drop_next[DH_MSG_CLIP_REQUEST] = 10000;
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of("the first copy")), Side::A);
+    pair.b.tick(1); /* arms the deadline on the first transfer */
+
+    /* A second copy supersedes it, most of the way through that deadline. */
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of("the second copy")), Side::A);
+
+    for (const ClipOutput &output : pair.b.tick(ClipService::kStallTimeoutMs + 1))
+        CHECK(!(output.kind == ClipOutput::Kind::Note &&
+                output.note.find("was abandoned") != std::string::npos),
+              "a transfer seconds old was abandoned on the deadline of the one it replaced");
+}
+
 } // namespace
 
 int main() {
@@ -571,6 +682,9 @@ int main() {
     test_a_stall_says_what_the_board_has_dropped();
     test_progress_keeps_a_transfer_alive();
     test_chunks_are_refused_before_the_seal_is_opened();
+    test_a_stalled_receive_asks_again();
+    test_a_swept_receive_is_still_abandoned();
+    test_a_superseded_receive_resets_the_deadline();
 
     if (failures > 0) {
         std::printf("%d clipboard check(s) failed\n", failures);

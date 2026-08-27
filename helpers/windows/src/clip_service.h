@@ -72,6 +72,24 @@ class ClipService {
     static constexpr uint32_t kStallTimeoutMs = 30000;
 
     /*
+     * How long an arriving transfer may make no progress before this end asks
+     * again for what it is waiting on.
+     *
+     * Well over a round trip on this link — a credit grant and the chunk it
+     * pays for cross in tens of milliseconds — and well under kStallTimeoutMs,
+     * so a receive that can be recovered is recovered long before the deadline
+     * that reports it lost.
+     *
+     * A receiver has to be able to prompt itself. Every message that would
+     * otherwise restart it — a credit grant, a retransmit request, the
+     * CLIP_DONE that drives a sweep — crosses the same seams the payload does,
+     * and a seam that refuses one has no retransmit beneath it (ADR-0005).
+     * Before #145 losing any of them cost the whole transfer, at no consistent
+     * size and no consistent fraction.
+     */
+    static constexpr uint32_t kSweepDelayMs = 2000;
+
+    /*
      * `aead` is the platform's cipher — seal_aead() over CNG — and must outlive
      * this object. Null is a machine that cannot run the seal at all, and this
      * refuses every copy rather than falling back to sending in clear.
@@ -157,6 +175,12 @@ class ClipService {
     std::vector<ClipOutput> sealed_offer();
     std::vector<ClipOutput> sealed_chunk(uint32_t seq);
 
+    /* Ask again for what a stopped receive is waiting on, and say so. Said out
+       loud on every round rather than counted quietly, because a stall that
+       recovers is otherwise invisible: the transfer completes and nothing in
+       the log says the link lost anything. */
+    std::vector<ClipOutput> sweep();
+
     /* Offer the payload already in flight again, as a fresh transfer — what a
        SEAL_STALE costs. The bytes do not move; only the transfer around them
        starts over. */
@@ -206,15 +230,23 @@ class ClipService {
      * actually done; the stamps say when that count last moved. Counting rather
      * than time-stamping inside `render` is what keeps a clock out of every
      * code path that produces an action.
+     *
+     * The receiving side counts *arrivals* — chunks assembled — and not the
+     * messages this end emits. A sweep emits messages, so counting those would
+     * let a receive whose far end is gone reset its own deadline for ever
+     * (#145). The count alone cannot see a *supersede*, though — a newer offer
+     * replaces an incomplete transfer and resets the count to zero, leaving the
+     * mark unchanged — so `on_offer` disarms the deadline outright and the next
+     * tick arms a fresh one.
      */
     uint32_t tx_progress_{0};
-    uint32_t rx_progress_{0};
     bool sending_timed_{false};
     uint32_t sending_since_{0};
     uint32_t sending_mark_{0};
     bool receiving_timed_{false};
     uint32_t receiving_since_{0};
     uint32_t receiving_mark_{0};
+    uint32_t swept_since_{0};
 };
 
 } // namespace deskhop

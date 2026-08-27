@@ -40,7 +40,9 @@ static int failures = 0;
 
 /* ---- harness: two sides joined by the real codecs -------------------- */
 
-#define RX_CAP (256u * 1024u)
+/* Big enough for the paste #145's acceptance names — 3,782 chunks — because
+   the sustained-loss scenarios are the ones that only bite at that length. */
+#define RX_CAP (4u * 1024u * 1024u)
 #define ACTS_CAP 64u
 #define QUEUE_CAP 512u
 
@@ -72,11 +74,21 @@ struct fault_plan {
     int drop_armed;
     uint32_t corrupt_seq; /* corrupt the first chunk with this seq once */
     int corrupt_armed;
+    int drop_chunks;      /* drop this many CLIP_CHUNK messages */
     int drop_done;        /* drop this many CLIP_DONE messages */
+    int credit_pass;      /* let this many CLIP_CREDIT messages through first */
+    int drop_credits;     /* then drop this many, then pass the rest */
+    int drop_requests;    /* drop this many CLIP_REQUEST messages, then pass the rest */
     int block_credits;    /* while set, CLIP_CREDIT messages are discarded */
     struct wire_msg held_credits[16];
     size_t held_count;
     int cancel_rx_on_retransmit; /* receiver cancels after emitting a retransmit */
+    /* A link that loses roughly one message in `loss_one_in`, deterministically.
+       The offer is exempt: a lost CLIP_OFFER is the sender's to time out
+       (docs/protocol.md), and no sweep on the receiving side can recover a
+       transfer it was never told about. */
+    unsigned loss_one_in;
+    unsigned loss_state;
 };
 
 static struct side A, B;
@@ -123,6 +135,16 @@ static void reset_scenario(void) {
     establish_seal(&B, &A, 1);
 }
 
+/* The lossy link, as an LCG so a failure is reproducible from the seed alone. */
+static int lossy_drop(uint8_t type) {
+    if (plan.loss_one_in == 0)
+        return 0;
+    if (type == DH_MSG_CLIP_OFFER || type == DH_MSG_CLIP_CANCEL)
+        return 0;
+    plan.loss_state = plan.loss_state * 1103515245u + 12345u;
+    return ((plan.loss_state >> 16) % plan.loss_one_in) == 0;
+}
+
 /* Encode one action from `from` into a wire message; false = nothing to send
    (local action) or deliberately faulted away. */
 static int encode_action(struct side *from, const dh_xfer_action *a, struct wire_msg *m) {
@@ -142,6 +164,10 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         dh_clip_chunk chunk;
         CHECK(dh_xfer_chunk_at(&from->x, a->seq, &chunk), "wire", "chunk_at failed");
         from->chunks_sent++;
+        if (plan.drop_chunks > 0) {
+            plan.drop_chunks--;
+            return 0; /* lost in transit */
+        }
         if (plan.drop_armed > 0 && a->seq == plan.drop_seq) {
             plan.drop_armed--;
             return 0; /* lost in transit */
@@ -168,6 +194,10 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         n = dh_clip_encode_id(a->id, m->payload, sizeof m->payload);
         break;
     case DH_XFER_ACT_SEND_REQUEST:
+        if (plan.drop_requests > 0) {
+            plan.drop_requests--;
+            return 0; /* lost in transit: the sender never starts */
+        }
         m->type = DH_MSG_CLIP_REQUEST;
         n = dh_clip_encode_id(a->id, m->payload, sizeof m->payload);
         break;
@@ -181,6 +211,12 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         n = dh_clip_encode_retransmit(a->id, a->seq, m->payload, sizeof m->payload);
         break;
     case DH_XFER_ACT_SEND_CREDIT:
+        if (plan.credit_pass > 0) {
+            plan.credit_pass--; /* the window that starts the transfer lands */
+        } else if (plan.drop_credits > 0) {
+            plan.drop_credits--;
+            return 0; /* lost in transit: the sender stops at zero credit */
+        }
         m->type = DH_MSG_CLIP_CREDIT;
         n = dh_clip_encode_credit(a->id, a->credits, m->payload, sizeof m->payload);
         if (n > 0 && plan.block_credits) {
@@ -207,6 +243,8 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
     }
     CHECK(n > 0, "wire", "payload encode failed");
     m->len = (uint16_t)(n > 0 ? n : 0);
+    if (n > 0 && lossy_drop(m->type))
+        return 0; /* lost in transit */
     return n > 0;
 }
 
@@ -327,8 +365,10 @@ static void run_until_quiet(void) {
         enqueue_actions(&B, &A, acts, n);
         if (q_head == q_tail)
             return;
-        CHECK(++spins < 10000, "wire", "scenario did not quiesce");
-        if (spins >= 10000)
+        /* One spin carries about one chunk, so the bound is the longest
+           scenario's chunk count with room for its retransmit rounds. */
+        CHECK(++spins < 200000, "wire", "scenario did not quiesce");
+        if (spins >= 200000)
             return;
     }
 }
@@ -340,17 +380,39 @@ static void offer_and_run(struct side *from, const uint8_t *data, uint64_t total
     run_until_quiet();
 }
 
+/*
+ * Stand in for the helper's tick: a receive that has stopped moving sweeps for
+ * what it is waiting on, and whatever it asks for is carried. Returns the
+ * number of sweeps it took, or -1 if the receive never finished — bounded,
+ * because a scenario needing more rounds than this has stopped converging.
+ */
+static int sweep_until_delivered(struct side *rx, int max_rounds) {
+    for (int round = 0; round < max_rounds; round++) {
+        if (!dh_xfer_is_receiving(&rx->x))
+            return round;
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_sweep_rx(&rx->x, acts, ACTS_CAP);
+        enqueue_actions(rx, peer(rx), acts, n);
+        run_until_quiet();
+    }
+    return dh_xfer_is_receiving(&rx->x) ? -1 : max_rounds;
+}
+
 static void fill_pattern(uint8_t *buf, size_t len) {
     for (size_t i = 0; i < len; i++)
         buf[i] = (uint8_t)(i * 7 + (i >> 8));
 }
 
 static uint8_t payload[64u * 1024u];
+/* The paste #145's acceptance names, byte for byte. */
+#define BIG_CHUNKS 3782u
+static uint8_t big_payload[BIG_CHUNKS * DH_XFER_CHUNK_SIZE];
 
 /* ---- scenarios ------------------------------------------------------- */
 
 int main(void) {
     fill_pattern(payload, sizeof payload);
+    fill_pattern(big_payload, sizeof big_payload);
 
     /* CRC32 known vectors (the check everything else leans on). */
     {
@@ -734,6 +796,171 @@ int main(void) {
         offer_and_run(&B, payload, 300);
         CHECK(A.delivered == 1 && A.delivered_len == 300, "ids",
               "reverse-direction transfer failed");
+    }
+
+    /* ---- #145: a receive that stalls asks again for what it wants -------- */
+
+    /* AC: a lost credit grant strands the sender; a stall sweep restarts it.
+       Nothing else can: no chunk arrives, so nothing prompts the receiver, and
+       no DONE arrives to drive the sweep in handle_done. */
+    {
+        reset_scenario();
+        plan.credit_pass = 1;  /* the opening window lands */
+        plan.drop_credits = 3; /* every grant the first three chunks earn is lost */
+        const size_t len = 40 * DH_XFER_CHUNK_SIZE;
+        offer_and_run(&A, payload, len);
+        CHECK(B.delivered == 0, "sweep-credit", "the scenario did not stall");
+        CHECK(A.x.tx.credits == 0, "sweep-credit", "the sender was not starved");
+        const int rounds = sweep_until_delivered(&B, 20);
+        CHECK(rounds > 0, "sweep-credit", "the sweep did not finish the transfer");
+        CHECK(B.delivered == 1 && B.delivered_len == len, "sweep-credit", "not delivered");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "sweep-credit", "bytes differ");
+    }
+
+    /* AC: a lost CLIP_REQUEST means the sender never starts. The sweep sends
+       it again, with the window that covers it, because this end cannot tell a
+       lost request from a lost grant. */
+    {
+        reset_scenario();
+        plan.drop_requests = 1;
+        const size_t len = 6 * DH_XFER_CHUNK_SIZE;
+        offer_and_run(&A, payload, len);
+        CHECK(A.chunks_sent == 0, "sweep-request", "the sender started without a request");
+
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_sweep_rx(&B.x, acts, ACTS_CAP);
+        size_t asked = 0, granted = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (acts[i].type == DH_XFER_ACT_SEND_REQUEST)
+                asked++;
+            if (acts[i].type == DH_XFER_ACT_SEND_CREDIT)
+                granted += acts[i].credits;
+        }
+        CHECK(asked == 1, "sweep-request", "the request was not sent again");
+        CHECK(granted == DH_XFER_CREDIT_WINDOW, "sweep-request", "no window came with it");
+        enqueue_actions(&B, &A, acts, n);
+        run_until_quiet();
+        CHECK(B.delivered == 1 && B.delivered_len == len, "sweep-request", "not delivered");
+    }
+
+    /* AC (#137): the same burst takes the last chunk and the DONE behind it.
+       Nothing completes the set and no DONE arrives to drive a sweep. */
+    {
+        reset_scenario();
+        const size_t chunks = 12;
+        plan.drop_seq = (uint32_t)chunks - 1;
+        plan.drop_armed = 1;
+        plan.drop_done = 1;
+        offer_and_run(&A, payload, chunks * DH_XFER_CHUNK_SIZE);
+        CHECK(B.delivered == 0, "sweep-tail", "the scenario did not stall");
+        CHECK(dh_xfer_rx_received(&B.x) == chunks - 1, "sweep-tail", "wrong stall point");
+        CHECK(sweep_until_delivered(&B, 20) > 0, "sweep-tail", "the tail was never recovered");
+        CHECK(B.delivered == 1, "sweep-tail", "not delivered");
+        CHECK(memcmp(B.rx_buf, payload, chunks * DH_XFER_CHUNK_SIZE) == 0, "sweep-tail",
+              "bytes differ");
+    }
+
+    /* AC: the whole opening burst is lost — every chunk of it and the DONE
+       behind them. The receiver has seen nothing at all, so it cannot tell a
+       sender that never started from one that started and was not heard, and
+       has to cover both. */
+    {
+        reset_scenario();
+        const size_t chunks = DH_XFER_CREDIT_WINDOW;
+        plan.drop_chunks = (int)chunks;
+        plan.drop_done = 1;
+        const size_t len = chunks * DH_XFER_CHUNK_SIZE;
+        offer_and_run(&A, payload, len);
+        CHECK(dh_xfer_rx_received(&B.x) == 0, "sweep-opening", "the scenario did not stall");
+        CHECK(A.x.tx.next_seq == chunks, "sweep-opening", "the sender never emitted the burst");
+        CHECK(sweep_until_delivered(&B, 20) > 0, "sweep-opening", "the burst was never recovered");
+        CHECK(B.delivered == 1, "sweep-opening", "not delivered");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "sweep-opening", "bytes differ");
+    }
+
+    /* AC: the sweep names what it is waiting for — the chunks at the frontier,
+       a window's worth and no more, each with its covering credit. Asking for
+       the whole tail would be one request per remaining chunk. */
+    {
+        reset_scenario();
+        plan.credit_pass = 1;
+        plan.drop_credits = 3;
+        offer_and_run(&A, payload, 40 * DH_XFER_CHUNK_SIZE);
+        const uint32_t stopped_at = dh_xfer_rx_received(&B.x);
+        CHECK(stopped_at > 0 && stopped_at < 40, "sweep-names", "the scenario did not stall");
+
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_sweep_rx(&B.x, acts, ACTS_CAP);
+        size_t asked = 0, granted = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (acts[i].type == DH_XFER_ACT_SEND_RETRANSMIT) {
+                CHECK(acts[i].seq >= stopped_at, "sweep-names", "asked for a chunk it holds");
+                asked++;
+            }
+            if (acts[i].type == DH_XFER_ACT_SEND_CREDIT)
+                granted += acts[i].credits;
+        }
+        CHECK(asked == DH_XFER_CREDIT_WINDOW, "sweep-names", "wrong number of chunks named");
+        CHECK(granted == asked, "sweep-names", "a request went out without covering credit");
+        CHECK(dh_xfer_rx_retx_asked(&B.x) == asked, "sweep-names", "the reading does not say so");
+    }
+
+    /* A stall says whether a retransmit was asked for, and whether one came
+       back — on both ends, which is what no log line said before (#145). */
+    {
+        reset_scenario();
+        plan.drop_seq = 2;
+        plan.drop_armed = 1;
+        offer_and_run(&A, payload, 8 * DH_XFER_CHUNK_SIZE);
+        CHECK(B.delivered == 1, "sweep-reading", "the transfer did not recover");
+        CHECK(dh_xfer_rx_retx_asked(&B.x) >= 1, "sweep-reading", "the receiver asked for nothing");
+        CHECK(dh_xfer_rx_retx_answered(&B.x) >= 1, "sweep-reading", "nothing came back");
+        CHECK(dh_xfer_tx_retx_asked(&A.x) >= 1, "sweep-reading", "the sender was asked nothing");
+        CHECK(dh_xfer_tx_retx_sent(&A.x) >= 1, "sweep-reading", "the sender sent nothing again");
+    }
+
+    /* A sender that has not started must not bank every window a repeating
+       receiver sends it, or the first pump is a burst no outbound queue on the
+       path is sized for (ADR-0005). Driven directly: what is being pinned is
+       what the sender does with credit it cannot yet spend. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 40 * DH_XFER_CHUNK_SIZE, acts, ACTS_CAP);
+        for (int i = 0; i < 4; i++) /* four sweeps whose requests were all lost */
+            (void)dh_xfer_handle_credit(&A.x, A.x.tx.id, DH_XFER_CREDIT_WINDOW, acts, ACTS_CAP);
+        CHECK(A.x.tx.credits == 4 * DH_XFER_CREDIT_WINDOW, "sweep-burst",
+              "the scenario did not bank anything");
+
+        (void)dh_xfer_handle_request(&A.x, A.x.tx.id, acts, ACTS_CAP);
+        size_t n = dh_xfer_pump(&A.x, acts, ACTS_CAP);
+        size_t chunks = 0;
+        for (size_t i = 0; i < n; i++)
+            if (acts[i].type == DH_XFER_ACT_SEND_CHUNK)
+                chunks++;
+        CHECK(chunks <= DH_XFER_CREDIT_WINDOW, "sweep-burst",
+              "the first pump spent every banked window at once");
+    }
+
+    /* AC: the paste #145 names — 3,782 chunks — completes in both directions
+       over a link losing roughly one message in thirty. */
+    {
+        const size_t len = sizeof big_payload;
+        reset_scenario();
+        plan.loss_one_in = 30;
+        plan.loss_state = 0x5eed145u;
+        offer_and_run(&A, big_payload, len);
+        CHECK(sweep_until_delivered(&B, 4000) >= 0, "sweep-big", "A to B never finished");
+        CHECK(B.delivered == 1 && B.delivered_len == len, "sweep-big", "A to B not delivered");
+        CHECK(memcmp(B.rx_buf, big_payload, len) == 0, "sweep-big", "A to B bytes differ");
+
+        reset_scenario();
+        plan.loss_one_in = 30;
+        plan.loss_state = 0x5eed145u;
+        offer_and_run(&B, big_payload, len);
+        CHECK(sweep_until_delivered(&A, 4000) >= 0, "sweep-big", "B to A never finished");
+        CHECK(A.delivered == 1 && A.delivered_len == len, "sweep-big", "B to A not delivered");
+        CHECK(memcmp(A.rx_buf, big_payload, len) == 0, "sweep-big", "B to A bytes differ");
     }
 
     if (failures == 0)

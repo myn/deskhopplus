@@ -115,6 +115,11 @@ typedef struct {
         uint32_t credits;
         uint32_t retx[DH_XFER_RETX_MAX]; /* ring of re-requested seqs */
         uint32_t retx_head, retx_count;
+        /* What this end was asked to send again, and what it sent again. Read
+           together they answer the question a stall could not answer before
+           (#145): the receiver asked, and this end did or did not act on it. */
+        uint32_t retx_asked;
+        uint32_t retx_sent;
     } tx;
     /* incoming transfer */
     struct {
@@ -127,6 +132,12 @@ typedef struct {
         uint32_t max_seq_seen;
         bool any_seen;
         uint32_t ungranted; /* valid chunks since the last credit grant */
+        /* The same pair from the receiving end: what this end asked for again,
+           and how much of it came back. A stall with `asked` at zero is a
+           receiver that never noticed; one with `answered` at zero is a far end
+           that is not acting on what it was asked (#145). */
+        uint32_t retx_asked;
+        uint32_t retx_answered;
         uint16_t meta_len;
         uint8_t meta[DH_XFER_META_MAX]; /* copied: the offer's view is transient */
         uint8_t received[DH_XFER_MAX_CHUNKS / 8];
@@ -194,11 +205,45 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
    one — nothing else reaches here with the set full — plus the unreached case
    of a DELIVERED the chunk handler had no room to emit. */
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
+
 size_t dh_xfer_handle_cancel(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_action *acts,
                                  size_t acts_cap);
 size_t dh_xfer_handle_credit(dh_xfer *x, uint32_t id, uint16_t credits, dh_xfer_action *acts,
                              size_t acts_cap);
+
+/*
+ * The receiver's own prompt: ask again for what an arriving transfer is
+ * waiting on. Empty when nothing is arriving.
+ *
+ * Every message that would otherwise restart a stalled receive — a credit
+ * grant, a retransmit request, the CLIP_DONE that drives the sweep above —
+ * crosses the same seams the payload does, and a seam that refuses one has no
+ * retransmit beneath it (ADR-0005). Losing any of them used to cost the whole
+ * transfer out to the helper's thirty-second timeout, at no consistent size
+ * and no consistent fraction (#145). So the receiver stops depending on being
+ * told and works it out for itself, which is the same move #132 made when a
+ * receive stopped waiting for CLIP_DONE to say it was finished.
+ *
+ * It has no clock and must not gain one. **The caller's tick decides when**:
+ * call this on a receive that has made no progress for a short interval — well
+ * over a round trip, well under the stall timeout. Each helper's clipboard
+ * service already measures exactly that.
+ *
+ * What it asks for, in one message batch:
+ *   - CLIP_REQUEST again, when nothing has arrived at all. The request may have
+ *     been lost, or the grant covering it, or the opening burst of chunks
+ *     itself; this end cannot tell which, and a sender already streaming
+ *     ignores the repeat.
+ *   - every hole below the highest seq seen: those chunks were sent and lost.
+ *   - up to a window's worth at and above that seq — or from seq 0 when nothing
+ *     has arrived. Past there the sender may simply not have got that far, so
+ *     asking for the whole tail would be one request per remaining chunk. A
+ *     window is what it could have had in flight.
+ * Every request carries its covering credit, as at any other seam, so a sender
+ * stopped by a lost grant is paid to start again.
+ */
+size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 
 /*
  * Whether a transfer is live in each direction.
@@ -226,6 +271,10 @@ static inline bool dh_xfer_is_receiving(const dh_xfer *x) { return x->rx.active;
 static inline uint32_t dh_xfer_rx_chunks(const dh_xfer *x) { return x->rx.nchunks; }
 static inline uint32_t dh_xfer_rx_received(const dh_xfer *x) { return x->rx.nreceived; }
 static inline uint32_t dh_xfer_tx_chunks(const dh_xfer *x) { return x->tx.nchunks; }
+static inline uint32_t dh_xfer_rx_retx_asked(const dh_xfer *x) { return x->rx.retx_asked; }
+static inline uint32_t dh_xfer_rx_retx_answered(const dh_xfer *x) { return x->rx.retx_answered; }
+static inline uint32_t dh_xfer_tx_retx_asked(const dh_xfer *x) { return x->tx.retx_asked; }
+static inline uint32_t dh_xfer_tx_retx_sent(const dh_xfer *x) { return x->tx.retx_sent; }
 static inline uint32_t dh_xfer_tx_next_seq(const dh_xfer *x) { return x->tx.next_seq; }
 static inline bool dh_xfer_tx_streaming(const dh_xfer *x) { return x->tx.streaming; }
 

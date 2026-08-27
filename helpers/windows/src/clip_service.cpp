@@ -159,19 +159,46 @@ std::vector<ClipOutput> ClipService::pump() {
     return render(actions, n);
 }
 
+/* The re-request pair is on both directions and always printed, zeros
+   included: a stall where nothing was ever asked for again is a different
+   fault from one where it was asked for and nothing came back, and neither end
+   said which before #145. */
 std::string ClipService::progress_line() const {
     std::string out;
     if (dh_xfer_is_sending(xfer_.get())) {
         out += "sending " + std::to_string(dh_xfer_tx_next_seq(xfer_.get())) + "/" +
                std::to_string(dh_xfer_tx_chunks(xfer_.get())) + " chunks";
         if (!dh_xfer_tx_streaming(xfer_.get())) out += ", never requested";
+        out += ", asked for " + std::to_string(dh_xfer_tx_retx_asked(xfer_.get())) +
+               " again and sent " + std::to_string(dh_xfer_tx_retx_sent(xfer_.get()));
     }
     if (dh_xfer_is_receiving(xfer_.get())) {
         if (!out.empty()) out += ", ";
         out += "receiving " + std::to_string(dh_xfer_rx_received(xfer_.get())) + "/" +
-               std::to_string(dh_xfer_rx_chunks(xfer_.get())) + " chunks";
+               std::to_string(dh_xfer_rx_chunks(xfer_.get())) + " chunks, asked for " +
+               std::to_string(dh_xfer_rx_retx_asked(xfer_.get())) + " again and got " +
+               std::to_string(dh_xfer_rx_retx_answered(xfer_.get())) + " back";
     }
     return out.empty() ? std::string("nothing in flight") : out;
+}
+
+std::vector<ClipOutput> ClipService::sweep() {
+    dh_xfer_action actions[kActionCapacity];
+    const size_t n = dh_xfer_sweep_rx(xfer_.get(), actions, kActionCapacity);
+    bool restarted = false;
+    size_t named = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (actions[i].type == DH_XFER_ACT_SEND_REQUEST) restarted = true;
+        if (actions[i].type == DH_XFER_ACT_SEND_RETRANSMIT) named++;
+    }
+    std::vector<ClipOutput> outputs = render(actions, n);
+    outputs.push_back(note("an arriving transfer made no progress for " +
+                           std::to_string(kSweepDelayMs / 1000) + "s; " +
+                           (restarted ? std::string("nothing has arrived at all, so it was asked "
+                                                    "for again")
+                                      : std::to_string(named) + " chunk(s) asked for again") +
+                           " (" + progress_line() + ")"));
+    return outputs;
 }
 
 std::string ClipService::drops_line(const dh_device_drops *drops) {
@@ -255,10 +282,11 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
 
     if (!dh_xfer_is_receiving(xfer_.get())) {
         receiving_timed_ = false;
-    } else if (!receiving_timed_ || receiving_mark_ != rx_progress_) {
+    } else if (!receiving_timed_ || receiving_mark_ != dh_xfer_rx_received(xfer_.get())) {
         receiving_timed_ = true;
         receiving_since_ = now_ms;
-        receiving_mark_ = rx_progress_;
+        swept_since_ = now_ms;
+        receiving_mark_ = dh_xfer_rx_received(xfer_.get());
     } else if (now_ms - receiving_since_ >= kStallTimeoutMs) {
         const std::string line = progress_line();
         receiving_timed_ = false;
@@ -266,6 +294,9 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
         outputs.push_back(note("an arriving transfer made no progress for " +
                                std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
                                line + "; " + board + "); nothing partial is ever written"));
+    } else if (now_ms - swept_since_ >= kSweepDelayMs) {
+        swept_since_ = now_ms;
+        append(outputs, sweep());
     }
     return outputs;
 }
@@ -419,6 +450,18 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
     if (rc != DH_SEAL_OK)
         return {note("an offer could not be opened: error " + std::to_string(rc))};
 
+    /*
+     * A new offer starts a new deadline. Disarmed here rather than inferred in
+     * the tick, because what the tick can see — the received count — is zero
+     * for the transfer being replaced and zero for the one replacing it, and
+     * the transfer id cannot separate them either: ids are per far-helper
+     * *process* and start again at one when that process restarts. Without
+     * this the second transfer inherits whatever is left of the first one's
+     * thirty seconds and is abandoned seconds old (#145). No clock is read
+     * here, which is what keeps one out of every path that produces an action.
+     */
+    receiving_timed_ = false;
+
     dh_xfer_action actions[kActionCapacity];
     return render(actions,
                   dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
@@ -555,16 +598,13 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             outputs.push_back(send(DH_MSG_CLIP_DONE, encode_id(action.id)));
             break;
         case DH_XFER_ACT_SEND_REQUEST:
-            rx_progress_++;
             outputs.push_back(send(DH_MSG_CLIP_REQUEST, encode_id(action.id)));
             break;
         case DH_XFER_ACT_SEND_RETRANSMIT:
-            rx_progress_++;
             outputs.push_back(
                 send(DH_MSG_CLIP_RETRANSMIT, encode_retransmit(action.id, action.seq)));
             break;
         case DH_XFER_ACT_SEND_CREDIT:
-            rx_progress_++;
             outputs.push_back(send(DH_MSG_CLIP_CREDIT, encode_credit(action.id, action.credits)));
             break;
         case DH_XFER_ACT_SEND_CANCEL:
