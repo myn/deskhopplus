@@ -799,6 +799,27 @@ between the helpers**; the firmware relays its messages opaquely.
   bookkeeping beyond a received-set. A chunk is exactly one CLIP_CHUNK frame's sealed payload.
 - **Streaming starts on request, never before.** An offered transfer emits nothing until
   CLIP_REQUEST arrives — a lazy payload (files) is not even read until then.
+- **An offer repeats until it is requested**
+  ([#78](https://github.com/myn/deskhopplus/issues/78)). CLIP_OFFER is the one transfer message whose
+  loss creates no state at the paste side, so nothing there can time out or ask for it again. The
+  copy side therefore repeats its immutable offer whenever it has made no progress for two seconds
+  and is still awaiting a request. The same caller-owned cadence drives the receive sweep below;
+  `dh_xfer` has no clock and does not gain one. A lazy transfer stops being eligible as soon as its
+  request makes it data-pending, even though no chunk is streaming yet.
+
+  Offer ids are monotonically ordered in the copy side's namespace, skip zero, and use wrap-safe
+  32-bit serial arithmetic. At the paste side, the same id with the same kind, total length and
+  metadata is an idempotent retry. If no chunk has arrived, it repeats CLIP_REQUEST and one covering
+  credit window without resetting the receive; once any chunk has arrived it emits nothing. A
+  duplicate of a completed offer and any older offer are stale and ignored. A newer offer keeps the
+  existing supersede rule, including when the new transfer is then refused as unacceptable. Reusing
+  an id with different immutable fields is an authenticated protocol error and ends the session.
+
+  Neither producing nor receiving a retry is transfer progress, so retries cannot hold either
+  side's thirty-second deadline open forever. The copy side counts actions it **offered again**; the
+  paste side counts duplicates it **saw**, deliberately different claims because `dh_xfer` cannot
+  know whether a helper's transport took a frame. When the first request arrives after retries, the
+  copy side logs one recovery note rather than one line per attempt.
 - **Integrity and loss.** The paste side unseals each chunk, verifies its CRC32 and tracks
   received seqs. A chunk that fails to unseal is treated as a corrupt chunk, not as a protocol
   error: it is a bulk payload and the transfer's own machinery already handles losing one. A
@@ -807,8 +828,9 @@ between the helpers**; the firmware relays its messages opaquely.
   CLIP_DONE. A loss is reported once per round: a DONE sweep leaves a freshly requested
   chunk alone once — its retransmission is behind that DONE in the FIFO — **but a chunk
   still missing a full round later is requested again**, so a retransmitted chunk that is
-  itself lost converges on the next DONE round. Only the loss of a message with no DONE
-  behind it (a CLIP_OFFER, a lone request) is left to the helper's transfer timeout.
+  itself lost converges on the next DONE round. A lost CLIP_OFFER is recovered by the sender-side
+  offer retry above; a lone lost request is recovered by the receive sweep below. The helper's
+  transfer timeout remains the terminal bound when repeated recovery attempts get no answer.
 - **A receive completes on its last chunk, not on CLIP_DONE.** The paste side verifies every
   chunk's length and CRC32 as it arrives, so a receiver holding the whole received-set already
   knows it is finished; CLIP_DONE carries nothing but the id. Completing on the chunk is what

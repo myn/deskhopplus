@@ -118,6 +118,12 @@ The unit of integrity, loss detection, and selective retransmission — exactly 
 carrying id, length, and CRC32.
 _Avoid_: block, segment, packet (a packet is the 12-byte inter-board wire unit)
 
+**Offer**:
+The immutable announcement of one clipboard transfer: its transfer id, kind, total length, and
+metadata. Repeating the same offer is a retry of that transfer; reusing its id with any different
+field is a protocol error, never a newer transfer.
+_Avoid_: request (the paste side requests an offered transfer), proposal, header
+
 ### Layout
 
 **Seam**:
