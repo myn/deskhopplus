@@ -55,8 +55,34 @@ static void tx_reset(dh_xfer *x) {
     memset(&x->tx, 0, sizeof x->tx);
 }
 
+/* End the arriving transfer but keep the identity behind it: the offer that
+   opened it stays known, so a duplicate of it is still recognised as one. */
 static void rx_reset(dh_xfer *x) {
     x->rx.active = false;
+}
+
+/* The stronger one: forget the incoming direction outright, the far end's
+   offer ordering with it. Even a completed identity must not make the first
+   offer of the *next* namespace look stale. */
+static void rx_forget(dh_xfer *x) {
+    memset(&x->rx, 0, sizeof x->rx);
+}
+
+/* Give up on an arriving transfer and forget the direction with it — what both
+   boundaries of the far end's offer ordering do (dh_xfer_link_down and
+   dh_xfer_rx_seal_replaced). Silent when nothing is arriving; the ordering goes
+   either way. Partial data is never kept. */
+static void rx_abandon(dh_xfer *x, uint8_t reason, dh_xfer_action *acts, size_t *n,
+                       size_t acts_cap) {
+    if (x->rx.active) {
+        dh_xfer_action *a = emit(acts, n, acts_cap);
+        if (a) {
+            a->type = DH_XFER_ACT_FAILED;
+            a->id = x->rx.id;
+            a->reason = reason;
+        }
+    }
+    rx_forget(x);
 }
 
 static bool serial_newer(uint32_t candidate, uint32_t current) {
@@ -328,7 +354,7 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
     if (x->rx.seen_offer && !serial_newer(offer->id, x->rx.id))
         return 0;
     /* A genuinely newer offer supersedes an incomplete incoming transfer. */
-    memset(&x->rx, 0, sizeof x->rx);
+    rx_forget(x);
     x->rx.seen_offer = true;
     x->rx.id = offer->id;
     x->rx.kind = offer->kind;
@@ -625,18 +651,9 @@ size_t dh_xfer_handle_cancel(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size
 
 size_t dh_xfer_link_down(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
-    const uint32_t rx_id = x->rx.id;
-    if (x->rx.active) {
-        dh_xfer_action *a = emit(acts, &n, acts_cap);
-        if (a) {
-            a->type = DH_XFER_ACT_FAILED;
-            a->id = rx_id;
-            a->reason = DH_XFER_FAIL_LINK_DROP;
-        }
-    }
-    /* Offer ordering belongs to the session. Even a completed identity must
-       not make the first offer of the next session look stale. */
-    memset(&x->rx, 0, sizeof x->rx);
+    /* This end's session is one of the two boundaries the far end's offer
+       ordering has; dh_xfer_rx_seal_replaced is the other. */
+    rx_abandon(x, DH_XFER_FAIL_LINK_DROP, acts, &n, acts_cap);
     if (x->tx.active) {
         uint32_t id = x->tx.id;
         tx_reset(x);
@@ -647,5 +664,13 @@ size_t dh_xfer_link_down(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
             a->reason = DH_XFER_FAIL_LINK_DROP;
         }
     }
+    return n;
+}
+
+size_t dh_xfer_rx_seal_replaced(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
+    size_t n = 0;
+    /* The copy side's offer ordering restarted with its process, so the id
+       frontier held here is the dead namespace's and has to go. */
+    rx_abandon(x, DH_XFER_FAIL_SEAL_REPLACED, acts, &n, acts_cap);
     return n;
 }

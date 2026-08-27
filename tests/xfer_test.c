@@ -1065,6 +1065,54 @@ int main(void) {
               "offer ordering did not reset with the link");
     }
 
+    /*
+     * The paste side's own session is not the only boundary of that ordering:
+     * the copy side's helper can restart while this side stays up, and its ids
+     * start again at one (#151). A fresh incoming seal is the evidence, and it
+     * has to end the previous process's namespace along with its transfers.
+     */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        dh_clip_offer first = {1, 0, 10, NULL, 0};
+        dh_clip_offer second = {2, 0, 2 * DH_XFER_CHUNK_SIZE, NULL, 0};
+        CHECK(dh_xfer_handle_offer(&B.x, &first, acts, ACTS_CAP) == 2, "offer-restart",
+              "the first identity was not accepted");
+        CHECK(dh_xfer_handle_offer(&B.x, &second, acts, ACTS_CAP) == 2, "offer-restart",
+              "the frontier did not move on");
+
+        /* An incomplete receive belongs to the seal it arrived under, so a
+           restarted copy side can never finish it. Abandoned, never delivered
+           in part. */
+        dh_clip_chunk part = {2, 0, dh_crc32(payload, DH_XFER_CHUNK_SIZE), payload,
+                              DH_XFER_CHUNK_SIZE};
+        (void)dh_xfer_handle_chunk(&B.x, &part, acts, ACTS_CAP);
+        CHECK(dh_xfer_rx_received(&B.x) == 1, "offer-restart", "the partial chunk was refused");
+        size_t n = dh_xfer_rx_seal_replaced(&B.x, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_FAILED && acts[0].id == 2 &&
+                  acts[0].reason == DH_XFER_FAIL_SEAL_REPLACED,
+              "offer-restart", "the receive under the replaced seal was not abandoned");
+        CHECK(!dh_xfer_is_receiving(&B.x) && dh_xfer_rx_received(&B.x) == 0, "offer-restart",
+              "a partial receive survived the seal it arrived under");
+
+        /* And the restarted copy side's id 1 is a fresh transfer, not a stale
+           one and not a conflict with what the dead process sent under it. */
+        dh_clip_offer restarted = {1, 0, 20, NULL, 0};
+        CHECK(dh_xfer_handle_offer(&B.x, &restarted, acts, ACTS_CAP) == 2, "offer-restart",
+              "the restarted copy side's first offer was refused");
+
+        /* Nothing this end is sending is touched: that recovers by the
+           ordinary stale-seal exchange re-offering it under a key the far end
+           can open. */
+        reset_scenario();
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        const uint32_t sending = A.x.tx.id;
+        CHECK(dh_xfer_rx_seal_replaced(&A.x, acts, ACTS_CAP) == 0, "offer-restart",
+              "a fresh seal reported something with nothing arriving");
+        CHECK(dh_xfer_is_sending(&A.x) && A.x.tx.id == sending, "offer-restart",
+              "a fresh incoming seal disturbed the outgoing transfer");
+    }
+
     /* Offer recovery state is per direction: simultaneous copies can both
        lose their opening announcement and recover independently. */
     {

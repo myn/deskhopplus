@@ -39,6 +39,10 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a superseding offer gets its own deadline", testASupersededReceiveResetsTheDeadline),
     ("a lost offer retries without extending its deadline", testALostOfferRetries),
     ("a conflicting authenticated offer ends the local session", testConflictingOfferEndsSession),
+    ("a restarted far helper is not heard as stale", testARestartedFarHelperIsHeard),
+    ("a restarted far helper's reused id is not a conflict", testARestartedIdIsNotAConflict),
+    ("a receive under a replaced seal is abandoned", testAReplacedSealAbandonsTheReceive),
+    ("an offer under the replaced seal cannot revive it", testADelayedOfferCannotRevive),
 ]
 
 /*
@@ -64,7 +68,11 @@ private func counterEntropy(_ seed: UInt8) -> (Int) -> [UInt8] {
  * bytes over unchanged is exactly what one is.
  */
 private final class Pair {
-    let a: ClipboardService
+    /* `a` is replaceable because one of the failures these drive is the far
+       helper's *process* going away and coming back (#151): its offer ids are
+       ordered inside that process and start again at one with it, which no
+       call on a living service can reproduce. */
+    private(set) var a: ClipboardService
     let b: ClipboardService
     var deliveredToA: [(kind: UInt8, bytes: [UInt8])] = []
     var deliveredToB: [(kind: UInt8, bytes: [UInt8])] = []
@@ -79,10 +87,24 @@ private final class Pair {
      * ever lost.
      */
     var dropNext: [UInt8: Int] = [:]
+    /// Every frame put on the link, in order, so a test can hand one over
+    /// again later — the only way to reach a message that was sealed under a
+    /// key its receiver has since replaced.
+    var carriedFrames: [(type: UInt8, body: [UInt8])] = []
+
+    private let capacity: Int
 
     init(capacity: Int = 64 * 1024) {
+        self.capacity = capacity
         a = ClipboardService(entropy: counterEntropy(1), capacity: capacity)
         b = ClipboardService(entropy: counterEntropy(2), capacity: capacity)
+    }
+
+    /// A's helper process went away and came back: a new service, with an
+    /// offer-id namespace that starts at one again. B is untouched, which is
+    /// the whole asymmetry — its session never ended.
+    func restartA() {
+        a = ClipboardService(entropy: counterEntropy(3), capacity: capacity)
     }
 
     /// Carry every frame to its far end, and everything that answers, until the
@@ -100,6 +122,7 @@ private final class Pair {
             switch output {
             case .send(let type, let body):
                 carried += 1
+                carriedFrames.append((type, body))
                 /* A frame going out is a chance to push the next credit-gated
                    batch, which is what the runtime does on the same seam — and
                    it happens whether or not the link carries this one. */
@@ -750,4 +773,98 @@ private func testConflictingOfferEndsSession() throws {
     let outputs = service.received(type: MessageType.clipOffer, body: conflict)
     Check.that(outputs.contains { if case .protocolError = $0 { return true }; return false },
                "an authenticated offer identity conflict did not end the local session")
+}
+
+/*
+ * The asymmetric restart (#151): the far computer's helper process goes away
+ * and comes back while this end's session never falters.
+ *
+ * Offer ids are ordered inside the *copy side helper's* namespace, so a fresh
+ * process starts again at one. Without a boundary at the fresh seal, this end
+ * measures that one against the dead process's offer-id frontier, calls it stale, and
+ * the clipboard stays dead in that direction until this end resets too.
+ */
+private func testARestartedFarHelperIsHeard() {
+    let pair = Pair()
+    pair.copyOnA("first")
+    pair.copyOnA("second") /* the frontier is now above one */
+    Check.equal(text(pair.deliveredToB), ["first", "second"],
+                "the copies before the restart did not arrive")
+
+    pair.restartA()
+    pair.copyOnA("after the restart")
+
+    Check.equal(text(pair.deliveredToB), ["first", "second", "after the restart"],
+                "the restarted helper's first offer was ignored as stale")
+}
+
+/*
+ * The same restart one copy earlier, where the reused id is not older but
+ * *equal* — and the payload behind it is a different one. Answered as a fresh
+ * transfer, not as an identity conflict, which would end the session over a
+ * far helper doing nothing wrong.
+ */
+private func testARestartedIdIsNotAConflict() {
+    let pair = Pair()
+    pair.copyOnA("first")
+    Check.equal(pair.deliveredToB.count, 1, "the copy before the restart did not arrive")
+
+    pair.restartA()
+    pair.copyOnA("a different payload under the same id")
+
+    Check.equal(text(pair.deliveredToB), ["first", "a different payload under the same id"],
+                "the restarted helper's reused id did not carry its payload")
+    Check.that(!pair.sawNote(containing: "protocol error"),
+               "a restarted helper's reused offer id was read as a conflict")
+}
+
+/*
+ * A half-arrived transfer belongs to the seal it arrived under. The helper
+ * that sent it has forgotten it, so it can never be finished — abandoned
+ * whole, and never written to the pasteboard in part.
+ */
+private func testAReplacedSealAbandonsTheReceive() {
+    let pair = Pair()
+    pair.copyOnA("first, to establish a seal")
+
+    /* Every chunk of the second copy is refused at a seam with no retransmit
+       beneath it, so B is left holding an offer and no payload. */
+    pair.dropNext[MessageType.clipChunk] = 10_000
+    pair.copyOnA(String(repeating: "lost ", count: 1000))
+    Check.equal(pair.deliveredToB.count, 1, "the payload arrived through a link that dropped it")
+
+    pair.dropNext = [:]
+    pair.restartA()
+    pair.copyOnA("after the restart")
+
+    Check.equal(text(pair.deliveredToB), ["first, to establish a seal", "after the restart"],
+                "a partial payload was delivered, or the copy after the restart was not")
+    Check.that(pair.sawNote(containing: "abandoned: the far helper started a fresh seal"),
+               "the receive under the replaced seal was abandoned without saying why")
+}
+
+/*
+ * The straggler. An offer sealed under the replaced key can still be in flight
+ * when the fresh one is accepted, and arriving late it must not be able to
+ * recreate the receive state that was just given up. It cannot be opened at
+ * all: this end holds one incoming seal, and the fresh one replaced it.
+ */
+private func testADelayedOfferCannotRevive() {
+    let pair = Pair()
+    pair.copyOnA("first, to establish a seal")
+    guard let old = pair.carriedFrames.last(where: { $0.type == MessageType.clipOffer }) else {
+        Check.that(false, "no offer was carried to hold back")
+        return
+    }
+
+    pair.restartA()
+    pair.copyOnA("after the restart")
+
+    let outputs = pair.b.received(type: MessageType.clipOffer, body: old.body)
+    Check.that(outputs.contains {
+                   if case .send(let type, _) = $0 { return type == MessageType.sealStale }
+                   return false
+               }, "an offer under the replaced seal was opened rather than refused")
+    Check.equal(text(pair.deliveredToB), ["first, to establish a seal", "after the restart"],
+                "a delayed offer under the replaced seal changed what arrived")
 }

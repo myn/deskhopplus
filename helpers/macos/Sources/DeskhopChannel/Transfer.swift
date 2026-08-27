@@ -274,6 +274,14 @@ public final class Transfer {
         collect { acts, cap in dh_xfer_cancel_rx(machine, acts, cap) }
     }
 
+    /// The far helper offered a fresh seal, so its process — and the offer-id
+    /// namespace ordered inside it — started over. The incoming direction is
+    /// forgotten, ordering included; the outgoing one is untouched. See
+    /// `dh_xfer_rx_seal_replaced`.
+    public func incomingSealReplaced() -> [TransferAction] {
+        collect { acts, cap in dh_xfer_rx_seal_replaced(machine, acts, cap) }
+    }
+
     /// The session went away: both directions are abandoned. Partial data is
     /// never kept — a half-written clipboard is worse than none.
     public func linkDown() -> [TransferAction] {

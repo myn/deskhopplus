@@ -323,12 +323,32 @@ public final class ClipboardService {
 
     // MARK: - The seal exchange
 
+    /*
+     * A fresh seal is the only word this end gets that the far helper's process
+     * started over, because a helper offers one exactly when it holds no key to
+     * send under. Its offer ids started over with it, so the offer-id frontier
+     * this end measures them against belongs to a process that no longer exists (#151)
+     * — kept, it would read the restarted helper's first offer as stale and
+     * leave the clipboard dead in that direction until this end reset too.
+     *
+     * So the incoming direction is forgotten here. Anything half-arrived
+     * belonged to the seal just replaced and can never be finished; it is
+     * abandoned rather than delivered in part.
+     *
+     * A healthy receive cannot be thrown away this way. A duplicated frame
+     * never reaches here — a counter seen once is refused for ever (dh_auth.h)
+     * — and a genuinely fresh offer means the far end holds no key, which is
+     * exactly the state in which it cannot be sending anything.
+     */
     private func onSealOffered(_ body: [UInt8]) -> [ClipboardOutput] {
+        let accept: [UInt8]
         do {
-            return [.send(type: MessageType.sealAccept, body: try seal.accept(offer: body))]
+            accept = try seal.accept(offer: body)
         } catch {
             return [.note("a seal offer could not be accepted: \(error)")]
         }
+        return [.send(type: MessageType.sealAccept, body: accept)]
+            + render(transfer.incomingSealReplaced())
     }
 
     private func onSealAccepted(_ body: [UInt8]) -> [ClipboardOutput] {
@@ -576,6 +596,7 @@ public final class ClipboardService {
         case DH_XFER_FAIL_CANCELLED: return "it was cancelled"
         case DH_XFER_FAIL_LINK_DROP: return "the session went away"
         case DH_XFER_FAIL_NO_DATA: return "the payload could not be produced"
+        case DH_XFER_FAIL_SEAL_REPLACED: return "the far helper started a fresh seal"
         default: return "reason \(reason.rawValue)"
         }
     }

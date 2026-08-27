@@ -90,6 +90,10 @@ struct Pair {
     std::vector<std::string> notes;
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
+    /* Every frame put on the link, in order, so a test can hand one over again
+       later — the only way to reach a message that was sealed under a key its
+       receiver has since replaced. */
+    std::vector<std::pair<uint8_t, std::vector<uint8_t>>> carried_frames;
     /*
      * Frames the link loses before they reach the far end, counted down by
      * message type. This is the seam ADR-0005 describes — a bounded queue
@@ -122,6 +126,7 @@ struct Pair {
             switch (output.kind) {
             case ClipOutput::Kind::Send: {
                 carried++;
+                carried_frames.emplace_back(output.type, output.bytes);
                 /* A frame going out is a chance to push the next credit-gated
                    batch, which is what the run loop does on the same seam — and
                    it happens whether or not the link carries this one. */
@@ -151,6 +156,14 @@ struct Pair {
             }
         }
     }
+
+    /*
+     * A's helper process went away and came back: a new service, with an
+     * offer-id namespace that starts at one again. B is untouched, which is the
+     * whole asymmetry — its session never ended, and no call on a living
+     * service can reproduce this (#151).
+     */
+    void restart_a() { a = ClipService(seal_aead(), counter_entropy(3), 64u * 1024u); }
 
     void copy_on_a(const std::string &text) {
         settle(a.local_copy(ClipKind::Text, bytes_of(text)), Side::A);
@@ -749,6 +762,111 @@ void test_a_conflicting_authenticated_offer_ends_the_local_session() {
     CHECK(protocol_error, "an authenticated offer identity conflict did not end the local session");
 }
 
+/*
+ * The asymmetric restart (#151): the far computer's helper process goes away
+ * and comes back while this end's session never falters.
+ *
+ * Offer ids are ordered inside the *copy side helper's* namespace, so a fresh
+ * process starts again at one. Without a boundary at the fresh seal, this end
+ * measures that one against the dead process's offer-id frontier, calls it stale, and
+ * the clipboard stays dead in that direction until this end resets too.
+ */
+void test_a_restarted_far_helper_is_heard() {
+    Pair pair;
+    pair.copy_on_a("first");
+    pair.copy_on_a("second"); /* the frontier is now above one */
+    CHECK(pair.delivered_to_b.size() == 2, "the copies before the restart did not arrive");
+
+    pair.restart_a();
+    pair.copy_on_a("after the restart");
+
+    CHECK(pair.delivered_to_b.size() == 3,
+          "the restarted helper's first offer was ignored as stale");
+    if (pair.delivered_to_b.size() == 3)
+        CHECK(text_of(pair.delivered_to_b[2]) == "after the restart",
+              "the restarted helper's offer carried the wrong payload");
+}
+
+/*
+ * The same restart one copy earlier, where the reused id is not older but
+ * *equal* — and the payload behind it is a different one. Answered as a fresh
+ * transfer, not as an identity conflict, which would end the session over a far
+ * helper doing nothing wrong.
+ */
+void test_a_restarted_id_is_not_a_conflict() {
+    Pair pair;
+    pair.copy_on_a("first");
+    CHECK(pair.delivered_to_b.size() == 1, "the copy before the restart did not arrive");
+
+    pair.restart_a();
+    pair.copy_on_a("a different payload under the same id");
+
+    CHECK(pair.delivered_to_b.size() == 2,
+          "the restarted helper's reused id did not carry its payload");
+    if (pair.delivered_to_b.size() == 2)
+        CHECK(text_of(pair.delivered_to_b[1]) == "a different payload under the same id",
+              "the reused id carried the wrong payload");
+    CHECK(!pair.saw_note("protocol error"),
+          "a restarted helper's reused offer id was read as a conflict");
+}
+
+/*
+ * A half-arrived transfer belongs to the seal it arrived under. The helper that
+ * sent it has forgotten it, so it can never be finished — abandoned whole, and
+ * never written to the clipboard in part.
+ */
+void test_a_replaced_seal_abandons_the_receive() {
+    Pair pair;
+    pair.copy_on_a("first, to establish a seal");
+
+    /* Every chunk of the second copy is refused at a seam with no retransmit
+       beneath it, so B is left holding an offer and no payload. */
+    pair.drop_next[DH_MSG_CLIP_CHUNK] = 10000;
+    pair.copy_on_a(std::string(5000, 'x'));
+    CHECK(pair.delivered_to_b.size() == 1, "the payload arrived through a link that dropped it");
+
+    pair.drop_next.clear();
+    pair.restart_a();
+    pair.copy_on_a("after the restart");
+
+    CHECK(pair.delivered_to_b.size() == 2,
+          "a partial payload was delivered, or the copy after the restart was not");
+    if (pair.delivered_to_b.size() == 2)
+        CHECK(text_of(pair.delivered_to_b[1]) == "after the restart",
+              "what arrived after the restart was not the payload that was copied");
+    CHECK(pair.saw_note("abandoned: the far helper started a fresh seal"),
+          "the receive under the replaced seal was abandoned without saying why");
+}
+
+/*
+ * The straggler. An offer sealed under the replaced key can still be in flight
+ * when the fresh one is accepted, and arriving late it must not be able to
+ * recreate the receive state that was just given up. It cannot be opened at
+ * all: this end holds one incoming seal, and the fresh one replaced it.
+ */
+void test_a_delayed_offer_cannot_revive() {
+    Pair pair;
+    pair.copy_on_a("first, to establish a seal");
+    std::vector<uint8_t> old_offer;
+    for (const auto &frame : pair.carried_frames)
+        if (frame.first == DH_MSG_CLIP_OFFER) old_offer = frame.second;
+    CHECK(!old_offer.empty(), "no offer was carried to hold back");
+    if (old_offer.empty()) return;
+
+    pair.restart_a();
+    pair.copy_on_a("after the restart");
+
+    const std::vector<ClipOutput> outputs =
+        pair.b.received(DH_MSG_CLIP_OFFER, old_offer.data(), old_offer.size());
+    bool said_stale = false;
+    for (const ClipOutput &output : outputs)
+        if (output.kind == ClipOutput::Kind::Send && output.type == DH_MSG_SEAL_STALE)
+            said_stale = true;
+    CHECK(said_stale, "an offer under the replaced seal was opened rather than refused");
+    CHECK(pair.delivered_to_b.size() == 2,
+          "a delayed offer under the replaced seal changed what arrived");
+}
+
 } // namespace
 
 int main() {
@@ -777,6 +895,10 @@ int main() {
     test_a_superseded_receive_resets_the_deadline();
     test_a_lost_offer_retries_without_extending_the_deadline();
     test_a_conflicting_authenticated_offer_ends_the_local_session();
+    test_a_restarted_far_helper_is_heard();
+    test_a_restarted_id_is_not_a_conflict();
+    test_a_replaced_seal_abandons_the_receive();
+    test_a_delayed_offer_cannot_revive();
 
     if (failures > 0) {
         std::printf("%d clipboard check(s) failed\n", failures);

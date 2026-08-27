@@ -594,6 +594,9 @@ The ephemeral keys are per seal and are not either party's identity key.
 - **A helper drops all seal state when its own session ends.** #107 measured 586 session
   teardowns in 16 hours; re-offering is cheap and the alternative is a key whose peer may no
   longer exist.
+- **Accepting a seal offer ends the offerer's transfer namespace at this end.** A helper offers a
+  seal only when it holds no key to send under, so a fresh offer is the far end saying its sending
+  state started over. See "Transfer semantics" below for what that boundary does (#151).
 - **A `CLIP_OFFER` is not sent until the seal is accepted.** The offer is itself sealed, so
   there is nothing to send before there is a key to send it under.
 - **An offer that is never accepted times out** on the sender's transfer timeout and the
@@ -814,6 +817,17 @@ between the helpers**; the firmware relays its messages opaquely.
   duplicate of a completed offer and any older offer are stale and ignored. A newer offer keeps the
   existing supersede rule, including when the new transfer is then refused as unacceptable. Reusing
   an id with different immutable fields is an authenticated protocol error and ends the session.
+
+  That namespace belongs to the copy side helper's **process**, so it has two boundaries at the
+  paste side, not one ([#151](https://github.com/myn/deskhopplus/issues/151)). Its own session
+  ending is the first. **A fresh incoming seal is the second**: a helper offers a seal exactly when
+  it holds no key to send under, so one arriving is the far end saying its sending state started
+  over — which it can do while this side stays perfectly healthy. Accepting it forgets the incoming
+  direction whole, ordering included, and the restarted helper's id 1 is then a fresh transfer
+  rather than a stale one. An incomplete receive is abandoned with it, never delivered in part: it
+  belongs to the seal it arrived under. A straggling offer sealed under the replaced key cannot
+  revive it either, because that seal is no longer held and the message answers `SEAL_STALE` instead
+  of opening.
 
   Neither producing nor receiving a retry is transfer progress, so retries cannot hold either
   side's thirty-second deadline open forever. The copy side counts actions it **offered again**; the

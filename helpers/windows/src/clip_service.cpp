@@ -66,6 +66,7 @@ const char *fail_reason(uint8_t reason) {
     case DH_XFER_FAIL_CANCELLED: return "it was cancelled";
     case DH_XFER_FAIL_LINK_DROP: return "the session went away";
     case DH_XFER_FAIL_NO_DATA: return "the payload could not be produced";
+    case DH_XFER_FAIL_SEAL_REPLACED: return "the far helper started a fresh seal";
     default: return "an unrecorded reason";
     }
 }
@@ -381,6 +382,23 @@ std::vector<ClipOutput> ClipService::received(uint8_t type, const uint8_t *body,
 
 // ------------------------------------------------------------------ the seal exchange
 
+/*
+ * A fresh seal is the only word this end gets that the far helper's process
+ * started over, because a helper offers one exactly when it holds no key to
+ * send under. Its offer ids started over with it, so the offer-id frontier this
+ * end measures them against belongs to a process that no longer exists (#151) —
+ * kept, it would read the restarted helper's first offer as stale and leave the
+ * clipboard dead in that direction until this end reset too.
+ *
+ * So the incoming direction is forgotten here. Anything half-arrived belonged
+ * to the seal just replaced and can never be finished; it is abandoned rather
+ * than delivered in part.
+ *
+ * A healthy receive cannot be thrown away this way. A duplicated frame never
+ * reaches here — a counter seen once is refused for ever (dh_auth.h) — and a
+ * genuinely fresh offer means the far end holds no key, which is exactly the
+ * state in which it cannot be sending anything.
+ */
 std::vector<ClipOutput> ClipService::on_seal_offered(const uint8_t *body, size_t len) {
     uint8_t reply[DH_SEAL_EXCHANGE_LEN];
     uint8_t nonce[DH_NONCE_SIZE];
@@ -398,7 +416,13 @@ std::vector<ClipOutput> ClipService::on_seal_offered(const uint8_t *body, size_t
         size_t written = 0;
         const dh_seal_result rc = dh_seal_rx_offered(&seal_rx_, body, len, eph_private, nonce,
                                                      reply, sizeof reply, &written);
-        if (rc == DH_SEAL_OK) return {send(DH_MSG_SEAL_ACCEPT, reply, written)};
+        if (rc == DH_SEAL_OK) {
+            std::vector<ClipOutput> outputs{send(DH_MSG_SEAL_ACCEPT, reply, written)};
+            dh_xfer_action actions[kActionCapacity];
+            const size_t n = dh_xfer_rx_seal_replaced(xfer_.get(), actions, kActionCapacity);
+            append(outputs, render(actions, n));
+            return outputs;
+        }
         if (rc != DH_SEAL_ERR_KEY)
             return {note("a seal offer could not be accepted: error " + std::to_string(rc))};
     }

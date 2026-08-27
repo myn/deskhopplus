@@ -92,6 +92,7 @@ typedef enum {
     DH_XFER_FAIL_CANCELLED = 0,
     DH_XFER_FAIL_LINK_DROP = 1,
     DH_XFER_FAIL_NO_DATA = 2, /* lazy provider could not produce the payload */
+    DH_XFER_FAIL_SEAL_REPLACED = 3, /* the copy side's helper started over */
 } dh_xfer_fail_reason;
 
 typedef struct {
@@ -197,6 +198,29 @@ size_t dh_xfer_cancel_tx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_cancel_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* The link dropped: abandon both directions. Partial data is never kept. */
 size_t dh_xfer_link_down(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
+
+/*
+ * The copy side offered a fresh seal: forget the incoming direction, ordering
+ * included.
+ *
+ * Offer ids are ordered inside the *copy side helper's* namespace and start
+ * again at one when that process does, so this end's own session is not the
+ * only boundary of that namespace (#151). The far helper can restart while
+ * this side stays healthy, and its first offer would then be measured against
+ * the dead process's offer-id frontier and dropped as stale — a clipboard that stays
+ * unavailable in that direction until this end happens to reset too.
+ *
+ * A fresh incoming seal is that boundary, and it is the only evidence this end
+ * gets: a helper offers a seal only when it holds no key to send under. Any
+ * incomplete receive belongs to the seal it arrived under and can never be
+ * finished by a helper that has forgotten it, so it is abandoned whole and no
+ * partial payload is delivered.
+ *
+ * The outgoing direction is deliberately untouched. What this end is sending
+ * recovers by the ordinary SEAL_STALE exchange, which re-offers it under a key
+ * the far end can open.
+ */
+size_t dh_xfer_rx_seal_replaced(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 
 /* Peer messages in. */
 size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_action *acts,
