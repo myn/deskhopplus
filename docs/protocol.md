@@ -599,9 +599,9 @@ The ephemeral keys are per seal and are not either party's identity key.
   state started over. See "Transfer semantics" below for what that boundary does (#151).
 - **A `CLIP_OFFER` is not sent until the seal is accepted.** The offer is itself sealed, so
   there is nothing to send before there is a key to send it under.
-- **An offer that is never accepted times out** on the sender's transfer timeout and the
-  transfer is abandoned, exactly as any other stalled transfer is. The far computer having no
-  helper running is the ordinary reason, and it is not an error worth its own message.
+- **An offer that is never accepted keeps retrying** until the transfer is superseded,
+  cancelled, or the link drops. The copy side cannot tell an absent far helper from one that
+  accepted a completed transfer and then went quiet, so silence is not a failure signal.
 
 ### The seal itself
 
@@ -843,8 +843,8 @@ between the helpers**; the firmware relays its messages opaquely.
   chunk alone once — its retransmission is behind that DONE in the FIFO — **but a chunk
   still missing a full round later is requested again**, so a retransmitted chunk that is
   itself lost converges on the next DONE round. A lost CLIP_OFFER is recovered by the sender-side
-  offer retry above; a lone lost request is recovered by the receive sweep below. The helper's
-  transfer timeout remains the terminal bound when repeated recovery attempts get no answer.
+  offer retry above; a lone lost request is recovered by the receive sweep below. The paste
+  side's receive timeout remains the terminal bound when repeated recovery attempts get no answer.
 - **A receive completes on its last chunk, not on CLIP_DONE.** The paste side verifies every
   chunk's length and CRC32 as it arrives, so a receiver holding the whole received-set already
   knows it is finished; CLIP_DONE carries nothing but the id. Completing on the chunk is what
@@ -898,15 +898,14 @@ between the helpers**; the firmware relays its messages opaquely.
   first one's thirty seconds and be abandoned seconds old. And a sweep is said out loud on every
   round rather than counted quietly, because a stall that recovers is otherwise invisible; both
   progress lines now carry how much was asked for again and how much came back, zeros included.
-- **The transfer timeout is a *progress* deadline, not a duration.** Each helper's clipboard
-  service gives up on a direction that has produced nothing for 30 seconds and reports it — after
-  the two-second sweeps above have had fifteen chances to recover it. It
+- **The receive timeout is a *progress* deadline, not a duration.** Each helper's clipboard
+  service gives up on an arriving transfer that has produced nothing for 30 seconds and reports
+  it — after the two-second sweeps above have had fifteen chances to recover it. It
   cannot live in `dh_xfer`, which has no clock and must not gain one — and a deadline on the
   whole transfer would abandon healthy ones, because a large payload legitimately takes minutes
-  on this link. This is what covers the third interruption in
-  [#52](https://github.com/myn/deskhopplus/issues/52): an unplug and a config-mode reboot both
-  end a helper's own session, but the far helper *crashing* leaves this end's session perfectly
-  healthy and simply unanswered, where no message arrives for anything to react to.
+  on this link. The copy side has no equivalent deadline: without a delivery acknowledgement,
+  silence cannot distinguish a completed send from a missing far helper. Its payload therefore
+  remains available for late retransmits until one of the retention boundaries below.
 - **A retransmitted chunk is resealed**, under a fresh `seal_counter`. A seal counter is never
   reused, so a retransmission is not a byte-identical copy of the frame that was lost.
 - **The sender retains its payload after CLIP_DONE** — retransmit requests may still

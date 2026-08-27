@@ -45,11 +45,11 @@ public final class ClipboardService {
     public static let defaultCapacity = 10 * 1024 * 1024
 
     /*
-     * How long a transfer may make no progress before it is given up on.
+     * How long an arriving transfer may make no progress before it is given up on.
      *
      * Enormously more than the link needs: a full credit window is 16 KB, which
      * at this transport's ~64 KB/s per direction is a quarter of a second. The
-     * margin is deliberate — the cost of waiting too long is a stalled transfer
+     * margin is deliberate — the cost of waiting too long is a stalled receive
      * reported late, and the cost of firing too early is abandoning a healthy
      * one, which is the worse of the two.
      */
@@ -106,8 +106,8 @@ public final class ClipboardService {
     private var reofferWhenSealed = false
 
     /*
-     * The stall timeout's bookkeeping. The marks are what each direction has
-     * actually done; the `…Since` stamps say when that count last moved.
+     * Receive-timeout and offer-retry bookkeeping. The marks are what each
+     * direction has actually done; the stamps say when that count last moved.
      * Counting rather than time-stamping inside `render` is what keeps a clock
      * out of every code path that produces an action.
      *
@@ -120,8 +120,7 @@ public final class ClipboardService {
      * tick arms a fresh one.
      */
     private var txProgress = 0
-    private var sendingSince: TimeInterval?
-    private var sendingMark = 0
+    private var offerRetryMark = 0
     private var offerRetrySince: TimeInterval?
     private var receivingSince: TimeInterval?
     private var receivingMark: UInt32 = 0
@@ -193,15 +192,16 @@ public final class ClipboardService {
     }
 
     /*
-     * Give up on a transfer that has stopped moving.
+     * Recover an arriving transfer that has stopped moving.
      *
      * The other two interruptions #52 names — an unplug and a config-mode
      * reboot — both end this helper's own session, and `sessionEnded` already
      * abandons everything. The third does not: when the helper on the *other*
-     * computer crashes, this one's session is perfectly healthy and simply
-     * stops being answered. No message arrives, so nothing message-driven can
-     * fire, and without this the transfer would sit holding its payload until
-     * the next copy happened to supersede it.
+     * computer crashes, this one's session is perfectly healthy. The paste
+     * side can therefore time out an incomplete receive. The copy side cannot:
+     * v2 has no delivery acknowledgement, so a completed send and a missing
+     * helper look identical. Its payload remains available for late
+     * retransmits until supersede, cancellation, or session loss (#134).
      *
      * Measured against *progress*, not against the transfer's total duration: a
      * large payload legitimately takes minutes on this link, and a deadline on
@@ -219,21 +219,10 @@ public final class ClipboardService {
         let drops = boardDrops?.line ?? "the board has stated no drop totals"
 
         if !transfer.isSending {
-            sendingSince = nil
             offerRetrySince = nil
-        } else if sendingSince == nil || sendingMark != txProgress {
-            sendingSince = now
+        } else if offerRetrySince == nil || offerRetryMark != txProgress {
             offerRetrySince = now
-            sendingMark = txProgress
-        } else if now - sendingSince! >= Self.stallTimeout {
-            let line = transfer.progressLine
-            sendingSince = nil
-            pending = nil
-            reofferWhenSealed = false
-            outputs += render(transfer.cancelOutgoing())
-            outputs.append(.note("a transfer made no progress for \(Int(Self.stallTimeout))s and "
-                                 + "was abandoned (\(line); \(drops)); the other computer's "
-                                 + "helper is not answering"))
+            offerRetryMark = txProgress
         } else if transfer.isAwaitingRequest && now - (offerRetrySince ?? now) >= Self.sweepDelay {
             offerRetrySince = now
             outputs += render(transfer.retryOffer())

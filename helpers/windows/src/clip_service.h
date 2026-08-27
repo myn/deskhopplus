@@ -62,11 +62,11 @@ class ClipService {
     static constexpr size_t kDefaultCapacity = 10u * 1024u * 1024u;
 
     /*
-     * How long a transfer may make no progress before it is given up on.
+     * How long an arriving transfer may make no progress before it is given up on.
      *
      * Enormously more than the link needs: a full credit window is 16 KB, which
      * at this transport's ~64 KB/s per direction is a quarter of a second. The
-     * margin is deliberate — the cost of waiting too long is a stalled transfer
+     * margin is deliberate — the cost of waiting too long is a stalled receive
      * reported late, and the cost of firing too early is abandoning a healthy
      * one, which is the worse of the two.
      */
@@ -227,10 +227,10 @@ class ClipService {
     bool reoffer_when_sealed_{false};
 
     /*
-     * The stall timeout's bookkeeping. The counters say what each direction has
-     * actually done; the stamps say when that count last moved. Counting rather
-     * than time-stamping inside `render` is what keeps a clock out of every
-     * code path that produces an action.
+     * Receive-timeout and offer-retry bookkeeping. The counters say what each
+     * direction has actually done; the stamps say when that count last moved.
+     * Counting rather than time-stamping inside `render` is what keeps a clock
+     * out of every code path that produces an action.
      *
      * The receiving side counts *arrivals* — chunks assembled — and not the
      * messages this end emits. A sweep emits messages, so counting those would
@@ -241,9 +241,8 @@ class ClipService {
      * tick arms a fresh one.
      */
     uint32_t tx_progress_{0};
-    bool sending_timed_{false};
-    uint32_t sending_since_{0};
-    uint32_t sending_mark_{0};
+    bool offer_retry_timed_{false};
+    uint32_t offer_retry_mark_{0};
     uint32_t offer_retry_since_{0};
     bool receiving_timed_{false};
     uint32_t receiving_since_{0};

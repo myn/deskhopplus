@@ -267,23 +267,11 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
     /* Unsigned differences throughout, so a wrapping millisecond counter is
        arithmetic rather than a transfer abandoned once every 49 days. */
     if (!dh_xfer_is_sending(xfer_.get())) {
-        sending_timed_ = false;
-    } else if (!sending_timed_ || sending_mark_ != tx_progress_) {
-        sending_timed_ = true;
-        sending_since_ = now_ms;
+        offer_retry_timed_ = false;
+    } else if (!offer_retry_timed_ || offer_retry_mark_ != tx_progress_) {
+        offer_retry_timed_ = true;
         offer_retry_since_ = now_ms;
-        sending_mark_ = tx_progress_;
-    } else if (now_ms - sending_since_ >= kStallTimeoutMs) {
-        const std::string line = progress_line();
-        sending_timed_ = false;
-        have_pending_ = false;
-        pending_.clear();
-        reoffer_when_sealed_ = false;
-        append(outputs, render(actions, dh_xfer_cancel_tx(xfer_.get(), actions, kActionCapacity)));
-        outputs.push_back(note("a transfer made no progress for " +
-                               std::to_string(kStallTimeoutMs / 1000) + "s and was abandoned (" +
-                               line + "; " + board +
-                               "); the other computer's helper is not answering"));
+        offer_retry_mark_ = tx_progress_;
     } else if (dh_xfer_tx_awaiting_request(xfer_.get()) &&
                now_ms - offer_retry_since_ >= kSweepDelayMs) {
         offer_retry_since_ = now_ms;

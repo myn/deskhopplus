@@ -28,16 +28,17 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a lost session abandons the transfer and the seal", testALostSessionAbandonsEverything),
     ("a seal the far end lost is offered again", testAStaleSealIsReoffered),
     ("a malformed control message is refused, not acted on", testMalformedControlMessages),
-    ("a transfer that stops moving is abandoned and reported", testAStalledTransferIsAbandoned),
+    ("an unanswered send is retained without a false failure", testAStalledSendIsRetained),
     ("a transfer that is still moving is left alone", testProgressKeepsATransferAlive),
-    ("an abandonment says what the board has dropped", testAStallSaysWhatTheBoardHasDropped),
+    ("a receive abandonment says what the board has dropped", testAStallSaysWhatTheBoardHasDropped),
     ("a chunk is not opened when receiving is off", testChunksAreRefusedBeforeTheSealIsOpened),
     ("copy after copy after copy all arrive", testRepeatedCopiesAllArrive),
     ("every payload size arrives intact", testEveryPayloadSizeArrives),
     ("a receive the link starved recovers on its own", testAStalledReceiveAsksAgain),
+    ("a copy-side deadline does not defeat a later receive sweep", testACopySideDeadlineDoesNotDefeatSweep),
     ("sweeping does not keep a dead receive alive", testASweptReceiveIsStillAbandoned),
     ("a superseding offer gets its own deadline", testASupersededReceiveResetsTheDeadline),
-    ("a lost offer retries without extending its deadline", testALostOfferRetries),
+    ("a lost offer retries until a retention boundary", testALostOfferRetries),
     ("a conflicting authenticated offer ends the local session", testConflictingOfferEndsSession),
     ("a restarted far helper is not heard as stale", testARestartedFarHelperIsHeard),
     ("a restarted far helper's reused id is not a conflict", testARestartedIdIsNotAConflict),
@@ -386,12 +387,11 @@ private func testMalformedControlMessages() {
 
 
 /*
- * The third interruption #52 names: the helper on the *other* computer crashes.
- * This end's session is untouched — it simply stops being answered — so nothing
- * message-driven can notice, and without the tick the transfer would sit
- * holding its payload until the next copy happened to supersede it.
+ * A helper on the other computer may be gone, or it may have accepted the
+ * payload and gone quiet. Without a delivery acknowledgement those states are
+ * indistinguishable, so silence alone cannot end or diagnose the send.
  */
-private func testAStalledTransferIsAbandoned() {
+private func testAStalledSendIsRetained() {
     let a = ClipboardService(entropy: counterEntropy(1))
     let b = ClipboardService(entropy: counterEntropy(2))
 
@@ -406,26 +406,44 @@ private func testAStalledTransferIsAbandoned() {
         }
     }
 
-    /* Well inside the timeout, nothing happens: abandoning a healthy transfer
-       is the worse of the two mistakes. */
+    /* There is no delivery acknowledgement in v2. Silence is equally
+       consistent with success, so it cannot abandon or diagnose the send. */
     Check.that(a.tick(at: 1).isEmpty, "a transfer was abandoned on its first tick")
-    Check.that(!a.tick(at: ClipboardService.stallTimeout - 1).contains {
-                   if case .note(let n) = $0 { return n.contains("abandoned") }
+    let late = a.tick(at: ClipboardService.stallTimeout * 3)
+    Check.that(!late.contains {
+                   if case .note(let note) = $0 { return note.contains("not answering") }
+                   if case .send(let type, _) = $0 { return type == MessageType.clipCancel }
                    return false
-               },
-               "a transfer was abandoned before the timeout elapsed")
+               }, "an unanswered send was falsely diagnosed or abandoned")
+}
 
-    let abandoned = a.tick(at: ClipboardService.stallTimeout + 1)
-    Check.that(abandoned.contains { if case .note(let n) = $0 { return n.contains("no progress") }
-                                    return false },
-               "a stalled transfer was never abandoned")
-    Check.that(abandoned.contains { if case .note(let n) = $0 { return n.contains("abandoned") }
-                                    return false },
-               "the abandonment was not reported")
+/*
+ * The hardware failure in #146: the copy side reaches DONE, but one chunk and
+ * the paste side's early retransmit requests are lost. The copy side's own
+ * old copy-side deadline then passes before a request finally crosses. DONE is
+ * not acknowledged, so elapsed time must not discard the payload that the
+ * protocol promises to retain for a late retransmit.
+ */
+private func testACopySideDeadlineDoesNotDefeatSweep() {
+    let pair = Pair()
+    pair.copyOnA("warm the seal")
 
-    /* And it is gone: a second timeout produces nothing to abandon. */
-    Check.that(a.tick(at: ClipboardService.stallTimeout * 3).isEmpty,
-               "the abandoned transfer was abandoned twice")
+    pair.dropNext[MessageType.clipChunk] = 1
+    pair.dropNext[MessageType.clipRetransmit] = 10_000
+    let payload = String(repeating: "recovery ", count: 5_000)
+    pair.copyOnA(payload)
+    Check.equal(pair.deliveredToB.count, 1,
+                "the deliberately incomplete transfer unexpectedly arrived")
+
+    _ = pair.a.tick(at: 0)
+    _ = pair.a.tick(at: ClipboardService.stallTimeout + 1)
+
+    pair.dropNext = [:]
+    _ = pair.b.tick(at: 0) // arm the paste side's sweep clock
+    pair.settle(pair.b.tick(at: ClipboardService.sweepDelay + 1), from: .b)
+
+    Check.equal(text(pair.deliveredToB), ["warm the seal", payload],
+                "the old copy-side deadline discarded the payload before the late retransmit")
 }
 
 /*
@@ -442,20 +460,14 @@ private func testAStalledTransferIsAbandoned() {
  */
 private func testAStallSaysWhatTheBoardHasDropped() {
     func stallNote(_ drops: BoardDrops?) -> String {
-        let a = ClipboardService(entropy: counterEntropy(1))
-        let b = ClipboardService(entropy: counterEntropy(2))
-        var outputs = a.localCopy(kind: .text, bytes: Array("into the void".utf8))
-        for output in outputs {
-            guard case .send(let type, let body) = output else { continue }
-            for reply in b.received(type: type, body: body) {
-                if case .send(let replyType, let replyBody) = reply {
-                    outputs += a.received(type: replyType, body: replyBody)
-                }
-            }
-        }
+        let pair = Pair()
+        pair.copyOnA("warm the seal")
+        pair.dropNext[MessageType.clipChunk] = 10_000
+        pair.settle(pair.a.localCopy(kind: .text, bytes: Array(repeating: 1, count: 5_000)),
+                    from: .a)
         /* The first tick arms the stall clock; the second is past it. */
-        _ = a.tick(at: 1, boardDrops: drops)
-        let abandoned = a.tick(at: ClipboardService.stallTimeout + 1, boardDrops: drops)
+        _ = pair.b.tick(at: 1, boardDrops: drops)
+        let abandoned = pair.b.tick(at: ClipboardService.stallTimeout + 1, boardDrops: drops)
         for output in abandoned {
             if case .note(let n) = output, n.contains("abandoned") { return n }
         }
@@ -737,8 +749,8 @@ private func testALostOfferRetries() {
         dead.settle(dead.a.tick(at: now), from: .a)
         now += ClipboardService.sweepDelay
     }
-    Check.that(dead.sawNote(containing: "was abandoned"),
-               "offer retries extended the terminal deadline")
+    Check.that(!dead.sawNote(containing: "was abandoned"),
+               "an unanswered offer was falsely diagnosed or abandoned")
 
     let duplicate = Pair()
     duplicate.copyOnA("warm the seal")

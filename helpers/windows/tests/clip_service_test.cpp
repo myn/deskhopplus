@@ -395,12 +395,11 @@ void test_malformed_control_messages() {
 }
 
 /*
- * The third interruption #52 names: the helper on the *other* computer crashes.
- * This end's session is untouched — it simply stops being answered — so nothing
- * message-driven can notice, and without the tick the transfer would sit
- * holding its payload until the next copy happened to supersede it.
+ * A helper on the other computer may be gone, or it may have accepted the
+ * payload and gone quiet. Without a delivery acknowledgement those states are
+ * indistinguishable, so silence alone cannot end or diagnose the send.
  */
-void test_a_stalled_transfer_is_abandoned() {
+void test_a_stalled_send_is_retained() {
     ClipService a(seal_aead(), counter_entropy(1));
     ClipService b(seal_aead(), counter_entropy(2));
 
@@ -416,26 +415,16 @@ void test_a_stalled_transfer_is_abandoned() {
         }
     }
 
-    /* Well inside the timeout, nothing happens: abandoning a healthy transfer
-       is the worse of the two mistakes. */
+    /* There is no delivery acknowledgement in v2. Silence is equally
+       consistent with success, so it cannot abandon or diagnose the send. */
     CHECK(a.tick(1).empty(), "a transfer was abandoned on its first tick");
-    bool early_abandon = false;
-    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs - 1))
-        if (output.kind == ClipOutput::Kind::Note &&
-            output.note.find("abandoned") != std::string::npos)
-            early_abandon = true;
-    CHECK(!early_abandon, "a transfer was abandoned before the timeout elapsed");
-
-    bool reported = false;
-    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs + 1))
-        if (output.kind == ClipOutput::Kind::Note &&
-            output.note.find("no progress") != std::string::npos)
-            reported = true;
-    CHECK(reported, "a stalled transfer was never abandoned, or never reported");
-
-    /* And it is gone: a second timeout produces nothing to abandon. */
-    CHECK(a.tick(ClipService::kStallTimeoutMs * 3).empty(),
-          "the abandoned transfer was abandoned twice");
+    bool false_failure = false;
+    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs * 3))
+        if ((output.kind == ClipOutput::Kind::Note &&
+             output.note.find("not answering") != std::string::npos) ||
+            (output.kind == ClipOutput::Kind::Send && output.type == DH_MSG_CLIP_CANCEL))
+            false_failure = true;
+    CHECK(!false_failure, "an unanswered send was falsely diagnosed or abandoned");
 }
 
 /*
@@ -451,23 +440,14 @@ void test_a_stalled_transfer_is_abandoned() {
  * was dropped" — the first two being the pair that got read as each other.
  */
 static std::string stall_note(const dh_device_drops *drops) {
-    ClipService a(seal_aead(), counter_entropy(1));
-    ClipService b(seal_aead(), counter_entropy(2));
-
-    std::vector<ClipOutput> outputs = a.local_copy(ClipKind::Text, bytes_of("into the void"));
-    for (size_t i = 0; i < outputs.size(); i++) {
-        if (outputs[i].kind != ClipOutput::Kind::Send) continue;
-        for (const ClipOutput &reply :
-             b.received(outputs[i].type, outputs[i].bytes.data(), outputs[i].bytes.size())) {
-            if (reply.kind != ClipOutput::Kind::Send) continue;
-            for (ClipOutput &back : a.received(reply.type, reply.bytes.data(), reply.bytes.size()))
-                outputs.push_back(std::move(back));
-        }
-    }
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+    pair.drop_next[DH_MSG_CLIP_CHUNK] = 10000;
+    pair.settle(pair.a.local_copy(ClipKind::Text, std::vector<uint8_t>(5000, 1)), Side::A);
 
     /* The first tick arms the stall clock; the second is past it. */
-    a.tick(1, drops);
-    for (const ClipOutput &output : a.tick(ClipService::kStallTimeoutMs + 1, drops))
+    pair.b.tick(1, drops);
+    for (const ClipOutput &output : pair.b.tick(ClipService::kStallTimeoutMs + 1, drops))
         if (output.kind == ClipOutput::Kind::Note &&
             output.note.find("abandoned") != std::string::npos)
             return output.note;
@@ -615,6 +595,34 @@ void test_a_stalled_receive_asks_again() {
           "the receive recovered without saying it had stalled");
 }
 
+/* #146: the copy side has reached DONE, but a lost chunk and lost early
+   retransmit requests leave the paste side incomplete. A copy-side timeout
+   must not discard the payload before a later receive sweep asks again. */
+void test_a_copy_side_deadline_does_not_defeat_a_later_receive_sweep() {
+    Pair pair;
+    pair.copy_on_a("warm the seal");
+
+    pair.drop_next[DH_MSG_CLIP_CHUNK] = 1;
+    pair.drop_next[DH_MSG_CLIP_RETRANSMIT] = 10000;
+    const std::string payload(45000, 'r');
+    pair.settle(pair.a.local_copy(ClipKind::Text, bytes_of(payload)), Side::A);
+    CHECK(pair.delivered_to_b.size() == 1,
+          "the deliberately incomplete transfer unexpectedly arrived");
+
+    pair.a.tick(0);
+    pair.a.tick(ClipService::kStallTimeoutMs + 1);
+
+    pair.drop_next.clear();
+    pair.b.tick(0);
+    pair.settle(pair.b.tick(ClipService::kSweepDelayMs + 1), Side::B);
+
+    CHECK(pair.delivered_to_b.size() == 2,
+          "the old copy-side deadline discarded the payload before the late retransmit");
+    if (pair.delivered_to_b.size() == 2)
+        CHECK(text_of(pair.delivered_to_b[1]) == payload,
+              "the late retransmit delivered the wrong payload");
+}
+
 /*
  * Sweeping must not keep a dead receive alive.
  *
@@ -679,7 +687,7 @@ void test_a_superseded_receive_resets_the_deadline() {
               "a transfer seconds old was abandoned on the deadline of the one it replaced");
 }
 
-void test_a_lost_offer_retries_without_extending_the_deadline() {
+void test_a_lost_offer_retries_until_a_retention_boundary() {
     Pair pair;
     pair.copy_on_a("warm the seal");
     pair.drop_next[DH_MSG_CLIP_OFFER] = 1;
@@ -706,7 +714,8 @@ void test_a_lost_offer_retries_without_extending_the_deadline() {
     dead.settle(dead.a.local_copy(ClipKind::Text, bytes_of("unanswered")), Side::A);
     for (uint32_t now = 0; now <= ClipService::kStallTimeoutMs; now += ClipService::kSweepDelayMs)
         dead.settle(dead.a.tick(now), Side::A);
-    CHECK(dead.saw_note("was abandoned"), "offer retries extended the terminal deadline");
+    CHECK(!dead.saw_note("was abandoned"),
+          "an unanswered offer was falsely diagnosed or abandoned");
 
     Pair duplicate;
     duplicate.copy_on_a("warm the seal");
@@ -886,14 +895,15 @@ int main() {
     test_a_lost_session_abandons_everything();
     test_a_stale_seal_is_reoffered();
     test_malformed_control_messages();
-    test_a_stalled_transfer_is_abandoned();
+    test_a_stalled_send_is_retained();
     test_a_stall_says_what_the_board_has_dropped();
     test_progress_keeps_a_transfer_alive();
     test_chunks_are_refused_before_the_seal_is_opened();
     test_a_stalled_receive_asks_again();
+    test_a_copy_side_deadline_does_not_defeat_a_later_receive_sweep();
     test_a_swept_receive_is_still_abandoned();
     test_a_superseded_receive_resets_the_deadline();
-    test_a_lost_offer_retries_without_extending_the_deadline();
+    test_a_lost_offer_retries_until_a_retention_boundary();
     test_a_conflicting_authenticated_offer_ends_the_local_session();
     test_a_restarted_far_helper_is_heard();
     test_a_restarted_id_is_not_a_conflict();
