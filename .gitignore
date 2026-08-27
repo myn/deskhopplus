@@ -17,6 +17,12 @@ tools/windows-checks/deskhopplus-*.json
 # Personal Claude Code settings, not team-wide
 .claude/settings.local.json
 
+# Claude Code session working files: a resume checkpoint naming one session's
+# id, and a lock holding a live pid. The skills beside them are team-wide and
+# are tracked.
+.claude/RESUME.md
+.claude/scheduled_tasks.lock
+
 # The measure-only ECDH image (#110, tools/board-checks/README.md)
 build-bench/
 
