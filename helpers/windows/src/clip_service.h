@@ -227,8 +227,12 @@ class ClipService {
     bool reoffer_when_sealed_{false};
 
     /*
-     * Receive-timeout and offer-retry bookkeeping. The counters say what each
-     * direction has actually done; the stamps say when that count last moved.
+     * Seal-wait, receive-timeout and offer-retry bookkeeping. A copy waiting
+     * on a seal has no transfer yet, so it owns a separate terminal stamp and
+     * two-second retry stamp. A retry deliberately moves only the latter.
+     *
+     * The counters below say what each transfer direction has actually done;
+     * the stamps say when that count last moved.
      * Counting rather than time-stamping inside `render` is what keeps a clock
      * out of every code path that produces an action.
      *
@@ -244,6 +248,9 @@ class ClipService {
     bool offer_retry_timed_{false};
     uint32_t offer_retry_mark_{0};
     uint32_t offer_retry_since_{0};
+    bool seal_waiting_timed_{false};
+    uint32_t seal_waiting_since_{0};
+    uint32_t seal_retry_since_{0};
     bool receiving_timed_{false};
     uint32_t receiving_since_{0};
     uint32_t receiving_mark_{0};

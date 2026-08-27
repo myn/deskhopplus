@@ -106,8 +106,12 @@ public final class ClipboardService {
     private var reofferWhenSealed = false
 
     /*
-     * Receive-timeout and offer-retry bookkeeping. The marks are what each
-     * direction has actually done; the stamps say when that count last moved.
+     * Seal-wait, receive-timeout and offer-retry bookkeeping. A copy waiting
+     * on a seal has no transfer yet, so it owns a separate terminal stamp and
+     * two-second retry stamp. A retry deliberately moves only the latter.
+     *
+     * The marks below are what each transfer direction has actually done; the
+     * stamps say when that count last moved.
      * Counting rather than time-stamping inside `render` is what keeps a clock
      * out of every code path that produces an action.
      *
@@ -122,6 +126,8 @@ public final class ClipboardService {
     private var txProgress = 0
     private var offerRetryMark = 0
     private var offerRetrySince: TimeInterval?
+    private var sealWaitingSince: TimeInterval?
+    private var sealRetrySince: TimeInterval?
     private var receivingSince: TimeInterval?
     private var receivingMark: UInt32 = 0
     private var sweptSince: TimeInterval?
@@ -143,6 +149,8 @@ public final class ClipboardService {
         guard !bytes.isEmpty else { return [] }
 
         pending = (kind.rawValue, bytes)
+        sealWaitingSince = nil
+        sealRetrySince = nil
         return startPendingIfSealed()
     }
 
@@ -158,6 +166,8 @@ public final class ClipboardService {
         var outputs: [ClipboardOutput] = []
         if couldSend && !maySend {
             pending = nil
+            sealWaitingSince = nil
+            sealRetrySince = nil
             reofferWhenSealed = false
             outputs += render(transfer.cancelOutgoing())
             outputs.append(.note("clipboard sending was turned off; anything in flight was "
@@ -176,6 +186,8 @@ public final class ClipboardService {
     /// a key whose peer may no longer exist is not.
     public func sessionEnded() -> [ClipboardOutput] {
         pending = nil
+        sealWaitingSince = nil
+        sealRetrySince = nil
         reofferWhenSealed = false
         let outputs = render(transfer.linkDown())
         seal.reset()
@@ -217,6 +229,23 @@ public final class ClipboardService {
     public func tick(at now: TimeInterval, boardDrops: BoardDrops? = nil) -> [ClipboardOutput] {
         var outputs: [ClipboardOutput] = []
         let drops = boardDrops?.line ?? "the board has stated no drop totals"
+
+        if pending == nil || seal.canSeal {
+            sealWaitingSince = nil
+            sealRetrySince = nil
+        } else if sealWaitingSince == nil {
+            sealWaitingSince = now
+            sealRetrySince = now
+        } else if now - sealWaitingSince! >= Self.stallTimeout {
+            pending = nil
+            sealWaitingSince = nil
+            sealRetrySince = nil
+            outputs.append(.note("a copy waiting for a seal made no progress for "
+                                 + "\(Int(Self.stallTimeout))s and was abandoned (\(drops))"))
+        } else if now - (sealRetrySince ?? now) >= Self.sweepDelay {
+            sealRetrySince = now
+            outputs += offerSeal()
+        }
 
         if !transfer.isSending {
             offerRetrySince = nil
@@ -485,6 +514,8 @@ public final class ClipboardService {
         guard seal.canSeal else { return offerSeal() }
 
         pending = nil
+        sealWaitingSince = nil
+        sealRetrySince = nil
         return render(transfer.offer(kind: waiting.kind, data: waiting.bytes))
     }
 
@@ -493,6 +524,8 @@ public final class ClipboardService {
             return [.send(type: MessageType.sealOffer, body: try seal.offer())]
         } catch {
             pending = nil
+            sealWaitingSince = nil
+            sealRetrySince = nil
             return [.note("a seal could not be offered, so nothing can be sent: \(error)")]
         }
     }

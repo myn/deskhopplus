@@ -20,6 +20,9 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("text copied on one computer arrives on the other", testTextCrossesTheLink),
     ("the payload is byte-identical end to end", testFidelityIsPreserved),
     ("nothing leaves before a seal is accepted", testNothingLeavesUnsealed),
+    ("a lost seal offer is retried", testALostSealOfferIsRetried),
+    ("a lost seal accept is retried", testALostSealAcceptIsRetried),
+    ("seal retries do not extend the copy deadline", testSealRetriesDoNotExtendTheCopyDeadline),
     ("a payload larger than one chunk is reassembled", testAMultiChunkPayloadArrives),
     ("a second copy supersedes the first", testASecondCopySupersedes),
     ("sending turned off stops this direction only", testSendingOffStopsOneDirection),
@@ -216,6 +219,50 @@ private func testNothingLeavesUnsealed() {
         return
     }
     Check.equal(type, MessageType.sealOffer, "the first thing sent was not a seal offer")
+}
+
+private func testALostSealOfferIsRetried() {
+    let pair = Pair()
+    pair.dropNext[MessageType.sealOffer] = 1
+    pair.copyOnA("survives a lost seal offer")
+
+    _ = pair.a.tick(at: 0)
+    pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
+
+    Check.equal(text(pair.deliveredToB), ["survives a lost seal offer"],
+                "a copy did not recover after its SEAL_OFFER was lost")
+}
+
+private func testALostSealAcceptIsRetried() {
+    let pair = Pair()
+    pair.dropNext[MessageType.sealAccept] = 1
+    pair.copyOnA("survives a lost seal accept")
+
+    _ = pair.a.tick(at: 0)
+    pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
+
+    Check.equal(text(pair.deliveredToB), ["survives a lost seal accept"],
+                "a copy did not recover after its SEAL_ACCEPT was lost")
+}
+
+private func testSealRetriesDoNotExtendTheCopyDeadline() {
+    let pair = Pair()
+    pair.dropNext[MessageType.sealOffer] = 100
+    pair.copyOnA("never sealed")
+
+    _ = pair.a.tick(at: 0)
+    var now = ClipboardService.sweepDelay
+    while now < ClipboardService.stallTimeout {
+        pair.settle(pair.a.tick(at: now), from: .a)
+        now += ClipboardService.sweepDelay
+    }
+    pair.settle(pair.a.tick(at: ClipboardService.stallTimeout), from: .a)
+
+    Check.that(pair.sawNote(containing: "waiting for a seal") &&
+               pair.sawNote(containing: "was abandoned"),
+               "a copy whose seal exchange never completed was not reported abandoned")
+    Check.that(pair.a.tick(at: ClipboardService.stallTimeout + ClipboardService.sweepDelay).isEmpty,
+               "a seal retry kept the terminal deadline open")
 }
 
 /*

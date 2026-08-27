@@ -236,6 +236,47 @@ void test_nothing_leaves_unsealed() {
     CHECK(first[0].type == DH_MSG_SEAL_OFFER, "the first thing sent was not a seal offer");
 }
 
+void test_a_lost_seal_offer_is_retried() {
+    Pair pair;
+    pair.drop_next[DH_MSG_SEAL_OFFER] = 1;
+    pair.copy_on_a("survives a lost seal offer");
+
+    pair.a.tick(0);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+
+    CHECK(pair.delivered_to_b.size() == 1,
+          "a copy did not recover after its SEAL_OFFER was lost");
+}
+
+void test_a_lost_seal_accept_is_retried() {
+    Pair pair;
+    pair.drop_next[DH_MSG_SEAL_ACCEPT] = 1;
+    pair.copy_on_a("survives a lost seal accept");
+
+    pair.a.tick(0);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+
+    CHECK(pair.delivered_to_b.size() == 1,
+          "a copy did not recover after its SEAL_ACCEPT was lost");
+}
+
+void test_seal_retries_do_not_extend_the_copy_deadline() {
+    Pair pair;
+    pair.drop_next[DH_MSG_SEAL_OFFER] = 100;
+    pair.copy_on_a("never sealed");
+
+    pair.a.tick(0);
+    for (uint32_t now = ClipService::kSweepDelayMs; now < ClipService::kStallTimeoutMs;
+         now += ClipService::kSweepDelayMs)
+        pair.settle(pair.a.tick(now), Side::A);
+    pair.settle(pair.a.tick(ClipService::kStallTimeoutMs), Side::A);
+
+    CHECK(pair.saw_note("waiting for a seal") && pair.saw_note("was abandoned"),
+          "a copy whose seal exchange never completed was not reported abandoned");
+    CHECK(pair.a.tick(ClipService::kStallTimeoutMs + ClipService::kSweepDelayMs).empty(),
+          "a seal retry kept the terminal deadline open");
+}
+
 /*
  * One chunk is 1024 bytes and the credit window is 16, so a payload of a few
  * tens of kilobytes is the first one where credit, batching and the
@@ -887,6 +928,9 @@ int main() {
     test_text_crosses_the_link();
     test_fidelity_is_preserved();
     test_nothing_leaves_unsealed();
+    test_a_lost_seal_offer_is_retried();
+    test_a_lost_seal_accept_is_retried();
+    test_seal_retries_do_not_extend_the_copy_deadline();
     test_a_multi_chunk_payload_arrives();
     test_a_second_copy_supersedes();
     test_sending_off_stops_one_direction();

@@ -102,6 +102,7 @@ std::vector<ClipOutput> ClipService::local_copy(ClipKind kind, const std::vector
     have_pending_ = true;
     pending_kind_ = static_cast<uint8_t>(kind);
     pending_ = bytes;
+    seal_waiting_timed_ = false;
     return start_pending_if_sealed();
 }
 
@@ -117,6 +118,7 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
     if (could_send && !may_send_) {
         have_pending_ = false;
         pending_.clear();
+        seal_waiting_timed_ = false;
         reoffer_when_sealed_ = false;
         const size_t n = dh_xfer_cancel_tx(xfer_.get(), actions, kActionCapacity);
         append(outputs, render(actions, n));
@@ -135,6 +137,7 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
 std::vector<ClipOutput> ClipService::session_ended() {
     have_pending_ = false;
     pending_.clear();
+    seal_waiting_timed_ = false;
     reoffer_when_sealed_ = false;
 
     dh_xfer_action actions[kActionCapacity];
@@ -263,6 +266,24 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
     std::vector<ClipOutput> outputs;
     dh_xfer_action actions[kActionCapacity];
     const std::string board = drops_line(drops);
+
+    if (!have_pending_ || seal_tx_.live) {
+        seal_waiting_timed_ = false;
+    } else if (!seal_waiting_timed_) {
+        seal_waiting_timed_ = true;
+        seal_waiting_since_ = now_ms;
+        seal_retry_since_ = now_ms;
+    } else if (now_ms - seal_waiting_since_ >= kStallTimeoutMs) {
+        have_pending_ = false;
+        pending_.clear();
+        seal_waiting_timed_ = false;
+        outputs.push_back(note("a copy waiting for a seal made no progress for " +
+                               std::to_string(kStallTimeoutMs / 1000) +
+                               "s and was abandoned (" + board + ")"));
+    } else if (now_ms - seal_retry_since_ >= kSweepDelayMs) {
+        seal_retry_since_ = now_ms;
+        append(outputs, offer_seal());
+    }
 
     /* Unsigned differences throughout, so a wrapping millisecond counter is
        arithmetic rather than a transfer abandoned once every 49 days. */
@@ -558,6 +579,7 @@ std::vector<ClipOutput> ClipService::start_pending_if_sealed() {
     if (!seal_tx_.live) return offer_seal();
 
     have_pending_ = false;
+    seal_waiting_timed_ = false;
     tx_payload_ = std::move(pending_);
     pending_.clear();
 
@@ -581,6 +603,7 @@ std::vector<ClipOutput> ClipService::offer_seal() {
     if (aead_ == nullptr) {
         have_pending_ = false;
         pending_.clear();
+        seal_waiting_timed_ = false;
         return {note("no AES-GCM provider, so nothing can be sealed and nothing can be sent")};
     }
 
@@ -607,6 +630,7 @@ std::vector<ClipOutput> ClipService::offer_seal() {
 
     have_pending_ = false;
     pending_.clear();
+    seal_waiting_timed_ = false;
     return {note("a seal could not be offered, so nothing can be sent")};
 }
 
