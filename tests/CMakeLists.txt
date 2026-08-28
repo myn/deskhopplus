@@ -36,6 +36,10 @@ add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
 target_include_directories(hotkey_test PRIVATE ${CORE})
 add_test(NAME hotkey_test COMMAND hotkey_test)
 
+add_executable(config_text_test config_text_test.c ${CORE}/dh_config_text.c)
+target_include_directories(config_text_test PRIVATE ${CORE})
+add_test(NAME config_text_test COMMAND config_text_test)
+
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
 target_include_directories(frame_test PRIVATE ${CORE})
 target_compile_definitions(frame_test PRIVATE DH_TEST_VECTORS="${VECTORS}")

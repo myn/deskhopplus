@@ -668,3 +668,9 @@ img {
   color: #b0342b;
   font-weight: bold;
 }
+
+.config-text-error {
+  color: #b0342b;
+  font-weight: bold;
+  min-height: 1.6em;
+}
