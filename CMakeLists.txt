@@ -145,7 +145,8 @@ execute_process(
 # inert and a *newly added* template needs a re-configure to be noticed.
 if(CAN_RENDER EQUAL 0)
   file(GLOB_RECURSE CONFIG_UI_SOURCES CONFIGURE_DEPENDS
-       ${WEB_DIR}/templates/* ${WEB_DIR}/form.py ${WEB_DIR}/render.py)
+       ${WEB_DIR}/templates/* ${WEB_DIR}/form.py ${WEB_DIR}/render.py
+       ${SRC_DIR}/core/dh_key_names.def)
   add_custom_command(
     OUTPUT ${CONFIG_PAGE}
     COMMAND make -s render
