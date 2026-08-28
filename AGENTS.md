@@ -25,3 +25,10 @@ Required order:
 3. implementation
 4. `mattpocock-skills:code-review`
 5. `deskhopplus-adversarial-review`
+
+## Keeping Track of the Work
+
+- If an issue is **100% complete**, including all required validation and testing including a green CI build, **close the ticket**.
+- **Before closing a ticket**, document any important context, decisions, discoveries, or learnings from the work that could help another agent session understand what was done or pick up where you left off.
+- If the work is technically complete but requires **human validation** (for example, hardware testing, visual verification, or helper proofs), **do not close the ticket**. Instead, tag it as **needs-hardware-validation** and **ready-for-human** and clearly document what needs to be validated.
+- Keep ticket status accurate throughout the work so that another agent can quickly determine what remains to be done.
