@@ -8,9 +8,24 @@ typedef struct {
 } key_name_t;
 
 static const key_name_t named_keys[] = {
-#define DH_KEY_NAME(name, usage) {name, usage},
-#include "dh_key_names.def"
-#undef DH_KEY_NAME
+    {"enter", 0x28},       {"esc", 0x29},        {"backspace", 0x2a},
+    {"tab", 0x2b},         {"space", 0x2c},      {"minus", 0x2d},
+    {"equals", 0x2e},      {"lbracket", 0x2f},   {"rbracket", 0x30},
+    {"backslash", 0x31},   {"semicolon", 0x33},  {"quote", 0x34},
+    {"grave", 0x35},       {"comma", 0x36},      {"period", 0x37},
+    {"slash", 0x38},       {"capslock", 0x39},   {"printscreen", 0x46},
+    {"scrolllock", 0x47},  {"insert", 0x49},     {"home", 0x4a},
+    {"pageup", 0x4b},      {"delete", 0x4c},     {"end", 0x4d},
+    {"pagedown", 0x4e},    {"right", 0x4f},      {"left", 0x50},
+    {"down", 0x51},        {"up", 0x52},         {"numlock", 0x53},
+    {"kp_divide", 0x54},   {"kp_multiply", 0x55}, {"kp_minus", 0x56},
+    {"kp_plus", 0x57},     {"kp_enter", 0x58},   {"kp1", 0x59},
+    {"kp2", 0x5a},         {"kp3", 0x5b},        {"kp4", 0x5c},
+    {"kp5", 0x5d},         {"kp6", 0x5e},        {"kp7", 0x5f},
+    {"kp8", 0x60},         {"kp9", 0x61},        {"kp0", 0x62},
+    {"kp_period", 0x63},   {"lctrl", 0xe0},      {"lshift", 0xe1},
+    {"lalt", 0xe2},        {"lgui", 0xe3},       {"rctrl", 0xe4},
+    {"rshift", 0xe5},      {"ralt", 0xe6},       {"rgui", 0xe7},
 };
 
 static bool ascii_equal(const char *input, size_t length, const char *known) {
