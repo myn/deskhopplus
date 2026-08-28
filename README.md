@@ -200,16 +200,16 @@ This immediately resets the device into bootloader mode where it appears as "RPI
 
 Ever tried to move that YT video slider to a specific position but your mouse moves too jumpy and suddenly you are moving your hand super-carefully like you're 5 and playing "Operation" all over again?
 
-**Press right CTRL + right ALT** to toggle a slow-mouse mode. The mouse pointer will slow down considerably, enabling you to get the finer precision work done and still have your mouse moving normally by quickly pressing the same keys again.
+**Press Right Alt + M** to toggle a slow-mouse mode. The mouse pointer will slow down considerably, enabling you to get the finer precision work done and still have your mouse moving normally by quickly pressing the same keys again.
 
 ### Switch Lock
 
-If you want to lock yourself to one screen, use ```RIGHT CTRL + K```.
+If you want to lock yourself to one screen, use ```Right Alt + K```.
 This will make sure you won't accidentally leave your current screen. To turn off, press the same key combo again.
 
 ### Lock Both Screens
 
-You can lock both computers at once by using ```RIGHT CTRL + L```.
+You can lock both computers at once by using ```Right Alt + L```.
 To make use of this feature, first set up the OS for each output in config (since the shortcuts are different).
 
 ### Gaming Mode
@@ -330,9 +330,9 @@ _Config_:
 
 _Usage_:
 
-- ```Right CTRL + Right ALT``` - Toggle slower mouse mode
-- ```Right CTRL + K``` - Lock/Unlock mouse desktop switching
-- ```Right CTRL + L``` - Lock both outputs at once (set output OS before, see shortcuts below)
+- ```Right Alt + M``` - Toggle slower mouse mode
+- ```Right Alt + K``` - Lock/Unlock mouse desktop switching
+- ```Right Alt + L``` - Lock both outputs at once (set output OS before, see shortcuts below)
 - ~~```Left Shift```~~ ```Left CTRL + Right Shift + G``` - Toggle gaming mode (lock to screen, act as standard mouse)
 - ```Left CTRL + Right Shift + S``` - Enable screensaver
 - ```Left CTRL + Right Shift + X``` - Disable screensaver

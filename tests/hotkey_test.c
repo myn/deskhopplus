@@ -4,6 +4,7 @@
  * convention established by session_test.c.
  */
 #include "dh_hotkey.h"
+#include "dh_hotkey_defaults.h"
 
 #include <stdio.h>
 
@@ -145,6 +146,66 @@ static int action_properties_and_complete_table_are_resolved_at_the_keyboard_sea
     return 0;
 }
 
+static bool binding_is(const dh_hotkey_t *binding, uint8_t action, uint8_t modifier,
+                       uint8_t first_key, uint8_t second_key) {
+    uint8_t key_count = second_key == 0 ? 1 : 2;
+    return binding->action_id == action && binding->modifier == modifier &&
+           binding->key_count == key_count && binding->keys[0] == first_key &&
+           binding->keys[1] == second_key;
+}
+
+static int default_hotkeys_are_reachable_without_right_ctrl_and_preserve_existing_chords(void) {
+    const dh_hotkey_t defaults[DH_HOTKEY_ACTION_COUNT] = DH_HOTKEY_DEFAULTS;
+
+    ASSERT_TRUE(dh_hotkey_table_is_valid(defaults, DH_HOTKEY_ACTION_COUNT));
+
+    /* Independent USB HID wire values make changes to the ten existing chords fail here. */
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_OUTPUT_TOGGLE],
+                           DH_HOTKEY_ACTION_OUTPUT_TOGGLE, 0x01, 0x39, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_GAMING_MODE],
+                           DH_HOTKEY_ACTION_GAMING_MODE, 0x21, 0x0a, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SCREENSAVER_PONG],
+                           DH_HOTKEY_ACTION_SCREENSAVER_PONG, 0x21, 0x16, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SCREENSAVER_JITTER],
+                           DH_HOTKEY_ACTION_SCREENSAVER_JITTER, 0x21, 0x0d, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SCREENSAVER_DISABLE],
+                           DH_HOTKEY_ACTION_SCREENSAVER_DISABLE, 0x21, 0x1b, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_WIPE_CONFIG],
+                           DH_HOTKEY_ACTION_WIPE_CONFIG, 0x20, 0x45, 0x07));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SCREEN_SEAM],
+                           DH_HOTKEY_ACTION_SCREEN_SEAM, 0x20, 0x45, 0x1c));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_CONFIG_ENABLE],
+                           DH_HOTKEY_ACTION_CONFIG_ENABLE, 0x21, 0x06, 0x12));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_FW_UPGRADE_A],
+                           DH_HOTKEY_ACTION_FW_UPGRADE_A, 0x22, 0x04, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_FW_UPGRADE_B],
+                           DH_HOTKEY_ACTION_FW_UPGRADE_B, 0x22, 0x05, 0));
+
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_MOUSE_ZOOM],
+                           DH_HOTKEY_ACTION_MOUSE_ZOOM, 0x40, 0x10, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SWITCHLOCK],
+                           DH_HOTKEY_ACTION_SWITCHLOCK, 0x40, 0x0e, 0));
+    ASSERT_TRUE(binding_is(&defaults[DH_HOTKEY_ACTION_SCREENLOCK],
+                           DH_HOTKEY_ACTION_SCREENLOCK, 0x40, 0x0f, 0));
+
+    for (size_t action = 0; action < DH_HOTKEY_ACTION_COUNT; ++action)
+        ASSERT_TRUE((defaults[action].modifier & DH_MOD_RIGHT_CTRL) == 0);
+
+    dh_hotkey_t prepared[DH_HOTKEY_ACTION_COUNT] = DH_HOTKEY_DEFAULTS;
+    dh_hotkey_prepare(prepared, DH_HOTKEY_ACTION_COUNT);
+    for (size_t action = 0; action < DH_HOTKEY_ACTION_COUNT; ++action) {
+        const dh_hotkey_t *match = dh_hotkey_match(
+            prepared, DH_HOTKEY_ACTION_COUNT, defaults[action].modifier, defaults[action].keys);
+        ASSERT_TRUE(match != NULL);
+        ASSERT_TRUE(match->action_id == action);
+    }
+
+    ASSERT_TRUE(!dh_hotkey_action_passes_to_os(DH_HOTKEY_ACTION_SWITCHLOCK));
+    ASSERT_TRUE(!dh_hotkey_action_passes_to_os(DH_HOTKEY_ACTION_SCREENLOCK));
+    ASSERT_TRUE(dh_hotkey_action_passes_to_os(DH_HOTKEY_ACTION_MOUSE_ZOOM));
+    return 0;
+}
+
 int main(void) {
     if (more_specific_overlapping_chord_wins())
         return 1;
@@ -163,6 +224,8 @@ int main(void) {
     if (recovery_chord_always_reaches_config_mode())
         return 1;
     if (action_properties_and_complete_table_are_resolved_at_the_keyboard_seam())
+        return 1;
+    if (default_hotkeys_are_reachable_without_right_ctrl_and_preserve_existing_chords())
         return 1;
 
     printf("hotkey_test: PASS\n");
