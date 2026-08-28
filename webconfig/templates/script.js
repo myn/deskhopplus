@@ -128,6 +128,11 @@ function updateElement(key, event) {
   var dataOffset = 4;
   var element = document.querySelector(`[data-key="${key}"]`);
 
+  if (key >= {{ hotkey_field_base }} && key < {{ hotkey_last_field }}) {
+    updateHotkeyChunk(key, event);
+    return;
+  }
+
   if (!element)
     return;
 
@@ -188,6 +193,82 @@ function updateElement(key, event) {
       }
     }
   }
+}
+
+const hotkeyBytes = Array.from({length: {{ hotkey_count }}}, () => ({bytes: new Uint8Array(9), mask: 0}));
+const namedKeyUsages = {{ named_keys_json }};
+for (let i=0; i<26; ++i) namedKeyUsages[String.fromCharCode(97+i)] = 0x04+i;
+for (let i=1; i<=9; ++i) namedKeyUsages[String(i)] = 0x1d+i;
+namedKeyUsages['0'] = 0x27;
+for (let i=1; i<=12; ++i) namedKeyUsages[`f${i}`] = 0x39+i;
+const usageNames = Object.fromEntries(Object.entries(namedKeyUsages).map(([name, usage]) => [usage, name]));
+
+function updateHotkeyChunk(key, event) {
+  const action = Math.floor((key - {{ hotkey_field_base }}) / 2);
+  const part = (key - {{ hotkey_field_base }}) % 2;
+  const entry = hotkeyBytes[action];
+  const length = part ? 3 : 6;
+  const offset = part ? 6 : 0;
+  for (let i=0; i<length; ++i) entry.bytes[offset+i] = event.data.getUint8(4+i);
+  entry.mask |= 1 << part;
+  if (entry.mask !== 3) return;
+  const input = document.querySelector(`[data-hotkey-action="${action}"] .hotkey-text`);
+  const error = input.parentElement.querySelector('.hotkey-error');
+  if (entry.bytes[8] !== action || entry.bytes[7] > {{ chord_capacity }}) {
+    error.textContent = 'Stored binding is invalid; Save will replace it.';
+    input.value = 'invalid';
+    return;
+  }
+  const names = [];
+  for (let bit=0; bit<8; ++bit) if (entry.bytes[0] & (1 << bit)) names.push(usageNames[0xe0+bit]);
+  for (let i=0; i<entry.bytes[7]; ++i) names.push(usageNames[entry.bytes[1+i]] || `unknown_${entry.bytes[1+i]}`);
+  input.value = names.join('+');
+  input.setAttribute('fetched-value', input.value);
+}
+
+function parseHotkey(input, action) {
+  const rawTokens = input.value.split('+');
+  const tokens = rawTokens.map(token => token.trim().toLowerCase());
+  if (!input.value.trim() || tokens.some(token => !token))
+    return {error: {line:1, column:1, token: tokens.find(token => !token) || '', message:'expected a key name'}};
+  if (tokens.length > {{ chord_capacity }})
+    return {error: {line:1, column:input.value.indexOf(rawTokens[{{ chord_capacity }}])+1, token:tokens[{{ chord_capacity }}], message:'chord exceeds the {{ chord_capacity }}-key capacity'}};
+  const usages = [];
+  for (const token of tokens) {
+    if (!(token in namedKeyUsages))
+      return {error:{line:1, column:input.value.toLowerCase().indexOf(token)+1, token, message:'unknown key name'}};
+    usages.push(namedKeyUsages[token]);
+  }
+  const bytes = new Uint8Array(9);
+  let keyCount = 0;
+  for (const usage of usages) {
+    if (usage >= 0xe0 && usage <= 0xe7) bytes[0] |= 1 << (usage - 0xe0);
+    else bytes[1 + keyCount++] = usage;
+  }
+  bytes[7] = keyCount;
+  bytes[8] = action;
+  return {bytes};
+}
+
+async function saveHotkeys() {
+  const inputs = [...document.querySelectorAll('.hotkey-text')];
+  const parsed = inputs.map((input, action) => parseHotkey(input, action));
+  let valid = true;
+  parsed.forEach((result, action) => {
+    const error = inputs[action].parentElement.querySelector('.hotkey-error');
+    error.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
+    valid = valid && !result.error;
+  });
+  if (!valid) return false;
+  for (let action=0; action<parsed.length; ++action) {
+    const input = inputs[action];
+    if (input.getAttribute('fetched-value') === input.value) continue;
+    const bytes = parsed[action].bytes;
+    await sendReport(packetType.setValMsg, [{{ hotkey_field_base }}+2*action, ...bytes.slice(0,6)], true);
+    await sendReport(packetType.setValMsg, [{{ hotkey_field_base + 1 }}+2*action, ...bytes.slice(6)], true);
+    input.setAttribute('fetched-value', input.value);
+  }
+  return true;
 }
 
 /* The key id the paired helper's hellos carry, as eight bytes of hex — the
@@ -268,6 +349,9 @@ async function saveHandler() {
   const elements = document.querySelectorAll('.api');
 
   if (!device || !device.opened)
+    return;
+
+  if (!await saveHotkeys())
     return;
 
   for (const element of elements) {

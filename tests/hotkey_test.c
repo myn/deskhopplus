@@ -78,6 +78,73 @@ static int zero_configured_key_uses_fallback(void) {
     return 0;
 }
 
+static int all_actions_have_stable_names(void) {
+    ASSERT_TRUE(DH_HOTKEY_ACTION_COUNT == 13);
+    for (uint8_t action = 0; action < DH_HOTKEY_ACTION_COUNT; ++action) {
+        const char *name = dh_hotkey_action_name(action);
+        ASSERT_TRUE(name != NULL);
+        ASSERT_TRUE(dh_hotkey_action_id(name) == action);
+    }
+    ASSERT_TRUE(dh_hotkey_action_id("not-an-action") == DH_HOTKEY_ACTION_INVALID);
+    return 0;
+}
+
+static int chord_usages_become_a_runtime_binding(void) {
+    const uint8_t chord[] = {0xe0, 0xe5, 0x06, 0x12}; /* lctrl+rshift+c+o */
+    dh_hotkey_t binding = {0};
+
+    ASSERT_TRUE(dh_hotkey_binding_from_usages(
+        &binding, DH_HOTKEY_ACTION_CONFIG_ENABLE, chord, sizeof(chord)));
+    ASSERT_TRUE(binding.modifier == (0x01 | 0x20));
+    ASSERT_TRUE(binding.key_count == 2);
+    ASSERT_TRUE(binding.keys[0] == 0x06 && binding.keys[1] == 0x12);
+    ASSERT_TRUE(binding.action_id == DH_HOTKEY_ACTION_CONFIG_ENABLE);
+    return 0;
+}
+
+static int recovery_chord_always_reaches_config_mode(void) {
+    dh_hotkey_t configured[] = {{.modifier = 0x01,
+                                 .keys = {0x04},
+                                 .key_count = 1,
+                                 .action_id = DH_HOTKEY_ACTION_OUTPUT_TOGGLE}};
+    const uint8_t recovery[DH_HOTKEY_KEY_CAPACITY] = {0x06, 0x12};
+
+    const dh_hotkey_t *match = dh_hotkey_match_with_recovery(
+        configured, 1, 0x21, recovery);
+    ASSERT_TRUE(match != NULL);
+    ASSERT_TRUE(match->action_id == DH_HOTKEY_ACTION_CONFIG_ENABLE);
+    return 0;
+}
+
+static int action_properties_and_complete_table_are_resolved_at_the_keyboard_seam(void) {
+    dh_hotkey_t table[DH_HOTKEY_ACTION_COUNT];
+    for (uint8_t action = 0; action < DH_HOTKEY_ACTION_COUNT; ++action) {
+        table[action] = (dh_hotkey_t){.modifier = 0x01,
+                                     .keys = {(uint8_t)(0x04 + action)},
+                                     .key_count = 1,
+                                     .action_id = action};
+    }
+    ASSERT_TRUE(dh_hotkey_table_is_valid(table, DH_HOTKEY_ACTION_COUNT));
+    ASSERT_TRUE(dh_hotkey_action_passes_to_os(DH_HOTKEY_ACTION_MOUSE_ZOOM));
+    ASSERT_TRUE(!dh_hotkey_action_passes_to_os(DH_HOTKEY_ACTION_SCREENLOCK));
+    ASSERT_TRUE(!dh_hotkey_action_acknowledges(DH_HOTKEY_ACTION_OUTPUT_TOGGLE));
+    ASSERT_TRUE(dh_hotkey_action_acknowledges(DH_HOTKEY_ACTION_SCREENLOCK));
+
+    const uint8_t zoom_keys[DH_HOTKEY_KEY_CAPACITY] = {0x05};
+    dh_keyboard_hotkey_result_t result = dh_keyboard_hotkey_resolve(
+        table, DH_HOTKEY_ACTION_COUNT, 0x01, zoom_keys);
+    ASSERT_TRUE(result.matched);
+    ASSERT_TRUE(result.action_id == DH_HOTKEY_ACTION_MOUSE_ZOOM);
+    ASSERT_TRUE(result.pass_to_os && result.acknowledge);
+
+    table[12].action_id = 11;
+    ASSERT_TRUE(!dh_hotkey_table_is_valid(table, DH_HOTKEY_ACTION_COUNT));
+    table[12].action_id = 12;
+    table[12].key_count = DH_HOTKEY_KEY_CAPACITY + 1;
+    ASSERT_TRUE(!dh_hotkey_table_is_valid(table, DH_HOTKEY_ACTION_COUNT));
+    return 0;
+}
+
 int main(void) {
     if (more_specific_overlapping_chord_wins())
         return 1;
@@ -88,6 +155,14 @@ int main(void) {
     if (zero_is_not_a_required_key())
         return 1;
     if (zero_configured_key_uses_fallback())
+        return 1;
+    if (all_actions_have_stable_names())
+        return 1;
+    if (chord_usages_become_a_runtime_binding())
+        return 1;
+    if (recovery_chord_always_reaches_config_mode())
+        return 1;
+    if (action_properties_and_complete_table_are_resolved_at_the_keyboard_seam())
         return 1;
 
     printf("hotkey_test: PASS\n");

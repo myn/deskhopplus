@@ -668,3 +668,6 @@ img {
   color: #b0342b;
   font-weight: bold;
 }
+/* A malformed hotkey table is refused as a unit; keep the reason beside the field. */
+.hotkey-error { color: #b42318; display: block; min-height: 1.4em; }
+.hotkey-text { margin-bottom: 0; }

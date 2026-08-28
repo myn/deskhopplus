@@ -145,7 +145,7 @@ typedef struct {
     bool reboot_requested;           // If set, stop updating watchdog
     uint64_t config_mode_timer;      // Counts how long are we to remain in config mode
 
-    uint8_t page_buffer[FLASH_PAGE_SIZE]; // For firmware-over-serial upgrades
+    uint8_t page_buffer[CONFIG_FLASH_BYTES]; // Config save and firmware page staging
 
     /* Connection status flags */
     bool tud_connected;      // True when TinyUSB device successfully connects

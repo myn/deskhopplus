@@ -54,7 +54,6 @@ const field_map_t api_field_map[] = {
     { 71, false, UINT8,  1, offsetof(device_t, config.force_mouse_boot_mode) },
     { 72, false, UINT8,  1, offsetof(device_t, config.force_kbd_boot_protocol) },
     { 73, false, UINT8,  1, offsetof(device_t, config.kbd_led_as_indicator) },
-    { 74, false, UINT8,  1, offsetof(device_t, config.hotkey_toggle) },
     { 75, false, UINT8,  1, offsetof(device_t, config.enable_acceleration) },
     { 76, false, UINT8,  1, offsetof(device_t, config.enforce_ports) },
     { 77, false, UINT16, 2, offsetof(device_t, config.jump_threshold) },
@@ -153,6 +152,14 @@ const field_map_t api_field_map[] = {
     { 95, true,  UINT32, 4, offsetof(device_t, _channel_relay_orphans) },
     { 96, true,  UINT32, 4, offsetof(device_t, _channel_relay_truncated) },
     { 97, true,  UINT32, 4, offsetof(device_t, _channel_relay_refused) },
+
+#define DH_HOTKEY_ACTION(symbol, name) \
+    {DH_HOTKEY_CONFIG_FIELD_BASE + 2 * DH_HOTKEY_ACTION_##symbol, false, UINT64, 6, \
+     offsetof(device_t, config.hotkeys[DH_HOTKEY_ACTION_##symbol])}, \
+    {DH_HOTKEY_CONFIG_FIELD_BASE + 2 * DH_HOTKEY_ACTION_##symbol + 1, false, UINT32, 3, \
+     offsetof(device_t, config.hotkeys[DH_HOTKEY_ACTION_##symbol]) + 6},
+    DH_HOTKEY_ACTIONS(DH_HOTKEY_ACTION)
+#undef DH_HOTKEY_ACTION
 };
 
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave

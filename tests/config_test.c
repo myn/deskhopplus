@@ -201,6 +201,26 @@ static void test_the_clipboard_toggles_fit_the_padding(void) {
           "a toggle changed underneath the checksum was accepted");
 }
 
+static void test_complete_hotkey_table_fits_the_config_sector(void) {
+    CHECK(CONFIG_FLASH_PAGE_COUNT == 2, "hotkeys",
+          "the complete hotkey table is not covered by exactly two flash pages");
+    CHECK(CONFIG_FLASH_BYTES >= sizeof(config_t), "hotkeys",
+          "the persisted config buffer truncates the hotkey table");
+    CHECK(CONFIG_FLASH_BYTES <= CONFIG_FLASH_SECTOR_SIZE, "hotkeys",
+          "the hotkey table escaped the dedicated config sector");
+
+    config_t cfg = a_populated_config();
+    cfg.hotkeys[DH_HOTKEY_ACTION_FW_UPGRADE_B] = (dh_hotkey_t){
+        .modifier = 0x22, .keys = {0x05, 0x45}, .key_count = 2,
+        .action_id = DH_HOTKEY_ACTION_FW_UPGRADE_B};
+    config_seal(&cfg);
+    config_t loaded;
+    memcpy(&loaded, &cfg, sizeof loaded);
+    CHECK(config_is_valid(&loaded), "hotkeys", "a complete table did not survive persistence");
+    CHECK(memcmp(loaded.hotkeys, cfg.hotkeys, sizeof cfg.hotkeys) == 0, "hotkeys",
+          "a valid binding was lost or truncated on reload");
+}
+
 int main(void) {
     test_a_sealed_config_validates();
     test_every_payload_byte_is_covered();
@@ -209,6 +229,7 @@ int main(void) {
     test_magic_and_version_are_refused_distinctly();
     test_sealing_is_idempotent();
     test_the_clipboard_toggles_fit_the_padding();
+    test_complete_hotkey_table_fits_the_config_sector();
 
     if (failures) {
         printf("%d config check(s) failed\n", failures);

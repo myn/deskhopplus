@@ -17,6 +17,7 @@
 
 #include "constants.h" /* NUM_SCREENS */
 #include "dh_p256.h"   /* DH_P256_SHARED_SIZE, DH_KEY_ID_SIZE */
+#include "dh_hotkey.h"
 #include "screen.h"    /* output_t */
 
 /* What marks these bytes as a configuration at all. An erased sector reads as
@@ -41,8 +42,10 @@
  *      costs every board its pairing, and that is not a side effect: v2 does
  *      not migrate a v1 pairing, because a migration path would have to accept
  *      the bearer token, which is the thing being removed. One chord press.
+ *  11: the single configurable toggle key became the complete thirteen-action
+ *      hotkey table (#27), which necessarily extends the stored layout.
  */
-#define CURRENT_CONFIG_VERSION 10
+#define CURRENT_CONFIG_VERSION 11
 
 typedef struct {
     uint32_t magic_header;
@@ -52,7 +55,7 @@ typedef struct {
     uint8_t force_kbd_boot_protocol;
 
     uint8_t kbd_led_as_indicator;
-    uint8_t hotkey_toggle;
+    dh_hotkey_t hotkeys[DH_HOTKEY_ACTION_COUNT];
     uint8_t enable_acceleration;
 
     uint8_t enforce_ports;
@@ -137,6 +140,14 @@ typedef struct {
  */
 _Static_assert(offsetof(config_t, checksum) == sizeof(config_t) - sizeof(uint32_t),
                "config_t: checksum must be last, with no trailing padding (see #74)");
+
+#define CONFIG_FLASH_PAGE_SIZE 256u
+#define CONFIG_FLASH_SECTOR_SIZE 4096u
+#define CONFIG_FLASH_PAGE_COUNT \
+    ((sizeof(config_t) + CONFIG_FLASH_PAGE_SIZE - 1u) / CONFIG_FLASH_PAGE_SIZE)
+#define CONFIG_FLASH_BYTES (CONFIG_FLASH_PAGE_COUNT * CONFIG_FLASH_PAGE_SIZE)
+_Static_assert(CONFIG_FLASH_BYTES <= CONFIG_FLASH_SECTOR_SIZE,
+               "config_t must fit its dedicated flash sector");
 
 /*
  * The clipboard toggles came out of padding that was already there, so the

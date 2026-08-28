@@ -124,13 +124,18 @@ void load_config(device_t *state) {
     /* Everything this function decides is in config_is_valid, which is pure
        and therefore testable (#74). All that is left here is the flash read
        and the fallback. */
-    if (!config_is_valid(running_config))
+    if (!config_is_valid(running_config) ||
+        !dh_hotkey_table_is_valid(running_config->hotkeys, DH_HOTKEY_ACTION_COUNT))
         memcpy(running_config, &default_config, sizeof(config_t));
 
-    prepare_hotkeys(running_config->hotkey_toggle);
+    prepare_hotkeys(running_config->hotkeys);
 }
 
 void save_config(device_t *state) {
+    _Static_assert(CONFIG_FLASH_PAGE_SIZE == FLASH_PAGE_SIZE,
+                   "config layout and Pico flash page sizes must agree");
+    _Static_assert(CONFIG_FLASH_SECTOR_SIZE == FLASH_SECTOR_SIZE,
+                   "config layout and Pico flash sector sizes must agree");
     uint8_t *raw_config = (uint8_t *)&state->config;
 
     /* The other half of the pair load_config uses, so the two cannot drift
@@ -139,10 +144,11 @@ void save_config(device_t *state) {
 
     /* Copy the config to buffer and pad the rest with zeros */
     memcpy(state->page_buffer, raw_config, sizeof(config_t));
-    memset(state->page_buffer + sizeof(config_t), 0, FLASH_PAGE_SIZE - sizeof(config_t));
+    memset(state->page_buffer + sizeof(config_t), 0, CONFIG_FLASH_BYTES - sizeof(config_t));
 
     /* Write the new config to flash */
-    write_flash_page((uint32_t)ADDR_CONFIG - XIP_BASE, state->page_buffer);
+    for (size_t offset = 0; offset < CONFIG_FLASH_BYTES; offset += FLASH_PAGE_SIZE)
+        write_flash_page((uint32_t)ADDR_CONFIG - XIP_BASE + offset, state->page_buffer + offset);
 }
 
 /* ================================================== *

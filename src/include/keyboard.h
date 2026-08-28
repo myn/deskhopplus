@@ -27,7 +27,7 @@ keyboard_t *get_keyboard(hid_interface_t *iface, uint8_t report_id);
  *==============================================================================*/
 
 bool check_specific_hotkey(hotkey_combo_t, const hid_keyboard_report_t *);
-void prepare_hotkeys(uint8_t toggle_key);
+void prepare_hotkeys(const dh_hotkey_t bindings[DH_HOTKEY_ACTION_COUNT]);
 
 /*==============================================================================
  *  Keyboard State Management

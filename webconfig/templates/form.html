@@ -47,6 +47,14 @@
   {% elif item.get("elem") == "label" %}
     {{ label(item, class='') }}
 
+  {% elif item.get("elem") == "hotkey" %}
+    <div class="clearfix hotkey-field" data-hotkey-action="{{ item.action }}">
+      {{ label(item, class='') }}
+      <input class="hotkey-text" type="text" data-hotkey-key="{{ key }}"
+             data-action-name="{{ item.name }}" autocomplete="off" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
   {% elif item.get("elem") == "range" %}
   <div class="clearfix">
     <form>

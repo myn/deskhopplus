@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 
 from dataclasses import dataclass, field
+from pathlib import Path
+import re
 
 @dataclass
 class FormField:
@@ -10,6 +12,7 @@ class FormField:
     values: dict[int, str] = field(default_factory=dict)
     data_type: str = "int32"
     elem: str | None = None
+    action: int | None = None
 
 SHORTCUTS = {
     0x73: "None",
@@ -85,7 +88,15 @@ CONFIG_ = [
     FormField(1004, "Clipboard", elem="label"),
     FormField(89, "Block clipboard A to B", None, {}, "uint8", "checkbox"),
     FormField(90, "Block clipboard B to A", None, {}, "uint8", "checkbox"),
+
+    FormField(1006, "Hotkeys", elem="label"),
 ]
+
+_CATALOG = (Path(__file__).parent.parent / "src/core/dh_hotkey_actions.h").read_text()
+HOTKEY_FIELD_BASE = int(re.search(r"DH_HOTKEY_CONFIG_FIELD_BASE\s+(\d+)", _CATALOG).group(1))
+HOTKEY_NAMES = re.findall(r"X\([^,]+,\s*([^\)]+)\)", _CATALOG)
+CONFIG_.extend(FormField(HOTKEY_FIELD_BASE + 2 * action, name.strip(), elem="hotkey", action=action)
+               for action, name in enumerate(HOTKEY_NAMES))
 
 OUTPUT_ = [
     FormField(1, "Screen Count", 1, {1: "1", 2: "2", 3: "3"}, "uint32"),
@@ -112,6 +123,7 @@ def generate_output(base, data):
             "values": field.values,
             "type": field.data_type,
             "elem": field.elem,
+            "action": field.action,
         }
         for field in data
     ]

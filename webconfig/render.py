@@ -8,6 +8,9 @@ from jinja2 import Environment, FileSystemLoader
 from form import *
 import base64
 import zlib
+import json
+import re
+from pathlib import Path
 
 # Input and output
 TEMPLATE_PATH = "templates/"
@@ -42,6 +45,11 @@ def encode_file(payload):
 
 
 if __name__ == "__main__":
+    config_text_source = (Path(__file__).parent.parent / "src/core/dh_config_text.c").read_text()
+    named_keys = {name: int(usage, 16) for name, usage in
+                  re.findall(r'\{"([^"]+)",\s*(0x[0-9a-f]+)\}', config_text_source)}
+    config_text_header = (Path(__file__).parent.parent / "src/core/dh_config_text.h").read_text()
+    chord_capacity = int(re.search(r"DH_CONFIG_TEXT_CHORD_CAPACITY\s+(\d+)u", config_text_header).group(1))
     # Read main template contents
     webpage = render(
         INPUT_FILENAME,
@@ -49,6 +57,11 @@ if __name__ == "__main__":
         screen_B=output_B(),
         status=output_status(),
         config=output_config(),
+        hotkey_field_base=HOTKEY_FIELD_BASE,
+        hotkey_count=len(HOTKEY_NAMES),
+        hotkey_last_field=HOTKEY_FIELD_BASE + 2 * len(HOTKEY_NAMES),
+        named_keys_json=json.dumps(named_keys, separators=(",", ":")),
+        chord_capacity=chord_capacity,
     )
 
     # Compress file and encode to base64
