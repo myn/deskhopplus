@@ -48,8 +48,10 @@
  *      former alignment padding, but old configurations cannot express the
  *      macOS-on default, so accepting them would silently choose the wrong
  *      behavior.
+ *  13: each output gained its fixed-size remap profile (#26): 32 overrides
+ *      and 16 passthrough usages. The profile changes the stored layout.
  */
-#define CURRENT_CONFIG_VERSION 12
+#define CURRENT_CONFIG_VERSION 13
 
 typedef struct {
     uint32_t magic_header;

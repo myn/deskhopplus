@@ -34,6 +34,9 @@ const field_map_t api_field_map[] = {
     { 21, false, UINT64, 7, offsetof(device_t, config.output[0].screensaver.idle_time_us) },
     { 22, false, UINT64, 7, offsetof(device_t, config.output[0].screensaver.max_time_us) },
     { 23, false, UINT8,  1, offsetof(device_t, config.output[0].swap_ctrl_gui) },
+#define KEYMAP_FIELD(index, screen_idx, offset, length) \
+    {index, false, UINT64, length, offsetof(device_t, config.output[screen_idx].keymap) + offset}
+    DH_KEYMAP_CONFIG_CHUNKS(KEYMAP_FIELD, DH_KEYMAP_CONFIG_FIELD_A_BASE, 0),
 
     /* Output B */
     { 40, false, UINT32, 4, offsetof(device_t, config.output[1].number) },
@@ -50,6 +53,8 @@ const field_map_t api_field_map[] = {
     { 51, false, UINT64, 7, offsetof(device_t, config.output[1].screensaver.idle_time_us) },
     { 52, false, UINT64, 7, offsetof(device_t, config.output[1].screensaver.max_time_us) },
     { 53, false, UINT8,  1, offsetof(device_t, config.output[1].swap_ctrl_gui) },
+    DH_KEYMAP_CONFIG_CHUNKS(KEYMAP_FIELD, DH_KEYMAP_CONFIG_FIELD_B_BASE, 1),
+#undef KEYMAP_FIELD
 
     /* Common config */
     { 70, false, UINT32, 4, offsetof(device_t, config.version) },

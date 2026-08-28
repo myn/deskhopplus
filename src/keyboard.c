@@ -184,6 +184,7 @@ void output_keyboard_report(const hid_keyboard_report_t *report,
                             dh_keyboard_provenance provenance, device_t *state) {
     hid_keyboard_report_t emitted_report;
     dh_keyboard_output_prepare((const uint8_t *)report, provenance,
+                               &state->config.output[BOARD_ROLE].keymap,
                                state->config.output[BOARD_ROLE].swap_ctrl_gui,
                                (uint8_t *)&emitted_report);
     queue_kbd_report(&emitted_report, state);

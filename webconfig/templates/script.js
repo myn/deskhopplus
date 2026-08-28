@@ -126,6 +126,12 @@ function setValue(element, value) {
 
 function updateElement(key, event) {
   var dataOffset = 4;
+
+  if ({% for base in keymap_field_bases %}(key >= {{ base }} && key < {{ base }} + {{ keymap_chunk_count }}){% if not loop.last %} || {% endif %}{% endfor %}) {
+    updateKeymapChunk(key, event);
+    return;
+  }
+
   var element = document.querySelector(`[data-key="${key}"]`);
 
   if (key >= {{ hotkey_field_base }} && key < {{ hotkey_last_field }}) {
@@ -202,6 +208,134 @@ for (let i=1; i<=9; ++i) namedKeyUsages[String(i)] = 0x1d+i;
 namedKeyUsages['0'] = 0x27;
 for (let i=1; i<=12; ++i) namedKeyUsages[`f${i}`] = 0x39+i;
 const usageNames = Object.fromEntries(Object.entries(namedKeyUsages).map(([name, usage]) => [usage, name]));
+
+const keymapProfileBytes = {{ keymap_profile_size }};
+const keymapChunkSize = {{ keymap_chunk_size }};
+const keymapChunkCount = {{ keymap_chunk_count }};
+const keymapProfiles = {{ keymap_field_bases }}.map(base => ({base, bytes: new Uint8Array(keymapProfileBytes), mask: 0}));
+
+function keymapInput(output, kind) {
+  return document.querySelector(`[data-keymap-output="${output}"][data-keymap-kind="${kind}"] .keymap-text`);
+}
+
+function updateKeymapChunk(key, event) {
+  const output = key >= keymapProfiles[1].base ? 1 : 0;
+  const entry = keymapProfiles[output];
+  const part = key - entry.base;
+  const length = Math.min(keymapChunkSize, keymapProfileBytes - part*keymapChunkSize);
+  for (let i=0; i<length; ++i) entry.bytes[part*keymapChunkSize+i] = event.data.getUint8(4+i);
+  entry.mask |= 1 << part;
+  if (entry.mask !== (1 << keymapChunkCount) - 1) return;
+
+  const overrideCount = entry.bytes[{{ keymap_override_count_offset }}];
+  const passthroughCount = entry.bytes[{{ keymap_passthrough_count_offset }}];
+  const overrides = keymapInput(output, 'overrides');
+  const passthrough = keymapInput(output, 'passthrough');
+  const error = overrides.parentElement.querySelector('.keymap-error');
+  if (overrideCount > {{ override_capacity }} || passthroughCount > {{ passthrough_capacity }}) {
+    error.textContent = 'Stored profile is invalid; Save will replace it.';
+    overrides.value = 'invalid';
+    passthrough.value = 'invalid';
+    return;
+  }
+  const shownOverrides = [];
+  for (let i=0; i<overrideCount; ++i)
+    shownOverrides.push(`${usageNames[entry.bytes[2*i]] || `unknown_${entry.bytes[2*i]}`}=${usageNames[entry.bytes[2*i+1]] || `unknown_${entry.bytes[2*i+1]}`}`);
+  const shownPassthrough = [];
+  for (let i=0; i<passthroughCount; ++i)
+    shownPassthrough.push(usageNames[entry.bytes[{{ keymap_passthrough_offset }}+i]] || `unknown_${entry.bytes[{{ keymap_passthrough_offset }}+i]}`);
+  overrides.value = shownOverrides.join('\n');
+  passthrough.value = shownPassthrough.join(', ');
+  overrides.setAttribute('fetched-value', overrides.value);
+  passthrough.setAttribute('fetched-value', passthrough.value);
+}
+
+function keymapError(line, column, token, message) {
+  return {error: {line, column, token, message}};
+}
+
+function parseOverrides(input) {
+  const parsed = [];
+  const lines = input.value.split('\n');
+  for (let lineIndex=0; lineIndex<lines.length; ++lineIndex) {
+    const line = lines[lineIndex];
+    if (!line.trim()) continue;
+    const equals = line.indexOf('=');
+    if (equals < 0)
+      return keymapError(lineIndex+1, line.length+1, line.trim(), 'expected “=”');
+    const from = line.slice(0, equals).trim().toLowerCase();
+    const to = line.slice(equals+1).trim().toLowerCase();
+    if (!from || !to)
+      return keymapError(lineIndex+1, equals+2, '', 'expected a key name');
+    if (to.includes('='))
+      return keymapError(lineIndex+1, equals+2+to.indexOf('='), '=', 'expected one mapping per line');
+    if (!(from in namedKeyUsages))
+      return keymapError(lineIndex+1, line.toLowerCase().indexOf(from)+1, from, 'unknown key name');
+    if (!(to in namedKeyUsages))
+      return keymapError(lineIndex+1, line.toLowerCase().indexOf(to, equals+1)+1, to, 'unknown key name');
+    if (parsed.length >= {{ override_capacity }})
+      return keymapError(lineIndex+1, 1, from, 'profile exceeds the {{ override_capacity }}-override capacity');
+    parsed.push([namedKeyUsages[from], namedKeyUsages[to]]);
+  }
+  return {parsed};
+}
+
+function parsePassthrough(input) {
+  const parsed = [];
+  const lines = input.value.split('\n');
+  for (let lineIndex=0; lineIndex<lines.length; ++lineIndex) {
+    if (!lines[lineIndex].trim()) continue;
+    const rawTokens = lines[lineIndex].split(',');
+    for (const raw of rawTokens) {
+      const token = raw.trim().toLowerCase();
+      if (!token)
+        return keymapError(lineIndex+1, Math.max(1, lines[lineIndex].indexOf(raw)+1), '', 'expected a key name');
+      if (!(token in namedKeyUsages))
+        return keymapError(lineIndex+1, lines[lineIndex].toLowerCase().indexOf(token)+1, token, 'unknown key name');
+      if (parsed.length >= {{ passthrough_capacity }})
+        return keymapError(lineIndex+1, lines[lineIndex].toLowerCase().indexOf(token)+1, token, 'profile exceeds the {{ passthrough_capacity }}-key capacity');
+      parsed.push(namedKeyUsages[token]);
+    }
+  }
+  return {parsed};
+}
+
+function showKeymapError(input, result) {
+  const shown = input.parentElement.querySelector('.keymap-error');
+  shown.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
+}
+
+async function saveKeymaps() {
+  const parsed = [];
+  let valid = true;
+  for (let output=0; output<2; ++output) {
+    const overrides = keymapInput(output, 'overrides');
+    const passthrough = keymapInput(output, 'passthrough');
+    const overrideResult = parseOverrides(overrides);
+    const passthroughResult = parsePassthrough(passthrough);
+    showKeymapError(overrides, overrideResult);
+    showKeymapError(passthrough, passthroughResult);
+    valid = valid && !overrideResult.error && !passthroughResult.error;
+    parsed.push({overrides, passthrough, overrideResult, passthroughResult});
+  }
+  if (!valid) return false;
+
+  for (let output=0; output<2; ++output) {
+    const item = parsed[output];
+    if (item.overrides.getAttribute('fetched-value') === item.overrides.value &&
+        item.passthrough.getAttribute('fetched-value') === item.passthrough.value) continue;
+    const bytes = new Uint8Array(keymapProfileBytes);
+    item.overrideResult.parsed.forEach((mapping, i) => { bytes[2*i] = mapping[0]; bytes[2*i+1] = mapping[1]; });
+    bytes[{{ keymap_override_count_offset }}] = item.overrideResult.parsed.length;
+    item.passthroughResult.parsed.forEach((usage, i) => { bytes[{{ keymap_passthrough_offset }}+i] = usage; });
+    bytes[{{ keymap_passthrough_count_offset }}] = item.passthroughResult.parsed.length;
+    for (let part=0; part<keymapChunkCount; ++part)
+      await sendReport(packetType.setValMsg, [keymapProfiles[output].base+part, ...bytes.slice(part*keymapChunkSize, Math.min((part+1)*keymapChunkSize, bytes.length))], true);
+    item.overrides.setAttribute('fetched-value', item.overrides.value);
+    item.passthrough.setAttribute('fetched-value', item.passthrough.value);
+  }
+  return true;
+}
 
 function updateHotkeyChunk(key, event) {
   const action = Math.floor((key - {{ hotkey_field_base }}) / 2);
@@ -352,6 +486,9 @@ async function saveHandler() {
     return;
 
   if (!await saveHotkeys())
+    return;
+
+  if (!await saveKeymaps())
     return;
 
   for (const element of elements) {

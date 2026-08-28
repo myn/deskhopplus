@@ -221,6 +221,38 @@ static void test_complete_hotkey_table_fits_the_config_sector(void) {
           "a valid binding was lost or truncated on reload");
 }
 
+static void test_keymap_profiles_survive_persistence(void) {
+    CHECK(CURRENT_CONFIG_VERSION == 13, "keymaps",
+          "the stored layout changed without the issue #26 version bump");
+    CHECK(sizeof(((output_t *)0)->keymap.overrides) / sizeof(dh_key_override_t) == 32,
+          "keymaps", "an output does not hold 32 overrides");
+    CHECK(sizeof(((output_t *)0)->keymap.passthrough) == 16,
+          "keymaps", "an output does not hold 16 passthrough entries");
+
+    config_t cfg = a_populated_config();
+    cfg.output[0].keymap = (dh_keymap_profile_t){
+        .overrides = {{0x39, 0xe0}, {0xe1, 0x04}},
+        .override_count = 2,
+        .passthrough = {0xe3, 0x2a},
+        .passthrough_count = 2,
+    };
+    cfg.output[1].keymap = (dh_keymap_profile_t){
+        .overrides = {{0x04, 0x05}}, .override_count = 1,
+        .passthrough = {0x39}, .passthrough_count = 1,
+    };
+    config_seal(&cfg);
+    config_t loaded;
+    memcpy(&loaded, &cfg, sizeof loaded);
+
+    CHECK(config_is_valid(&loaded), "keymaps", "keymap profiles invalidated persistence");
+    CHECK(memcmp(loaded.output[0].keymap.overrides, cfg.output[0].keymap.overrides,
+                 sizeof cfg.output[0].keymap.overrides) == 0,
+          "keymaps", "output A overrides changed on reload");
+    CHECK(memcmp(&loaded.output[1].keymap, &cfg.output[1].keymap,
+                 sizeof cfg.output[1].keymap) == 0,
+          "keymaps", "output B profile changed on reload");
+}
+
 int main(void) {
     test_a_sealed_config_validates();
     test_every_payload_byte_is_covered();
@@ -230,6 +262,7 @@ int main(void) {
     test_sealing_is_idempotent();
     test_the_clipboard_toggles_fit_the_padding();
     test_complete_hotkey_table_fits_the_config_sector();
+    test_keymap_profiles_survive_persistence();
 
     if (failures) {
         printf("%d config check(s) failed\n", failures);

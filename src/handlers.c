@@ -211,6 +211,7 @@ void handle_keyboard_uart_msg(uart_packet_t *packet, device_t *state) {
         combine_local_kbd_states(state, &local_report);
         dh_keyboard_output_merge((const uint8_t *)&local_report,
                                  (const uint8_t *)report,
+                                 &state->config.output[BOARD_ROLE].keymap,
                                  state->config.output[BOARD_ROLE].swap_ctrl_gui,
                                  (uint8_t *)&combined_report);
         queue_kbd_report(&combined_report, state);

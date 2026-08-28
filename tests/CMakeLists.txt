@@ -48,6 +48,11 @@ add_executable(config_text_test config_text_test.c ${CORE}/dh_config_text.c)
 target_include_directories(config_text_test PRIVATE ${CORE})
 add_test(NAME config_text_test COMMAND config_text_test)
 
+find_program(NODE_EXECUTABLE node REQUIRED)
+add_test(NAME webconfig_keymap_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_keymap_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
 target_include_directories(frame_test PRIVATE ${CORE})
 target_compile_definitions(frame_test PRIVATE DH_TEST_VECTORS="${VECTORS}")

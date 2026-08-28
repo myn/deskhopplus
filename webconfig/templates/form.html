@@ -55,6 +55,15 @@
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
 
+  {% elif item.get("elem") == "keymap" %}
+    <div class="clearfix keymap-field" data-keymap-output="{{ item.keymap_output }}"
+         data-keymap-kind="{{ item.keymap_kind }}">
+      {{ label(item, class='') }}
+      <textarea class="keymap-text" rows="4" autocomplete="off"
+                placeholder="{% if item.keymap_kind == 'overrides' %}capslock=lctrl{% else %}capslock, f1{% endif %}"></textarea>
+      <small class="keymap-error" aria-live="polite"></small>
+    </div>
+
   {% elif item.get("elem") == "range" %}
   <div class="clearfix">
     <form>

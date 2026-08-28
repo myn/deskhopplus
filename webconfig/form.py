@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
+_KEYMAP_HEADER = (Path(__file__).parent.parent / "src/core/dh_keymap.h").read_text()
+KEYMAP_FIELD_OFFSET = int(re.search(r"DH_KEYMAP_CONFIG_FIELD_OFFSET\s+(\d+)u", _KEYMAP_HEADER).group(1))
+
 @dataclass
 class FormField:
     offset: int
@@ -13,6 +16,8 @@ class FormField:
     data_type: str = "int32"
     elem: str | None = None
     action: int | None = None
+    keymap_kind: str | None = None
+    keymap_output: int | None = None
 
 SHORTCUTS = {
     0x73: "None",
@@ -113,9 +118,11 @@ OUTPUT_ = [
     FormField(11, "Idle Time (μs)", None, {}, "uint64"),
     FormField(12, "Max Time (μs)", None, {}, "uint64"),
     FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
+    FormField(KEYMAP_FIELD_OFFSET, "Key overrides", elem="keymap", keymap_kind="overrides"),
+    FormField(KEYMAP_FIELD_OFFSET, "Passthrough keys", elem="keymap", keymap_kind="passthrough"),
 ]
 
-def generate_output(base, data):
+def generate_output(base, data, output_index=None):
     output = [
         {
             "name": field.name,
@@ -125,16 +132,18 @@ def generate_output(base, data):
             "type": field.data_type,
             "elem": field.elem,
             "action": field.action,
+            "keymap_kind": field.keymap_kind,
+            "keymap_output": output_index if field.keymap_kind else field.keymap_output,
         }
         for field in data
     ]
     return output
 
 def output_A(base=10):
-    return generate_output(base, data=OUTPUT_)
+    return generate_output(base, data=OUTPUT_, output_index=0)
 
 def output_B(base=40):
-    return generate_output(base, data=OUTPUT_)
+    return generate_output(base, data=OUTPUT_, output_index=1)
 
 def output_status():
     return generate_output(0, data=STATUS_)
