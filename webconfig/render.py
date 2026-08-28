@@ -7,8 +7,6 @@
 from jinja2 import Environment, FileSystemLoader
 from form import *
 import base64
-from pathlib import Path
-import re
 import zlib
 
 # Input and output
@@ -43,12 +41,6 @@ def encode_file(payload):
     return base64_compressed_data
 
 
-def key_names():
-    definition = Path("../src/core/dh_key_names.def").read_text(encoding="utf-8")
-    return [(name, int(usage, 16)) for name, usage in
-            re.findall(r'DH_KEY_NAME\("([^"]+)", (0x[0-9a-f]+)\)', definition)]
-
-
 if __name__ == "__main__":
     # Read main template contents
     webpage = render(
@@ -57,7 +49,6 @@ if __name__ == "__main__":
         screen_B=output_B(),
         status=output_status(),
         config=output_config(),
-        key_names=key_names(),
     )
 
     # Compress file and encode to base64

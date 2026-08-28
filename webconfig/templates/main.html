@@ -117,20 +117,6 @@
               {% include "form.html" with context %}
             {% endfor %}
 
-          <h4>Key configuration</h4>
-          <label for="key-overrides">Remap overrides</label>
-          <textarea id="key-overrides" data-key-config="overrides"
-            placeholder="capslock=lctrl" oninput="keyConfig.validateField(this, 'overrides')"></textarea>
-
-          <label for="key-passthrough">Passthrough keys</label>
-          <textarea id="key-passthrough" data-key-config="keys"
-            placeholder="f1, kp_enter" oninput="keyConfig.validateField(this, 'keys')"></textarea>
-
-          <label for="key-chord">Hotkey chord</label>
-          <input id="key-chord" type="text" data-key-config="chord"
-            value="lctrl+capslock" placeholder="ralt+k"
-            oninput="keyConfig.validateField(this, 'chord')" />
-
           <input type="submit" value="Save" id="submitButton">
         </div>
 
@@ -149,7 +135,6 @@
   </main>
 
   <script>
-  {% include "key_config.js" %}
   {% include "script.js" %}
   </script>
 </body>

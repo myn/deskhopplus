@@ -265,9 +265,6 @@ async function valueChangedHandler(element) {
 }
 
 async function saveHandler() {
-  if (!keyConfig.validateAll())
-    return;
-
   const elements = document.querySelectorAll('.api');
 
   if (!device || !device.opened)
