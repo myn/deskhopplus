@@ -18,6 +18,27 @@ static unsigned specificity(const dh_hotkey_t *hotkey) {
     return modifier_count(hotkey->modifier) + hotkey->key_count;
 }
 
+bool dh_hotkey_configure_key(dh_hotkey_t *hotkeys,
+                             size_t count,
+                             uint8_t action_id,
+                             uint8_t configured_key,
+                             uint8_t fallback_key) {
+    uint8_t key = configured_key != 0 ? configured_key : fallback_key;
+
+    if (key == 0)
+        return false;
+
+    for (size_t i = 0; i < count; ++i) {
+        if (hotkeys[i].action_id == action_id && hotkeys[i].key_count > 0 &&
+            hotkeys[i].key_count <= DH_HOTKEY_KEY_CAPACITY) {
+            hotkeys[i].keys[0] = key;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void dh_hotkey_prepare(dh_hotkey_t *hotkeys, size_t count) {
     for (size_t i = 1; i < count; ++i) {
         dh_hotkey_t candidate = hotkeys[i];
@@ -33,6 +54,9 @@ void dh_hotkey_prepare(dh_hotkey_t *hotkeys, size_t count) {
 }
 
 static bool contains_key(const uint8_t keys[DH_HOTKEY_KEY_CAPACITY], uint8_t wanted) {
+    if (wanted == 0)
+        return false;
+
     for (size_t i = 0; i < DH_HOTKEY_KEY_CAPACITY; ++i) {
         if (keys[i] == wanted)
             return true;

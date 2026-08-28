@@ -175,12 +175,11 @@ static const hotkey_action_t *check_all_hotkeys(const hid_keyboard_report_t *rep
 }
 
 void prepare_hotkeys(uint8_t toggle_key) {
-    for (size_t i = 0; i < ARRAY_SIZE(hotkeys); ++i) {
-        if (hotkeys[i].action_id == HOTKEY_ACTION_OUTPUT_TOGGLE) {
-            hotkeys[i].keys[0] = toggle_key;
-            break;
-        }
-    }
+    (void)dh_hotkey_configure_key(hotkeys,
+                                  ARRAY_SIZE(hotkeys),
+                                  HOTKEY_ACTION_OUTPUT_TOGGLE,
+                                  toggle_key,
+                                  HOTKEY_TOGGLE);
 
     dh_hotkey_prepare(hotkeys, ARRAY_SIZE(hotkeys));
 }

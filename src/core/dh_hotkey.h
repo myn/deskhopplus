@@ -16,6 +16,12 @@ typedef struct {
     uint8_t action_id;
 } dh_hotkey_t;
 
+bool dh_hotkey_configure_key(dh_hotkey_t *hotkeys,
+                             size_t count,
+                             uint8_t action_id,
+                             uint8_t configured_key,
+                             uint8_t fallback_key);
+
 void dh_hotkey_prepare(dh_hotkey_t *hotkeys, size_t count);
 
 const dh_hotkey_t *dh_hotkey_match(const dh_hotkey_t *hotkeys,
