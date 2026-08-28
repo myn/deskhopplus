@@ -77,6 +77,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/main.c
   ${SRC_DIR}/ramdisk.c
   ${SRC_DIR}/core/dh_frame.c
+  ${SRC_DIR}/core/dh_hotkey.c
   ${SRC_DIR}/core/dh_session.c
   ${SRC_DIR}/core/dh_relay.c
   ${SRC_DIR}/core/dh_outq.c
@@ -287,4 +288,3 @@ target_link_options(${binary} PRIVATE
   -Xlinker
   --print-memory-usage
 )
-

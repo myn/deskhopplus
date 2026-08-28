@@ -126,6 +126,8 @@ void load_config(device_t *state) {
        and the fallback. */
     if (!config_is_valid(running_config))
         memcpy(running_config, &default_config, sizeof(config_t));
+
+    prepare_hotkeys(running_config->hotkey_toggle);
 }
 
 void save_config(device_t *state) {

@@ -15,84 +15,119 @@
  * Hotkeys to trigger actions via the keyboard.
  * ==================================================== */
 
+enum hotkey_action_id {
+    HOTKEY_ACTION_OUTPUT_TOGGLE,
+    HOTKEY_ACTION_MOUSE_ZOOM,
+    HOTKEY_ACTION_SWITCHLOCK,
+    HOTKEY_ACTION_SCREENLOCK,
+    HOTKEY_ACTION_GAMING_MODE,
+    HOTKEY_ACTION_SCREENSAVER_PONG,
+    HOTKEY_ACTION_SCREENSAVER_JITTER,
+    HOTKEY_ACTION_SCREENSAVER_DISABLE,
+    HOTKEY_ACTION_WIPE_CONFIG,
+    HOTKEY_ACTION_SCREEN_BORDER,
+    HOTKEY_ACTION_CONFIG_ENABLE,
+    HOTKEY_ACTION_FW_UPGRADE_A,
+    HOTKEY_ACTION_FW_UPGRADE_B,
+    HOTKEY_ACTION_COUNT,
+};
+
+typedef struct {
+    void (*handler)(device_t *, hid_keyboard_report_t *);
+    bool pass_to_os;
+    bool acknowledge;
+} hotkey_action_t;
+
+static const hotkey_action_t hotkey_actions[HOTKEY_ACTION_COUNT] = {
+    [HOTKEY_ACTION_OUTPUT_TOGGLE] = {.handler = output_toggle_hotkey_handler},
+    [HOTKEY_ACTION_MOUSE_ZOOM] =
+        {.handler = mouse_zoom_hotkey_handler, .pass_to_os = true, .acknowledge = true},
+    [HOTKEY_ACTION_SWITCHLOCK] = {.handler = switchlock_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_SCREENLOCK] = {.handler = screenlock_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_GAMING_MODE] = {.handler = toggle_gaming_mode_handler, .acknowledge = true},
+    [HOTKEY_ACTION_SCREENSAVER_PONG] =
+        {.handler = enable_screensaver_pong_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_SCREENSAVER_JITTER] =
+        {.handler = enable_screensaver_jitter_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_SCREENSAVER_DISABLE] =
+        {.handler = disable_screensaver_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_WIPE_CONFIG] = {.handler = wipe_config_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_SCREEN_BORDER] =
+        {.handler = screen_border_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_CONFIG_ENABLE] =
+        {.handler = config_enable_hotkey_handler, .acknowledge = true},
+    [HOTKEY_ACTION_FW_UPGRADE_A] =
+        {.handler = fw_upgrade_hotkey_handler_A, .acknowledge = true},
+    [HOTKEY_ACTION_FW_UPGRADE_B] =
+        {.handler = fw_upgrade_hotkey_handler_B, .acknowledge = true},
+};
+
 hotkey_combo_t hotkeys[] = {
     /* Main keyboard switching hotkey */
     {.modifier       = HOTKEY_MODIFIER,
      .keys           = {HOTKEY_TOGGLE},
      .key_count      = 1,
-     .pass_to_os     = false,
-     .action_handler = &output_toggle_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_OUTPUT_TOGGLE},
 
     /* Pressing right ALT + right CTRL toggles the slow mouse mode */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTALT | KEYBOARD_MODIFIER_RIGHTCTRL,
      .keys           = {},
      .key_count      = 0,
-     .pass_to_os     = true,
-     .acknowledge    = true,
-     .action_handler = &mouse_zoom_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_MOUSE_ZOOM},
 
     /* Switch lock */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTCTRL,
      .keys           = {HID_KEY_K},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &switchlock_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SWITCHLOCK},
 
     /* Screen lock */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTCTRL,
      .keys           = {HID_KEY_L},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &screenlock_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SCREENLOCK},
 
     /* Toggle gaming mode */
     {.modifier       = KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_G},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &toggle_gaming_mode_handler},
+     .action_id      = HOTKEY_ACTION_GAMING_MODE},
 
     /* Enable screensaver pong for active output */
     {.modifier       = KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_S},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &enable_screensaver_pong_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SCREENSAVER_PONG},
 
     /* Enable screensaver jitter for active output */
     {.modifier       = KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_J},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &enable_screensaver_jitter_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SCREENSAVER_JITTER},
 
     /* Disable screensaver for active output */
     {.modifier       = KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_X},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &disable_screensaver_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SCREENSAVER_DISABLE},
 
     /* Erase stored config */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_F12, HID_KEY_D},
      .key_count      = 2,
-     .acknowledge    = true,
-     .action_handler = &wipe_config_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_WIPE_CONFIG},
 
     /* Record switch y coordinate  */
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_F12, HID_KEY_Y},
      .key_count      = 2,
-     .acknowledge    = true,
-     .action_handler = &screen_border_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_SCREEN_BORDER},
 
     /* Switch to configuration mode  */
     {.modifier       = KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTSHIFT,
      .keys           = {HID_KEY_C, HID_KEY_O},
      .key_count      = 2,
-     .acknowledge    = true,
-     .action_handler = &config_enable_hotkey_handler},
+     .action_id      = HOTKEY_ACTION_CONFIG_ENABLE},
 
     /* Left shift + right shift + A ==> BOOTSEL on board A, reached from the keyboard rather
        than the on-board button, so flashing needs no replug. The handler reads BOARD_ROLE, so
@@ -100,8 +135,7 @@ hotkey_combo_t hotkeys[] = {
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT | KEYBOARD_MODIFIER_LEFTSHIFT,
      .keys           = {HID_KEY_A},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &fw_upgrade_hotkey_handler_A},
+     .action_id      = HOTKEY_ACTION_FW_UPGRADE_A},
 
     /* Left shift + right shift + B ==> BOOTSEL on board B. Pressed on board A it travels as
        FIRMWARE_UPGRADE_MSG and B reboots itself on receipt; pressed on board B it resets
@@ -109,8 +143,7 @@ hotkey_combo_t hotkeys[] = {
     {.modifier       = KEYBOARD_MODIFIER_RIGHTSHIFT | KEYBOARD_MODIFIER_LEFTSHIFT,
      .keys           = {HID_KEY_B},
      .key_count      = 1,
-     .acknowledge    = true,
-     .action_handler = &fw_upgrade_hotkey_handler_B}};
+     .action_id      = HOTKEY_ACTION_FW_UPGRADE_B}};
 
 /* ============================================================ *
  * Detect if any hotkeys were pressed
@@ -129,29 +162,27 @@ bool key_in_report(uint8_t key, const hid_keyboard_report_t *report) {
 
 /* Check if the current report matches a specific hotkey passed on */
 bool check_specific_hotkey(hotkey_combo_t keypress, const hid_keyboard_report_t *report) {
-    /* We expect all modifiers specified to be detected in the report */
-    if (keypress.modifier != (report->modifier & keypress.modifier))
-        return false;
-
-    for (int n = 0; n < keypress.key_count; n++) {
-        if (!key_in_report(keypress.keys[n], report)) {
-            return false;
-        }
-    }
-
-    /* Getting here means all of the keys were found. */
-    return true;
+    return dh_hotkey_match(&keypress, 1, report->modifier, report->keycode) != NULL;
 }
 
 /* Go through the list of hotkeys, check if any of them match. */
-hotkey_combo_t *check_all_hotkeys(hid_keyboard_report_t *report, device_t *state) {
-    for (int n = 0; n < ARRAY_SIZE(hotkeys); n++) {
-        if (check_specific_hotkey(hotkeys[n], report)) {
-            return &hotkeys[n];
+static const hotkey_action_t *check_all_hotkeys(const hid_keyboard_report_t *report) {
+    const dh_hotkey_t *match = dh_hotkey_match(
+        hotkeys, ARRAY_SIZE(hotkeys), report->modifier, report->keycode);
+
+    return match == NULL || match->action_id >= HOTKEY_ACTION_COUNT ? NULL
+                                                                    : &hotkey_actions[match->action_id];
+}
+
+void prepare_hotkeys(uint8_t toggle_key) {
+    for (size_t i = 0; i < ARRAY_SIZE(hotkeys); ++i) {
+        if (hotkeys[i].action_id == HOTKEY_ACTION_OUTPUT_TOGGLE) {
+            hotkeys[i].keys[0] = toggle_key;
+            break;
         }
     }
 
-    return NULL;
+    dh_hotkey_prepare(hotkeys, ARRAY_SIZE(hotkeys));
 }
 
 /* ==================================================== *
@@ -298,7 +329,7 @@ void send_system_control(uint8_t *raw_report, device_t *state) {
 void process_keyboard_report(uint8_t *raw_report, int length, uint8_t itf, hid_interface_t *iface) {
     hid_keyboard_report_t new_report = {0};
     device_t *state                  = &global_state;
-    hotkey_combo_t *hotkey           = NULL;
+    const hotkey_action_t *hotkey    = NULL;
 
     if (length < KBD_REPORT_LENGTH)
         return;
@@ -313,7 +344,7 @@ void process_keyboard_report(uint8_t *raw_report, int length, uint8_t itf, hid_i
     update_kbd_state(state, &new_report, itf);
 
     /* Check if any hotkey was pressed */
-    hotkey = check_all_hotkeys(&new_report, state);
+    hotkey = check_all_hotkeys(&new_report);
 
     /* ... and take appropriate action */
     if (hotkey != NULL) {
@@ -322,7 +353,7 @@ void process_keyboard_report(uint8_t *raw_report, int length, uint8_t itf, hid_i
             blink_led(state);
 
         /* Execute the corresponding handler */
-        hotkey->action_handler(state, &new_report);
+        hotkey->handler(state, &new_report);
 
         /* And pass the key to the output PC if configured to do so. */
         if (!hotkey->pass_to_os)

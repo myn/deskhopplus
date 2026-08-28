@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "dh_hotkey.h"
 #include "dh_pair.h"
 
 #include <stddef.h>
@@ -29,14 +30,10 @@ typedef struct { // Maps message type -> message handler function
     action_handler_t handler;
 } uart_handler_t;
 
-typedef struct {
-    uint8_t modifier;                 // Which modifier is pressed
-    uint8_t keys[KEYS_IN_USB_REPORT]; // Which keys need to be pressed
-    uint8_t key_count;                // How many keys are pressed
-    action_handler_t action_handler;  // What to execute when the key combination is detected
-    bool pass_to_os;                  // True if we are to pass the key to the OS too
-    bool acknowledge;                 // True if we are to notify the user about registering keypress
-} hotkey_combo_t;
+typedef dh_hotkey_t hotkey_combo_t;
+
+_Static_assert(KEYS_IN_USB_REPORT == DH_HOTKEY_KEY_CAPACITY,
+               "core and firmware keyboard reports must have the same key capacity");
 
 typedef struct TU_ATTR_PACKED {
     uint8_t buttons;

@@ -32,6 +32,10 @@ set(PRIMITIVE_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/primitives.txt
 
 enable_testing()
 
+add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
+target_include_directories(hotkey_test PRIVATE ${CORE})
+add_test(NAME hotkey_test COMMAND hotkey_test)
+
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
 target_include_directories(frame_test PRIVATE ${CORE})
 target_compile_definitions(frame_test PRIVATE DH_TEST_VECTORS="${VECTORS}")
