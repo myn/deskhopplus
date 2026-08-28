@@ -12,6 +12,8 @@
 
 #include <stdint.h>
 
+#include "dh_keyboard_transport.h"
+
 enum packet_type_e {
     KEYBOARD_REPORT_MSG  = 1,
     MOUSE_REPORT_MSG     = 2,
@@ -43,7 +45,13 @@ enum packet_type_e {
        start was lost - is discardable without a sequence number. */
     CHANNEL_START_MSG    = 26,
     CHANNEL_DATA_MSG     = 27,
+    SYNTHESIZED_KEYBOARD_REPORT_MSG = 28,
 };
+
+_Static_assert(KEYBOARD_REPORT_MSG == DH_KEYBOARD_PHYSICAL_PACKET,
+               "physical keyboard packet marker drifted");
+_Static_assert(SYNTHESIZED_KEYBOARD_REPORT_MSG == DH_KEYBOARD_SYNTHESIZED_PACKET,
+               "synthesized keyboard packet marker drifted");
 
 typedef enum {
     UINT8 = 0,

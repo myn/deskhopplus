@@ -79,6 +79,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/core/dh_frame.c
   ${SRC_DIR}/core/dh_config_text.c
   ${SRC_DIR}/core/dh_hotkey.c
+  ${SRC_DIR}/core/dh_keyboard_transport.c
   ${SRC_DIR}/core/dh_session.c
   ${SRC_DIR}/core/dh_relay.c
   ${SRC_DIR}/core/dh_outq.c

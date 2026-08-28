@@ -175,6 +175,14 @@ void queue_kbd_report(hid_keyboard_report_t *report, device_t *state) {
     queue_try_add(&state->kbd_queue, report);
 }
 
+bool queue_remote_keyboard_report(const hid_keyboard_report_t *report,
+                                  dh_keyboard_provenance provenance) {
+    uint8_t payload[DH_KEYBOARD_REPORT_LENGTH];
+    uint8_t packet_type = dh_keyboard_transport_encode(
+        provenance, (const uint8_t *)report, payload);
+    return queue_packet(payload, (enum packet_type_e)packet_type, sizeof(payload));
+}
+
 /* If keys need to go locally, queue packet to kbd queue, else send them through UART */
 void send_key(hid_keyboard_report_t *report, device_t *state) {
     /* Create a combined report from all device states */
@@ -187,7 +195,7 @@ void send_key(hid_keyboard_report_t *report, device_t *state) {
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
         /* Send the combined report to ensure all keys are included */
-        (void)queue_packet((uint8_t *)&combined_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
+        (void)queue_remote_keyboard_report(&combined_report, DH_KEYBOARD_PHYSICAL);
     }
 }
 

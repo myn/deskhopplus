@@ -109,8 +109,8 @@ void screenlock_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
             queue_kbd_report(&lock_report, state);
             release_all_keys(state);
         } else {
-            (void)queue_packet((uint8_t *)&lock_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
-            (void)queue_packet((uint8_t *)&release_keys, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
+            (void)queue_remote_keyboard_report(&lock_report, DH_KEYBOARD_SYNTHESIZED);
+            (void)queue_remote_keyboard_report(&release_keys, DH_KEYBOARD_SYNTHESIZED);
         }
     }
 }
@@ -192,8 +192,18 @@ void config_enable_hotkey_handler(device_t *state, hid_keyboard_report_t *report
 
 /* Function handles received keypresses from the other board */
 void handle_keyboard_uart_msg(uart_packet_t *packet, device_t *state) {
-    hid_keyboard_report_t *report = (hid_keyboard_report_t *)packet->data;
+    dh_keyboard_provenance provenance;
+    const uint8_t *payload;
+    if (!dh_keyboard_transport_decode(packet->type, packet->data, &provenance, &payload))
+        return;
+
+    hid_keyboard_report_t *report = (hid_keyboard_report_t *)payload;
     hid_keyboard_report_t combined_report;
+
+    /* Provenance is known here, before emission, so the remap seam can bypass
+       synthesized reports. Both kinds still follow the existing state merge:
+       a lock chord must not release keys held on this board. */
+    (void)provenance;
 
     /* Update the keyboard state for the remote device  */
     update_remote_kbd_state(state, report);
