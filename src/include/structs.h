@@ -175,14 +175,6 @@ typedef struct {
     bool *enabled;
 } task_t;
 
-enum os_type_e {
-    LINUX   = 1,
-    MACOS   = 2,
-    WINDOWS = 3,
-    ANDROID = 4,
-    OTHER   = 255,
-};
-
 enum screen_pos_e {
     NONE   = 0,
     LEFT   = 1,

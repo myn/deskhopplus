@@ -44,8 +44,12 @@
  *      the bearer token, which is the thing being removed. One chord press.
  *  11: the single configurable toggle key became the complete thirteen-action
  *      hotkey table (#27), which necessarily extends the stored layout.
+ *  12: each output gained its Ctrl/GUI swap setting (#22). The byte occupies
+ *      former alignment padding, but old configurations cannot express the
+ *      macOS-on default, so accepting them would silently choose the wrong
+ *      behavior.
  */
-#define CURRENT_CONFIG_VERSION 11
+#define CURRENT_CONFIG_VERSION 12
 
 typedef struct {
     uint32_t magic_header;

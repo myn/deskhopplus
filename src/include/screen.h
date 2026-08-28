@@ -20,6 +20,16 @@
 #define MAX_SCREEN_COORD 32767
 #define MIN_SCREEN_COORD 0
 
+enum os_type_e {
+    LINUX   = 1,
+    MACOS   = 2,
+    WINDOWS = 3,
+    ANDROID = 4,
+    OTHER   = 255,
+};
+
+#define DEFAULT_CTRL_GUI_SWAP(os) ((os) == MACOS)
+
 /*==============================================================================
  *  Data Structures
  *==============================================================================*/
@@ -47,5 +57,6 @@ typedef struct {
     uint8_t os;                // Operating system on this output
     uint8_t pos;               // Screen position on this output
     uint8_t mouse_park_pos;    // Where the mouse goes after switch
+    uint8_t swap_ctrl_gui;     // Emit physical Ctrl as GUI and GUI as Ctrl
     screensaver_t screensaver; // Screensaver parameters for this output
 } output_t;

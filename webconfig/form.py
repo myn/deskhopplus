@@ -112,6 +112,7 @@ OUTPUT_ = [
     FormField(10, "Only If Inactive", None, {}, "uint8", "checkbox"),
     FormField(11, "Idle Time (μs)", None, {}, "uint64"),
     FormField(12, "Max Time (μs)", None, {}, "uint64"),
+    FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
 ]
 
 def generate_output(base, data):

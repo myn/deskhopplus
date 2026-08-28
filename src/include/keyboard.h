@@ -13,6 +13,7 @@
 
 #include "structs.h"
 #include "dh_keyboard_transport.h"
+#include "dh_keyboard_output.h"
 #include "hid_parser.h"
 
 /*==============================================================================
@@ -36,6 +37,7 @@ void prepare_hotkeys(const dh_hotkey_t bindings[DH_HOTKEY_ACTION_COUNT]);
 void     update_kbd_state(device_t *, hid_keyboard_report_t *, uint8_t);
 void     update_remote_kbd_state(device_t *, hid_keyboard_report_t *);
 void     combine_kbd_states(device_t *, hid_keyboard_report_t *);
+void     combine_local_kbd_states(device_t *, hid_keyboard_report_t *);
 
 /*==============================================================================
  *  Keyboard Report Processing
@@ -46,6 +48,7 @@ void     process_keyboard_report(uint8_t *, int, uint8_t, hid_interface_t *);
 void     process_system_report(uint8_t *, int, uint8_t, hid_interface_t *);
 void     queue_cc_packet(uint8_t *, device_t *);
 void     queue_kbd_report(hid_keyboard_report_t *, device_t *);
+void     output_keyboard_report(const hid_keyboard_report_t *, dh_keyboard_provenance, device_t *);
 bool     queue_remote_keyboard_report(const hid_keyboard_report_t *, dh_keyboard_provenance);
 void     queue_system_packet(uint8_t *, device_t *);
 void     release_all_keys(device_t *);

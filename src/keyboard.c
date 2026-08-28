@@ -10,6 +10,7 @@
  */
 
 #include "main.h"
+#include "core/dh_keyboard_output.h"
 
 /* ==================================================== *
  * Hotkeys to trigger actions via the keyboard.
@@ -121,8 +122,7 @@ void release_all_keys(device_t *state) {
 }
 
 
-/* Combine all keyboard states into a single report */
-void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report) {
+void combine_local_kbd_states(device_t *state, hid_keyboard_report_t *combined_report) {
     memset(combined_report, 0, sizeof(hid_keyboard_report_t));
 
     /* Combine all local keyboards up to max_kbd_idx */
@@ -130,6 +130,11 @@ void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report)
         combined_report->modifier |= state->local_kbd_states[i].modifier;
         add_keys(combined_report, &state->local_kbd_states[i]);
     }
+}
+
+/* Combine all keyboard states into a single report */
+void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report) {
+    combine_local_kbd_states(state, combined_report);
     
     /* Add remote keyboard */
     combined_report->modifier |= state->remote_kbd_state.modifier;
@@ -175,6 +180,15 @@ void queue_kbd_report(hid_keyboard_report_t *report, device_t *state) {
     queue_try_add(&state->kbd_queue, report);
 }
 
+void output_keyboard_report(const hid_keyboard_report_t *report,
+                            dh_keyboard_provenance provenance, device_t *state) {
+    hid_keyboard_report_t emitted_report;
+    dh_keyboard_output_prepare((const uint8_t *)report, provenance,
+                               state->config.output[BOARD_ROLE].swap_ctrl_gui,
+                               (uint8_t *)&emitted_report);
+    queue_kbd_report(&emitted_report, state);
+}
+
 bool queue_remote_keyboard_report(const hid_keyboard_report_t *report,
                                   dh_keyboard_provenance provenance) {
     uint8_t payload[DH_KEYBOARD_REPORT_LENGTH];
@@ -191,7 +205,7 @@ void send_key(hid_keyboard_report_t *report, device_t *state) {
 
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
         /* Queue the combined report */
-        queue_kbd_report(&combined_report, state);
+        output_keyboard_report(&combined_report, DH_KEYBOARD_PHYSICAL, state);
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
         /* Send the combined report to ensure all keys are included */

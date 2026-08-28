@@ -200,19 +200,24 @@ void handle_keyboard_uart_msg(uart_packet_t *packet, device_t *state) {
     hid_keyboard_report_t *report = (hid_keyboard_report_t *)payload;
     hid_keyboard_report_t combined_report;
 
-    /* Provenance is known here, before emission, so the remap seam can bypass
-       synthesized reports. Both kinds still follow the existing state merge:
-       a lock chord must not release keys held on this board. */
-    (void)provenance;
-
     /* Update the keyboard state for the remote device  */
     update_remote_kbd_state(state, report);
 
-    /* Create a combined report from all device states */
-    combine_kbd_states(state, &combined_report);
-
-    /* Queue the combined report */
-    queue_kbd_report(&combined_report, state);
+    if (provenance == DH_KEYBOARD_SYNTHESIZED) {
+        /* Preserve the provenance of both halves of this full-state snapshot:
+           local physical modifiers are transformed, the injected lock chord
+           is not. */
+        hid_keyboard_report_t local_report;
+        combine_local_kbd_states(state, &local_report);
+        dh_keyboard_output_merge((const uint8_t *)&local_report,
+                                 (const uint8_t *)report,
+                                 state->config.output[BOARD_ROLE].swap_ctrl_gui,
+                                 (uint8_t *)&combined_report);
+        queue_kbd_report(&combined_report, state);
+    } else {
+        combine_kbd_states(state, &combined_report);
+        output_keyboard_report(&combined_report, provenance, state);
+    }
     state->last_activity[BOARD_ROLE] = time_us_64();
 }
 

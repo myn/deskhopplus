@@ -63,6 +63,9 @@ if __name__ == "__main__":
         named_keys_json=json.dumps(named_keys, separators=(",", ":")),
         chord_capacity=chord_capacity,
     )
+    # Jinja preserves indentation on control-only lines. Keep the generated
+    # artifact compliant with the repository's no-trailing-whitespace rule.
+    webpage = "\n".join(line.rstrip() for line in webpage.split("\n"))
 
     # Compress file and encode to base64
     encoded_data = {'payload': encode_file(webpage)}

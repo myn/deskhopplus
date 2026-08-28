@@ -36,6 +36,10 @@ add_executable(keyboard_transport_test keyboard_transport_test.c ${CORE}/dh_keyb
 target_include_directories(keyboard_transport_test PRIVATE ${CORE})
 add_test(NAME keyboard_transport_test COMMAND keyboard_transport_test)
 
+add_executable(keyboard_output_test keyboard_output_test.c ${CORE}/dh_keyboard_output.c)
+target_include_directories(keyboard_output_test PRIVATE ${CORE} ${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
+add_test(NAME keyboard_output_test COMMAND keyboard_output_test)
+
 add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
 target_include_directories(hotkey_test PRIVATE ${CORE})
 add_test(NAME hotkey_test COMMAND hotkey_test)
