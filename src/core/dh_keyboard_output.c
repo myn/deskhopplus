@@ -41,7 +41,12 @@ static void add_usage(uint8_t usage, uint8_t emitted[DH_KEYBOARD_REPORT_LENGTH])
         emitted[0] |= (uint8_t)(1u << (usage - 0xe0));
         return;
     }
-    if (usage == 0 || memchr(emitted + 2, usage, DH_KEYBOARD_REPORT_LENGTH - 2))
+    if (usage == 0)
+        return;
+    /* HID keyboard error usages fill every key slot deliberately. Collapsing
+       ErrorRollOver (0x01), POSTFail (0x02), or ErrorUndefined (0x03) would
+       turn the host-visible error report into an ordinary one-key report. */
+    if (usage > 0x03 && memchr(emitted + 2, usage, DH_KEYBOARD_REPORT_LENGTH - 2))
         return;
     uint8_t *slot = memchr(emitted + 2, 0, DH_KEYBOARD_REPORT_LENGTH - 2);
     if (slot)

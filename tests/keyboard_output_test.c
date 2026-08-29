@@ -136,6 +136,16 @@ static void test_collisions_deduplicate_and_capacity_drops_the_tail(void) {
     CHECK(memcmp(emitted, full_expected, sizeof(full_expected)) == 0);
 }
 
+static void test_error_rollover_remains_a_six_slot_error_report(void) {
+    const uint8_t rollover[DH_KEYBOARD_REPORT_LENGTH] = {
+        0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01};
+    uint8_t emitted[DH_KEYBOARD_REPORT_LENGTH] = {0};
+
+    dh_keyboard_output_prepare(rollover, DH_KEYBOARD_PHYSICAL, NULL, false, emitted);
+
+    CHECK(memcmp(emitted, rollover, sizeof(rollover)) == 0);
+}
+
 static void test_profile_changes_are_applied_to_the_next_snapshot(void) {
     const uint8_t held[DH_KEYBOARD_REPORT_LENGTH] = {0x00, 0x00, 0x39};
     const dh_keymap_profile_t first = {
@@ -207,6 +217,7 @@ int main(void) {
     test_overrides_cross_keycode_and_modifier_classes();
     test_passthrough_precedes_override_and_swap();
     test_collisions_deduplicate_and_capacity_drops_the_tail();
+    test_error_rollover_remains_a_six_slot_error_report();
     test_profile_changes_are_applied_to_the_next_snapshot();
     test_shared_inputs_match_mkroamers_original_mapper();
     if (failures == 0)
