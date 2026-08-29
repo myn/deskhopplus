@@ -40,6 +40,19 @@ add_executable(keyboard_output_test keyboard_output_test.c ${CORE}/dh_keyboard_o
 target_include_directories(keyboard_output_test PRIVATE ${CORE} ${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
 add_test(NAME keyboard_output_test COMMAND keyboard_output_test)
 
+add_executable(mouse_layout_test mouse_layout_test.c ${CORE}/dh_mouse_layout.c)
+target_include_directories(mouse_layout_test PRIVATE ${CORE})
+add_test(NAME mouse_layout_test COMMAND mouse_layout_test)
+
+add_executable(mouse_seam_test mouse_seam_test.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c ${CORE}/dh_mouse_layout.c)
+target_include_directories(mouse_seam_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs ${CORE}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
+if(NOT MSVC)
+  target_link_libraries(mouse_seam_test PRIVATE m)
+endif()
+add_test(NAME mouse_seam_test COMMAND mouse_seam_test)
+
 add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
 target_include_directories(hotkey_test PRIVATE ${CORE})
 add_test(NAME hotkey_test COMMAND hotkey_test)
@@ -51,6 +64,9 @@ add_test(NAME config_text_test COMMAND config_text_test)
 find_program(NODE_EXECUTABLE node REQUIRED)
 add_test(NAME webconfig_keymap_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_keymap_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+add_test(NAME webconfig_layout_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_layout_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
 
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)

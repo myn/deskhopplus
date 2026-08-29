@@ -50,8 +50,10 @@
  *      behavior.
  *  13: each output gained its fixed-size remap profile (#26): 32 overrides
  *      and 16 passthrough usages. The profile changes the stored layout.
+ *  14: each output's single screen position became independent chain and
+ *      border directions (#24). Old bytes cannot express the split.
  */
-#define CURRENT_CONFIG_VERSION 13
+#define CURRENT_CONFIG_VERSION 14
 
 typedef struct {
     uint32_t magic_header;

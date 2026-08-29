@@ -222,8 +222,8 @@ static void test_complete_hotkey_table_fits_the_config_sector(void) {
 }
 
 static void test_keymap_profiles_survive_persistence(void) {
-    CHECK(CURRENT_CONFIG_VERSION == 13, "keymaps",
-          "the stored layout changed without the issue #26 version bump");
+    CHECK(CURRENT_CONFIG_VERSION >= 13, "keymaps",
+          "the keymap profile predates the issue #26 config version");
     CHECK(sizeof(((output_t *)0)->keymap.overrides) / sizeof(dh_key_override_t) == 32,
           "keymaps", "an output does not hold 32 overrides");
     CHECK(sizeof(((output_t *)0)->keymap.passthrough) == 16,
@@ -253,6 +253,18 @@ static void test_keymap_profiles_survive_persistence(void) {
           "keymaps", "output B profile changed on reload");
 }
 
+static void test_layout_directions_require_the_new_config_version(void) {
+    CHECK(CURRENT_CONFIG_VERSION == 14, "layout",
+          "the chain-axis/border-direction layout did not bump stored config version");
+
+    output_t output = {0};
+    output.chain_direction = DH_DIRECTION_RIGHT;
+    output.border_direction = DH_DIRECTION_LEFT;
+    CHECK(output.chain_direction == DH_DIRECTION_RIGHT &&
+              output.border_direction == DH_DIRECTION_LEFT, "layout",
+          "an output did not retain its independent layout directions");
+}
+
 int main(void) {
     test_a_sealed_config_validates();
     test_every_payload_byte_is_covered();
@@ -263,6 +275,7 @@ int main(void) {
     test_the_clipboard_toggles_fit_the_padding();
     test_complete_hotkey_table_fits_the_config_sector();
     test_keymap_profiles_survive_persistence();
+    test_layout_directions_require_the_new_config_version();
 
     if (failures) {
         printf("%d config check(s) failed\n", failures);

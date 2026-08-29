@@ -18,6 +18,7 @@ class FormField:
     action: int | None = None
     keymap_kind: str | None = None
     keymap_output: int | None = None
+    output_keys: tuple[int, int] | None = None
 
 SHORTCUTS = {
     0x73: "None",
@@ -110,7 +111,11 @@ OUTPUT_ = [
     FormField(4, "Border Top", None, {}, "int32"),
     FormField(5, "Border Bottom", None, {}, "int32"),
     FormField(6, "Operating System", 1, {1: "Linux", 2: "MacOS", 3: "Windows", 4: "Android", 255: "Other"}, "uint8"),
-    FormField(7, "Screen Position", 1, {1: "Left", 2: "Right"}, "uint8"),
+    FormField(7, "Border Direction", 1,
+              {1: "Left", 2: "Right", 4: "Top", 5: "Bottom"}, "uint8"),
+    FormField(0, "Chain Direction", 2,
+              {1: "Left", 2: "Right", 4: "Top", 5: "Bottom"}, "uint8",
+              output_keys=(98, 99)),
     FormField(8, "Cursor Park Position", 0, {0: "Top", 1: "Bottom", 3: "Previous"}, "uint8"),
     FormField(1003, "Screensaver", elem="label"),
     FormField(9, "Mode", 0, {0: "Disabled", 1: "Pong", 2: "Jitter"}, "uint8"),
@@ -126,7 +131,7 @@ def generate_output(base, data, output_index=None):
     output = [
         {
             "name": field.name,
-            "key": base + field.offset,
+            "key": field.output_keys[output_index] if field.output_keys else base + field.offset,
             "default": field.default,
             "values": field.values,
             "type": field.data_type,

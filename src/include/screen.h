@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "dh_keymap.h"
+#include "dh_mouse_layout.h"
 
 
 /*==============================================================================
@@ -57,7 +58,8 @@ typedef struct {
     int32_t speed_y;           // Mouse speed per output, in direction Y
     border_size_t border;      // Screen border size/offset to keep cursor at same height when switching
     uint8_t os;                // Operating system on this output
-    uint8_t pos;               // Screen position on this output
+    uint8_t chain_direction;  // dh_direction_t in which screen index increases
+    uint8_t border_direction; // dh_direction_t toward the other computer
     uint8_t mouse_park_pos;    // Where the mouse goes after switch
     uint8_t swap_ctrl_gui;     // Emit physical Ctrl as GUI and GUI as Ctrl
     dh_keymap_profile_t keymap; // Physical-key transform for this output

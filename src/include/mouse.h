@@ -24,6 +24,10 @@ void      parse_report_descriptor(hid_interface_t *, uint8_t const *, int);
  *  Mouse Report Handling
  *==============================================================================*/
 void process_mouse_report(uint8_t *, int, uint8_t, hid_interface_t *);
+enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
+void do_screen_switch(device_t *, int);
+void switch_to_another_pc(device_t *, output_t *, int, int);
+void switch_virtual_desktop(device_t *, output_t *, int, int);
 void queue_mouse_report(mouse_report_t *, device_t *);
 bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_t wheel, int8_t pan);
 void output_mouse_report(mouse_report_t *, device_t *);

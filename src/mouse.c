@@ -10,140 +10,8 @@
  */
 
 #include "main.h"
-#include <math.h>
-
 #define MACOS_SWITCH_MOVE_X 10
 #define MACOS_SWITCH_MOVE_COUNT 5
-#define ACCEL_POINTS 7
-
-uint16_t get_jump_threshold(output_t *output, enum screen_pos_e direction) {
-    const uint16_t NO_JUMP_THRESHOLD = 0;
-
-    /* If on non-main local screen, every possible switch is local */
-    if (output->screen_index > 1)
-        return NO_JUMP_THRESHOLD;
-
-    /* If on main screen but going away from the border, switch is local */
-    if (output->pos == direction && output->screen_index == 1)
-        return NO_JUMP_THRESHOLD;
-
-    /* ... in all other cases, switch is non-local (jump to another pc) */
-    return global_state.config.jump_threshold;
-}
-
-/* Check if our upcoming mouse movement would result in having to switch outputs */
-enum screen_pos_e is_screen_switch_needed(output_t *output, int position, int offset) {
-    enum screen_pos_e direction = (offset < 0) ? LEFT : RIGHT;
-
-    /* No position offset implies no switch needed. */
-    if (offset == 0)
-        return NONE;
-
-    /* Local switches (virtual desktop changes) have no gap, only cross-output jumps use threshold */
-    uint16_t threshold = get_jump_threshold(output, direction);
-
-    if (position + offset < MIN_SCREEN_COORD - threshold)
-        return LEFT;
-
-    if (position + offset > MAX_SCREEN_COORD + threshold)
-        return RIGHT;
-
-    return NONE;
-}
-
-/* Move mouse coordinate 'position' by 'offset', but don't fall off the screen */
-int32_t move_and_keep_on_screen(int position, int offset) {
-    /* Lowest we can go is 0 */
-    if (position + offset < MIN_SCREEN_COORD)
-        return MIN_SCREEN_COORD;
-
-    /* Highest we can go is MAX_SCREEN_COORD */
-    else if (position + offset > MAX_SCREEN_COORD)
-        return MAX_SCREEN_COORD;
-
-    /* We're still on screen, all good */
-    return position + offset;
-}
-
-/* Implement basic mouse acceleration based on actual 2D movement magnitude.
-   Returns the acceleration factor to apply to both x and y components. */
-float calculate_mouse_acceleration_factor(int32_t offset_x, int32_t offset_y) {
-    const struct curve {
-        int value;
-        float factor;
-    } acceleration[ACCEL_POINTS] = {
-                   // 4 |                                        *
-        {2, 1},    //   |                                  *
-        {5, 1.1},  // 3 |
-        {15, 1.4}, //   |                       *
-        {30, 1.9}, // 2 |                *
-        {45, 2.6}, //   |        *
-        {60, 3.4}, // 1 |  *
-        {70, 4.0}, //    -------------------------------------------
-    };             //        10    20    30    40    50    60    70
-
-    if (offset_x == 0 && offset_y == 0)
-        return 1.0;
-
-    if (!global_state.config.enable_acceleration)
-        return 1.0;
-
-    // Calculate the 2D movement magnitude
-    const float movement_magnitude = sqrtf((float)(offset_x * offset_x) + (float)(offset_y * offset_y));
-
-    if (movement_magnitude <= acceleration[0].value)
-        return acceleration[0].factor;
-
-    if (movement_magnitude >= acceleration[ACCEL_POINTS-1].value)
-        return acceleration[ACCEL_POINTS-1].factor;
-
-    const struct curve *lower = NULL;
-    const struct curve *upper = NULL;
-
-    for (int i = 0; i < ACCEL_POINTS-1; i++) {
-        if (movement_magnitude < acceleration[i + 1].value) {
-            lower = &acceleration[i];
-            upper = &acceleration[i + 1];
-            break;
-        }
-    }
-
-    // Should never happen, but just in case
-    if (lower == NULL || upper == NULL)
-        return 1.0;
-
-    const float interpolation_pos = (movement_magnitude - lower->value) /
-                                  (upper->value - lower->value);
-
-    return lower->factor + interpolation_pos * (upper->factor - lower->factor);
-}
-
-/* Returns LEFT if need to jump left, RIGHT if right, NONE otherwise */
-enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values) {
-    output_t *current    = &state->config.output[state->active_output];
-    uint8_t reduce_speed = 0;
-
-    /* Check if we are configured to move slowly */
-    if (state->mouse_zoom)
-        reduce_speed = MOUSE_ZOOM_SCALING_FACTOR;
-
-    /* Calculate movement */
-    float acceleration_factor = calculate_mouse_acceleration_factor(values->move_x, values->move_y);
-    int offset_x = round(values->move_x * acceleration_factor * (current->speed_x >> reduce_speed));
-    int offset_y = round(values->move_y * acceleration_factor * (current->speed_y >> reduce_speed));
-
-    /* Determine if our upcoming movement would stay within the screen */
-    enum screen_pos_e switch_direction = is_screen_switch_needed(current, state->pointer_x, offset_x);
-
-    /* Update movement */
-    state->pointer_x = move_and_keep_on_screen(state->pointer_x, offset_x);
-    state->pointer_y = move_and_keep_on_screen(state->pointer_y, offset_y);
-
-    /* Update buttons state */
-    state->mouse_buttons = values->buttons;
-
-    return switch_direction;
-}
 
 /* If we are active output, queue packet to mouse queue, else send them through UART */
 void output_mouse_report(mouse_report_t *report, device_t *state) {
@@ -190,9 +58,8 @@ void switch_to_another_pc(
     device_t *state, output_t *output, int output_to, int direction) {
     uint8_t *mouse_park_pos = &state->config.output[state->active_output].mouse_park_pos;
 
-    int16_t mouse_y = (*mouse_park_pos == 0) ? MIN_SCREEN_COORD : /* Top */
-                      (*mouse_park_pos == 1) ? MAX_SCREEN_COORD : /* Bottom */
-                                               state->pointer_y;  /* Previous */
+    int16_t mouse_y = (int16_t)dh_mouse_park_coordinate(
+        *mouse_park_pos, state->pointer_y, MIN_SCREEN_COORD, MAX_SCREEN_COORD);
 
     mouse_report_t hidden_pointer = {.y = mouse_y, .x = MAX_SCREEN_COORD};
 
@@ -255,40 +122,6 @@ void switch_virtual_desktop(device_t *state, output_t *output, int new_index, in
 
     state->pointer_x       = (direction == RIGHT) ? MIN_SCREEN_COORD : MAX_SCREEN_COORD;
     output->screen_index = new_index;
-}
-
-/*                               BORDER
-                                   |
-       .---------.    .---------.  |  .---------.    .---------.    .---------.
-      ||    B2   ||  ||    B1   || | ||    A1   ||  ||    A2   ||  ||    A3   ||   (output, index)
-      ||  extra  ||  ||   main  || | ||   main  ||  ||  extra  ||  ||  extra  ||   (main or extra)
-       '---------'    '---------'  |  '---------'    '---------'    '---------'
-          )___(          )___(     |     )___(          )___(          )___(
-*/
-void do_screen_switch(device_t *state, int direction) {
-    output_t *output = &state->config.output[state->active_output];
-
-    /* No switching allowed if explicitly disabled or in gaming mode */
-    if (state->switch_lock || state->gaming_mode)
-        return;
-
-    /* We want to jump in the direction of the other computer */
-    if (output->pos != direction) {
-        if (output->screen_index == 1) { /* We are at the border -> switch outputs */
-            /* No switching allowed if mouse button is held. Should only apply to the border! */
-            if (state->mouse_buttons)
-                return;
-
-            switch_to_another_pc(state, output, 1 - state->active_output, direction);
-        }
-        /* If here, this output has multiple desktops and we are not on the main one */
-        else
-            switch_virtual_desktop(state, output, output->screen_index - 1, direction);
-    }
-
-    /* We want to jump away from the other computer, only possible if there is another screen to jump to */
-    else if (output->screen_index < output->screen_count)
-        switch_virtual_desktop(state, output, output->screen_index + 1, direction);
 }
 
 static inline bool extract_value(bool uses_id, int32_t *dst, report_val_t *src, uint8_t *raw_report, int len) {

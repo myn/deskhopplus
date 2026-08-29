@@ -25,7 +25,7 @@ const field_map_t api_field_map[] = {
     { 14, false, INT32,  4, offsetof(device_t, config.output[0].border.top) },
     { 15, false, INT32,  4, offsetof(device_t, config.output[0].border.bottom) },
     { 16, false, UINT8,  1, offsetof(device_t, config.output[0].os) },
-    { 17, false, UINT8,  1, offsetof(device_t, config.output[0].pos) },
+    { 17, false, UINT8,  1, offsetof(device_t, config.output[0].border_direction) },
     { 18, false, UINT8,  1, offsetof(device_t, config.output[0].mouse_park_pos) },
     { 19, false, UINT8,  1, offsetof(device_t, config.output[0].screensaver.mode) },
     { 20, false, UINT8,  1, offsetof(device_t, config.output[0].screensaver.only_if_inactive) },
@@ -46,7 +46,7 @@ const field_map_t api_field_map[] = {
     { 44, false, INT32,  4, offsetof(device_t, config.output[1].border.top) },
     { 45, false, INT32,  4, offsetof(device_t, config.output[1].border.bottom) },
     { 46, false, UINT8,  1, offsetof(device_t, config.output[1].os) },
-    { 47, false, UINT8,  1, offsetof(device_t, config.output[1].pos) },
+    { 47, false, UINT8,  1, offsetof(device_t, config.output[1].border_direction) },
     { 48, false, UINT8,  1, offsetof(device_t, config.output[1].mouse_park_pos) },
     { 49, false, UINT8,  1, offsetof(device_t, config.output[1].screensaver.mode) },
     { 50, false, UINT8,  1, offsetof(device_t, config.output[1].screensaver.only_if_inactive) },
@@ -159,6 +159,11 @@ const field_map_t api_field_map[] = {
     { 95, true,  UINT32, 4, offsetof(device_t, _channel_relay_orphans) },
     { 96, true,  UINT32, 4, offsetof(device_t, _channel_relay_truncated) },
     { 97, true,  UINT32, 4, offsetof(device_t, _channel_relay_refused) },
+
+    /* Keymap chunks occupy 24..39 and 54..69, so the chain directions use
+       the next two free API ids instead of pretending each output block is contiguous. */
+    { 98, false, UINT8, 1, offsetof(device_t, config.output[0].chain_direction) },
+    { 99, false, UINT8, 1, offsetof(device_t, config.output[1].chain_direction) },
 
 #define DH_HOTKEY_ACTION(symbol, name) \
     {DH_HOTKEY_CONFIG_FIELD_BASE + 2 * DH_HOTKEY_ACTION_##symbol, false, UINT64, 6, \

@@ -176,10 +176,12 @@ typedef struct {
 } task_t;
 
 enum screen_pos_e {
-    NONE   = 0,
-    LEFT   = 1,
-    RIGHT  = 2,
+    NONE   = DH_DIRECTION_NONE,
+    LEFT   = DH_DIRECTION_LEFT,
+    RIGHT  = DH_DIRECTION_RIGHT,
     MIDDLE = 3,
+    TOP    = DH_DIRECTION_TOP,
+    BOTTOM = DH_DIRECTION_BOTTOM,
 };
 
 enum screensaver_mode_e {
