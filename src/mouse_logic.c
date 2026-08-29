@@ -18,17 +18,36 @@ uint16_t get_jump_threshold(output_t *output, enum screen_pos_e direction) {
                                        global_state.config.jump_threshold);
 }
 
-enum screen_pos_e is_screen_switch_needed(output_t *output, int position, int offset) {
-    enum screen_pos_e direction = (offset < 0) ? LEFT : RIGHT;
-    if (offset == 0)
-        return NONE;
+typedef struct {
+    enum screen_pos_e direction;
+    int overshoot;
+} screen_boundary_crossing_t;
 
-    uint16_t threshold = get_jump_threshold(output, direction);
-    if (position + offset < MIN_SCREEN_COORD - threshold)
-        return LEFT;
-    if (position + offset > MAX_SCREEN_COORD + threshold)
-        return RIGHT;
-    return NONE;
+static screen_boundary_crossing_t screen_boundary_crossing(
+    output_t *output,
+    int position,
+    int offset,
+    enum screen_pos_e negative_direction,
+    enum screen_pos_e positive_direction) {
+    const enum screen_pos_e direction =
+        (offset < 0) ? negative_direction : positive_direction;
+    if (offset == 0)
+        return (screen_boundary_crossing_t){.direction = NONE};
+
+    const int threshold = get_jump_threshold(output, direction);
+    const int next_position = position + offset;
+
+    if (next_position < MIN_SCREEN_COORD - threshold)
+        return (screen_boundary_crossing_t){
+            .direction = negative_direction,
+            .overshoot = MIN_SCREEN_COORD - next_position,
+        };
+    if (next_position > MAX_SCREEN_COORD + threshold)
+        return (screen_boundary_crossing_t){
+            .direction = positive_direction,
+            .overshoot = next_position - MAX_SCREEN_COORD,
+        };
+    return (screen_boundary_crossing_t){.direction = NONE};
 }
 
 int32_t move_and_keep_on_screen(int position, int offset) {
@@ -76,7 +95,12 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
     float acceleration = calculate_mouse_acceleration_factor(values->move_x, values->move_y);
     int offset_x = round(values->move_x * acceleration * (current->speed_x >> reduce_speed));
     int offset_y = round(values->move_y * acceleration * (current->speed_y >> reduce_speed));
-    enum screen_pos_e direction = is_screen_switch_needed(current, state->pointer_x, offset_x);
+    const screen_boundary_crossing_t horizontal =
+        screen_boundary_crossing(current, state->pointer_x, offset_x, LEFT, RIGHT);
+    const screen_boundary_crossing_t vertical =
+        screen_boundary_crossing(current, state->pointer_y, offset_y, TOP, BOTTOM);
+    const enum screen_pos_e direction =
+        vertical.overshoot > horizontal.overshoot ? vertical.direction : horizontal.direction;
 
     state->pointer_x = move_and_keep_on_screen(state->pointer_x, offset_x);
     state->pointer_y = move_and_keep_on_screen(state->pointer_y, offset_y);

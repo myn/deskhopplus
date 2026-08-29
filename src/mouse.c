@@ -57,16 +57,30 @@ int16_t scale_y_coordinate(int screen_from, int screen_to, device_t *state) {
 void switch_to_another_pc(
     device_t *state, output_t *output, int output_to, int direction) {
     uint8_t *mouse_park_pos = &state->config.output[state->active_output].mouse_park_pos;
-
-    int16_t mouse_y = (int16_t)dh_mouse_park_coordinate(
-        *mouse_park_pos, state->pointer_y, MIN_SCREEN_COORD, MAX_SCREEN_COORD);
-
-    mouse_report_t hidden_pointer = {.y = mouse_y, .x = MAX_SCREEN_COORD};
+    const bool vertical = dh_direction_is_vertical((dh_direction_t)direction);
+    const dh_mouse_coordinates_t pointer = {.x = state->pointer_x, .y = state->pointer_y};
+    const dh_mouse_coordinates_t hidden = dh_mouse_hidden_coordinates(
+        (dh_direction_t)direction,
+        *mouse_park_pos,
+        pointer,
+        MIN_SCREEN_COORD,
+        MAX_SCREEN_COORD);
+    mouse_report_t hidden_pointer = {
+        .x = (int16_t)hidden.x,
+        .y = (int16_t)hidden.y,
+    };
 
     output_mouse_report(&hidden_pointer, state);
     set_active_output(state, output_to);
-    state->pointer_x = (direction == LEFT) ? MAX_SCREEN_COORD : MIN_SCREEN_COORD;
-    state->pointer_y = scale_y_coordinate(output->number, 1 - output->number, state);
+    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
+        (dh_direction_t)direction,
+        pointer,
+        MIN_SCREEN_COORD,
+        MAX_SCREEN_COORD);
+    state->pointer_x = (int16_t)entry.x;
+    state->pointer_y = (int16_t)entry.y;
+    if (!vertical)
+        state->pointer_y = scale_y_coordinate(output->number, 1 - output->number, state);
 }
 
 void switch_virtual_desktop_macos(device_t *state, int direction) {
@@ -77,16 +91,23 @@ void switch_virtual_desktop_macos(device_t *state, int direction) {
      * 2. Send relative mouse movement one or two pixels in the direction of movement to get
      *    the cursor onto the next screen
      */
+    const dh_mouse_coordinates_t edge = dh_mouse_edge_coordinates(
+        (dh_direction_t)direction,
+        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
+        MIN_SCREEN_COORD,
+        MAX_SCREEN_COORD);
     mouse_report_t edge_position = {
-        .x = (direction == LEFT) ? MIN_SCREEN_COORD : MAX_SCREEN_COORD,
-        .y = MAX_SCREEN_COORD / 2,
+        .x = (int16_t)edge.x,
+        .y = (int16_t)edge.y,
         .mode = ABSOLUTE,
         .buttons = state->mouse_buttons,
     };
 
-    uint16_t move = (direction == LEFT) ? -MACOS_SWITCH_MOVE_X : MACOS_SWITCH_MOVE_X;
+    const dh_mouse_coordinates_t nudge =
+        dh_mouse_nudge((dh_direction_t)direction, MACOS_SWITCH_MOVE_X);
     mouse_report_t move_relative_one = {
-        .x = move,
+        .x = (int16_t)nudge.x,
+        .y = (int16_t)nudge.y,
         .mode = RELATIVE,
         /* Force buttons to 0 for relative movement to avoid duplicating the button 
            press state, which would leave the relative HID mouse permanently stuck 
@@ -120,7 +141,13 @@ void switch_virtual_desktop(device_t *state, output_t *output, int new_index, in
             break;
     }
 
-    state->pointer_x       = (direction == RIGHT) ? MIN_SCREEN_COORD : MAX_SCREEN_COORD;
+    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
+        (dh_direction_t)direction,
+        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
+        MIN_SCREEN_COORD,
+        MAX_SCREEN_COORD);
+    state->pointer_x = (int16_t)entry.x;
+    state->pointer_y = (int16_t)entry.y;
     output->screen_index = new_index;
 }
 

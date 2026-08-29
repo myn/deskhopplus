@@ -64,13 +64,46 @@ static void test_chain_direction_is_independent_of_the_border(void) {
               DH_MOUSE_TRANSITION_CHAIN_BACK,
           "independent_axes", "chain-back movement was derived from the border direction");
     CHECK(dh_mouse_transition_for(&perpendicular, 2, 2, DH_DIRECTION_TOP) ==
-              DH_MOUSE_TRANSITION_NONE,
-          "independent_axes", "perpendicular crossing behavior arrived before issue #28");
+              DH_MOUSE_TRANSITION_OUTPUT,
+          "independent_axes", "perpendicular seam did not cross from every monitor");
+
+    const dh_mouse_layout_t vertical_parallel = {
+        .chain_direction = DH_DIRECTION_BOTTOM,
+        .border_direction = DH_DIRECTION_TOP,
+    };
+    CHECK(dh_mouse_transition_for(&vertical_parallel, 2, 2, DH_DIRECTION_TOP) ==
+              DH_MOUSE_TRANSITION_CHAIN_BACK,
+          "parallel_axes", "parallel seam crossed before reaching the adjacent monitor");
+    CHECK(dh_mouse_transition_for(&vertical_parallel, 1, 2, DH_DIRECTION_TOP) ==
+              DH_MOUSE_TRANSITION_OUTPUT,
+          "parallel_axes", "parallel seam did not cross from its adjacent monitor");
+}
+
+static void test_vertical_coordinate_actions_use_the_y_axis(void) {
+    dh_mouse_coordinates_t coordinates = dh_mouse_hidden_coordinates(
+        DH_DIRECTION_TOP, 2, (dh_mouse_coordinates_t){.x = 1234, .y = 5678}, 0, 32767);
+    CHECK(coordinates.x == 1234 && coordinates.y == 32767,
+          "vertical_parking", "vertical crossing did not park using the live X coordinate");
+
+    coordinates = dh_mouse_entry_coordinates(
+        DH_DIRECTION_TOP, (dh_mouse_coordinates_t){.x = 1234, .y = 5678}, 0, 32767);
+    CHECK(coordinates.x == 1234 && coordinates.y == 32767,
+          "vertical_entry", "top crossing did not enter through the target's bottom edge");
+
+    coordinates = dh_mouse_edge_coordinates(
+        DH_DIRECTION_BOTTOM, (dh_mouse_coordinates_t){.x = 1234, .y = 5678}, 0, 32767);
+    CHECK(coordinates.x == 1234 && coordinates.y == 32767,
+          "vertical_desktop", "bottom desktop switch did not use the live X coordinate");
+
+    coordinates = dh_mouse_nudge(DH_DIRECTION_TOP, 10);
+    CHECK(coordinates.x == 0 && coordinates.y == -10,
+          "vertical_desktop", "top desktop switch did not nudge upward on Y");
 }
 
 int main(void) {
     test_side_by_side_layout_preserves_current_switching();
     test_chain_direction_is_independent_of_the_border();
+    test_vertical_coordinate_actions_use_the_y_axis();
 
     if (failures != 0)
         return 1;

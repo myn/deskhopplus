@@ -46,6 +46,95 @@ static device_t side_by_side_state(void) {
     return state;
 }
 
+static device_t stacked_computers_state(void) {
+    device_t state = side_by_side_state();
+    state.pointer_x = 100;
+    state.pointer_y = 10;
+    state.config.output[0].screen_index = 2;
+    state.config.output[0].border_direction = DH_DIRECTION_TOP;
+    return state;
+}
+
+static void test_perpendicular_seam_crosses_from_any_monitor(void) {
+    device_t state = stacked_computers_state();
+    global_state = state;
+    mouse_values_t movement = {.move_y = -16};
+
+    enum screen_pos_e direction = update_mouse_position(&state, &movement);
+    CHECK(direction == TOP, "update_mouse_position did not detect the top seam");
+    CHECK(state.pointer_y == MIN_SCREEN_COORD, "update_mouse_position did not clamp Y");
+
+    output_switches = 0;
+    do_screen_switch(&state, direction);
+    CHECK(output_switches == 1 && state.active_output == 1,
+          "perpendicular seam did not cross from a non-primary monitor");
+
+    state = stacked_computers_state();
+    state.pointer_y = MAX_SCREEN_COORD - 10;
+    state.config.output[0].border_direction = DH_DIRECTION_BOTTOM;
+    global_state = state;
+    movement.move_y = 16;
+    direction = update_mouse_position(&state, &movement);
+    CHECK(direction == BOTTOM, "update_mouse_position did not detect the bottom seam");
+
+    output_switches = 0;
+    do_screen_switch(&state, direction);
+    CHECK(output_switches == 1 && state.active_output == 1,
+          "bottom seam did not cross from a non-primary monitor");
+}
+
+static void test_diagonal_push_uses_the_larger_overshoot(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_x = 2;
+    state.pointer_y = 2;
+    global_state = state;
+    mouse_values_t movement = {.move_x = -10, .move_y = -20};
+
+    enum screen_pos_e direction = update_mouse_position(&state, &movement);
+    CHECK(direction == TOP, "diagonal push did not choose the farther Y overshoot");
+
+    state.pointer_x = 2;
+    state.pointer_y = 2;
+    movement.move_x = -12;
+    movement.move_y = -14;
+    CHECK(update_mouse_position(&state, &movement) == TOP,
+          "jump threshold distorted the corner overshoot comparison");
+}
+
+static void test_vertical_seam_preserves_crossing_guards(void) {
+    device_t state = stacked_computers_state();
+
+    output_switches = 0;
+    state.switch_lock = true;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0, "switch lock allowed a vertical crossing");
+
+    state.switch_lock = false;
+    state.gaming_mode = true;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0, "gaming mode allowed a vertical crossing");
+
+    state.gaming_mode = false;
+    state.mouse_buttons = 1;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0, "held mouse button allowed a vertical crossing");
+}
+
+static void test_jump_threshold_uses_the_vertical_seam_axis(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_y = 10;
+    global_state = state;
+    mouse_values_t movement = {.move_y = -15};
+
+    CHECK(update_mouse_position(&state, &movement) == NONE,
+          "vertical crossing ignored the configured jump threshold");
+
+    state.pointer_y = 10;
+    movement.move_y = -16;
+    CHECK(update_mouse_position(&state, &movement) == TOP,
+          "vertical crossing did not trigger beyond the jump threshold");
+}
+
 static void test_update_and_switch_at_the_public_mouse_seam(void) {
     device_t state = side_by_side_state();
     global_state = state;
@@ -77,6 +166,10 @@ static void test_virtual_desktops_remain_local(void) {
 int main(void) {
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();
+    test_perpendicular_seam_crosses_from_any_monitor();
+    test_diagonal_push_uses_the_larger_overshoot();
+    test_vertical_seam_preserves_crossing_guards();
+    test_jump_threshold_uses_the_vertical_seam_axis();
     if (failures) return 1;
     printf("mouse_seam_test: all checks passed\n");
     return 0;

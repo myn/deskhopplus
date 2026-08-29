@@ -1,6 +1,7 @@
 /* Pure mouse-layout decisions shared by firmware and host tests (#24). */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef enum {
@@ -16,6 +17,11 @@ typedef struct {
     dh_direction_t border_direction;
 } dh_mouse_layout_t;
 
+typedef struct {
+    int32_t x;
+    int32_t y;
+} dh_mouse_coordinates_t;
+
 typedef enum {
     DH_MOUSE_TRANSITION_NONE = 0,
     DH_MOUSE_TRANSITION_OUTPUT,
@@ -24,6 +30,7 @@ typedef enum {
 } dh_mouse_transition_t;
 
 dh_direction_t dh_opposite_direction(dh_direction_t direction);
+bool dh_direction_is_vertical(dh_direction_t direction);
 
 dh_mouse_transition_t dh_mouse_transition_for(
     const dh_mouse_layout_t *layout,
@@ -41,3 +48,20 @@ uint16_t dh_mouse_jump_threshold_for(
 uint32_t dh_mouse_next_screen_index(dh_mouse_transition_t transition, uint32_t screen_index);
 int32_t dh_mouse_park_coordinate(
     uint8_t park_position, int32_t previous, int32_t minimum, int32_t maximum);
+dh_mouse_coordinates_t dh_mouse_hidden_coordinates(
+    dh_direction_t direction,
+    uint8_t park_position,
+    dh_mouse_coordinates_t pointer,
+    int32_t minimum,
+    int32_t maximum);
+dh_mouse_coordinates_t dh_mouse_entry_coordinates(
+    dh_direction_t direction,
+    dh_mouse_coordinates_t pointer,
+    int32_t minimum,
+    int32_t maximum);
+dh_mouse_coordinates_t dh_mouse_edge_coordinates(
+    dh_direction_t direction,
+    dh_mouse_coordinates_t pointer,
+    int32_t minimum,
+    int32_t maximum);
+dh_mouse_coordinates_t dh_mouse_nudge(dh_direction_t direction, int32_t distance);
