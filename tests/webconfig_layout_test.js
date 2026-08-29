@@ -28,4 +28,16 @@ for (const key of [98, 99]) {
   }
 }
 
+for (const [base, output] of [[140, "A"], [152, "B"]]) {
+  for (let segment = 0; segment < 4; segment++) {
+    for (let offset = 0; offset < 3; offset++) {
+      const key = base + segment * 3 + offset;
+      check(page.includes(`data-key="${key}"`),
+            `missing output ${output} seam segment field ${key}`);
+    }
+  }
+}
+
+check(page.includes("Seam ranges"), "missing seam-range UI heading");
+
 process.exit(failures === 0 ? 0 : 1);

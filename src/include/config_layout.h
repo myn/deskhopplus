@@ -52,8 +52,12 @@
  *      and 16 passthrough usages. The profile changes the stored layout.
  *  14: each output's single screen position became independent chain and
  *      border directions (#24). Old bytes cannot express the split.
+ *  15: each output gained four keyed, normalized seam ranges (#29).
  */
-#define CURRENT_CONFIG_VERSION 14
+#define CURRENT_CONFIG_VERSION 15
+
+_Static_assert(sizeof(dh_seam_range_t) == 6,
+               "dh_seam_range_t must contain no unnamed persisted padding");
 
 typedef struct {
     uint32_t magic_header;

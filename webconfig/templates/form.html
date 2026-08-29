@@ -11,6 +11,11 @@
 <label class="{{class}}"> {{ item.name }}{{ add }}</label>
 {% endmacro %}
 
+{% macro seam_input(key, type, minimum, maximum) %}
+<input class="api seam-input" type="number" data-type="{{ type }}" data-key="{{ key }}"
+  min="{{ minimum }}" max="{{ maximum }}" onchange="valueChangedHandler(this)" />
+{% endmacro %}
+
 {% block form_render %}
   {% if item.get("elem") == "hex_info" %}
     {{ label(item, add=':') }}
@@ -62,6 +67,14 @@
       <textarea class="keymap-text" rows="4" autocomplete="off"
                 placeholder="{% if item.keymap_kind == 'overrides' %}capslock=lctrl{% else %}capslock, f1{% endif %}"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
+    </div>
+
+  {% elif item.get("elem") == "seam_range" %}
+    <div class="clearfix seam-range">
+      <span>Segment {{ item.segment }}</span>
+      <label>Screen {{ seam_input(item.screen_key, 'uint8', 0, 3) }}</label>
+      <label>Start {{ seam_input(item.start_key, 'uint16', 0, 65535) }}</label>
+      <label>End {{ seam_input(item.end_key, 'uint16', 0, 65535) }}</label>
     </div>
 
   {% elif item.get("elem") == "range" %}

@@ -664,6 +664,21 @@ img {
   opacity: 0.5;
 }
 
+.seam-range {
+  display: grid;
+  grid-template-columns: 1fr repeat(3, minmax(8rem, 1fr));
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.seam-range label {
+  margin: 0;
+}
+
+.seam-range .seam-input {
+  width: 100%;
+}
+
 .dev-warning {
   color: #b0342b;
   font-weight: bold;

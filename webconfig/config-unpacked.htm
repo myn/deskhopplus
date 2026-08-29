@@ -673,6 +673,21 @@ img {
   opacity: 0.5;
 }
 
+.seam-range {
+  display: grid;
+  grid-template-columns: 1fr repeat(3, minmax(8rem, 1fr));
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.seam-range label {
+  margin: 0;
+}
+
+.seam-range .seam-input {
+  width: 100%;
+}
+
 .dev-warning {
   color: #b0342b;
   font-weight: bold;
@@ -763,6 +778,8 @@ img {
 
 
 
+
+
 <label class=""> Screen Count</label>
 
     <select class="api" data-type="uint32" data-key="11" required>
@@ -776,6 +793,8 @@ img {
     <option value="3">3</option>
 
     </select><br />
+
+
 
 
 
@@ -810,6 +829,8 @@ img {
     </form>
 
   </div>
+
+
 
 
 
@@ -859,7 +880,9 @@ img {
 
 
 
-<label class=""> Border Top</label>
+
+
+<label class=""> Legacy seam start</label>
 
 
 <input class="api" type="text" name="name14" data-type="int32" data-key="14"
@@ -880,12 +903,16 @@ img {
 
 
 
-<label class=""> Border Bottom</label>
+
+
+<label class=""> Legacy seam end</label>
 
 
 <input class="api" type="text" name="name15" data-type="int32" data-key="15"
   onchange="valueChangedHandler(this)"
   />
+
+
 
 
 
@@ -933,6 +960,8 @@ img {
 
 
 
+
+
 <label class=""> Border Direction</label>
 
     <select class="api" data-type="uint8" data-key="17" required>
@@ -948,6 +977,8 @@ img {
     <option value="5">Bottom</option>
 
     </select><br />
+
+
 
 
 
@@ -993,6 +1024,8 @@ img {
 
 
 
+
+
 <label class=""> Cursor Park Position</label>
 
     <select class="api" data-type="uint8" data-key="18" required>
@@ -1021,7 +1054,11 @@ img {
 
 
 
+
+
 <label class=""> Screensaver</label>
+
+
 
 
 
@@ -1065,6 +1102,8 @@ img {
 
 
 
+
+
   <div class="clearfix">
 
 <label class="label-inline"> Only If Inactive</label>
@@ -1075,6 +1114,8 @@ img {
   />
 
   </div>
+
+
 
 
 
@@ -1111,12 +1152,16 @@ img {
 
 
 
+
+
 <label class=""> Max Time (μs)</label>
 
 
 <input class="api" type="text" name="name22" data-type="uint64" data-key="22"
   onchange="valueChangedHandler(this)"
   />
+
+
 
 
 
@@ -1155,6 +1200,151 @@ img {
 
 
 
+
+
+
+<label class=""> Seam ranges</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 1</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="140"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="141"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="142"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 2</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="143"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="144"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="145"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 3</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="146"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="147"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="148"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 4</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="149"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="150"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="151"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     <div class="clearfix keymap-field" data-keymap-output="0"
          data-keymap-kind="overrides">
 
@@ -1164,6 +1354,8 @@ img {
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -1215,6 +1407,8 @@ img {
 
 
 
+
+
 <label class=""> Screen Count</label>
 
     <select class="api" data-type="uint32" data-key="41" required>
@@ -1228,6 +1422,8 @@ img {
     <option value="3">3</option>
 
     </select><br />
+
+
 
 
 
@@ -1262,6 +1458,8 @@ img {
     </form>
 
   </div>
+
+
 
 
 
@@ -1311,7 +1509,9 @@ img {
 
 
 
-<label class=""> Border Top</label>
+
+
+<label class=""> Legacy seam start</label>
 
 
 <input class="api" type="text" name="name44" data-type="int32" data-key="44"
@@ -1332,12 +1532,16 @@ img {
 
 
 
-<label class=""> Border Bottom</label>
+
+
+<label class=""> Legacy seam end</label>
 
 
 <input class="api" type="text" name="name45" data-type="int32" data-key="45"
   onchange="valueChangedHandler(this)"
   />
+
+
 
 
 
@@ -1385,6 +1589,8 @@ img {
 
 
 
+
+
 <label class=""> Border Direction</label>
 
     <select class="api" data-type="uint8" data-key="47" required>
@@ -1400,6 +1606,8 @@ img {
     <option value="5">Bottom</option>
 
     </select><br />
+
+
 
 
 
@@ -1445,6 +1653,8 @@ img {
 
 
 
+
+
 <label class=""> Cursor Park Position</label>
 
     <select class="api" data-type="uint8" data-key="48" required>
@@ -1473,7 +1683,11 @@ img {
 
 
 
+
+
 <label class=""> Screensaver</label>
+
+
 
 
 
@@ -1517,6 +1731,8 @@ img {
 
 
 
+
+
   <div class="clearfix">
 
 <label class="label-inline"> Only If Inactive</label>
@@ -1527,6 +1743,8 @@ img {
   />
 
   </div>
+
+
 
 
 
@@ -1563,12 +1781,16 @@ img {
 
 
 
+
+
 <label class=""> Max Time (μs)</label>
 
 
 <input class="api" type="text" name="name52" data-type="uint64" data-key="52"
   onchange="valueChangedHandler(this)"
   />
+
+
 
 
 
@@ -1607,6 +1829,151 @@ img {
 
 
 
+
+
+
+<label class=""> Seam ranges</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 1</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="152"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="153"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="154"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 2</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="155"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="156"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="157"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 3</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="158"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="159"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="160"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 4</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="161"
+  min="0" max="3" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="162"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="163"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     <div class="clearfix keymap-field" data-keymap-output="1"
          data-keymap-kind="overrides">
 
@@ -1616,6 +1983,8 @@ img {
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -1671,7 +2040,11 @@ img {
 
 
 
+
+
 <label class=""> Mouse</label>
+
+
 
 
 
@@ -1711,6 +2084,8 @@ img {
 
 
 
+
+
   <div class="clearfix">
 
 <label class="label-inline"> Enable Acceleration</label>
@@ -1721,6 +2096,8 @@ img {
   />
 
   </div>
+
+
 
 
 
@@ -1770,7 +2147,11 @@ img {
 
 
 
+
+
 <label class=""> Keyboard</label>
+
+
 
 
 
@@ -1810,6 +2191,8 @@ img {
 
 
 
+
+
   <div class="clearfix">
 
 <label class="label-inline"> KBD LED as Indicator</label>
@@ -1820,6 +2203,8 @@ img {
   />
 
   </div>
+
+
 
 
 
@@ -1859,7 +2244,11 @@ img {
 
 
 
+
+
 <label class=""> Clipboard</label>
+
+
 
 
 
@@ -1899,6 +2288,8 @@ img {
 
 
 
+
+
   <div class="clearfix">
 
 <label class="label-inline"> Block clipboard B to A</label>
@@ -1924,7 +2315,11 @@ img {
 
 
 
+
+
 <label class=""> Hotkeys</label>
+
+
 
 
 
@@ -1962,6 +2357,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="1">
 
 <label class=""> mouse_zoom</label>
@@ -1970,6 +2367,8 @@ img {
              data-action-name="mouse_zoom" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2006,6 +2405,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="3">
 
 <label class=""> screen_lock</label>
@@ -2014,6 +2415,8 @@ img {
              data-action-name="screen_lock" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2050,6 +2453,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="5">
 
 <label class=""> screensaver_pong</label>
@@ -2058,6 +2463,8 @@ img {
              data-action-name="screensaver_pong" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2094,6 +2501,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="7">
 
 <label class=""> screensaver_disable</label>
@@ -2102,6 +2511,8 @@ img {
              data-action-name="screensaver_disable" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2138,6 +2549,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="9">
 
 <label class=""> screen_seam</label>
@@ -2146,6 +2559,8 @@ img {
              data-action-name="screen_seam" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2182,6 +2597,8 @@ img {
 
 
 
+
+
     <div class="clearfix hotkey-field" data-hotkey-action="11">
 
 <label class=""> firmware_upgrade_a</label>
@@ -2190,6 +2607,8 @@ img {
              data-action-name="firmware_upgrade_a" autocomplete="off" />
       <small class="hotkey-error" aria-live="polite"></small>
     </div>
+
+
 
 
 
@@ -2235,12 +2654,16 @@ img {
 
 
 
+
+
 <label class=""> This board FW version</label>
 
 
 <input class="api" type="text" name="name78" data-type="uint16" data-key="78"
   onchange="valueChangedHandler(this)"
  data-fw-ver readonly />
+
+
 
 
 
@@ -2277,6 +2700,8 @@ img {
 
 
 
+
+
 <label class="label-inline"> Running FW checksum:</label>
 
 
@@ -2298,12 +2723,16 @@ img {
 
 
 
+
+
 <label class="label-inline"> Other board FW checksum:</label>
 
 
 <input class="content api" type="text" name="name85" data-type="uint32" data-key="85"
   onchange="valueChangedHandler(this)"
  data-peer-fw-crc readonly />
+
+
 
 
 
@@ -2341,6 +2770,8 @@ img {
 
 
 
+
+
 <input class="api" type="hidden" name="name86" data-type="uint32" data-key="86"
   onchange="valueChangedHandler(this)"
  data-helper-key-lo readonly />
@@ -2359,9 +2790,13 @@ img {
 
 
 
+
+
 <input class="api" type="hidden" name="name87" data-type="uint32" data-key="87"
   onchange="valueChangedHandler(this)"
  data-helper-key-hi readonly />
+
+
 
 
 
@@ -2398,7 +2833,11 @@ img {
 
 
 
+
+
 <label class=""> Channel drops (since this boot)</label>
+
+
 
 
 
@@ -2436,12 +2875,16 @@ img {
 
 
 
+
+
 <label class="label-inline"> From peer board:</label>
 
 
 <input class="content api" type="text" name="name92" data-type="uint32" data-key="92"
   onchange="valueChangedHandler(this)"
  data-hex readonly />
+
+
 
 
 
@@ -2478,12 +2921,16 @@ img {
 
 
 
+
+
 <label class="label-inline"> Inter-board refused:</label>
 
 
 <input class="content api" type="text" name="name94" data-type="uint32" data-key="94"
   onchange="valueChangedHandler(this)"
  data-hex readonly />
+
+
 
 
 
@@ -2520,12 +2967,16 @@ img {
 
 
 
+
+
 <label class="label-inline"> Peer frames truncated:</label>
 
 
 <input class="content api" type="text" name="name96" data-type="uint32" data-key="96"
   onchange="valueChangedHandler(this)"
  data-hex readonly />
+
+
 
 
 

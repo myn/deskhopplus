@@ -22,8 +22,8 @@ const config_t default_config = {
             .speed_x = MOUSE_SPEED_A_FACTOR_X,
             .speed_y = MOUSE_SPEED_A_FACTOR_Y,
             .border = {
-                .top = 0,
-                .bottom = MAX_SCREEN_COORD,
+                .start = 0,
+                .end = MAX_SCREEN_COORD,
             },
             .screen_count = 1,
             .screen_index = 1,
@@ -44,8 +44,8 @@ const config_t default_config = {
             .speed_x = MOUSE_SPEED_B_FACTOR_X,
             .speed_y = MOUSE_SPEED_B_FACTOR_Y,
             .border = {
-                .top = 0,
-                .bottom = MAX_SCREEN_COORD,
+                .start = 0,
+                .end = MAX_SCREEN_COORD,
             },
             .screen_count = 1,
             .screen_index = 1,

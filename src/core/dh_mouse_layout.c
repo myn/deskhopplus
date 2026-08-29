@@ -12,6 +12,11 @@ bool dh_direction_is_vertical(dh_direction_t direction) {
     return direction == DH_DIRECTION_TOP || direction == DH_DIRECTION_BOTTOM;
 }
 
+int32_t dh_mouse_along_seam(dh_direction_t border_direction,
+                            dh_mouse_coordinates_t pointer) {
+    return dh_direction_is_vertical(border_direction) ? pointer.x : pointer.y;
+}
+
 dh_direction_t dh_opposite_direction(dh_direction_t direction) {
     switch (direction) {
         case DH_DIRECTION_LEFT: return DH_DIRECTION_RIGHT;

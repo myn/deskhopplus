@@ -83,6 +83,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/core/dh_keyboard_transport.c
   ${SRC_DIR}/core/dh_keyboard_output.c
   ${SRC_DIR}/core/dh_mouse_layout.c
+  ${SRC_DIR}/core/dh_seam_map.c
   ${SRC_DIR}/core/dh_session.c
   ${SRC_DIR}/core/dh_relay.c
   ${SRC_DIR}/core/dh_outq.c

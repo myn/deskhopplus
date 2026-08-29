@@ -14,6 +14,7 @@
 
 #include "dh_keymap.h"
 #include "dh_mouse_layout.h"
+#include "dh_seam_map.h"
 
 
 /*==============================================================================
@@ -38,9 +39,8 @@ enum os_type_e {
  *==============================================================================*/
 
 typedef struct {
-    int top;    // When jumping from a smaller to a bigger screen, go to THIS top height
-    int bottom; // When jumping from a smaller to a bigger screen, go to THIS bottom
-                // height
+    int start;
+    int end;
 } border_size_t;
 
 typedef struct {
@@ -62,6 +62,7 @@ typedef struct {
     uint8_t border_direction; // dh_direction_t toward the other computer
     uint8_t mouse_park_pos;    // Where the mouse goes after switch
     uint8_t swap_ctrl_gui;     // Emit physical Ctrl as GUI and GUI as Ctrl
+    dh_seam_range_t seam_ranges[DH_SEAM_RANGE_CAPACITY]; // Corresponding seam segments
     dh_keymap_profile_t keymap; // Physical-key transform for this output
     screensaver_t screensaver; // Screensaver parameters for this output
 } output_t;

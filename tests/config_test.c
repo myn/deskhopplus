@@ -202,8 +202,8 @@ static void test_the_clipboard_toggles_fit_the_padding(void) {
 }
 
 static void test_complete_hotkey_table_fits_the_config_sector(void) {
-    CHECK(CONFIG_FLASH_PAGE_COUNT == 2, "hotkeys",
-          "the complete hotkey table is not covered by exactly two flash pages");
+    CHECK(CONFIG_FLASH_PAGE_COUNT == 3, "hotkeys",
+          "the complete configuration is not covered by exactly three flash pages");
     CHECK(CONFIG_FLASH_BYTES >= sizeof(config_t), "hotkeys",
           "the persisted config buffer truncates the hotkey table");
     CHECK(CONFIG_FLASH_BYTES <= CONFIG_FLASH_SECTOR_SIZE, "hotkeys",
@@ -254,8 +254,8 @@ static void test_keymap_profiles_survive_persistence(void) {
 }
 
 static void test_layout_directions_require_the_new_config_version(void) {
-    CHECK(CURRENT_CONFIG_VERSION == 14, "layout",
-          "the chain-axis/border-direction layout did not bump stored config version");
+    CHECK(CURRENT_CONFIG_VERSION == 15, "layout",
+          "the seam-map layout did not bump stored config version");
 
     output_t output = {0};
     output.chain_direction = DH_DIRECTION_RIGHT;
@@ -263,6 +263,21 @@ static void test_layout_directions_require_the_new_config_version(void) {
     CHECK(output.chain_direction == DH_DIRECTION_RIGHT &&
               output.border_direction == DH_DIRECTION_LEFT, "layout",
           "an output did not retain its independent layout directions");
+}
+
+static void test_seam_ranges_survive_persistence(void) {
+    config_t cfg = a_populated_config();
+    cfg.output[0].seam_ranges[3] = (dh_seam_range_t){
+        .screen_index = 3, .start = 1234, .end = 45678,
+    };
+    config_seal(&cfg);
+    config_t loaded;
+    memcpy(&loaded, &cfg, sizeof loaded);
+
+    CHECK(config_is_valid(&loaded), "seam ranges", "seam ranges invalidated persistence");
+    CHECK(memcmp(loaded.output[0].seam_ranges, cfg.output[0].seam_ranges,
+                 sizeof cfg.output[0].seam_ranges) == 0,
+          "seam ranges", "seam ranges changed on reload");
 }
 
 int main(void) {
@@ -276,6 +291,7 @@ int main(void) {
     test_complete_hotkey_table_fits_the_config_sector();
     test_keymap_profiles_survive_persistence();
     test_layout_directions_require_the_new_config_version();
+    test_seam_ranges_survive_persistence();
 
     if (failures) {
         printf("%d config check(s) failed\n", failures);

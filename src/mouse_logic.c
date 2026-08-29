@@ -119,8 +119,33 @@ void do_screen_switch(device_t *state, int direction) {
                                 (dh_direction_t)direction);
     switch (transition) {
         case DH_MOUSE_TRANSITION_OUTPUT:
-            if (!state->mouse_buttons)
+            if (!state->mouse_buttons) {
+                output_t *target = &state->config.output[1 - state->active_output];
+                const int along = dh_mouse_along_seam(
+                    (dh_direction_t)direction,
+                    (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y});
+                const uint16_t normalized = (uint16_t)(
+                    ((uint32_t)along * DH_SEAM_POSITION_MAX + MAX_SCREEN_COORD / 2) /
+                    MAX_SCREEN_COORD);
+                dh_seam_entry_t mapped_entry;
+                dh_seam_crossing_kind_t crossing = dh_seam_resolve_crossing(
+                    output->seam_ranges, target->seam_ranges, output->screen_index,
+                    output->screen_count, target->screen_count, normalized,
+                    &mapped_entry);
+                if (crossing == DH_SEAM_CROSSING_BLOCKED)
+                    break;
                 switch_to_another_pc(state, output, 1 - state->active_output, direction);
+                if (crossing == DH_SEAM_CROSSING_MAPPED) {
+                    const int entry = (int)(((uint32_t)mapped_entry.position * MAX_SCREEN_COORD +
+                                             DH_SEAM_POSITION_MAX / 2) /
+                                            DH_SEAM_POSITION_MAX);
+                    if (dh_direction_is_vertical((dh_direction_t)direction))
+                        state->pointer_x = (int16_t)entry;
+                    else
+                        state->pointer_y = (int16_t)entry;
+                    target->screen_index = mapped_entry.screen_index;
+                }
+            }
             break;
         case DH_MOUSE_TRANSITION_CHAIN_BACK:
         case DH_MOUSE_TRANSITION_CHAIN_FORWARD:

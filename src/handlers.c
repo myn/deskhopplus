@@ -26,11 +26,15 @@ void output_toggle_hotkey_handler(device_t *state, hid_keyboard_report_t *report
 };
 
 void _get_border_position(device_t *state, border_size_t *border) {
-    /* To avoid having 2 different keys, if we're above half, it's the top coord */
-    if (state->pointer_y > (MAX_SCREEN_COORD / 2))
-        border->bottom = state->pointer_y;
+    const output_t *output = &state->config.output[state->active_output];
+    const int position = dh_mouse_along_seam(
+        (dh_direction_t)output->border_direction,
+        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y});
+    /* One hotkey records either end of the range, selected by the midpoint. */
+    if (position > (MAX_SCREEN_COORD / 2))
+        border->end = position;
     else
-        border->top = state->pointer_y;
+        border->start = position;
 }
 
 void _screensaver_set(device_t *state, uint8_t value) {

@@ -45,13 +45,18 @@ target_include_directories(mouse_layout_test PRIVATE ${CORE})
 add_test(NAME mouse_layout_test COMMAND mouse_layout_test)
 
 add_executable(mouse_seam_test mouse_seam_test.c
-               ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c ${CORE}/dh_mouse_layout.c)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c ${CORE}/dh_mouse_layout.c
+               ${CORE}/dh_seam_map.c)
 target_include_directories(mouse_seam_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs ${CORE}
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
 if(NOT MSVC)
   target_link_libraries(mouse_seam_test PRIVATE m)
 endif()
 add_test(NAME mouse_seam_test COMMAND mouse_seam_test)
+
+add_executable(seam_map_test seam_map_test.c ${CORE}/dh_seam_map.c)
+target_include_directories(seam_map_test PRIVATE ${CORE})
+add_test(NAME seam_map_test COMMAND seam_map_test)
 
 add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
 target_include_directories(hotkey_test PRIVATE ${CORE})

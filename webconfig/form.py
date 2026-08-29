@@ -6,6 +6,9 @@ import re
 
 _KEYMAP_HEADER = (Path(__file__).parent.parent / "src/core/dh_keymap.h").read_text()
 KEYMAP_FIELD_OFFSET = int(re.search(r"DH_KEYMAP_CONFIG_FIELD_OFFSET\s+(\d+)u", _KEYMAP_HEADER).group(1))
+_SEAM_HEADER = (Path(__file__).parent.parent / "src/core/dh_seam_map.h").read_text()
+SEAM_FIELD_BASES = tuple(int(re.search(rf"DH_SEAM_CONFIG_FIELD_{name}_BASE\s+(\d+)u",
+                                       _SEAM_HEADER).group(1)) for name in ("A", "B"))
 
 @dataclass
 class FormField:
@@ -19,6 +22,11 @@ class FormField:
     keymap_kind: str | None = None
     keymap_output: int | None = None
     output_keys: tuple[int, int] | None = None
+
+@dataclass
+class SeamRangeRow:
+    segment: int
+    elem: str = "seam_range"
 
 SHORTCUTS = {
     0x73: "None",
@@ -108,8 +116,8 @@ OUTPUT_ = [
     FormField(1, "Screen Count", 1, {1: "1", 2: "2", 3: "3"}, "uint32"),
     FormField(2, "Speed X", 16, {"min": 1, "max": 100}, "int32", "range"),
     FormField(3, "Speed Y", 16, {"min": 1, "max": 100}, "int32", "range"),
-    FormField(4, "Border Top", None, {}, "int32"),
-    FormField(5, "Border Bottom", None, {}, "int32"),
+    FormField(4, "Legacy seam start", None, {}, "int32"),
+    FormField(5, "Legacy seam end", None, {}, "int32"),
     FormField(6, "Operating System", 1, {1: "Linux", 2: "MacOS", 3: "Windows", 4: "Android", 255: "Other"}, "uint8"),
     FormField(7, "Border Direction", 1,
               {1: "Left", 2: "Right", 4: "Top", 5: "Bottom"}, "uint8"),
@@ -123,13 +131,29 @@ OUTPUT_ = [
     FormField(11, "Idle Time (μs)", None, {}, "uint64"),
     FormField(12, "Max Time (μs)", None, {}, "uint64"),
     FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
+    FormField(1007, "Seam ranges", elem="label"),
+    SeamRangeRow(0),
+    SeamRangeRow(1),
+    SeamRangeRow(2),
+    SeamRangeRow(3),
     FormField(KEYMAP_FIELD_OFFSET, "Key overrides", elem="keymap", keymap_kind="overrides"),
     FormField(KEYMAP_FIELD_OFFSET, "Passthrough keys", elem="keymap", keymap_kind="passthrough"),
 ]
 
 def generate_output(base, data, output_index=None):
-    output = [
-        {
+    output = []
+    for field in data:
+        if isinstance(field, SeamRangeRow):
+            key = SEAM_FIELD_BASES[output_index] + field.segment * 3
+            output.append({
+                "elem": field.elem,
+                "segment": field.segment + 1,
+                "screen_key": key,
+                "start_key": key + 1,
+                "end_key": key + 2,
+            })
+        else:
+            output.append({
             "name": field.name,
             "key": field.output_keys[output_index] if field.output_keys else base + field.offset,
             "default": field.default,
@@ -139,9 +163,7 @@ def generate_output(base, data, output_index=None):
             "action": field.action,
             "keymap_kind": field.keymap_kind,
             "keymap_output": output_index if field.keymap_kind else field.keymap_output,
-        }
-        for field in data
-    ]
+            })
     return output
 
 def output_A(base=10):

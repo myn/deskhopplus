@@ -22,8 +22,8 @@ const field_map_t api_field_map[] = {
     { 11, false, UINT32, 4, offsetof(device_t, config.output[0].screen_count) },
     { 12, false, INT32,  4, offsetof(device_t, config.output[0].speed_x) },
     { 13, false, INT32,  4, offsetof(device_t, config.output[0].speed_y) },
-    { 14, false, INT32,  4, offsetof(device_t, config.output[0].border.top) },
-    { 15, false, INT32,  4, offsetof(device_t, config.output[0].border.bottom) },
+    { 14, false, INT32,  4, offsetof(device_t, config.output[0].border.start) },
+    { 15, false, INT32,  4, offsetof(device_t, config.output[0].border.end) },
     { 16, false, UINT8,  1, offsetof(device_t, config.output[0].os) },
     { 17, false, UINT8,  1, offsetof(device_t, config.output[0].border_direction) },
     { 18, false, UINT8,  1, offsetof(device_t, config.output[0].mouse_park_pos) },
@@ -43,8 +43,8 @@ const field_map_t api_field_map[] = {
     { 41, false, UINT32, 4, offsetof(device_t, config.output[1].screen_count) },
     { 42, false, INT32,  4, offsetof(device_t, config.output[1].speed_x) },
     { 43, false, INT32,  4, offsetof(device_t, config.output[1].speed_y) },
-    { 44, false, INT32,  4, offsetof(device_t, config.output[1].border.top) },
-    { 45, false, INT32,  4, offsetof(device_t, config.output[1].border.bottom) },
+    { 44, false, INT32,  4, offsetof(device_t, config.output[1].border.start) },
+    { 45, false, INT32,  4, offsetof(device_t, config.output[1].border.end) },
     { 46, false, UINT8,  1, offsetof(device_t, config.output[1].os) },
     { 47, false, UINT8,  1, offsetof(device_t, config.output[1].border_direction) },
     { 48, false, UINT8,  1, offsetof(device_t, config.output[1].mouse_park_pos) },
@@ -164,6 +164,23 @@ const field_map_t api_field_map[] = {
        the next two free API ids instead of pretending each output block is contiguous. */
     { 98, false, UINT8, 1, offsetof(device_t, config.output[0].chain_direction) },
     { 99, false, UINT8, 1, offsetof(device_t, config.output[1].chain_direction) },
+
+#define SEAM_RANGE_FIELDS(base, output_idx, segment) \
+    {base + segment * 3, false, UINT8, 1, \
+     offsetof(device_t, config.output[output_idx].seam_ranges[segment].screen_index)}, \
+    {base + segment * 3 + 1, false, UINT16, 2, \
+     offsetof(device_t, config.output[output_idx].seam_ranges[segment].start)}, \
+    {base + segment * 3 + 2, false, UINT16, 2, \
+     offsetof(device_t, config.output[output_idx].seam_ranges[segment].end)}
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_A_BASE, 0, 0),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_A_BASE, 0, 1),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_A_BASE, 0, 2),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_A_BASE, 0, 3),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_B_BASE, 1, 0),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_B_BASE, 1, 1),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_B_BASE, 1, 2),
+    SEAM_RANGE_FIELDS(DH_SEAM_CONFIG_FIELD_B_BASE, 1, 3),
+#undef SEAM_RANGE_FIELDS
 
 #define DH_HOTKEY_ACTION(symbol, name) \
     {DH_HOTKEY_CONFIG_FIELD_BASE + 2 * DH_HOTKEY_ACTION_##symbol, false, UINT64, 6, \

@@ -23,35 +23,12 @@ void output_mouse_report(mouse_report_t *report, device_t *state) {
     }
 }
 
-/* Calculate and return Y coordinate when moving from screen out_from to screen out_to */
-int16_t scale_y_coordinate(int screen_from, int screen_to, device_t *state) {
+/* Map the coordinate along the seam between the two legacy output ranges. */
+int16_t map_output_seam_coordinate(int pointer, int screen_from, int screen_to, device_t *state) {
     output_t *from = &state->config.output[screen_from];
     output_t *to   = &state->config.output[screen_to];
-
-    int size_to   = to->border.bottom - to->border.top;
-    int size_from = from->border.bottom - from->border.top;
-
-    /* If sizes match, there is nothing to do */
-    if (size_from == size_to)
-        return state->pointer_y;
-
-    /* Moving from smaller ==> bigger screen
-       y_a = top + (((bottom - top) * y_b) / HEIGHT) */
-
-    if (size_from > size_to) {
-        return to->border.top + ((size_to * state->pointer_y) / MAX_SCREEN_COORD);
-    }
-
-    /* Moving from bigger ==> smaller screen
-       y_b = ((y_a - top) * HEIGHT) / (bottom - top) */
-
-    if (state->pointer_y < from->border.top)
-        return MIN_SCREEN_COORD;
-
-    if (state->pointer_y > from->border.bottom)
-        return MAX_SCREEN_COORD;
-
-    return ((state->pointer_y - from->border.top) * MAX_SCREEN_COORD) / size_from;
+    return (int16_t)dh_seam_map_coordinate(pointer, from->border.start, from->border.end,
+                                           to->border.start, to->border.end);
 }
 
 void switch_to_another_pc(
@@ -79,8 +56,12 @@ void switch_to_another_pc(
         MAX_SCREEN_COORD);
     state->pointer_x = (int16_t)entry.x;
     state->pointer_y = (int16_t)entry.y;
-    if (!vertical)
-        state->pointer_y = scale_y_coordinate(output->number, 1 - output->number, state);
+    if (vertical)
+        state->pointer_x = map_output_seam_coordinate(
+            state->pointer_x, output->number, 1 - output->number, state);
+    else
+        state->pointer_y = map_output_seam_coordinate(
+            state->pointer_y, output->number, 1 - output->number, state);
 }
 
 void switch_virtual_desktop_macos(device_t *state, int direction) {

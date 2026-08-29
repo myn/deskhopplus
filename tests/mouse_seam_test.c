@@ -31,6 +31,16 @@ static int failures;
     if (!(condition)) { fprintf(stderr, "FAIL mouse_seam: %s\n", message); failures++; } \
 } while (0)
 
+/* edge_map.h's original double-and-round formulas, kept independent of firmware math. */
+static uint16_t mkroamer_cross(uint16_t position, uint16_t start, uint16_t end) {
+    const double fraction = (double)(position - start) / (double)(end - start);
+    return (uint16_t)(fraction * 65535.0 + 0.5);
+}
+
+static uint16_t mkroamer_entry(uint16_t position, uint16_t start, uint16_t end) {
+    return (uint16_t)(start + ((double)position / 65535.0) * (end - start) + 0.5);
+}
+
 static device_t side_by_side_state(void) {
     device_t state;
     memset(&state, 0, sizeof state);
@@ -42,6 +52,12 @@ static device_t side_by_side_state(void) {
         .speed_x = 1, .speed_y = 1,
         .chain_direction = DH_DIRECTION_RIGHT,
         .border_direction = DH_DIRECTION_LEFT,
+    };
+    state.config.output[1] = (output_t){
+        .number = 1, .screen_count = 3, .screen_index = 1,
+        .speed_x = 1, .speed_y = 1,
+        .chain_direction = DH_DIRECTION_LEFT,
+        .border_direction = DH_DIRECTION_RIGHT,
     };
     return state;
 }
@@ -135,6 +151,98 @@ static void test_jump_threshold_uses_the_vertical_seam_axis(void) {
           "vertical crossing did not trigger beyond the jump threshold");
 }
 
+static void test_configured_seam_maps_position_and_blocks_gaps(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_x = MAX_SCREEN_COORD / 2;
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 1, .start = 16384, .end = 32768,
+    };
+
+    output_switches = 0;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 1, "configured seam range did not cross");
+    CHECK(state.pointer_x == 12288,
+          "crossing position was not scaled onto the target range");
+    CHECK(state.config.output[1].screen_index == 1,
+          "crossing did not select the target range's screen index");
+
+    state = stacked_computers_state();
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 1, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 1, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    output_switches = 0;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0, "monitor without a configured range crossed");
+}
+
+static void test_half_configured_seam_keeps_legacy_crossing(void) {
+    device_t state = stacked_computers_state();
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+
+    output_switches = 0;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 1,
+          "half-configured seam trapped the cursor on the source output");
+}
+
+static void test_public_mouse_seam_matches_mkroamer_edge_map(void) {
+    const int shared_pointer_positions[] = {500, 4096, 8192, 12000, 15000};
+    for (unsigned i = 0; i < sizeof shared_pointer_positions / sizeof shared_pointer_positions[0];
+         i++) {
+        device_t state = stacked_computers_state();
+        state.pointer_x = (int16_t)shared_pointer_positions[i];
+        state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+            .screen_index = 2, .start = 1000, .end = 32000,
+        };
+        state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+            .screen_index = 3, .start = 12000, .end = 60000,
+        };
+
+        const uint16_t source = (uint16_t)(
+            ((uint32_t)state.pointer_x * DH_SEAM_POSITION_MAX + MAX_SCREEN_COORD / 2) /
+            MAX_SCREEN_COORD);
+        const uint16_t expected_normalized =
+            mkroamer_entry(mkroamer_cross(source, 1000, 32000), 12000, 60000);
+        const int expected_pointer = (int)(
+            ((uint32_t)expected_normalized * MAX_SCREEN_COORD + DH_SEAM_POSITION_MAX / 2) /
+            DH_SEAM_POSITION_MAX);
+
+        output_switches = 0;
+        do_screen_switch(&state, TOP);
+        CHECK(output_switches == 1, "mkroamer shared input did not cross the mouse seam");
+        CHECK(state.pointer_x == expected_pointer,
+              "public mouse seam differs from mkroamer's edge map");
+        CHECK(state.config.output[1].screen_index == 3,
+              "public mouse seam lost mkroamer's segment identity");
+    }
+}
+
+static void test_invalid_target_screen_degrades_to_legacy_crossing(void) {
+    device_t state = stacked_computers_state();
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].screen_count = 2;
+    state.config.output[1].screen_index = 1;
+    state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 255, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+
+    output_switches = 0;
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 1, "invalid target screen trapped the cursor");
+    CHECK(state.config.output[1].screen_index == 1,
+          "invalid seam range selected a nonexistent target monitor");
+}
+
 static void test_update_and_switch_at_the_public_mouse_seam(void) {
     device_t state = side_by_side_state();
     global_state = state;
@@ -170,6 +278,10 @@ int main(void) {
     test_diagonal_push_uses_the_larger_overshoot();
     test_vertical_seam_preserves_crossing_guards();
     test_jump_threshold_uses_the_vertical_seam_axis();
+    test_configured_seam_maps_position_and_blocks_gaps();
+    test_half_configured_seam_keeps_legacy_crossing();
+    test_public_mouse_seam_matches_mkroamer_edge_map();
+    test_invalid_target_screen_degrades_to_legacy_crossing();
     if (failures) return 1;
     printf("mouse_seam_test: all checks passed\n");
     return 0;

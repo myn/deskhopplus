@@ -100,10 +100,23 @@ static void test_vertical_coordinate_actions_use_the_y_axis(void) {
           "vertical_desktop", "top desktop switch did not nudge upward on Y");
 }
 
+static void test_seam_position_uses_the_axis_along_the_seam(void) {
+    const dh_mouse_coordinates_t pointer = {.x = 1234, .y = 5678};
+    CHECK(dh_mouse_along_seam(DH_DIRECTION_TOP, pointer) == 1234,
+          "seam_axis", "top seam calibration did not use X");
+    CHECK(dh_mouse_along_seam(DH_DIRECTION_BOTTOM, pointer) == 1234,
+          "seam_axis", "bottom seam calibration did not use X");
+    CHECK(dh_mouse_along_seam(DH_DIRECTION_LEFT, pointer) == 5678,
+          "seam_axis", "left seam calibration did not use Y");
+    CHECK(dh_mouse_along_seam(DH_DIRECTION_RIGHT, pointer) == 5678,
+          "seam_axis", "right seam calibration did not use Y");
+}
+
 int main(void) {
     test_side_by_side_layout_preserves_current_switching();
     test_chain_direction_is_independent_of_the_border();
     test_vertical_coordinate_actions_use_the_y_axis();
+    test_seam_position_uses_the_axis_along_the_seam();
 
     if (failures != 0)
         return 1;
