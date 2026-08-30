@@ -79,6 +79,8 @@ const uart_handler_t uart_handler[] = {
     {.type = OUTPUT_SELECT_MSG, .handler = handle_output_select_msg},
     {.type = CURSOR_PLACE_MSG, .handler = handle_cursor_place_msg},
     {.type = CURSOR_POSITION_MSG, .handler = handle_cursor_position_msg},
+    {.type = CURSOR_QUERY_MSG, .handler = handle_cursor_query_msg},
+    {.type = CURSOR_QUERY_UNAVAILABLE_MSG, .handler = handle_cursor_query_unavailable_msg},
 
     /* Box control */
     {.type = MOUSE_ZOOM_MSG, .handler = handle_mouse_zoom_msg},

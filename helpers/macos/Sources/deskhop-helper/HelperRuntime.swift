@@ -107,8 +107,9 @@ final class HelperRuntime {
         session.onPayload = { [weak self] type, body in
             guard let self else { return }
             if self.cursorPlacement.received(type: type, body: body) { return }
-            if type == UInt8(DH_MSG_POS_QUERY.rawValue), body.isEmpty,
-               let response = self.cursorPlacement.positionBody() {
+            if type == UInt8(DH_MSG_POS_QUERY.rawValue),
+               body.count == Int(DH_POS_QUERY_BODY_SIZE),
+               let response = self.cursorPlacement.positionBody(queryID: body[0]) {
                 self.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue), body: response)
                 return
             }

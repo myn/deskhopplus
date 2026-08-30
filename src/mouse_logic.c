@@ -3,6 +3,7 @@
 #include <math.h>
 
 #define ACCEL_POINTS 7
+#define CURSOR_REANCHOR_TIMEOUT_US 30000u
 
 static dh_mouse_layout_t mouse_layout_for(const output_t *output) {
     return (dh_mouse_layout_t){
@@ -22,6 +23,16 @@ typedef struct {
     enum screen_pos_e direction;
     int overshoot;
 } screen_boundary_crossing_t;
+
+static void cursor_crossing_clear(device_t *state) {
+    state->cursor_crossing = (cursor_crossing_t){.phase = CURSOR_CROSSING_IDLE};
+}
+
+static uint8_t next_cursor_query_id(device_t *state) {
+    if (++state->next_cursor_query_id == 0)
+        ++state->next_cursor_query_id;
+    return state->next_cursor_query_id;
+}
 
 static screen_boundary_crossing_t screen_boundary_crossing(
     output_t *output,
@@ -120,6 +131,36 @@ void do_screen_switch(device_t *state, int direction) {
     switch (transition) {
         case DH_MOUSE_TRANSITION_OUTPUT:
             if (!state->mouse_buttons) {
+                /* Windows secondary monitors are relative, so their stored
+                   coordinate is only an estimate. Resolve the seam only after
+                   the source helper has reported the OS cursor position. */
+                if (state->relative_mouse) {
+                    cursor_crossing_enter();
+                    const cursor_crossing_phase_t phase = state->cursor_crossing.phase;
+                    if (phase == CURSOR_CROSSING_RESUMING)
+                        cursor_crossing_clear(state);
+                    cursor_crossing_exit();
+                    if (phase != CURSOR_CROSSING_IDLE &&
+                        phase != CURSOR_CROSSING_RESUMING)
+                        break;
+                    if (phase == CURSOR_CROSSING_IDLE) {
+                        const uint8_t query_id = next_cursor_query_id(state);
+                        cursor_crossing_enter();
+                        state->cursor_crossing.direction = (uint8_t)direction;
+                        state->cursor_crossing.output = state->active_output;
+                        state->cursor_crossing.query_id = query_id;
+                        state->cursor_crossing.started_us = time_us_32();
+                        state->cursor_crossing.phase = CURSOR_CROSSING_WAITING;
+                        cursor_crossing_exit();
+                        if (channel_query_cursor(state->active_output, query_id))
+                            break;
+                        cursor_crossing_enter();
+                        if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+                            state->cursor_crossing.query_id == query_id)
+                            cursor_crossing_clear(state);
+                        cursor_crossing_exit();
+                    }
+                }
                 output_t *target = &state->config.output[1 - state->active_output];
                 const int along = dh_mouse_along_seam(
                     (dh_direction_t)direction,
@@ -163,4 +204,46 @@ void do_screen_switch(device_t *state, int direction) {
         case DH_MOUSE_TRANSITION_NONE:
             break;
     }
+}
+
+void mouse_crossing_task(device_t *state, uint32_t now_us) {
+    cursor_crossing_enter();
+    cursor_crossing_t *crossing = &state->cursor_crossing;
+    if (crossing->phase == CURSOR_CROSSING_IDLE ||
+        crossing->phase == CURSOR_CROSSING_RESUMING) {
+        cursor_crossing_exit();
+        return;
+    }
+    if (state->active_output != crossing->output || state->mouse_buttons ||
+        state->switch_lock || state->gaming_mode) {
+        cursor_crossing_clear(state);
+        cursor_crossing_exit();
+        return;
+    }
+    if (crossing->phase == CURSOR_CROSSING_CANCELLED) {
+        cursor_crossing_clear(state);
+        cursor_crossing_exit();
+        return;
+    }
+    if (crossing->phase == CURSOR_CROSSING_WAITING &&
+        (uint32_t)(now_us - crossing->started_us) >= CURSOR_REANCHOR_TIMEOUT_US)
+        crossing->phase = CURSOR_CROSSING_FALLBACK;
+    if (crossing->phase == CURSOR_CROSSING_WAITING) {
+        cursor_crossing_exit();
+        return;
+    }
+
+    const uint8_t direction = crossing->direction;
+    crossing->phase = CURSOR_CROSSING_RESUMING;
+    cursor_crossing_exit();
+    do_screen_switch(state, direction);
+}
+
+void mouse_crossing_query_unavailable(device_t *state, uint8_t output, uint8_t query_id) {
+    cursor_crossing_enter();
+    cursor_crossing_t *crossing = &state->cursor_crossing;
+    if (crossing->phase == CURSOR_CROSSING_WAITING && crossing->output == output &&
+        crossing->query_id == query_id)
+        crossing->phase = CURSOR_CROSSING_FALLBACK;
+    cursor_crossing_exit();
 }

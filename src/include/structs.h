@@ -71,6 +71,23 @@ typedef enum { IDLE, READING_PACKET, PROCESSING_PACKET } receiver_state_t;
 /*==============================================================================
  *  Device State
  *==============================================================================*/
+typedef enum {
+    CURSOR_CROSSING_IDLE = 0,
+    CURSOR_CROSSING_WAITING,
+    CURSOR_CROSSING_REANCHORED,
+    CURSOR_CROSSING_FALLBACK,
+    CURSOR_CROSSING_CANCELLED,
+    CURSOR_CROSSING_RESUMING,
+} cursor_crossing_phase_t;
+
+typedef struct {
+    cursor_crossing_phase_t phase;
+    uint8_t direction;
+    uint8_t output;
+    uint8_t query_id;
+    uint32_t started_us;
+} cursor_crossing_t;
+
 typedef struct {
     uint8_t kbd_dev_addr; // Address of the Keyboard device
     uint8_t kbd_instance; // Keyboard instance (d'uh - isn't this a useless comment)
@@ -160,6 +177,11 @@ typedef struct {
     bool gaming_mode;        // True when gaming mode is on (relative passthru + lock)
     bool config_mode_active; // True when config mode is active
     bool digitizer_active;   // True when digitizer Win/Mac workaround is active
+
+    /* A relative-mode output crossing waiting for the source helper's true
+       cursor position before its seam mapping is resolved (#30). */
+    cursor_crossing_t cursor_crossing;
+    uint8_t next_cursor_query_id;
 
     /* Onboard LED blinky (provide feedback when e.g. mouse connected) */
     int32_t  blinks_left;     // How many blink transitions are left

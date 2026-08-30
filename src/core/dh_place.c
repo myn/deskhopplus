@@ -33,18 +33,20 @@ bool dh_place_decode(const uint8_t *body, size_t len, dh_place *place) {
 bool dh_position_encode(const dh_position *position, uint8_t *out, size_t cap) {
     if (position == NULL || out == NULL || cap < DH_POSITION_BODY_SIZE)
         return false;
-    out[0] = position->chain_index;
-    wr_u16(out + 1, position->x);
-    wr_u16(out + 3, position->y);
+    out[0] = position->query_id;
+    out[1] = position->chain_index;
+    wr_u16(out + 2, position->x);
+    wr_u16(out + 4, position->y);
     return true;
 }
 
 bool dh_position_decode(const uint8_t *body, size_t len, dh_position *position) {
     if (body == NULL || position == NULL || len != DH_POSITION_BODY_SIZE)
         return false;
-    position->chain_index = body[0];
-    position->x = rd_u16(body + 1);
-    position->y = rd_u16(body + 3);
+    position->query_id = body[0];
+    position->chain_index = body[1];
+    position->x = rd_u16(body + 2);
+    position->y = rd_u16(body + 4);
     return true;
 }
 

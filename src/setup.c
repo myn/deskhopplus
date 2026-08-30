@@ -208,6 +208,7 @@ static void configure_rx_dma(device_t *state) {
 int board;
 
 void initial_setup(device_t *state) {
+    cursor_crossing_init();
     /* PIO USB requires a clock multiple of 12 MHz, setting to 120 MHz */
     set_sys_clock_khz(120000, true);
 

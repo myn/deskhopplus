@@ -5,6 +5,12 @@
 device_t global_state;
 static int failures;
 
+void mouse_crossing_query_unavailable(device_t *state, uint8_t output, uint8_t query_id) {
+    (void)state;
+    (void)output;
+    (void)query_id;
+}
+
 #define CHECK(condition, message) do { if (!(condition)) { \
     fprintf(stderr, "FAIL: %s\n", message); failures++; } } while (0)
 
@@ -20,6 +26,7 @@ static void receive_position(device_t *state, uint8_t output, uint8_t screen,
     uart_packet_t packet = {.data = {output, screen}};
     packet.data16[1] = x;
     packet.data16[2] = y;
+    packet.data[6] = 0;
     handle_cursor_position_msg(&packet, state);
 }
 

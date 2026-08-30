@@ -26,15 +26,15 @@ CursorPlacement::~CursorPlacement() {
 
 bool CursorPlacement::received(uint8_t type, const uint8_t *body, size_t len, uint32_t now_ms) {
     if (type == DH_MSG_POS_QUERY) {
-        if (len != 0) {
+        if (len != DH_POS_QUERY_BODY_SIZE) {
             log_("ignored a malformed cursor position query");
             return true;
         }
         if (pending_) {
-            query_pending_ = true;
+            pending_query_id_ = body[0];
         } else {
             std::vector<uint8_t> response;
-            if (position_body(response)) respond_(DH_MSG_POS_RESPONSE, response);
+            if (position_body(body[0], response)) respond_(DH_MSG_POS_RESPONSE, response);
         }
         return true;
     }
@@ -57,7 +57,7 @@ void CALLBACK CursorPlacement::foreground_changed(HWINEVENTHOOK, DWORD, HWND, LO
     if (static_cast<int32_t>(now - self->pending_->expires_at) >= 0) {
         self->log_("deferred cursor placement expired");
         self->pending_.reset();
-        self->query_pending_ = false;
+        self->pending_query_id_.reset();
         return;
     }
     const dh_place request = self->pending_->place;
@@ -100,10 +100,11 @@ bool CursorPlacement::place(const dh_place &request, uint32_t now_ms, bool may_d
 }
 
 void CursorPlacement::answer_pending_query() {
-    if (!query_pending_) return;
-    query_pending_ = false;
+    if (!pending_query_id_) return;
+    const uint8_t query_id = *pending_query_id_;
+    pending_query_id_.reset();
     std::vector<uint8_t> response;
-    if (position_body(response)) respond_(DH_MSG_POS_RESPONSE, response);
+    if (position_body(query_id, response)) respond_(DH_MSG_POS_RESPONSE, response);
 }
 
 namespace {
@@ -147,7 +148,7 @@ bool CursorPlacement::target(const dh_place &request, POINT &point) {
     return true;
 }
 
-bool CursorPlacement::position_body(std::vector<uint8_t> &body) {
+bool CursorPlacement::position_body(uint8_t query_id, std::vector<uint8_t> &body) {
     if (!last_chain_direction_) return false;
     DisplayList displays;
     size_t primary_index = 0;
@@ -175,7 +176,7 @@ bool CursorPlacement::position_body(std::vector<uint8_t> &body) {
         const int64_t offset = std::clamp<int64_t>((int64_t)value - start, 0, size - 1);
         return static_cast<uint16_t>((offset * 65535 + (size - 1) / 2) / (size - 1));
     };
-    const dh_position position{chain_index, normalized(cursor.x, rect.x, rect.width),
+    const dh_position position{query_id, chain_index, normalized(cursor.x, rect.x, rect.width),
                                normalized(cursor.y, rect.y, rect.height)};
     body.resize(DH_POSITION_BODY_SIZE);
     return dh_position_encode(&position, body.data(), body.size());

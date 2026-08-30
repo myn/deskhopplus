@@ -129,6 +129,11 @@ static struct {
 
     /* A registration that channel_task still owes the configuration. */
     bool registration_unsaved;
+
+    /* A source-position query handed from core 1 to core 0. Protected by the
+       outbound lock so a peer request cannot overwrite a local one. */
+    enum { CURSOR_QUERY_NONE, CURSOR_QUERY_LOCAL, CURSOR_QUERY_PEER } cursor_query_origin;
+    uint8_t cursor_query_id;
 } channel;
 
 static bool channel_queue_frame(const uint8_t *frame, size_t len);
@@ -229,6 +234,8 @@ static void channel_reset_link(void) {
        and the drop totals did not (#142). */
 
     critical_section_enter_blocking(&channel.out_lock);
+    channel.cursor_query_origin = CURSOR_QUERY_NONE;
+    channel.cursor_query_id = 0;
     dh_outq_reset(&channel.out);
     critical_section_exit(&channel.out_lock);
 }
@@ -330,6 +337,51 @@ bool channel_helper_present(void) {
     return channel.session.present;
 }
 
+bool channel_query_cursor(uint8_t output, uint8_t query_id) {
+    if (output != BOARD_ROLE) {
+        uart_packet_t packet = {
+            .type = CURSOR_QUERY_MSG,
+            .data = {output, query_id},
+        };
+        return queue_uart_packet(&packet, &global_state);
+    }
+    if (!channel_helper_present())
+        return false;
+    critical_section_enter_blocking(&channel.out_lock);
+    const bool accepted = channel.cursor_query_origin == CURSOR_QUERY_NONE;
+    if (accepted) {
+        channel.cursor_query_origin = CURSOR_QUERY_LOCAL;
+        channel.cursor_query_id = query_id;
+    }
+    critical_section_exit(&channel.out_lock);
+    return accepted;
+}
+
+void handle_cursor_query_msg(uart_packet_t *packet, device_t *state) {
+    if (!channel_helper_present()) {
+        uart_packet_t unavailable = {
+            .type = CURSOR_QUERY_UNAVAILABLE_MSG,
+            .data = {(uint8_t)BOARD_ROLE, packet->data[1]},
+        };
+        (void)queue_uart_packet(&unavailable, state);
+        return;
+    }
+    critical_section_enter_blocking(&channel.out_lock);
+    const bool accepted = channel.cursor_query_origin == CURSOR_QUERY_NONE;
+    if (accepted) {
+        channel.cursor_query_origin = CURSOR_QUERY_PEER;
+        channel.cursor_query_id = packet->data[1];
+    }
+    critical_section_exit(&channel.out_lock);
+    if (!accepted) {
+        uart_packet_t unavailable = {
+            .type = CURSOR_QUERY_UNAVAILABLE_MSG,
+            .data = {(uint8_t)BOARD_ROLE, packet->data[1]},
+        };
+        (void)queue_uart_packet(&unavailable, state);
+    }
+}
+
 void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t border,
                           uint16_t position) {
     if (output != BOARD_ROLE) {
@@ -353,8 +405,9 @@ void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t
     uint8_t body[DH_PLACE_BODY_SIZE];
     if (!dh_place_encode(&place, body, sizeof body))
         return;
+    const uint8_t query[] = {0};
     if (channel_emit_placement_body(DH_MSG_PLACE, body, sizeof body))
-        (void)channel_emit_placement_body(DH_MSG_POS_QUERY, NULL, 0);
+        (void)channel_emit_placement_body(DH_MSG_POS_QUERY, query, sizeof query);
 }
 
 /* Hand a whole frame to this board's helper. */
@@ -522,8 +575,13 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
                 ((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
             const int16_t pointer_y = (int16_t)(
                 ((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
-            if (!apply_helper_cursor_position(state, BOARD_ROLE, position.chain_index,
-                                              pointer_x, pointer_y))
+            const bool applied = apply_helper_cursor_position(
+                state, BOARD_ROLE, position.chain_index, pointer_x, pointer_y,
+                position.query_id);
+            /* A nonzero query may have originated on the peer board. This
+               board has no matching crossing state in that case, but it must
+               still relay the correlated answer to the requester. */
+            if (!applied && position.query_id == 0)
                 return;
             uart_packet_t packet = {
                 .type = CURSOR_POSITION_MSG,
@@ -531,6 +589,7 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
             };
             packet.data16[1] = (uint16_t)pointer_x;
             packet.data16[2] = (uint16_t)pointer_y;
+            packet.data[6] = position.query_id;
             (void)queue_uart_packet(&packet, state);
         }
         return;
@@ -832,6 +891,35 @@ void channel_task(device_t *state) {
     }
 
     channel_drain_reports(state, now);
+
+    critical_section_enter_blocking(&channel.out_lock);
+    const int query_origin = channel.cursor_query_origin;
+    const uint8_t query_id = channel.cursor_query_id;
+    critical_section_exit(&channel.out_lock);
+    bool query_finished = false;
+    if (query_origin != CURSOR_QUERY_NONE) {
+        if (!channel_helper_present()) {
+            if (query_origin == CURSOR_QUERY_PEER) {
+                uart_packet_t unavailable = {
+                    .type = CURSOR_QUERY_UNAVAILABLE_MSG,
+                    .data = {(uint8_t)BOARD_ROLE, query_id},
+                };
+                query_finished = queue_uart_packet(&unavailable, state);
+            } else {
+                query_finished = true;
+            }
+        } else {
+            const uint8_t body[] = {query_id};
+            query_finished = channel_emit_placement_body(DH_MSG_POS_QUERY, body, sizeof body);
+        }
+        if (query_finished) {
+            critical_section_enter_blocking(&channel.out_lock);
+            if (channel.cursor_query_origin == query_origin &&
+                channel.cursor_query_id == query_id)
+                channel.cursor_query_origin = CURSOR_QUERY_NONE;
+            critical_section_exit(&channel.out_lock);
+        }
+    }
 
     /* Written after the grant is already in the outbound queue, because a
        grant the helper never receives is a pairing neither end holds — and

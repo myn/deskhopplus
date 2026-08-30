@@ -10,7 +10,8 @@ extern "C" {
 #endif
 
 #define DH_PLACE_BODY_SIZE 5u
-#define DH_POSITION_BODY_SIZE 5u
+#define DH_POS_QUERY_BODY_SIZE 1u
+#define DH_POSITION_BODY_SIZE 6u
 
 typedef struct {
     uint8_t chain_index;
@@ -20,6 +21,7 @@ typedef struct {
 } dh_place;
 
 typedef struct {
+    uint8_t query_id;
     uint8_t chain_index;
     uint16_t x;
     uint16_t y;

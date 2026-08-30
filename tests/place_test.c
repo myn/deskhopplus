@@ -29,17 +29,18 @@ int main(void) {
           "PLACE did not round-trip");
     CHECK(!dh_place_decode(body, sizeof body - 1, &decoded), "short PLACE was accepted");
 
-    const dh_position position = {.chain_index = 2, .x = 0x1234, .y = 0xabcd};
+    const dh_position position = {.query_id = 7, .chain_index = 2, .x = 0x1234, .y = 0xabcd};
     uint8_t pos_body[DH_POSITION_BODY_SIZE] = {0};
     CHECK(dh_position_encode(&position, pos_body, sizeof pos_body),
           "POS_RESPONSE did not encode");
-    const uint8_t expected_pos[] = {2, 0x34, 0x12, 0xcd, 0xab};
+    const uint8_t expected_pos[] = {7, 2, 0x34, 0x12, 0xcd, 0xab};
     CHECK(memcmp(pos_body, expected_pos, sizeof expected_pos) == 0,
           "POS_RESPONSE wire body changed");
     dh_position decoded_position = {0};
     CHECK(dh_position_decode(pos_body, sizeof pos_body, &decoded_position),
           "POS_RESPONSE did not decode");
-    CHECK(decoded_position.chain_index == position.chain_index &&
+    CHECK(decoded_position.query_id == position.query_id &&
+              decoded_position.chain_index == position.chain_index &&
               decoded_position.x == position.x && decoded_position.y == position.y,
           "POS_RESPONSE did not round-trip");
 

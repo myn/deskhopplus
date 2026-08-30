@@ -13,6 +13,9 @@ static uint8_t placed_screen;
 static uint8_t placed_chain;
 static uint8_t placed_border;
 static uint16_t placed_position;
+static int source_queries;
+static bool source_query_available;
+static uint8_t source_query_id;
 
 enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
@@ -40,6 +43,13 @@ void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t
     placed_chain = chain;
     placed_border = border;
     placed_position = position;
+}
+
+bool channel_query_cursor(uint8_t output, uint8_t query_id) {
+    (void)output;
+    source_queries++;
+    source_query_id = query_id;
+    return source_query_available;
 }
 
 static int failures;
@@ -235,6 +245,154 @@ static void test_mapped_crossing_places_cursor_on_target_monitor(void) {
           "mapped crossing left target screen 2 absolute while placement was pending");
 }
 
+static void test_relative_source_crossing_waits_for_true_position(void) {
+    device_t state = stacked_computers_state();
+    state.active_output = 0;
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.config.output[0].border_direction = DH_DIRECTION_TOP;
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 1, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.relative_mouse = true;
+    state.pointer_x = 4000; /* stale firmware estimate */
+    state.pointer_y = MIN_SCREEN_COORD;
+    global_state = state;
+    source_query_available = true;
+    source_queries = 0;
+    output_switches = 0;
+    placements = 0;
+
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0 && state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "relative source crossed before its helper re-anchored it");
+    CHECK(source_queries == 1, "relative source crossing did not query its helper once");
+
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 20000, MIN_SCREEN_COORD,
+                                       source_query_id),
+          "true source position was refused");
+    mouse_crossing_task(&state, 1000);
+    CHECK(output_switches == 1 && placements == 1,
+          "source response did not resume exactly one crossing");
+    CHECK(placed_position >= 39999 && placed_position <= 40001,
+          "resumed crossing did not use the helper's true source coordinate");
+
+    mouse_crossing_task(&state, 1001);
+    CHECK(output_switches == 1, "source response triggered a duplicate crossing");
+}
+
+static void test_relative_source_crossing_falls_back_without_helper(void) {
+    device_t state = stacked_computers_state();
+    state.active_output = 0;
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.config.output[0].border_direction = DH_DIRECTION_TOP;
+    state.relative_mouse = true;
+    source_query_available = false;
+    output_switches = 0;
+
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 1 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "missing source helper stalled the firmware-only crossing");
+}
+
+static device_t pending_relative_crossing(void) {
+    device_t state = stacked_computers_state();
+    state.active_output = 0;
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.config.output[0].border_direction = DH_DIRECTION_TOP;
+    state.relative_mouse = true;
+    source_query_available = true;
+    output_switches = 0;
+    do_screen_switch(&state, TOP);
+    return state;
+}
+
+static void test_relative_source_crossing_falls_back_on_unavailable_reply(void) {
+    device_t state = pending_relative_crossing();
+    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && output_switches == 0,
+          "unavailable test did not begin a pending crossing");
+    mouse_crossing_query_unavailable(&state, 0, state.cursor_crossing.query_id);
+    mouse_crossing_task(&state, 1);
+    CHECK(output_switches == 1 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "unavailable source helper did not resume the fallback crossing");
+}
+
+static void test_relative_source_crossing_falls_back_on_timeout(void) {
+    device_t state = pending_relative_crossing();
+    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && output_switches == 0,
+          "timeout test did not begin a pending crossing");
+    mouse_crossing_task(&state, 29999);
+    CHECK(output_switches == 0, "source query timed out before its bounded deadline");
+    mouse_crossing_task(&state, 30000);
+    CHECK(output_switches == 1 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "source query timeout trapped the cursor at the seam");
+}
+
+static void test_source_response_away_from_edge_cancels_crossing(void) {
+    device_t state = pending_relative_crossing();
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 20000, 5000,
+                                       state.cursor_crossing.query_id),
+          "away-from-edge source position was refused");
+    mouse_crossing_task(&state, 1);
+    CHECK(output_switches == 0 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "source response after reversing away still crossed outputs");
+}
+
+static void test_late_source_response_cannot_satisfy_a_new_crossing(void) {
+    device_t state = pending_relative_crossing();
+    const uint8_t first_query_id = state.cursor_crossing.query_id;
+    mouse_crossing_task(&state, 30000);
+    CHECK(output_switches == 1, "first crossing did not take its timeout fallback");
+
+    state.active_output = 0;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    state.pointer_y = MIN_SCREEN_COORD;
+    do_screen_switch(&state, TOP);
+    const uint8_t second_query_id = state.cursor_crossing.query_id;
+    CHECK(second_query_id != first_query_id &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "new crossing did not receive a distinct query id");
+
+    CHECK(!apply_helper_cursor_position(&state, 0, 2, 5000, MIN_SCREEN_COORD,
+                                        first_query_id),
+          "late response from the first query was accepted by the second");
+    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && state.pointer_x != 5000,
+          "late response changed the pending crossing state");
+    mouse_crossing_task(&state, 1);
+    CHECK(output_switches == 1, "late response triggered a second crossing");
+
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 20000, MIN_SCREEN_COORD,
+                                       second_query_id),
+          "matching response for the second query was refused");
+    mouse_crossing_task(&state, 2);
+    CHECK(output_switches == 2, "matching response did not resume the second crossing");
+}
+
+static void test_post_placement_refresh_cannot_satisfy_a_source_query(void) {
+    device_t state = pending_relative_crossing();
+    state.pointer_x = 4000;
+    CHECK(!apply_helper_cursor_position(&state, 0, 2, 20000, MIN_SCREEN_COORD, 0),
+          "uncorrelated post-placement refresh was accepted during a source query");
+    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && state.pointer_x == 4000,
+          "post-placement refresh changed a pending source crossing");
+    mouse_crossing_task(&state, 1);
+    CHECK(output_switches == 0, "post-placement refresh resumed a source crossing");
+}
+
+static void test_pending_crossing_cancels_after_output_change(void) {
+    device_t state = pending_relative_crossing();
+    state.active_output = 1;
+    mouse_crossing_task(&state, 30000);
+    CHECK(output_switches == 0 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "timed-out query crossed a different active output");
+}
+
 static void test_half_configured_seam_keeps_legacy_crossing(void) {
     device_t state = stacked_computers_state();
     state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
@@ -334,6 +492,14 @@ int main(void) {
     test_jump_threshold_uses_the_vertical_seam_axis();
     test_configured_seam_maps_position_and_blocks_gaps();
     test_mapped_crossing_places_cursor_on_target_monitor();
+    test_relative_source_crossing_waits_for_true_position();
+    test_relative_source_crossing_falls_back_without_helper();
+    test_relative_source_crossing_falls_back_on_unavailable_reply();
+    test_relative_source_crossing_falls_back_on_timeout();
+    test_source_response_away_from_edge_cancels_crossing();
+    test_late_source_response_cannot_satisfy_a_new_crossing();
+    test_post_placement_refresh_cannot_satisfy_a_source_query();
+    test_pending_crossing_cancels_after_output_change();
     test_half_configured_seam_keeps_legacy_crossing();
     test_public_mouse_seam_matches_mkroamer_edge_map();
     test_invalid_target_screen_degrades_to_legacy_crossing();

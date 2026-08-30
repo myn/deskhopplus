@@ -61,7 +61,7 @@ final class CursorPlacement {
         return true
     }
 
-    func positionBody() -> [UInt8]? {
+    func positionBody(queryID: UInt8) -> [UInt8]? {
         guard let chain = lastChainDirection,
               let event = CGEvent(source: nil) else { return nil }
         guard let displays = displays() else { return nil }
@@ -87,7 +87,7 @@ final class CursorPlacement {
         let frame = CGDisplayBounds(displays.ids[displayIndex])
         let x = UInt16(clamping: Int(((cursor.x - frame.minX) / max(frame.width - 1, 1)) * 65535))
         let y = UInt16(clamping: Int(((cursor.y - frame.minY) / max(frame.height - 1, 1)) * 65535))
-        var position = dh_position(chain_index: chainIndex, x: x, y: y)
+        var position = dh_position(query_id: queryID, chain_index: chainIndex, x: x, y: y)
         var body = [UInt8](repeating: 0, count: Int(DH_POSITION_BODY_SIZE))
         let encoded = body.withUnsafeMutableBufferPointer {
             dh_position_encode(&position, $0.baseAddress, $0.count)

@@ -31,7 +31,7 @@ class CursorPlacement {
     bool place(const dh_place &request, uint32_t now_ms, bool may_defer);
     void answer_pending_query();
     bool target(const dh_place &request, POINT &point);
-    bool position_body(std::vector<uint8_t> &body);
+    bool position_body(uint8_t query_id, std::vector<uint8_t> &body);
     bool secure_desktop_active() const;
     bool foreground_is_higher_integrity() const;
     static DWORD process_integrity(HANDLE process);
@@ -41,7 +41,7 @@ class CursorPlacement {
     std::function<void(uint8_t, const std::vector<uint8_t> &)> respond_;
     HWINEVENTHOOK foreground_hook_{nullptr};
     std::optional<Pending> pending_;
-    bool query_pending_{false};
+    std::optional<uint8_t> pending_query_id_;
     std::optional<uint8_t> last_chain_direction_;
 };
 

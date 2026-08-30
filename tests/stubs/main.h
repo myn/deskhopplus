@@ -27,6 +27,23 @@ typedef struct {
     int32_t buttons;
 } mouse_values_t;
 
+typedef enum {
+    CURSOR_CROSSING_IDLE = 0,
+    CURSOR_CROSSING_WAITING,
+    CURSOR_CROSSING_REANCHORED,
+    CURSOR_CROSSING_FALLBACK,
+    CURSOR_CROSSING_CANCELLED,
+    CURSOR_CROSSING_RESUMING,
+} cursor_crossing_phase_t;
+
+typedef struct {
+    cursor_crossing_phase_t phase;
+    uint8_t direction;
+    uint8_t output;
+    uint8_t query_id;
+    uint32_t started_us;
+} cursor_crossing_t;
+
 typedef struct {
     struct {
         uint16_t jump_threshold;
@@ -41,6 +58,8 @@ typedef struct {
     bool switch_lock;
     bool gaming_mode;
     bool relative_mouse;
+    cursor_crossing_t cursor_crossing;
+    uint8_t next_cursor_query_id;
 } device_t;
 
 typedef struct {
@@ -51,12 +70,23 @@ typedef struct {
 
 #define OUTPUT_A 0
 #define OUTPUT_B 1
+static inline uint32_t time_us_32(void) { return 0; }
+typedef int critical_section_t;
+static inline void critical_section_init(critical_section_t *lock) { (void)lock; }
+static inline void critical_section_enter_blocking(critical_section_t *lock) { (void)lock; }
+static inline void critical_section_exit(critical_section_t *lock) { (void)lock; }
 
 extern device_t global_state;
 
 void switch_to_another_pc(device_t *, output_t *, int, int);
 void switch_virtual_desktop(device_t *, output_t *, int, int);
 void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
-bool apply_helper_cursor_position(device_t *, uint8_t, uint8_t, int16_t, int16_t);
+bool channel_query_cursor(uint8_t, uint8_t);
+void mouse_crossing_task(device_t *, uint32_t);
+void mouse_crossing_query_unavailable(device_t *, uint8_t, uint8_t);
+bool apply_helper_cursor_position(device_t *, uint8_t, uint8_t, int16_t, int16_t, uint8_t);
 bool select_cursor_screen(device_t *, uint8_t, uint8_t);
+void cursor_crossing_init(void);
+void cursor_crossing_enter(void);
+void cursor_crossing_exit(void);
 void handle_cursor_position_msg(uart_packet_t *, device_t *);
