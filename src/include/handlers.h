@@ -50,7 +50,6 @@ void handle_mouse_abs_uart_msg(uart_packet_t *, device_t *);
 void handle_mouse_zoom_msg(uart_packet_t *, device_t *);
 void handle_output_select_msg(uart_packet_t *, device_t *);
 void handle_cursor_place_msg(uart_packet_t *, device_t *);
-void handle_cursor_position_msg(uart_packet_t *, device_t *);
 void handle_proxy_msg(uart_packet_t *, device_t *);
 void handle_read_config_msg(uart_packet_t *, device_t *);
 void handle_reboot_msg(uart_packet_t *, device_t *);

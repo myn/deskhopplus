@@ -203,6 +203,7 @@ static void test_mapped_crossing_places_cursor_on_target_monitor(void) {
     state.config.output[0].screen_index = 1;
     state.config.output[0].border_direction = DH_DIRECTION_BOTTOM;
     state.config.output[1].border_direction = DH_DIRECTION_TOP;
+    state.config.output[1].os = WINDOWS;
     state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
         .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
     };
@@ -230,6 +231,8 @@ static void test_mapped_crossing_places_cursor_on_target_monitor(void) {
           "mapped crossing did not describe the target output's entry edge");
     CHECK(placed_position == 32766,
           "mapped crossing did not preserve the normalized seam position");
+    CHECK(state.relative_mouse,
+          "mapped crossing left target screen 2 absolute while placement was pending");
 }
 
 static void test_half_configured_seam_keeps_legacy_crossing(void) {

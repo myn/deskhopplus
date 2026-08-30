@@ -253,16 +253,6 @@ void handle_cursor_place_msg(uart_packet_t *packet, device_t *state) {
                          packet->data[2], packet->data16[2]);
 }
 
-void handle_cursor_position_msg(uart_packet_t *packet, device_t *state) {
-    const uint8_t output = packet->data[0];
-    const uint8_t screen = packet->data[1];
-    if (output > OUTPUT_B || screen == 0 || screen > state->config.output[output].screen_count)
-        return;
-    state->config.output[output].screen_index = screen;
-    state->pointer_x = (int16_t)packet->data16[1];
-    state->pointer_y = (int16_t)packet->data16[2];
-}
-
 /* On firmware upgrade message, reboot into the BOOTSEL fw upgrade mode */
 void handle_fw_upgrade_msg(uart_packet_t *packet, device_t *state) {
     reset_usb_boot(1 << PICO_DEFAULT_LED_PIN, 0);

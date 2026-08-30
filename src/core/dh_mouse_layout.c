@@ -1,5 +1,9 @@
 #include "dh_mouse_layout.h"
 
+bool dh_mouse_reports_are_relative(bool relative_mouse, bool gaming_mode) {
+    return relative_mouse || gaming_mode;
+}
+
 static bool directions_are_perpendicular(dh_direction_t first, dh_direction_t second) {
     const bool first_is_horizontal =
         first == DH_DIRECTION_LEFT || first == DH_DIRECTION_RIGHT;

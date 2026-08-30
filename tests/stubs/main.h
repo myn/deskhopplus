@@ -40,10 +40,23 @@ typedef struct {
     bool mouse_zoom;
     bool switch_lock;
     bool gaming_mode;
+    bool relative_mouse;
 } device_t;
+
+typedef struct {
+    uint8_t type;
+    union { uint8_t data[8]; uint16_t data16[4]; };
+    uint8_t checksum;
+} uart_packet_t;
+
+#define OUTPUT_A 0
+#define OUTPUT_B 1
 
 extern device_t global_state;
 
 void switch_to_another_pc(device_t *, output_t *, int, int);
 void switch_virtual_desktop(device_t *, output_t *, int, int);
 void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
+bool apply_helper_cursor_position(device_t *, uint8_t, uint8_t, int16_t, int16_t);
+bool select_cursor_screen(device_t *, uint8_t, uint8_t);
+void handle_cursor_position_msg(uart_packet_t *, device_t *);

@@ -518,17 +518,19 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
                 !dh_position_decode(body, body_len, &position) || position.chain_index == 0 ||
                 position.chain_index > state->config.output[BOARD_ROLE].screen_count)
                 return;
-            state->config.output[BOARD_ROLE].screen_index = position.chain_index;
-            state->pointer_x = (int16_t)(((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) /
-                                         DH_SEAM_POSITION_MAX);
-            state->pointer_y = (int16_t)(((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) /
-                                         DH_SEAM_POSITION_MAX);
+            const int16_t pointer_x = (int16_t)(
+                ((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
+            const int16_t pointer_y = (int16_t)(
+                ((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
+            if (!apply_helper_cursor_position(state, BOARD_ROLE, position.chain_index,
+                                              pointer_x, pointer_y))
+                return;
             uart_packet_t packet = {
                 .type = CURSOR_POSITION_MSG,
                 .data = {(uint8_t)BOARD_ROLE, position.chain_index},
             };
-            packet.data16[1] = (uint16_t)state->pointer_x;
-            packet.data16[2] = (uint16_t)state->pointer_y;
+            packet.data16[1] = (uint16_t)pointer_x;
+            packet.data16[2] = (uint16_t)pointer_y;
             (void)queue_uart_packet(&packet, state);
         }
         return;

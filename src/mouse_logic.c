@@ -143,7 +143,9 @@ void do_screen_switch(device_t *state, int direction) {
                         state->pointer_x = (int16_t)entry;
                     else
                         state->pointer_y = (int16_t)entry;
-                    target->screen_index = mapped_entry.screen_index;
+                    if (!select_cursor_screen(state, (uint8_t)target->number,
+                                              mapped_entry.screen_index))
+                        break;
                     channel_place_cursor((uint8_t)target->number,
                                          mapped_entry.screen_index,
                                          target->chain_direction,

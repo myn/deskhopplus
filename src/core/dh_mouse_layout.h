@@ -31,6 +31,7 @@ typedef enum {
 
 dh_direction_t dh_opposite_direction(dh_direction_t direction);
 bool dh_direction_is_vertical(dh_direction_t direction);
+bool dh_mouse_reports_are_relative(bool relative_mouse, bool gaming_mode);
 int32_t dh_mouse_along_seam(dh_direction_t border_direction,
                             dh_mouse_coordinates_t pointer);
 

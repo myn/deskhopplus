@@ -110,8 +110,6 @@ void switch_virtual_desktop(device_t *state, output_t *output, int new_index, in
             break;
 
         case WINDOWS:
-            /* TODO: Switch to relative-only if index > 1, but keep tabs to switch back */
-            state->relative_mouse = (new_index > 1);
             break;
 
         case LINUX:
@@ -129,7 +127,7 @@ void switch_virtual_desktop(device_t *state, output_t *output, int new_index, in
         MAX_SCREEN_COORD);
     state->pointer_x = (int16_t)entry.x;
     state->pointer_y = (int16_t)entry.y;
-    output->screen_index = new_index;
+    (void)select_cursor_screen(state, (uint8_t)output->number, (uint8_t)new_index);
 }
 
 static inline bool extract_value(bool uses_id, int32_t *dst, report_val_t *src, uint8_t *raw_report, int len) {
@@ -176,8 +174,8 @@ mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
         .mode    = ABSOLUTE,
     };
 
-    /* Workaround for Windows multiple desktops */
-    if (state->relative_mouse || state->gaming_mode) {
+    /* Secondary macOS and Windows monitors need relative HID reports. */
+    if (dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
         mouse_report.x = values->move_x;
         mouse_report.y = values->move_y;
         mouse_report.mode = RELATIVE;
