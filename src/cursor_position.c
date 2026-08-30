@@ -6,7 +6,7 @@ bool select_cursor_screen(device_t *state, uint8_t output, uint8_t screen) {
         return false;
     state->config.output[output].screen_index = screen;
     const uint8_t os = state->config.output[output].os;
-    state->relative_mouse = (os == MACOS || os == WINDOWS) && screen > 1;
+    state->relative_mouse = os == WINDOWS && screen > 1;
     return true;
 }
 

@@ -8,10 +8,10 @@ static int failures;
 #define CHECK(condition, message) do { if (!(condition)) { \
     fprintf(stderr, "FAIL: %s\n", message); failures++; } } while (0)
 
-static device_t two_monitor_macos(void) {
+static device_t two_monitor_output(uint8_t os) {
     device_t state = {0};
     state.config.output[0].screen_count = 2;
-    state.config.output[0].os = MACOS;
+    state.config.output[0].os = os;
     return state;
 }
 
@@ -23,8 +23,8 @@ static void receive_position(device_t *state, uint8_t output, uint8_t screen,
     handle_cursor_position_msg(&packet, state);
 }
 
-static void test_secondary_helper_position_selects_relative_reports(void) {
-    device_t state = two_monitor_macos();
+static void test_windows_secondary_helper_position_selects_relative_reports(void) {
+    device_t state = two_monitor_output(WINDOWS);
     receive_position(&state, 0, 2, 12000, 16000);
     CHECK(state.config.output[0].screen_index == 2,
           "helper position did not select monitor 2");
@@ -32,8 +32,16 @@ static void test_secondary_helper_position_selects_relative_reports(void) {
           "helper placement on monitor 2 left the next report absolute");
 }
 
+static void test_macos_secondary_helper_position_keeps_absolute_reports(void) {
+    device_t state = two_monitor_output(MACOS);
+    state.relative_mouse = true; /* mode carried from a Windows secondary */
+    receive_position(&state, 0, 2, 12000, 16000);
+    CHECK(!dh_mouse_reports_are_relative(state.relative_mouse, state.gaming_mode),
+          "macOS helper placement inherited Windows relative report mode");
+}
+
 static void test_primary_helper_position_restores_absolute_reports(void) {
-    device_t state = two_monitor_macos();
+    device_t state = two_monitor_output(MACOS);
     state.relative_mouse = true;
     receive_position(&state, 0, 1, 12000, 16000);
     CHECK(!dh_mouse_reports_are_relative(state.relative_mouse, state.gaming_mode),
@@ -41,7 +49,7 @@ static void test_primary_helper_position_restores_absolute_reports(void) {
 }
 
 static void test_stale_inactive_output_position_is_ignored(void) {
-    device_t state = two_monitor_macos();
+    device_t state = two_monitor_output(MACOS);
     state.pointer_x = 7000;
     state.pointer_y = 8000;
     state.config.output[1].screen_count = 2;
@@ -56,7 +64,8 @@ static void test_stale_inactive_output_position_is_ignored(void) {
 }
 
 int main(void) {
-    test_secondary_helper_position_selects_relative_reports();
+    test_windows_secondary_helper_position_selects_relative_reports();
+    test_macos_secondary_helper_position_keeps_absolute_reports();
     test_primary_helper_position_restores_absolute_reports();
     test_stale_inactive_output_position_is_ignored();
     if (failures) return 1;

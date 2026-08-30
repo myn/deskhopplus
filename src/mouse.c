@@ -174,7 +174,8 @@ mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
         .mode    = ABSOLUTE,
     };
 
-    /* Secondary macOS and Windows monitors need relative HID reports. */
+    /* Windows secondary monitors need relative HID reports. macOS crosses its
+       monitor chain with the absolute edge-and-nudge path above. */
     if (dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
         mouse_report.x = values->move_x;
         mouse_report.y = values->move_y;
