@@ -191,6 +191,12 @@ const field_map_t api_field_map[] = {
 #undef DH_HOTKEY_ACTION
 };
 
+/* GET_ALL_VALS_MSG queues one HID response for every entry before USB has an
+   opportunity to drain the queue. If the map outgrows the queue, its tail is
+   silently omitted and the config page renders those fields as empty. */
+_Static_assert(ARRAY_SIZE(api_field_map) <= HID_QUEUE_LENGTH,
+               "config read-all responses must fit in the HID queue");
+
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave
    its tail unreadable, and the config page would show a truncated value as if
    it were the whole thing — silently, since nothing else here would change. */

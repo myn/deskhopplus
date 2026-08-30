@@ -25,7 +25,7 @@
 
 /* Packet Queue Definitions  */
 #define UART_QUEUE_LENGTH  256
-#define HID_QUEUE_LENGTH   128
+#define HID_QUEUE_LENGTH   256
 #define KBD_QUEUE_LENGTH   128
 #define MOUSE_QUEUE_LENGTH 512
 
