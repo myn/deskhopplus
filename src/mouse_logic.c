@@ -144,6 +144,11 @@ void do_screen_switch(device_t *state, int direction) {
                     else
                         state->pointer_y = (int16_t)entry;
                     target->screen_index = mapped_entry.screen_index;
+                    channel_place_cursor((uint8_t)target->number,
+                                         mapped_entry.screen_index,
+                                         target->chain_direction,
+                                         target->border_direction,
+                                         mapped_entry.position);
                 }
             }
             break;

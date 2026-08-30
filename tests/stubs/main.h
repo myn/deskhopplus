@@ -46,3 +46,4 @@ extern device_t global_state;
 
 void switch_to_another_pc(device_t *, output_t *, int, int);
 void switch_virtual_desktop(device_t *, output_t *, int, int);
+void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);

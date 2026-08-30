@@ -11,6 +11,7 @@
 #include "dh_inq.h"
 #include "dh_outq.h"
 #include "dh_pair.h"
+#include "dh_place.h"
 #include "dh_relay.h"
 #include "dh_session.h"
 #include "dh_txq.h"
@@ -129,6 +130,9 @@ static struct {
     /* A registration that channel_task still owes the configuration. */
     bool registration_unsaved;
 } channel;
+
+static bool channel_queue_frame(const uint8_t *frame, size_t len);
+static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_t body_len);
 
 static uint32_t channel_now_ms(void) {
     /*
@@ -326,6 +330,33 @@ bool channel_helper_present(void) {
     return channel.session.present;
 }
 
+void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t border,
+                          uint16_t position) {
+    if (output != BOARD_ROLE) {
+        uart_packet_t packet = {
+            .type = CURSOR_PLACE_MSG,
+            .data = {screen, chain, border},
+        };
+        packet.data16[2] = position;
+        (void)queue_uart_packet(&packet, &global_state);
+        return;
+    }
+    if (!channel_helper_present())
+        return;
+
+    const dh_place place = {
+        .chain_index = screen,
+        .chain_direction = chain,
+        .border_direction = border,
+        .entry_position = position,
+    };
+    uint8_t body[DH_PLACE_BODY_SIZE];
+    if (!dh_place_encode(&place, body, sizeof body))
+        return;
+    if (channel_emit_placement_body(DH_MSG_PLACE, body, sizeof body))
+        (void)channel_emit_placement_body(DH_MSG_POS_QUERY, NULL, 0);
+}
+
 /* Hand a whole frame to this board's helper. */
 static bool channel_queue_frame(const uint8_t *frame, size_t len) {
     const uint32_t now = channel_now_ms();
@@ -363,6 +394,20 @@ static bool channel_queue_frame(const uint8_t *frame, size_t len) {
      * slot is sized to hold either of them (dh_outq.h).
      */
     return dh_txq_track(&channel.tx, queued);
+}
+
+static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_t body_len) {
+    if (body_len > DH_PLACE_BODY_SIZE)
+        return false;
+    uint8_t frame_bytes[DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_PLACE_BODY_SIZE];
+    size_t frame_len = 0;
+    const dh_frame_view frame = {
+        .hdr = {.type = type, .flags = 0, .len = (uint16_t)body_len},
+        .payload = body,
+    };
+    return dh_session_emit_relayed(&channel.session, &frame, frame_bytes, sizeof frame_bytes,
+                                   &frame_len) == DH_FRAME_OK &&
+           channel_queue_frame(frame_bytes, frame_len);
 }
 
 /*
@@ -459,6 +504,36 @@ static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32
      * the peer helper opaquely, everything below is addressed to this firmware
      * and is never forwarded. The payload is not read on either path.
      */
+    if (frame->hdr.type >= DH_MSG_PLACE && frame->hdr.type <= DH_MSG_POS_RESPONSE) {
+        const uint8_t *body = NULL;
+        size_t body_len = 0;
+        if (dh_session_authenticate(&channel.session, frame, now, &body, &body_len) != DH_AUTH_OK)
+            return;
+        if (frame->hdr.type == DH_MSG_POS_RESPONSE) {
+            dh_position position;
+            /* A response can arrive after the user has already crossed back.
+               It describes this board's output, so applying it while the peer
+               is active would rewind the global pointer to stale coordinates. */
+            if (state->active_output != BOARD_ROLE ||
+                !dh_position_decode(body, body_len, &position) || position.chain_index == 0 ||
+                position.chain_index > state->config.output[BOARD_ROLE].screen_count)
+                return;
+            state->config.output[BOARD_ROLE].screen_index = position.chain_index;
+            state->pointer_x = (int16_t)(((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) /
+                                         DH_SEAM_POSITION_MAX);
+            state->pointer_y = (int16_t)(((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) /
+                                         DH_SEAM_POSITION_MAX);
+            uart_packet_t packet = {
+                .type = CURSOR_POSITION_MSG,
+                .data = {(uint8_t)BOARD_ROLE, position.chain_index},
+            };
+            packet.data16[1] = (uint16_t)state->pointer_x;
+            packet.data16[2] = (uint16_t)state->pointer_y;
+            (void)queue_uart_packet(&packet, state);
+        }
+        return;
+    }
+
     if (dh_msg_is_bulk(frame->hdr.type)) {
         /*
          * Authorisation is per frame. v1 gated this on dh_session_may_relay —

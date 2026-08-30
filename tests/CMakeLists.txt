@@ -58,6 +58,10 @@ add_executable(seam_map_test seam_map_test.c ${CORE}/dh_seam_map.c)
 target_include_directories(seam_map_test PRIVATE ${CORE})
 add_test(NAME seam_map_test COMMAND seam_map_test)
 
+add_executable(place_test place_test.c ${CORE}/dh_place.c)
+target_include_directories(place_test PRIVATE ${CORE})
+add_test(NAME place_test COMMAND place_test)
+
 add_executable(hotkey_test hotkey_test.c ${CORE}/dh_hotkey.c)
 target_include_directories(hotkey_test PRIVATE ${CORE})
 add_test(NAME hotkey_test COMMAND hotkey_test)

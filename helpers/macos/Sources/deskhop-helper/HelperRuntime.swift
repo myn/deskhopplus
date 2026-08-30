@@ -1,4 +1,5 @@
 import DeskhopChannel
+import DHCore
 import Foundation
 import Security
 
@@ -14,6 +15,7 @@ final class HelperRuntime {
     private let transport = ChannelTransport()
     private let clipboard: ClipboardService
     private let pasteboard = Pasteboard()
+    private let cursorPlacement = CursorPlacement()
 
     /*
      * Whether the last thing the session said was that bulk may cross. The
@@ -98,10 +100,18 @@ final class HelperRuntime {
         transport.log = { message in Self.note(message) }
         transport.onEvent = { [weak self] event in self?.feed(event) }
 
-        /* Verified bulk frames, straight from the core. Nothing here re-reads
+        cursorPlacement.log = { message in Self.note(message) }
+
+        /* Verified payloads, straight from the core. Nothing here re-reads
            the stream: decode, tag and replay counter are all upstream of this. */
         session.onPayload = { [weak self] type, body in
             guard let self else { return }
+            if self.cursorPlacement.received(type: type, body: body) { return }
+            if type == UInt8(DH_MSG_POS_QUERY.rawValue), body.isEmpty,
+               let response = self.cursorPlacement.positionBody() {
+                self.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue), body: response)
+                return
+            }
             self.emit(self.clipboard.received(type: type, body: body))
         }
 
@@ -218,6 +228,19 @@ final class HelperRuntime {
                 Self.note("clipboard protocol error: \(note); dropping the connection")
                 transport.release()
             }
+        }
+    }
+
+    private func sendPayload(type: UInt8, body: [UInt8]) {
+        guard let frame = session.emit(type: type, body: body) else {
+            Self.note("a cursor-position response could not be built; there is no session")
+            return
+        }
+        if transport.send(frame) {
+            session.noteSent(at: now)
+        } else {
+            session.noteSendRefused()
+            Self.note("a cursor-position response was not taken by the transport and is lost")
         }
     }
 

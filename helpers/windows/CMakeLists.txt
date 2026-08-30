@@ -43,6 +43,7 @@ add_library(dhcore STATIC
   ${CORE}/dh_session.c
   ${CORE}/dh_pair.c
   ${CORE}/dh_frame.c
+  ${CORE}/dh_place.c
   ${CORE}/dh_auth.c
   ${CORE}/dh_sha256.c
   ${CORE}/dh_p256.c
@@ -133,6 +134,7 @@ if(WIN32)
     src/helper_session.cpp
     src/clip_service.cpp
     src/clipboard.cpp
+    src/cursor_placement.cpp
     src/words.cpp
     src/secret_store.cpp
     src/seal_aead.cpp

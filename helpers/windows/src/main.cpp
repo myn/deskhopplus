@@ -39,6 +39,7 @@
 #include "channel_identity.h"
 #include "clip_service.h"
 #include "clipboard.h"
+#include "cursor_placement.h"
 #include "dh_p256.h"
 #include "helper_session.h"
 #include "hid_transport.h"
@@ -113,6 +114,7 @@ class Helper {
     std::unique_ptr<HelperSession> session_;
     std::unique_ptr<Autostart> autostart_;
     std::unique_ptr<ClipService> clipboard_service_;
+    std::unique_ptr<CursorPlacement> cursor_placement_;
     HidTransport transport_;
     Tray tray_;
     Clipboard clipboard_;
@@ -249,10 +251,26 @@ bool Helper::start(HINSTANCE instance) {
            nothing to fall back to, so this stops. */
         if (!fill_random(out, len)) std::abort();
     });
+    cursor_placement_ = std::make_unique<CursorPlacement>(
+        [this](const std::string &message) { log(message); },
+        [this](uint8_t type, const std::vector<uint8_t> &body) {
+            std::vector<uint8_t> frame;
+            if (!session_->emit(type, body, frame)) {
+                log("a cursor-position response could not be built; there is no session");
+                return;
+            }
+            if (transport_.send(frame.data(), frame.size())) {
+                session_->note_sent(now_ms());
+            } else {
+                session_->note_send_refused();
+                log("a cursor-position response was not taken by the transport and is lost");
+            }
+        });
 
     /* Verified bulk frames, straight from the core. Nothing here re-reads the
        stream: decode, tag and replay counter are all upstream of this. */
     session_->set_payload_sink([this](uint8_t type, const uint8_t *body, size_t len) {
+        if (cursor_placement_->received(type, body, len, now_ms())) return;
         emit(clipboard_service_->received(type, body, len));
     });
 

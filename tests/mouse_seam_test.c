@@ -7,6 +7,12 @@ device_t global_state;
 static int output_switches;
 static int virtual_switches;
 static int requested_index;
+static int placements;
+static uint8_t placed_output;
+static uint8_t placed_screen;
+static uint8_t placed_chain;
+static uint8_t placed_border;
+static uint16_t placed_position;
 
 enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
@@ -24,6 +30,16 @@ void switch_virtual_desktop(device_t *state, output_t *output, int new_index, in
     virtual_switches++;
     requested_index = new_index;
     output->screen_index = (uint32_t)new_index;
+}
+
+void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t border,
+                          uint16_t position) {
+    placements++;
+    placed_output = output;
+    placed_screen = screen;
+    placed_chain = chain;
+    placed_border = border;
+    placed_position = position;
 }
 
 static int failures;
@@ -181,6 +197,41 @@ static void test_configured_seam_maps_position_and_blocks_gaps(void) {
     CHECK(output_switches == 0, "monitor without a configured range crossed");
 }
 
+static void test_mapped_crossing_places_cursor_on_target_monitor(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_x = MAX_SCREEN_COORD / 2;
+    state.config.output[0].screen_index = 1;
+    state.config.output[0].border_direction = DH_DIRECTION_BOTTOM;
+    state.config.output[1].border_direction = DH_DIRECTION_TOP;
+    state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].seam_ranges[0] = (dh_seam_range_t){
+        .screen_index = 1, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[0].seam_ranges[1] = (dh_seam_range_t){
+        .screen_index = 1, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+    state.config.output[1].seam_ranges[1] = (dh_seam_range_t){
+        .screen_index = 2, .start = 0, .end = DH_SEAM_POSITION_MAX,
+    };
+
+    placements = 0;
+    output_switches = 0;
+    do_screen_switch(&state, BOTTOM);
+
+    CHECK(output_switches == 1, "right-pair seam did not cross to the other output");
+    CHECK(placements == 1, "mapped crossing did not request target-helper placement");
+    CHECK(placed_output == 1 && placed_screen == 2,
+          "mapped crossing requested placement on the wrong target monitor");
+    CHECK(placed_chain == DH_DIRECTION_LEFT,
+          "mapped crossing did not describe the target monitor chain");
+    CHECK(placed_border == DH_DIRECTION_TOP,
+          "mapped crossing did not describe the target output's entry edge");
+    CHECK(placed_position == 32766,
+          "mapped crossing did not preserve the normalized seam position");
+}
+
 static void test_half_configured_seam_keeps_legacy_crossing(void) {
     device_t state = stacked_computers_state();
     state.config.output[0].seam_ranges[0] = (dh_seam_range_t){
@@ -279,6 +330,7 @@ int main(void) {
     test_vertical_seam_preserves_crossing_guards();
     test_jump_threshold_uses_the_vertical_seam_axis();
     test_configured_seam_maps_position_and_blocks_gaps();
+    test_mapped_crossing_places_cursor_on_target_monitor();
     test_half_configured_seam_keeps_legacy_crossing();
     test_public_mouse_seam_matches_mkroamer_edge_map();
     test_invalid_target_screen_degrades_to_legacy_crossing();

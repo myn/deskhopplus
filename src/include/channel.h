@@ -61,3 +61,8 @@ void handle_channel_relay_msg(uart_packet_t *, device_t *);
 /* Is a helper live on this board's channel? The configuration UI shows it
    per side (#50) — the surface that survives the helper being disabled. */
 bool channel_helper_present(void);
+
+/* Ask the helper on `output` to place the entry cursor on a mapped monitor.
+   Fire-and-forget: HID positioning remains the fallback when no helper is live. */
+void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t border,
+                          uint16_t position);
