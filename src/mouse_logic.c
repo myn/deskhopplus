@@ -114,6 +114,23 @@ float calculate_mouse_acceleration_factor(int32_t offset_x, int32_t offset_y) {
 }
 
 enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values) {
+    /* A relative-source output crossing is a short transaction: its helper
+       must report the OS cursor before seam mapping can finish. Fast diagonal
+       packets can otherwise take a monitor-chain seam while that query is in
+       flight, changing screen_index underneath the pending output crossing.
+       Hold positional motion until the transaction resolves, while still
+       forwarding buttons, wheel and pan through create_mouse_report(). */
+    cursor_crossing_enter();
+    const bool crossing_pending =
+        state->cursor_crossing.phase != CURSOR_CROSSING_IDLE;
+    cursor_crossing_exit();
+    if (crossing_pending) {
+        values->move_x = 0;
+        values->move_y = 0;
+        state->mouse_buttons = values->buttons;
+        return NONE;
+    }
+
     output_t *current = &state->config.output[state->active_output];
     uint8_t reduce_speed = state->mouse_zoom ? MOUSE_ZOOM_SCALING_FACTOR : 0;
     float acceleration = calculate_mouse_acceleration_factor(values->move_x, values->move_y);
