@@ -24,6 +24,19 @@ typedef struct {
     int overshoot;
 } screen_boundary_crossing_t;
 
+static dh_mouse_transition_t actionable_transition_for(
+    const device_t *state, const output_t *output, enum screen_pos_e direction, int buttons) {
+    if (direction == NONE || state->switch_lock || state->gaming_mode)
+        return DH_MOUSE_TRANSITION_NONE;
+    const dh_mouse_layout_t layout = mouse_layout_for(output);
+    const dh_mouse_transition_t transition = dh_mouse_transition_for(
+        &layout, output->screen_index, output->screen_count,
+        (dh_direction_t)direction);
+    return transition == DH_MOUSE_TRANSITION_OUTPUT && buttons
+               ? DH_MOUSE_TRANSITION_NONE
+               : transition;
+}
+
 static void cursor_crossing_clear(device_t *state) {
     state->cursor_crossing = (cursor_crossing_t){.phase = CURSOR_CROSSING_IDLE};
 }
@@ -110,27 +123,47 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
         screen_boundary_crossing(current, state->pointer_x, offset_x, LEFT, RIGHT);
     const screen_boundary_crossing_t vertical =
         screen_boundary_crossing(current, state->pointer_y, offset_y, TOP, BOTTOM);
+    const bool horizontal_actionable =
+        actionable_transition_for(state, current, horizontal.direction, values->buttons) !=
+        DH_MOUSE_TRANSITION_NONE;
+    const bool vertical_actionable =
+        actionable_transition_for(state, current, vertical.direction, values->buttons) !=
+        DH_MOUSE_TRANSITION_NONE;
     const enum screen_pos_e direction =
-        vertical.overshoot > horizontal.overshoot ? vertical.direction : horizontal.direction;
+        vertical_actionable &&
+                (!horizontal_actionable || vertical.overshoot > horizontal.overshoot)
+            ? vertical.direction
+            : horizontal_actionable ? horizontal.direction : NONE;
 
-    state->pointer_x = move_and_keep_on_screen(state->pointer_x, offset_x);
-    state->pointer_y = move_and_keep_on_screen(state->pointer_y, offset_y);
+    /* Relative reports (Windows secondary monitors) otherwise let the OS take
+       the losing seam before firmware performs the winning transition. Keep
+       only the winning-axis motion in a simultaneous actionable crossing. */
+    if (state->relative_mouse && horizontal_actionable && vertical_actionable) {
+        if (dh_direction_is_vertical((dh_direction_t)direction))
+            values->move_x = 0;
+        else
+            values->move_y = 0;
+    }
+
+    /* A crossing report chooses one seam below, but it may have overshot both
+       axes near a corner. Keep every crossing axis at its last valid position
+       so the unchosen seam cannot become a synthetic exact corner on the next
+       report. This is the vertical-layout behavior proven in the #28 prior
+       art, combined with our farther-overshoot arbitration. */
+    if (!horizontal_actionable)
+        state->pointer_x = move_and_keep_on_screen(state->pointer_x, offset_x);
+    if (!vertical_actionable)
+        state->pointer_y = move_and_keep_on_screen(state->pointer_y, offset_y);
     state->mouse_buttons = values->buttons;
     return direction;
 }
 
 void do_screen_switch(device_t *state, int direction) {
     output_t *output = &state->config.output[state->active_output];
-    if (state->switch_lock || state->gaming_mode)
-        return;
-
-    const dh_mouse_layout_t layout = mouse_layout_for(output);
-    dh_mouse_transition_t transition =
-        dh_mouse_transition_for(&layout, output->screen_index, output->screen_count,
-                                (dh_direction_t)direction);
+    const dh_mouse_transition_t transition = actionable_transition_for(
+        state, output, (enum screen_pos_e)direction, state->mouse_buttons);
     switch (transition) {
         case DH_MOUSE_TRANSITION_OUTPUT:
-            if (!state->mouse_buttons) {
                 /* Windows secondary monitors are relative, so their stored
                    coordinate is only an estimate. Resolve the seam only after
                    the source helper has reported the OS cursor position. */
@@ -173,8 +206,16 @@ void do_screen_switch(device_t *state, int direction) {
                     output->seam_ranges, target->seam_ranges, output->screen_index,
                     output->screen_count, target->screen_count, normalized,
                     &mapped_entry);
-                if (crossing == DH_SEAM_CROSSING_BLOCKED)
+                if (crossing == DH_SEAM_CROSSING_BLOCKED) {
+                    const dh_mouse_coordinates_t edge = dh_mouse_edge_coordinates(
+                        (dh_direction_t)direction,
+                        (dh_mouse_coordinates_t){.x = state->pointer_x,
+                                                 .y = state->pointer_y},
+                        MIN_SCREEN_COORD, MAX_SCREEN_COORD);
+                    state->pointer_x = (int16_t)edge.x;
+                    state->pointer_y = (int16_t)edge.y;
                     break;
+                }
                 switch_to_another_pc(state, output, 1 - state->active_output, direction);
                 if (crossing == DH_SEAM_CROSSING_MAPPED) {
                     const int entry = (int)(((uint32_t)mapped_entry.position * MAX_SCREEN_COORD +
@@ -193,7 +234,6 @@ void do_screen_switch(device_t *state, int direction) {
                                          target->border_direction,
                                          mapped_entry.position);
                 }
-            }
             break;
         case DH_MOUSE_TRANSITION_CHAIN_BACK:
         case DH_MOUSE_TRANSITION_CHAIN_FORWARD:

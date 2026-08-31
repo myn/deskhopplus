@@ -22,16 +22,25 @@ void do_screen_switch(device_t *, int);
 
 void switch_to_another_pc(device_t *state, output_t *output, int output_to, int direction) {
     (void)output;
-    (void)direction;
     output_switches++;
     state->active_output = (uint8_t)output_to;
+    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
+        (dh_direction_t)direction,
+        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
+        MIN_SCREEN_COORD, MAX_SCREEN_COORD);
+    state->pointer_x = (int16_t)entry.x;
+    state->pointer_y = (int16_t)entry.y;
 }
 
 void switch_virtual_desktop(device_t *state, output_t *output, int new_index, int direction) {
-    (void)state;
-    (void)direction;
     virtual_switches++;
     requested_index = new_index;
+    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
+        (dh_direction_t)direction,
+        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
+        MIN_SCREEN_COORD, MAX_SCREEN_COORD);
+    state->pointer_x = (int16_t)entry.x;
+    state->pointer_y = (int16_t)entry.y;
     output->screen_index = (uint32_t)new_index;
 }
 
@@ -97,6 +106,35 @@ static device_t stacked_computers_state(void) {
     return state;
 }
 
+static device_t four_screen_corner_state(enum screen_pos_e horizontal,
+                                         enum screen_pos_e vertical) {
+    device_t state = side_by_side_state();
+    state.active_output = 0;
+    state.config.output[0].chain_direction = DH_DIRECTION_RIGHT;
+    state.config.output[1].chain_direction = DH_DIRECTION_LEFT;
+    state.config.output[0].border_direction = (uint8_t)vertical;
+    state.config.output[1].border_direction = (uint8_t)dh_opposite_direction(
+        (dh_direction_t)vertical);
+    state.config.output[0].screen_count = 2;
+    state.config.output[1].screen_count = 2;
+    const uint8_t source_screen = horizontal == RIGHT ? 1 : 2;
+    state.config.output[0].screen_index = source_screen;
+    state.config.output[1].screen_index = source_screen == 1 ? 2 : 1;
+    state.config.output[0].os = WINDOWS;
+    state.config.output[1].os = MACOS;
+    state.relative_mouse = source_screen > 1;
+    for (uint8_t screen = 1; screen <= 2; screen++) {
+        state.config.output[0].seam_ranges[screen - 1] = (dh_seam_range_t){
+            .screen_index = screen, .start = 0, .end = DH_SEAM_POSITION_MAX,
+        };
+        state.config.output[1].seam_ranges[screen - 1] = (dh_seam_range_t){
+            .screen_index = screen == 1 ? 2 : 1,
+            .start = 0, .end = DH_SEAM_POSITION_MAX,
+        };
+    }
+    return state;
+}
+
 static void test_perpendicular_seam_crosses_from_any_monitor(void) {
     device_t state = stacked_computers_state();
     global_state = state;
@@ -104,7 +142,8 @@ static void test_perpendicular_seam_crosses_from_any_monitor(void) {
 
     enum screen_pos_e direction = update_mouse_position(&state, &movement);
     CHECK(direction == TOP, "update_mouse_position did not detect the top seam");
-    CHECK(state.pointer_y == MIN_SCREEN_COORD, "update_mouse_position did not clamp Y");
+    CHECK(state.pointer_y == 10,
+          "update_mouse_position discarded the last valid Y before switching");
 
     output_switches = 0;
     do_screen_switch(&state, direction);
@@ -134,6 +173,8 @@ static void test_diagonal_push_uses_the_larger_overshoot(void) {
 
     enum screen_pos_e direction = update_mouse_position(&state, &movement);
     CHECK(direction == TOP, "diagonal push did not choose the farther Y overshoot");
+    CHECK(state.pointer_x == 2 && state.pointer_y == 2,
+          "diagonal push manufactured an exact corner before switching");
 
     state.pointer_x = 2;
     state.pointer_y = 2;
@@ -141,6 +182,135 @@ static void test_diagonal_push_uses_the_larger_overshoot(void) {
     movement.move_y = -14;
     CHECK(update_mouse_position(&state, &movement) == TOP,
           "jump threshold distorted the corner overshoot comparison");
+}
+
+static void test_non_transition_and_guarded_edges_clamp_normally(void) {
+    device_t state = side_by_side_state();
+    state.pointer_y = 10;
+    global_state = state;
+    mouse_values_t movement = {.move_y = -11};
+    CHECK(update_mouse_position(&state, &movement) == NONE,
+          "a physical edge with no transition requested a screen switch");
+    CHECK(state.pointer_y == MIN_SCREEN_COORD,
+          "a physical edge with no transition froze short of the boundary");
+
+    state = stacked_computers_state();
+    state.switch_lock = true;
+    global_state = state;
+    movement = (mouse_values_t){.move_y = -16};
+    CHECK(update_mouse_position(&state, &movement) == NONE,
+          "switch lock left a pending geometric crossing");
+    CHECK(state.pointer_y == MIN_SCREEN_COORD,
+          "switch lock froze the cursor short of the output edge");
+
+    state = stacked_computers_state();
+    global_state = state;
+    movement = (mouse_values_t){.move_y = -16, .buttons = 1};
+    CHECK(update_mouse_position(&state, &movement) == NONE,
+          "held button left a blocked output crossing pending");
+    CHECK(state.pointer_y == MIN_SCREEN_COORD,
+          "held button froze the cursor short of the output edge");
+}
+
+static void test_diagonal_corner_continues_without_a_synthetic_adjacent_seam(void) {
+    const struct {
+        int16_t x;
+        int16_t y;
+        int32_t move_x;
+        int32_t move_y;
+        enum screen_pos_e horizontal;
+        enum screen_pos_e vertical;
+    } corners[] = {
+        {2, 2, -10, -20, LEFT, TOP},
+        {MAX_SCREEN_COORD - 2, 2, 10, -20, RIGHT, TOP},
+        {2, MAX_SCREEN_COORD - 2, -10, 20, LEFT, BOTTOM},
+        {MAX_SCREEN_COORD - 2, MAX_SCREEN_COORD - 2, 10, 20, RIGHT, BOTTOM},
+    };
+
+    for (unsigned i = 0; i < sizeof corners / sizeof corners[0]; i++) {
+        const uint8_t source_screen = corners[i].horizontal == RIGHT ? 1 : 2;
+        device_t state = four_screen_corner_state(corners[i].horizontal, corners[i].vertical);
+        state.pointer_x = corners[i].x;
+        state.pointer_y = corners[i].y;
+        global_state = state;
+        mouse_values_t movement = {
+            .move_x = corners[i].move_x,
+            .move_y = corners[i].move_y,
+        };
+
+        CHECK(update_mouse_position(&state, &movement) == corners[i].vertical,
+              "vertical-first corner did not choose the farther overshoot");
+        CHECK(state.pointer_x == corners[i].x && state.pointer_y == corners[i].y,
+              "vertical-first corner discarded its last valid coordinates");
+        CHECK(movement.move_x == (source_screen > 1 ? 0 : corners[i].move_x) &&
+                  movement.move_y == corners[i].move_y,
+              "vertical-first corner sent relative motion into the losing seam");
+
+        do_screen_switch(&state, corners[i].vertical);
+        CHECK(state.active_output == 1,
+              "vertical-first corner did not cross to the target output");
+        const uint8_t paired_target_screen = source_screen == 1 ? 2 : 1;
+        CHECK(state.config.output[1].screen_index == paired_target_screen,
+              "vertical-first corner selected the wrong paired monitor");
+        movement.move_x = corners[i].move_x;
+        movement.move_y = corners[i].move_y;
+        CHECK(update_mouse_position(&state, &movement) == corners[i].horizontal,
+              "continued diagonal did not reach the intended adjacent monitor");
+        CHECK(state.pointer_y != MIN_SCREEN_COORD && state.pointer_y != MAX_SCREEN_COORD,
+              "continued diagonal snapped its inward coordinate to a corner");
+        do_screen_switch(&state, corners[i].horizontal);
+        CHECK(state.active_output == 1 &&
+                  state.config.output[1].screen_index == source_screen,
+              "continued diagonal did not enter the adjacent target monitor");
+
+        state = four_screen_corner_state(corners[i].horizontal, corners[i].vertical);
+        state.pointer_x = corners[i].x;
+        state.pointer_y = corners[i].y;
+        global_state = state;
+        CHECK(update_mouse_position(&state, &movement) == corners[i].vertical,
+              "reversal setup did not choose the vertical seam");
+        do_screen_switch(&state, corners[i].vertical);
+        mouse_values_t reversal = {
+            .move_x = -corners[i].move_x,
+            .move_y = -corners[i].move_y,
+        };
+        const enum screen_pos_e reverse_vertical =
+            corners[i].vertical == TOP ? BOTTOM : TOP;
+        CHECK(update_mouse_position(&state, &reversal) == reverse_vertical,
+              "reversing after a vertical crossing triggered the unchosen seam");
+        do_screen_switch(&state, reverse_vertical);
+        CHECK(state.active_output == 0 &&
+                  state.config.output[0].screen_index == source_screen,
+              "reversal did not return through the paired vertical seam");
+
+        state = four_screen_corner_state(corners[i].horizontal, corners[i].vertical);
+        state.pointer_x = corners[i].x;
+        state.pointer_y = corners[i].y;
+        movement.move_x = corners[i].move_x * 2;
+        movement.move_y = corners[i].move_y / 2;
+        global_state = state;
+        CHECK(update_mouse_position(&state, &movement) == corners[i].horizontal,
+              "horizontal-first corner did not choose the farther overshoot");
+        CHECK(state.pointer_x == corners[i].x && state.pointer_y == corners[i].y,
+              "horizontal-first corner discarded its last valid coordinates");
+        CHECK(movement.move_x == corners[i].move_x * 2 &&
+                  movement.move_y == (source_screen > 1 ? 0 : corners[i].move_y / 2),
+              "horizontal-first corner sent relative motion into the losing seam");
+
+        do_screen_switch(&state, corners[i].horizontal);
+        CHECK(state.active_output == 0 &&
+                  state.config.output[0].screen_index == (source_screen == 1 ? 2 : 1),
+              "horizontal-first corner did not enter the adjacent source monitor");
+        movement.move_x = corners[i].move_x * 2;
+        movement.move_y = corners[i].move_y / 2;
+        CHECK(update_mouse_position(&state, &movement) == corners[i].vertical,
+              "horizontal-first continuation did not reach the intended adjacent seam");
+        CHECK(state.pointer_x != MIN_SCREEN_COORD && state.pointer_x != MAX_SCREEN_COORD,
+              "horizontal-first continuation snapped its inward coordinate to a corner");
+        do_screen_switch(&state, corners[i].vertical);
+        CHECK(state.active_output == 1,
+              "horizontal-first continuation did not cross to the target output");
+    }
 }
 
 static void test_vertical_seam_preserves_crossing_guards(void) {
@@ -205,6 +375,16 @@ static void test_configured_seam_maps_position_and_blocks_gaps(void) {
     output_switches = 0;
     do_screen_switch(&state, TOP);
     CHECK(output_switches == 0, "monitor without a configured range crossed");
+
+    state.pointer_y = 10;
+    global_state = state;
+    mouse_values_t movement = {.move_y = -16};
+    const enum screen_pos_e direction = update_mouse_position(&state, &movement);
+    CHECK(direction == TOP && state.pointer_y == 10,
+          "blocked seam setup did not preserve the last valid crossing coordinate");
+    do_screen_switch(&state, direction);
+    CHECK(state.pointer_y == MIN_SCREEN_COORD,
+          "blocked seam left the cursor frozen short of its physical edge");
 }
 
 static void test_mapped_crossing_places_cursor_on_target_monitor(void) {
@@ -462,7 +642,8 @@ static void test_update_and_switch_at_the_public_mouse_seam(void) {
 
     enum screen_pos_e direction = update_mouse_position(&state, &movement);
     CHECK(direction == LEFT, "update_mouse_position did not detect the thresholded border edge");
-    CHECK(state.pointer_x == MIN_SCREEN_COORD, "update_mouse_position did not clamp the pointer");
+    CHECK(state.pointer_x == 10,
+          "update_mouse_position discarded the last valid X before switching");
 
     output_switches = 0;
     do_screen_switch(&state, direction);
@@ -488,6 +669,8 @@ int main(void) {
     test_virtual_desktops_remain_local();
     test_perpendicular_seam_crosses_from_any_monitor();
     test_diagonal_push_uses_the_larger_overshoot();
+    test_non_transition_and_guarded_edges_clamp_normally();
+    test_diagonal_corner_continues_without_a_synthetic_adjacent_seam();
     test_vertical_seam_preserves_crossing_guards();
     test_jump_threshold_uses_the_vertical_seam_axis();
     test_configured_seam_maps_position_and_blocks_gaps();
