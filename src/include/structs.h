@@ -80,11 +80,19 @@ typedef enum {
     CURSOR_CROSSING_RESUMING,
 } cursor_crossing_phase_t;
 
+typedef enum {
+    CURSOR_CROSSING_SOURCE_REANCHOR = 0,
+    CURSOR_CROSSING_MACOS_PLACEMENT,
+} cursor_crossing_kind_t;
+
 typedef struct {
     cursor_crossing_phase_t phase;
+    cursor_crossing_kind_t kind;
     uint8_t direction;
     uint8_t output;
     uint8_t query_id;
+    uint8_t target_screen;
+    uint16_t target_position;
     uint32_t started_us;
 } cursor_crossing_t;
 

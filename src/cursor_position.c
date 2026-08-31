@@ -17,6 +17,26 @@ static bool position_is_at_pending_edge(const device_t *state, int16_t x, int16_
     }
 }
 
+static bool position_confirms_pending_placement(const device_t *state, int16_t x, int16_t y) {
+    const cursor_crossing_t *crossing = &state->cursor_crossing;
+    const int expected_along = (int)(
+        ((uint32_t)crossing->target_position * MAX_SCREEN_COORD +
+         DH_SEAM_POSITION_MAX / 2) / DH_SEAM_POSITION_MAX);
+    const int actual_along = dh_direction_is_vertical((dh_direction_t)crossing->direction)
+                                 ? x
+                                 : y;
+    if (actual_along < expected_along - 2 || actual_along > expected_along + 2)
+        return false;
+    const int threshold = state->config.jump_threshold;
+    switch (crossing->direction) {
+        case LEFT: return x >= MAX_SCREEN_COORD - threshold;
+        case RIGHT: return x <= MIN_SCREEN_COORD + threshold;
+        case TOP: return y >= MAX_SCREEN_COORD - threshold;
+        case BOTTOM: return y <= MIN_SCREEN_COORD + threshold;
+        default: return false;
+    }
+}
+
 bool select_cursor_screen(device_t *state, uint8_t output, uint8_t screen) {
     if (output > OUTPUT_B || output != state->active_output || screen == 0 ||
         screen > state->config.output[output].screen_count)
@@ -40,6 +60,12 @@ bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t scree
         cursor_crossing_exit();
         return false;
     }
+    if (query_id != 0 && crossing->kind == CURSOR_CROSSING_MACOS_PLACEMENT &&
+        (screen != crossing->target_screen ||
+         !position_confirms_pending_placement(state, x, y))) {
+        cursor_crossing_exit();
+        return false;
+    }
     /* q=0 is the immediate readback of a placement whose target screen was
        already selected by firmware. At an internal seam, continued fast
        motion (or an asynchronous OS observation) can report the neighbouring
@@ -59,7 +85,9 @@ bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t scree
     state->pointer_y = y;
     const uint8_t direction = crossing->direction;
     if (crossing->phase == CURSOR_CROSSING_WAITING && crossing->output == output) {
-        if (position_is_at_pending_edge(state, x, y)) {
+        if (crossing->kind == CURSOR_CROSSING_MACOS_PLACEMENT ||
+            (crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR &&
+             position_is_at_pending_edge(state, x, y))) {
             crossing->phase = CURSOR_CROSSING_REANCHORED;
         } else {
             /* Core 1 owns the metadata and performs the full clear. Core 0

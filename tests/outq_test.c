@@ -382,6 +382,56 @@ static void test_two_priority_frames_wait_behind_bulk_without_a_refusal(void) {
           "priority-burst", "the queued priority frame did not arrive whole and in order");
 }
 
+static void test_priority_pair_is_admitted_atomically(void) {
+    dh_outq q;
+    dh_outq_init(&q);
+    uint8_t first[64], second[64], occupied[64];
+    const size_t first_len = make_frame(DH_MSG_PLACE, 1, 5, first, sizeof first);
+    const size_t second_len = make_frame(DH_MSG_POS_QUERY, 2, 1, second, sizeof second);
+    const size_t occupied_len = make_frame(DH_MSG_DEVICE_HEARTBEAT, 3, 1, occupied,
+                                           sizeof occupied);
+
+    CHECK(dh_outq_offer(&q, occupied, occupied_len) == DH_OUTQ_OK, "priority-pair",
+          "setup priority frame was refused");
+    CHECK(dh_outq_offer_pair(&q, first, first_len, second, second_len) == DH_OUTQ_ERR_BUSY,
+          "priority-pair", "pair was partially admitted without two free slots");
+    sink refused;
+    sink_init(&refused);
+    drain_all(&q, &refused, 64);
+    CHECK(refused.frames == 1 && refused.len == occupied_len, "priority-pair",
+          "refused pair changed the queue");
+
+    dh_outq_init(&q);
+    uint8_t draining_bulk[256];
+    const size_t draining_len = make_frame(DH_MSG_CLIP_CHUNK, 5, 128, draining_bulk,
+                                           sizeof draining_bulk);
+    CHECK(dh_outq_offer(&q, draining_bulk, draining_len) == DH_OUTQ_OK, "priority-pair",
+          "setup bulk frame was refused");
+    sink partial;
+    sink_init(&partial);
+    CHECK(drain_once(&q, &partial, 64) == 64, "priority-pair", "bulk did not start");
+    CHECK(dh_outq_offer_pair(&q, first, first_len, second, second_len) == DH_OUTQ_ERR_BUSY,
+          "priority-pair", "time-bounded pair queued behind an in-flight bulk frame");
+
+    dh_outq_init(&q);
+    uint8_t bulk[64];
+    const size_t bulk_len = make_frame(DH_MSG_CLIP_DONE, 4, 1, bulk, sizeof bulk);
+    CHECK(dh_outq_offer_pair(&q, bulk, bulk_len, second, second_len) == DH_OUTQ_ERR_FRAME &&
+              q.refused_priority == 1 && q.refused_bad_header == 0,
+          "priority-pair", "valid bulk input was misreported as an unparseable header");
+
+    dh_outq_init(&q);
+    CHECK(dh_outq_offer_pair(&q, first, first_len, second, second_len) == DH_OUTQ_OK,
+          "priority-pair", "pair was refused with two free priority slots");
+    sink accepted;
+    sink_init(&accepted);
+    drain_all(&q, &accepted, 64);
+    CHECK(accepted.frames == 2 &&
+              memcmp(accepted.bytes, first, first_len) == 0 &&
+              memcmp(accepted.bytes + first_len, second, second_len) == 0,
+          "priority-pair", "accepted pair did not arrive whole and in order");
+}
+
 /*
  * A CLIP_OFFER's file-list metadata can legally exceed a chunk, and the
  * in-flight buffer is frame-sized precisely so it stays carryable. The queued
@@ -676,6 +726,7 @@ int main(void) {
     test_priority_overtakes_queued_bulk();
     test_a_frame_in_flight_is_never_interrupted();
     test_two_priority_frames_wait_behind_bulk_without_a_refusal();
+    test_priority_pair_is_admitted_atomically();
     test_an_outsized_frame_rides_the_in_flight_buffer();
     test_malformed_frames_are_refused();
     test_the_preamble_is_owed_once_per_frame();

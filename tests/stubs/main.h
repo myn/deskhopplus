@@ -37,11 +37,19 @@ typedef enum {
     CURSOR_CROSSING_RESUMING,
 } cursor_crossing_phase_t;
 
+typedef enum {
+    CURSOR_CROSSING_SOURCE_REANCHOR = 0,
+    CURSOR_CROSSING_MACOS_PLACEMENT,
+} cursor_crossing_kind_t;
+
 typedef struct {
     cursor_crossing_phase_t phase;
+    cursor_crossing_kind_t kind;
     uint8_t direction;
     uint8_t output;
     uint8_t query_id;
+    uint8_t target_screen;
+    uint16_t target_position;
     uint32_t started_us;
 } cursor_crossing_t;
 
@@ -83,6 +91,7 @@ void switch_to_another_pc(device_t *, output_t *, int, int);
 void switch_virtual_desktop(device_t *, output_t *, int, int);
 void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
 bool channel_query_cursor(uint8_t, uint8_t);
+bool channel_place_cursor_correlated(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t, uint8_t);
 void mouse_crossing_task(device_t *, uint32_t);
 void mouse_crossing_query_unavailable(device_t *, uint8_t, uint8_t);
 bool apply_helper_cursor_position(device_t *, uint8_t, uint8_t, int16_t, int16_t, uint8_t);

@@ -16,6 +16,8 @@ static uint16_t placed_position;
 static int source_queries;
 static bool source_query_available;
 static uint8_t source_query_id;
+static bool placement_query_available;
+static uint8_t placement_query_id;
 
 enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
@@ -59,6 +61,13 @@ bool channel_query_cursor(uint8_t output, uint8_t query_id) {
     source_queries++;
     source_query_id = query_id;
     return source_query_available;
+}
+
+bool channel_place_cursor_correlated(uint8_t output, uint8_t screen, uint8_t chain,
+                                     uint8_t border, uint16_t position, uint8_t query_id) {
+    channel_place_cursor(output, screen, chain, border, position);
+    placement_query_id = query_id;
+    return placement_query_available;
 }
 
 static int failures;
@@ -745,9 +754,182 @@ static void test_virtual_desktops_remain_local(void) {
           "do_screen_switch did not return locally to the border-adjacent monitor");
 }
 
+static void test_confirmed_macos_chain_forward_uses_only_helper_placement(void) {
+    device_t state = side_by_side_state();
+    state.active_output = 0;
+    state.config.output[0].os = MACOS;
+    state.config.output[0].screen_index = 1;
+    state.pointer_x = MAX_SCREEN_COORD;
+    state.pointer_y = 12345;
+    placement_query_available = true;
+    placements = 0;
+    virtual_switches = 0;
+
+    do_screen_switch(&state, RIGHT);
+
+    CHECK(placements == 1 && state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "macOS chain-forward did not wait for correlated helper placement");
+    CHECK(virtual_switches == 0 && state.config.output[0].screen_index == 1,
+          "macOS chain-forward emitted the legacy transition before confirmation");
+    CHECK(apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 12345,
+                                       placement_query_id),
+          "macOS chain-forward placement confirmation was refused");
+    mouse_crossing_task(&state, 1);
+    CHECK(virtual_switches == 0 && state.config.output[0].screen_index == 2 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "confirmed macOS chain-forward emitted legacy edge/nudge reports");
+    CHECK(!apply_helper_cursor_position(&state, 0, 1, MAX_SCREEN_COORD, 999,
+                                        placement_query_id) &&
+              state.config.output[0].screen_index == 2 && state.pointer_y == 12345,
+          "duplicate Mac placement response mutated the completed crossing");
+    placement_query_available = false;
+}
+
+static void test_confirmed_macos_chain_back_uses_only_helper_placement(void) {
+    device_t state = side_by_side_state();
+    state.active_output = 0;
+    state.config.output[0].os = MACOS;
+    state.config.output[0].screen_index = 2;
+    state.pointer_x = MIN_SCREEN_COORD;
+    state.pointer_y = 23456;
+    placement_query_available = true;
+    placements = 0;
+    virtual_switches = 0;
+
+    do_screen_switch(&state, LEFT);
+    CHECK(placements == 1 && placed_screen == 1 && placed_border == RIGHT &&
+              placed_position > 46911 && placed_position < 46914,
+          "macOS chain-back did not preserve the destination-edge coordinate");
+    CHECK(apply_helper_cursor_position(&state, 0, 1, MAX_SCREEN_COORD, 23456,
+                                       placement_query_id),
+          "macOS chain-back placement confirmation was refused");
+    mouse_crossing_task(&state, 1);
+    CHECK(virtual_switches == 0 && state.config.output[0].screen_index == 1,
+          "confirmed macOS chain-back emitted the legacy transition");
+    placement_query_available = false;
+}
+
+static void test_macos_chain_fallbacks_once(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = MACOS;
+    state.config.output[0].screen_index = 1;
+    placement_query_available = false;
+    virtual_switches = 0;
+    do_screen_switch(&state, RIGHT);
+    CHECK(virtual_switches == 1 && state.config.output[0].screen_index == 2,
+          "unavailable Mac helper did not run the legacy fallback exactly once");
+
+    state = side_by_side_state();
+    state.config.output[0].os = MACOS;
+    state.config.output[0].screen_index = 1;
+    placement_query_available = true;
+    virtual_switches = 0;
+    do_screen_switch(&state, RIGHT);
+    const uint8_t query_id = state.cursor_crossing.query_id;
+    mouse_crossing_query_unavailable(&state, 0, query_id);
+    mouse_crossing_task(&state, 1);
+    mouse_crossing_task(&state, 2);
+    CHECK(virtual_switches == 1 && state.config.output[0].screen_index == 2,
+          "refused Mac placement did not run the legacy fallback exactly once");
+
+    state = side_by_side_state();
+    state.config.output[0].os = MACOS;
+    state.config.output[0].screen_index = 1;
+    virtual_switches = 0;
+    do_screen_switch(&state, RIGHT);
+    const uint8_t timed_out_id = state.cursor_crossing.query_id;
+    mouse_crossing_task(&state, 30000);
+    mouse_crossing_task(&state, 30001);
+    CHECK(virtual_switches == 1 && state.config.output[0].screen_index == 2,
+          "timed-out Mac placement did not run the legacy fallback exactly once");
+    CHECK(!apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 100,
+                                        timed_out_id) && virtual_switches == 1,
+          "late Mac placement response was accepted after fallback");
+    placement_query_available = false;
+}
+
+static void test_macos_chain_holds_only_position_while_pending(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = MACOS;
+    placement_query_available = true;
+    do_screen_switch(&state, RIGHT);
+    mouse_values_t movement = {
+        .move_x = 40, .move_y = -30, .buttons = 1, .wheel = 2, .pan = -3,
+    };
+    CHECK(update_mouse_position(&state, &movement) == NONE &&
+              movement.move_x == 0 && movement.move_y == 0,
+          "pending Mac placement did not hold positional input");
+    CHECK(movement.buttons == 1 && movement.wheel == 2 && movement.pan == -3 &&
+              state.mouse_buttons == 1,
+          "pending Mac placement did not preserve buttons, wheel, and pan");
+    placement_query_available = false;
+}
+
+static void test_macos_chain_requires_the_requested_placement_coordinate(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = MACOS;
+    state.pointer_y = 12000;
+    placement_query_available = true;
+    virtual_switches = 0;
+    do_screen_switch(&state, RIGHT);
+    CHECK(!apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 20000,
+                                        placement_query_id) &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "target-screen response falsely confirmed a refused Mac placement");
+    mouse_crossing_task(&state, 30000);
+    CHECK(virtual_switches == 1,
+          "unconfirmed Mac placement did not reach the bounded legacy fallback");
+    placement_query_available = false;
+}
+
+static void test_fast_diagonal_macos_chain_uses_correlated_placement(void) {
+    for (unsigned i = 0; i < sizeof corner_cases / sizeof corner_cases[0]; i++) {
+        const corner_case_t *corner = &corner_cases[i];
+        device_t state = four_screen_corner_state(corner->horizontal, corner->vertical);
+        state.pointer_x = corner->x;
+        state.pointer_y = corner->y;
+        global_state = state;
+        output_switches = 0;
+        virtual_switches = 0;
+        placements = 0;
+        placement_query_available = false;
+        mouse_values_t movement = {.move_x = corner->move_x, .move_y = corner->move_y};
+        const enum screen_pos_e output_seam = update_mouse_position(&state, &movement);
+        do_screen_switch(&state, output_seam);
+
+        placement_query_available = true;
+        movement = (mouse_values_t){.move_x = corner->move_x, .move_y = corner->move_y};
+        const enum screen_pos_e chain_seam = update_mouse_position(&state, &movement);
+        const int16_t preserved_along_edge = state.pointer_y;
+        do_screen_switch(&state, chain_seam);
+        const uint8_t expected_screen = state.config.output[1].screen_index == 1 ? 2 : 1;
+        const uint16_t expected_position = (uint16_t)(
+            ((uint32_t)preserved_along_edge * DH_SEAM_POSITION_MAX +
+             MAX_SCREEN_COORD / 2) / MAX_SCREEN_COORD);
+        CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+                  placed_screen == expected_screen && placed_position == expected_position,
+              "fast diagonal did not request the adjacent Mac edge position");
+        const int16_t entry_x = chain_seam == RIGHT ? MIN_SCREEN_COORD : MAX_SCREEN_COORD;
+        CHECK(apply_helper_cursor_position(&state, 1, expected_screen, entry_x,
+                                           preserved_along_edge, placement_query_id),
+              "fast-diagonal Mac placement confirmation was refused");
+        mouse_crossing_task(&state, 1);
+        CHECK(state.config.output[1].screen_index == expected_screen &&
+                  state.pointer_y == preserved_along_edge && virtual_switches == 0,
+              "fast diagonal used legacy reports or lost its destination-edge coordinate");
+        placement_query_available = false;
+    }
+}
+
 int main(void) {
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();
+    test_confirmed_macos_chain_forward_uses_only_helper_placement();
+    test_confirmed_macos_chain_back_uses_only_helper_placement();
+    test_macos_chain_fallbacks_once();
+    test_macos_chain_holds_only_position_while_pending();
+    test_macos_chain_requires_the_requested_placement_coordinate();
+    test_fast_diagonal_macos_chain_uses_correlated_placement();
     test_perpendicular_seam_crosses_from_any_monitor();
     test_diagonal_push_uses_the_larger_overshoot();
     test_non_transition_and_guarded_edges_clamp_normally();

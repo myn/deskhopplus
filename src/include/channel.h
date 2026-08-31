@@ -68,3 +68,5 @@ void handle_cursor_query_msg(uart_packet_t *, device_t *);
    Fire-and-forget: HID positioning remains the fallback when no helper is live. */
 void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t border,
                           uint16_t position);
+bool channel_place_cursor_correlated(uint8_t output, uint8_t screen, uint8_t chain,
+                                     uint8_t border, uint16_t position, uint8_t query_id);

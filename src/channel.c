@@ -138,6 +138,7 @@ static struct {
 
 static bool channel_queue_frame(const uint8_t *frame, size_t len);
 static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_t body_len);
+static bool channel_emit_placement_query(const uint8_t *place_body, uint8_t query_id);
 
 static uint32_t channel_now_ms(void) {
     /*
@@ -410,6 +411,33 @@ void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t
         (void)channel_emit_placement_body(DH_MSG_POS_QUERY, query, sizeof query);
 }
 
+bool channel_place_cursor_correlated(uint8_t output, uint8_t screen, uint8_t chain,
+                                     uint8_t border, uint16_t position, uint8_t query_id) {
+    if (query_id == 0)
+        return false;
+    if (output != BOARD_ROLE) {
+        uart_packet_t packet = {
+            .type = CURSOR_PLACE_MSG,
+            .data = {screen, chain, border},
+        };
+        packet.data16[2] = position;
+        packet.data[7] = query_id;
+        return queue_uart_packet(&packet, &global_state);
+    }
+    if (!channel_helper_present())
+        return false;
+
+    const dh_place place = {
+        .chain_index = screen,
+        .chain_direction = chain,
+        .border_direction = border,
+        .entry_position = position,
+    };
+    uint8_t body[DH_PLACE_BODY_SIZE];
+    return dh_place_encode(&place, body, sizeof body) &&
+           channel_emit_placement_query(body, query_id);
+}
+
 /* Hand a whole frame to this board's helper. */
 static bool channel_queue_frame(const uint8_t *frame, size_t len) {
     const uint32_t now = channel_now_ms();
@@ -461,6 +489,40 @@ static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_
     return dh_session_emit_relayed(&channel.session, &frame, frame_bytes, sizeof frame_bytes,
                                    &frame_len) == DH_FRAME_OK &&
            channel_queue_frame(frame_bytes, frame_len);
+}
+
+/* PLACE and its correlated POS_QUERY are one transaction on the channel. Do
+   not queue PLACE unless the priority band can accept both frames: falling
+   back after sending only the placement would recreate the cross-endpoint race
+   this transaction exists to remove. */
+static bool channel_emit_placement_query(const uint8_t *place_body, uint8_t query_id) {
+    uint8_t place_frame[DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_PLACE_BODY_SIZE];
+    uint8_t query_frame[DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_POS_QUERY_BODY_SIZE];
+    size_t place_len = 0;
+    size_t query_len = 0;
+    const uint8_t query_body[] = {query_id};
+    const dh_frame_view place = {
+        .hdr = {.type = DH_MSG_PLACE, .flags = 0, .len = DH_PLACE_BODY_SIZE},
+        .payload = place_body,
+    };
+    const dh_frame_view query = {
+        .hdr = {.type = DH_MSG_POS_QUERY, .flags = 0, .len = DH_POS_QUERY_BODY_SIZE},
+        .payload = query_body,
+    };
+
+    critical_section_enter_blocking(&channel.out_lock);
+    bool queued = false;
+    if (dh_session_emit_relayed(&channel.session, &place, place_frame, sizeof place_frame,
+                                &place_len) == DH_FRAME_OK &&
+        dh_session_emit_relayed(&channel.session, &query, query_frame, sizeof query_frame,
+                                &query_len) == DH_FRAME_OK &&
+        dh_outq_offer_pair(&channel.out, place_frame, place_len,
+                           query_frame, query_len) == DH_OUTQ_OK) {
+        dh_session_note_sent(&channel.session, channel_now_ms());
+        queued = true;
+    }
+    critical_section_exit(&channel.out_lock);
+    return dh_txq_track(&channel.tx, queued);
 }
 
 /*

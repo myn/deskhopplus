@@ -168,6 +168,40 @@ dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len) {
     return DH_OUTQ_OK;
 }
 
+dh_outq_result dh_outq_offer_pair(dh_outq *q, const uint8_t *first, size_t first_len,
+                                  const uint8_t *second, size_t second_len) {
+    dh_frame_header first_hdr;
+    dh_frame_header second_hdr;
+    if (dh_frame_header_parse(first, first_len, &first_hdr) != DH_FRAME_OK ||
+        first_len != (size_t)DH_FRAME_HEADER_SIZE + first_hdr.len ||
+        dh_frame_header_parse(second, second_len, &second_hdr) != DH_FRAME_OK ||
+        second_len != (size_t)DH_FRAME_HEADER_SIZE + second_hdr.len) {
+        refuse(q, &q->refused_bad_header);
+        return DH_OUTQ_ERR_FRAME;
+    }
+    if (dh_msg_is_bulk(first_hdr.type) || dh_msg_is_bulk(second_hdr.type)) {
+        refuse(q, &q->refused_priority);
+        return DH_OUTQ_ERR_FRAME;
+    }
+    if (first_len > DH_OUTQ_PRIORITY_MAX || second_len > DH_OUTQ_PRIORITY_MAX) {
+        refuse(q, &q->refused_priority);
+        return DH_OUTQ_ERR_OVERSIZE;
+    }
+    if (q->priority.len > 0 || q->priority_stage_used > 0 || band_in_flight(&q->bulk)) {
+        refuse(q, &q->refused_priority);
+        return DH_OUTQ_ERR_BUSY;
+    }
+
+    memcpy(q->priority_buf, first, first_len);
+    band_clear(&q->priority);
+    q->priority.len = (uint16_t)first_len;
+    memcpy(q->priority_stage[0], second, second_len);
+    q->priority_stage_len[0] = (uint16_t)second_len;
+    q->priority_stage_first = 0;
+    q->priority_stage_used = 1;
+    return DH_OUTQ_OK;
+}
+
 bool dh_outq_peek(const dh_outq *q, dh_outq_view *out) {
     const band_id band = owed_band(q);
     if (band == BAND_NONE)

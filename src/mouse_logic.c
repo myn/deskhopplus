@@ -211,6 +211,7 @@ void do_screen_switch(device_t *state, int direction) {
                         state->cursor_crossing.direction = (uint8_t)direction;
                         state->cursor_crossing.output = state->active_output;
                         state->cursor_crossing.query_id = query_id;
+                        state->cursor_crossing.kind = CURSOR_CROSSING_SOURCE_REANCHOR;
                         state->cursor_crossing.started_us = time_us_32();
                         state->cursor_crossing.phase = CURSOR_CROSSING_WAITING;
                         cursor_crossing_exit();
@@ -274,6 +275,40 @@ void do_screen_switch(device_t *state, int direction) {
             break;
         case DH_MOUSE_TRANSITION_CHAIN_BACK:
         case DH_MOUSE_TRANSITION_CHAIN_FORWARD:
+            if (output->os == MACOS) {
+                const uint8_t target_screen = dh_mouse_next_screen_index(
+                    transition, output->screen_index);
+                const int along = dh_mouse_along_seam(
+                    (dh_direction_t)direction,
+                    (dh_mouse_coordinates_t){.x = state->pointer_x,
+                                             .y = state->pointer_y});
+                const uint16_t normalized = (uint16_t)(
+                    ((uint32_t)along * DH_SEAM_POSITION_MAX + MAX_SCREEN_COORD / 2) /
+                    MAX_SCREEN_COORD);
+                const uint8_t query_id = next_cursor_query_id(state);
+                cursor_crossing_enter();
+                state->cursor_crossing = (cursor_crossing_t){
+                    .phase = CURSOR_CROSSING_WAITING,
+                    .kind = CURSOR_CROSSING_MACOS_PLACEMENT,
+                    .direction = (uint8_t)direction,
+                    .output = state->active_output,
+                    .query_id = query_id,
+                    .target_screen = target_screen,
+                    .target_position = normalized,
+                    .started_us = time_us_32(),
+                };
+                cursor_crossing_exit();
+                if (channel_place_cursor_correlated(
+                        state->active_output, target_screen, output->chain_direction,
+                        (uint8_t)dh_opposite_direction((dh_direction_t)direction),
+                        normalized, query_id))
+                    break;
+                cursor_crossing_enter();
+                if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+                    state->cursor_crossing.query_id == query_id)
+                    cursor_crossing_clear(state);
+                cursor_crossing_exit();
+            }
             switch_virtual_desktop(state, output,
                                   dh_mouse_next_screen_index(transition, output->screen_index),
                                   direction);
@@ -293,7 +328,8 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         cursor_crossing_exit();
         return;
     }
-    if (state->active_output != crossing->output || state->mouse_buttons ||
+    if (state->active_output != crossing->output ||
+        (crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR && state->mouse_buttons) ||
         state->switch_lock || state->gaming_mode) {
         const uint8_t query_id = crossing->query_id;
         const uint8_t direction = crossing->direction;
@@ -323,12 +359,28 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     }
 
     const uint8_t direction = crossing->direction;
+    const cursor_crossing_kind_t kind = crossing->kind;
+    const uint8_t target_screen = crossing->target_screen;
+    if (kind == CURSOR_CROSSING_MACOS_PLACEMENT &&
+        crossing->phase == CURSOR_CROSSING_REANCHORED) {
+        cursor_crossing_clear(state);
+        cursor_crossing_exit();
+        return;
+    }
     crossing->phase = CURSOR_CROSSING_RESUMING;
     cursor_crossing_exit();
     if (timed_out)
         cursor_trace_event(state, DH_CURSOR_TRACE_TIMEOUT, timeout_query_id, 0, 0,
                            timeout_direction, DH_MOUSE_TRANSITION_OUTPUT);
-    do_screen_switch(state, direction);
+    if (kind == CURSOR_CROSSING_MACOS_PLACEMENT) {
+        output_t *output = &state->config.output[state->active_output];
+        switch_virtual_desktop(state, output, target_screen, direction);
+        cursor_crossing_enter();
+        cursor_crossing_clear(state);
+        cursor_crossing_exit();
+    } else {
+        do_screen_switch(state, direction);
+    }
 }
 
 void mouse_crossing_query_unavailable(device_t *state, uint8_t output, uint8_t query_id) {

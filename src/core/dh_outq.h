@@ -205,6 +205,11 @@ void dh_outq_reset(dh_outq *q);
  */
 dh_outq_result dh_outq_offer(dh_outq *q, const uint8_t *frame, size_t len);
 
+/* Atomically admit two priority frames in order, or admit neither. Used when
+   sending the first without the second would make a fallback unsafe. */
+dh_outq_result dh_outq_offer_pair(dh_outq *q, const uint8_t *first, size_t first_len,
+                                  const uint8_t *second, size_t second_len);
+
 /* What the transport owes next, without consuming it. False when nothing is
    owed. Peek/advance rather than pop: a transport whose own queue refuses the
    bytes leaves them owed rather than lost. */

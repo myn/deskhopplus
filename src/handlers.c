@@ -248,9 +248,21 @@ void handle_output_select_msg(uart_packet_t *packet, device_t *state) {
 }
 
 void handle_cursor_place_msg(uart_packet_t *packet, device_t *state) {
-    (void)state;
-    channel_place_cursor((uint8_t)BOARD_ROLE, packet->data[0], packet->data[1],
-                         packet->data[2], packet->data16[2]);
+    const uint8_t query_id = packet->data[7];
+    if (query_id == 0) {
+        channel_place_cursor((uint8_t)BOARD_ROLE, packet->data[0], packet->data[1],
+                             packet->data[2], packet->data16[2]);
+        return;
+    }
+    if (!channel_place_cursor_correlated((uint8_t)BOARD_ROLE, packet->data[0],
+                                         packet->data[1], packet->data[2],
+                                         packet->data16[2], query_id)) {
+        uart_packet_t unavailable = {
+            .type = CURSOR_QUERY_UNAVAILABLE_MSG,
+            .data = {(uint8_t)BOARD_ROLE, query_id},
+        };
+        (void)queue_uart_packet(&unavailable, state);
+    }
 }
 
 /* On firmware upgrade message, reboot into the BOOTSEL fw upgrade mode */
