@@ -63,6 +63,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/utils.c
   ${SRC_DIR}/config_store.c
   ${SRC_DIR}/cursor_position.c
+  ${SRC_DIR}/cursor_trace.c
   ${SRC_DIR}/identity_store.c
   ${SRC_DIR}/peer_fw.c
   ${SRC_DIR}/fw_upgrade.c
@@ -80,6 +81,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/ramdisk.c
   ${SRC_DIR}/core/dh_frame.c
   ${SRC_DIR}/core/dh_config_text.c
+  ${SRC_DIR}/core/dh_cursor_trace.c
   ${SRC_DIR}/core/dh_hotkey.c
   ${SRC_DIR}/core/dh_keyboard_transport.c
   ${SRC_DIR}/core/dh_keyboard_output.c

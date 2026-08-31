@@ -39,6 +39,8 @@ final class CursorPlacement {
             log("ignored a malformed cursor placement")
             return true
         }
+        log("cursor placement screen=\(place.chain_index) chain=\(place.chain_direction) " +
+            "border=\(place.border_direction) position=\(place.entry_position) received")
         lastChainDirection = place.chain_direction
 
         guard let displays = displays() else {
@@ -57,6 +59,8 @@ final class CursorPlacement {
         let result = CGWarpMouseCursorPosition(CGPoint(x: Int(target.x), y: Int(target.y)))
         if result != .success {
             log("cursor placement was refused (CoreGraphics error \(result.rawValue))")
+        } else {
+            log("cursor placement applied x=\(target.x) y=\(target.y)")
         }
         return true
     }
@@ -91,6 +95,9 @@ final class CursorPlacement {
         var body = [UInt8](repeating: 0, count: Int(DH_POSITION_BODY_SIZE))
         let encoded = body.withUnsafeMutableBufferPointer {
             dh_position_encode(&position, $0.baseAddress, $0.count)
+        }
+        if encoded {
+            log("cursor response id=\(queryID) screen=\(chainIndex) x=\(x) y=\(y) built")
         }
         return encoded ? body : nil
     }

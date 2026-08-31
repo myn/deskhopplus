@@ -44,7 +44,12 @@ add_executable(mouse_layout_test mouse_layout_test.c ${CORE}/dh_mouse_layout.c)
 target_include_directories(mouse_layout_test PRIVATE ${CORE})
 add_test(NAME mouse_layout_test COMMAND mouse_layout_test)
 
+add_executable(cursor_trace_test cursor_trace_test.c ${CORE}/dh_cursor_trace.c)
+target_include_directories(cursor_trace_test PRIVATE ${CORE})
+add_test(NAME cursor_trace_test COMMAND cursor_trace_test)
+
 add_executable(mouse_seam_test mouse_seam_test.c
+               cursor_trace_adapter_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c ${CORE}/dh_mouse_layout.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/cursor_position.c ${CORE}/dh_seam_map.c)
 target_include_directories(mouse_seam_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs ${CORE}
@@ -63,6 +68,7 @@ target_include_directories(place_test PRIVATE ${CORE})
 add_test(NAME place_test COMMAND place_test)
 
 add_executable(cursor_position_test cursor_position_test.c
+               cursor_trace_adapter_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/cursor_position.c
                ${CORE}/dh_mouse_layout.c)
 target_include_directories(cursor_position_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs ${CORE}
@@ -83,6 +89,9 @@ add_test(NAME webconfig_keymap_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
 add_test(NAME webconfig_layout_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_layout_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+add_test(NAME webconfig_cursor_trace_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_cursor_trace_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
 
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)

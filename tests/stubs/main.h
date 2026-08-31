@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "dh_mouse_layout.h"
+#include "dh_cursor_trace.h"
 #include "screen.h"
 
 #define NUM_SCREENS 2
@@ -90,3 +91,5 @@ void cursor_crossing_init(void);
 void cursor_crossing_enter(void);
 void cursor_crossing_exit(void);
 void handle_cursor_position_msg(uart_packet_t *, device_t *);
+void cursor_trace_event(const device_t *, dh_cursor_trace_event_t, uint8_t,
+                        int16_t, int16_t, uint8_t, uint8_t);

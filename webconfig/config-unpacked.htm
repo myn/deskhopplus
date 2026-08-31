@@ -3003,6 +3003,10 @@ img {
 
 
 
+          <h4>Cursor transition trace</h4>
+          <button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button>
+          <pre id="cursorTrace">No trace read.</pre>
+
         </div>
 
       </div>
@@ -3017,8 +3021,13 @@ var device;
 const packetType = {
   keyboardReportMsg: 1, mouseReportMsg: 2, outputSelectMsg: 3, firmwareUpgradeMsg: 4, switchLockMsg: 7,
   syncBordersMsg: 8, flashLedMsg: 9, wipeConfigMsg: 10, readConfigMsg: 16, writeConfigMsg: 17, saveConfigMsg: 18,
-  rebootMsg: 19, getValMsg: 20, setValMsg: 21, getValAllMsg: 22, proxyPacketMsg: 23
+  rebootMsg: 19, getValMsg: 20, setValMsg: 21, getValAllMsg: 22, proxyPacketMsg: 23,
+  getCursorTraceMsg: 33, cursorTraceMsg: 34
 };
+
+const cursorTraceEvents = ["", "input", "decision", "query", "response", "place", "switch", "cancel", "timeout"];
+const cursorTraceState = { output: 0, screen: 1, direction: 4, phase: 7, relative: 10, transition: 11 };
+let cursorTraceParts = new Map();
 
 function calcChecksum(report) {
   let checksum = 0;
@@ -3461,9 +3470,63 @@ async function readHandler() {
 
 async function handleInputReport(event) {
   var data = new Uint8Array(event.data.buffer);
+  if (data[2] === packetType.cursorTraceMsg) {
+    handleCursorTraceReport(data);
+    return;
+  }
   var key = data[3];
 
   updateElement(key, event);
+}
+
+function signed16(lo, hi) {
+  const value = lo | (hi << 8);
+  return value & 0x8000 ? value - 0x10000 : value;
+}
+
+function renderCursorTraceRecord(index, bytes) {
+  const state = bytes[10] | (bytes[11] << 8);
+  const output = (state >> cursorTraceState.output) & 1 ? "B" : "A";
+  const screen = (state >> cursorTraceState.screen) & 7;
+  const direction = (state >> cursorTraceState.direction) & 7;
+  const phase = (state >> cursorTraceState.phase) & 7;
+  const relative = (state >> cursorTraceState.relative) & 1;
+  const transition = (state >> cursorTraceState.transition) & 3;
+  return `${index}: ${cursorTraceEvents[bytes[0]] || "unknown"} q=${bytes[1]} ` +
+    `d=(${signed16(bytes[2], bytes[3])},${signed16(bytes[4], bytes[5])}) ` +
+    `p=(${signed16(bytes[6], bytes[7])},${signed16(bytes[8], bytes[9])}) ` +
+    `out=${output} screen=${screen} dir=${direction} transition=${transition} phase=${phase} relative=${relative}`;
+}
+
+async function handleCursorTraceReport(data) {
+  const index = data[3];
+  if (index === 0xff) {
+    const count = data[4];
+    cursorTraceParts.clear();
+    document.getElementById('cursorTrace').textContent = count ? "Reading trace…" : "Trace is empty.";
+    for (let i = 0; i < count; i++) {
+      await sendReport(packetType.getCursorTraceMsg, [i, 0]);
+      await sendReport(packetType.getCursorTraceMsg, [i, 1]);
+    }
+    return;
+  }
+  const half = data[4];
+  const parts = cursorTraceParts.get(index) || [];
+  parts[half] = Array.from(data.slice(5, 11));
+  cursorTraceParts.set(index, parts);
+  if (parts[0] && parts[1]) {
+    const lines = Array.from(cursorTraceParts.entries())
+      .filter(([, value]) => value[0] && value[1])
+      .sort(([a], [b]) => a - b)
+      .map(([i, value]) => renderCursorTraceRecord(i, [...value[0], ...value[1]]));
+    document.getElementById('cursorTrace').textContent = lines.join('\n');
+  }
+}
+
+async function readCursorTraceHandler() {
+  if (!device || !device.opened)
+    await connectHandler();
+  await sendReport(packetType.getCursorTraceMsg, [0xff, 0]);
 }
 
 async function rebootHandler() {

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "config_store.h"
 #include "cursor_position.h"
+#include "cursor_trace.h"
 #include "flash_layout.h"
 #include "identity_store.h"
 

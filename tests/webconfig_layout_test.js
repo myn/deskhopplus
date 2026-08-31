@@ -39,5 +39,9 @@ for (const [base, output] of [[140, "A"], [152, "B"]]) {
 }
 
 check(page.includes("Seam ranges"), "missing seam-range UI heading");
+check(page.includes('id="cursorTrace"'), "missing cursor trace readout");
+check(page.includes("getCursorTraceMsg: 33"), "missing cursor trace request packet");
+check(page.includes("cursorTraceMsg: 34"), "missing cursor trace response packet");
+check(page.includes("readCursorTraceHandler"), "missing cursor trace reader");
 
 process.exit(failures === 0 ? 0 : 1);

@@ -110,7 +110,10 @@ final class HelperRuntime {
             if type == UInt8(DH_MSG_POS_QUERY.rawValue),
                body.count == Int(DH_POS_QUERY_BODY_SIZE),
                let response = self.cursorPlacement.positionBody(queryID: body[0]) {
-                self.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue), body: response)
+                Self.note("cursor query id=\(body[0]) received")
+                if self.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue), body: response) {
+                    Self.note("cursor response id=\(body[0]) sent")
+                }
                 return
             }
             self.emit(self.clipboard.received(type: type, body: body))
@@ -232,16 +235,18 @@ final class HelperRuntime {
         }
     }
 
-    private func sendPayload(type: UInt8, body: [UInt8]) {
+    private func sendPayload(type: UInt8, body: [UInt8]) -> Bool {
         guard let frame = session.emit(type: type, body: body) else {
             Self.note("a cursor-position response could not be built; there is no session")
-            return
+            return false
         }
         if transport.send(frame) {
             session.noteSent(at: now)
+            return true
         } else {
             session.noteSendRefused()
             Self.note("a cursor-position response was not taken by the transport and is lost")
+            return false
         }
     }
 

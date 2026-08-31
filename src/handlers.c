@@ -373,6 +373,28 @@ void handle_api_read_all_msg(uart_packet_t *packet, device_t *state) {
     }
 }
 
+/* Return metadata (index 0xff) or one six-byte half of a chronological trace
+   record. Keeping this outside api_field_map avoids overflowing the HID queue. */
+void handle_cursor_trace_msg(uart_packet_t *packet, device_t *state) {
+    uart_packet_t response = {.type = CURSOR_TRACE_MSG};
+    const uint8_t index = packet->data[0];
+    response.data[0] = index;
+    if (index == UINT8_MAX) {
+        response.data[1] = (uint8_t)cursor_trace_count();
+        response.data[2] = DH_CURSOR_TRACE_CAPACITY;
+        response.data[3] = sizeof(dh_cursor_trace_record_t);
+    } else {
+        const uint8_t half = packet->data[1];
+        dh_cursor_trace_record_t record;
+        if (half > 1 || !cursor_trace_read(index, &record))
+            return;
+        response.data[1] = half;
+        memcpy(&response.data[2], ((const uint8_t *)&record) + half * 6u, 6u);
+    }
+    queue_cfg_packet(&response, state);
+    reset_config_timer(state);
+}
+
 /* Process request packet and create a response */
 void handle_request_byte_msg(uart_packet_t *packet, device_t *state) {
     uint32_t address = packet->data32[0];

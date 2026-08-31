@@ -123,8 +123,13 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
     cursor_crossing_enter();
     const bool crossing_pending =
         state->cursor_crossing.phase != CURSOR_CROSSING_IDLE;
+    const uint8_t pending_query_id = state->cursor_crossing.query_id;
+    const uint8_t pending_direction = state->cursor_crossing.direction;
     cursor_crossing_exit();
     if (crossing_pending) {
+        cursor_trace_event(state, DH_CURSOR_TRACE_INPUT, pending_query_id,
+                           values->move_x, values->move_y, pending_direction,
+                           DH_MOUSE_TRANSITION_OUTPUT);
         values->move_x = 0;
         values->move_y = 0;
         state->mouse_buttons = values->buttons;
@@ -151,6 +156,13 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
                 (!horizontal_actionable || vertical.overshoot > horizontal.overshoot)
             ? vertical.direction
             : horizontal_actionable ? horizontal.direction : NONE;
+    if (horizontal.direction != NONE || vertical.direction != NONE) {
+        const dh_mouse_transition_t chosen_transition = actionable_transition_for(
+            state, current, direction, values->buttons);
+        cursor_trace_event(state, DH_CURSOR_TRACE_DECISION, 0, values->move_x,
+                           values->move_y, (uint8_t)direction,
+                           (uint8_t)chosen_transition);
+    }
 
     /* Relative reports (Windows secondary monitors) otherwise let the OS take
        the losing seam before firmware performs the winning transition. Keep
@@ -202,6 +214,8 @@ void do_screen_switch(device_t *state, int direction) {
                         state->cursor_crossing.started_us = time_us_32();
                         state->cursor_crossing.phase = CURSOR_CROSSING_WAITING;
                         cursor_crossing_exit();
+                        cursor_trace_event(state, DH_CURSOR_TRACE_QUERY, query_id, 0, 0,
+                                           (uint8_t)direction, (uint8_t)transition);
                         if (channel_query_cursor(state->active_output, query_id))
                             break;
                         cursor_crossing_enter();
@@ -209,6 +223,8 @@ void do_screen_switch(device_t *state, int direction) {
                             state->cursor_crossing.query_id == query_id)
                             cursor_crossing_clear(state);
                         cursor_crossing_exit();
+                        cursor_trace_event(state, DH_CURSOR_TRACE_CANCEL, query_id, 0, 0,
+                                           (uint8_t)direction, (uint8_t)transition);
                     }
                 }
                 output_t *target = &state->config.output[1 - state->active_output];
@@ -234,6 +250,8 @@ void do_screen_switch(device_t *state, int direction) {
                     break;
                 }
                 switch_to_another_pc(state, output, 1 - state->active_output, direction);
+                cursor_trace_event(state, DH_CURSOR_TRACE_SWITCH, 0, 0, 0,
+                                   (uint8_t)direction, (uint8_t)transition);
                 if (crossing == DH_SEAM_CROSSING_MAPPED) {
                     const int entry = (int)(((uint32_t)mapped_entry.position * MAX_SCREEN_COORD +
                                              DH_SEAM_POSITION_MAX / 2) /
@@ -250,6 +268,8 @@ void do_screen_switch(device_t *state, int direction) {
                                          target->chain_direction,
                                          target->border_direction,
                                          mapped_entry.position);
+                    cursor_trace_event(state, DH_CURSOR_TRACE_PLACE, 0, 0, 0,
+                                       (uint8_t)direction, (uint8_t)transition);
                 }
             break;
         case DH_MOUSE_TRANSITION_CHAIN_BACK:
@@ -257,6 +277,8 @@ void do_screen_switch(device_t *state, int direction) {
             switch_virtual_desktop(state, output,
                                   dh_mouse_next_screen_index(transition, output->screen_index),
                                   direction);
+            cursor_trace_event(state, DH_CURSOR_TRACE_SWITCH, 0, 0, 0,
+                               (uint8_t)direction, (uint8_t)transition);
             break;
         case DH_MOUSE_TRANSITION_NONE:
             break;
@@ -273,8 +295,11 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     }
     if (state->active_output != crossing->output || state->mouse_buttons ||
         state->switch_lock || state->gaming_mode) {
+        const uint8_t query_id = crossing->query_id;
+        const uint8_t direction = crossing->direction;
         cursor_crossing_clear(state);
         cursor_crossing_exit();
+        cursor_trace_event(state, DH_CURSOR_TRACE_CANCEL, query_id, 0, 0, direction, 0);
         return;
     }
     if (crossing->phase == CURSOR_CROSSING_CANCELLED) {
@@ -282,9 +307,16 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         cursor_crossing_exit();
         return;
     }
+    bool timed_out = false;
+    uint8_t timeout_query_id = 0;
+    uint8_t timeout_direction = NONE;
     if (crossing->phase == CURSOR_CROSSING_WAITING &&
-        (uint32_t)(now_us - crossing->started_us) >= CURSOR_REANCHOR_TIMEOUT_US)
+        (uint32_t)(now_us - crossing->started_us) >= CURSOR_REANCHOR_TIMEOUT_US) {
         crossing->phase = CURSOR_CROSSING_FALLBACK;
+        timed_out = true;
+        timeout_query_id = crossing->query_id;
+        timeout_direction = crossing->direction;
+    }
     if (crossing->phase == CURSOR_CROSSING_WAITING) {
         cursor_crossing_exit();
         return;
@@ -293,6 +325,9 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     const uint8_t direction = crossing->direction;
     crossing->phase = CURSOR_CROSSING_RESUMING;
     cursor_crossing_exit();
+    if (timed_out)
+        cursor_trace_event(state, DH_CURSOR_TRACE_TIMEOUT, timeout_query_id, 0, 0,
+                           timeout_direction, DH_MOUSE_TRANSITION_OUTPUT);
     do_screen_switch(state, direction);
 }
 

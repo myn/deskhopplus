@@ -44,6 +44,7 @@ bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t scree
     }
     state->pointer_x = x;
     state->pointer_y = y;
+    const uint8_t direction = crossing->direction;
     if (crossing->phase == CURSOR_CROSSING_WAITING && crossing->output == output) {
         if (position_is_at_pending_edge(state, x, y)) {
             crossing->phase = CURSOR_CROSSING_REANCHORED;
@@ -54,6 +55,8 @@ bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t scree
         }
     }
     cursor_crossing_exit();
+    cursor_trace_event(state, DH_CURSOR_TRACE_RESPONSE, query_id, x, y, direction,
+                       DH_MOUSE_TRANSITION_OUTPUT);
     return true;
 }
 

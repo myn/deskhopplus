@@ -99,6 +99,7 @@ const uart_handler_t uart_handler[] = {
     {.type = GET_VAL_MSG, .handler = handle_api_msgs},
     {.type = GET_ALL_VALS_MSG, .handler = handle_api_read_all_msg},
     {.type = SET_VAL_MSG, .handler = handle_api_msgs},
+    {.type = GET_CURSOR_TRACE_MSG, .handler = handle_cursor_trace_msg},
 
     /* Firmware */
     {.type = REQUEST_BYTE_MSG, .handler = handle_request_byte_msg},

@@ -261,6 +261,8 @@ bool Helper::start(HINSTANCE instance) {
             }
             if (transport_.send(frame.data(), frame.size())) {
                 session_->note_sent(now_ms());
+                if (type == DH_MSG_POS_RESPONSE && !body.empty())
+                    log("cursor response id=" + std::to_string(body[0]) + " sent");
             } else {
                 session_->note_send_refused();
                 log("a cursor-position response was not taken by the transport and is lost");

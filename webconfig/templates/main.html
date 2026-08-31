@@ -127,6 +127,10 @@
             {% include "form.html" with context %}
           {% endfor %}
 
+          <h4>Cursor transition trace</h4>
+          <button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button>
+          <pre id="cursorTrace">No trace read.</pre>
+
         </div>
 
       </div>

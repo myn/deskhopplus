@@ -30,6 +30,7 @@ bool CursorPlacement::received(uint8_t type, const uint8_t *body, size_t len, ui
             log_("ignored a malformed cursor position query");
             return true;
         }
+        log_("cursor query id=" + std::to_string(body[0]) + " received");
         if (pending_) {
             pending_query_id_ = body[0];
         } else {
@@ -45,6 +46,10 @@ bool CursorPlacement::received(uint8_t type, const uint8_t *body, size_t len, ui
         return true;
     }
     last_chain_direction_ = request.chain_direction;
+    log_("cursor placement screen=" + std::to_string(request.chain_index) +
+         " chain=" + std::to_string(request.chain_direction) +
+         " border=" + std::to_string(request.border_direction) +
+         " position=" + std::to_string(request.entry_position) + " received");
     (void)place(request, now_ms, true);
     return true;
 }
@@ -96,6 +101,8 @@ bool CursorPlacement::place(const dh_place &request, uint32_t now_ms, bool may_d
         return false;
     }
     pending_.reset();
+    log_("cursor placement applied x=" + std::to_string(wanted.x) +
+         " y=" + std::to_string(wanted.y));
     return true;
 }
 
@@ -178,6 +185,10 @@ bool CursorPlacement::position_body(uint8_t query_id, std::vector<uint8_t> &body
     };
     const dh_position position{query_id, chain_index, normalized(cursor.x, rect.x, rect.width),
                                normalized(cursor.y, rect.y, rect.height)};
+    log_("cursor response id=" + std::to_string(query_id) +
+         " screen=" + std::to_string(chain_index) +
+         " x=" + std::to_string(position.x) + " y=" + std::to_string(position.y) +
+         " built");
     body.resize(DH_POSITION_BODY_SIZE);
     return dh_position_encode(&position, body.data(), body.size());
 }
