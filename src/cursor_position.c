@@ -29,12 +29,25 @@ bool select_cursor_screen(device_t *state, uint8_t output, uint8_t screen) {
 
 bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t screen,
                                   int16_t x, int16_t y, uint8_t query_id) {
+    if (output > OUTPUT_B)
+        return false;
     cursor_crossing_enter();
     cursor_crossing_t *crossing = &state->cursor_crossing;
     const cursor_crossing_phase_t phase = crossing->phase;
     if ((phase == CURSOR_CROSSING_WAITING &&
          (query_id == 0 || crossing->output != output || crossing->query_id != query_id)) ||
         (query_id != 0 && phase != CURSOR_CROSSING_WAITING)) {
+        cursor_crossing_exit();
+        return false;
+    }
+    /* q=0 is the immediate readback of a placement whose target screen was
+       already selected by firmware. At an internal seam, continued fast
+       motion (or an asynchronous OS observation) can report the neighbouring
+       screen before this uncorrelated readback arrives. Accepting that screen
+       rewinds screen_index and makes the next chain crossing start from the
+       wrong monitor (#28). Correlated re-anchor queries remain authoritative
+       because their purpose is to repair a relative-source estimate. */
+    if (query_id == 0 && screen != state->config.output[output].screen_index) {
         cursor_crossing_exit();
         return false;
     }
