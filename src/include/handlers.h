@@ -34,6 +34,15 @@ void toggle_gaming_mode_handler(device_t *, hid_keyboard_report_t *);
 void wipe_config_hotkey_handler(device_t *, hid_keyboard_report_t *);
 
 /*==============================================================================
+ *  Config API Pacing
+ *  Not a message handler: process_hid_queue_task calls this beside the drain,
+ *  so a Read All armed by handle_api_read_all_msg leaves one field per report
+ *  rather than the whole map at once (#156).
+ *==============================================================================*/
+
+void handle_api_read_all_step(device_t *);
+
+/*==============================================================================
  *  UART Message Handlers
  *  These handlers process incoming messages received over the UART interface.
  *==============================================================================*/

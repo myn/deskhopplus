@@ -348,6 +348,16 @@ void handle_toggle_gaming_msg(uart_packet_t *packet, device_t *state) {
     state->gaming_mode = packet->data[0];
 }
 
+/* Queue the current value of one mapped field. False when the response could
+   not be queued, which a Read All treats as "offer this field again next
+   pass" rather than as a field that has been sent (#156). */
+static bool queue_api_value(const field_map_t *map, device_t *state) {
+    uart_packet_t response = {.type = GET_VAL_MSG, .data = {[0] = (uint8_t)map->idx}};
+
+    memcpy(&response.data[1], ((uint8_t *)&global_state) + map->offset, map->len);
+    return queue_cfg_packet(&response, state);
+}
+
 /* Process api communication messages */
 void handle_api_msgs(uart_packet_t *packet, device_t *state) {
     uint8_t value_idx = packet->data[0];
@@ -357,34 +367,58 @@ void handle_api_msgs(uart_packet_t *packet, device_t *state) {
     if (map == NULL)
         return;
 
-    /* Create a pointer to the offset into the structure we need to access */
-    uint8_t *ptr = (((uint8_t *)&global_state) + map->offset);
-
     if (packet->type == SET_VAL_MSG) {
         /* Not allowing writes to objects defined as read-only */
         if (map->readonly)
             return;
 
-        memcpy(ptr, &packet->data[1], map->len);
+        /* Write straight to the field's offset into the structure */
+        memcpy(((uint8_t *)&global_state) + map->offset, &packet->data[1], map->len);
     }
     else if (packet->type == GET_VAL_MSG) {
-        uart_packet_t response = {.type=GET_VAL_MSG, .data={[0] = value_idx}};
-        memcpy(&response.data[1], ptr, map->len);
-        queue_cfg_packet(&response, state);
+        (void)queue_api_value(map, state);
     }
 
     /* With each GET/SET message, we reset the configuration mode timeout */
     reset_config_timer(state);
 }
 
-/* Handle the "read all" message by calling our "read one" handler for each type */
+/* Arm a walk over the field map. The responses leave one per HID queue drain
+   (handle_api_read_all_step below), not all at once, so a repeated or
+   overlapping request can never ask the queue for more than it holds (#156). */
 void handle_api_read_all_msg(uart_packet_t *packet, device_t *state) {
-    uart_packet_t result = {.type=GET_VAL_MSG};
+    config_read_all_start(&state->config_read_all, (uint16_t)get_field_map_length());
+    reset_config_timer(state);
+}
 
-    for (int i = 0; i < get_field_map_length(); i++) {
-        result.data[0] = get_field_map_index(i)->idx;
-        handle_api_msgs(&result, state);
+/* Hand the next field of a config Read All to the HID queue. Called from
+   process_hid_queue_task so the walk is paced by the drain itself: at most one
+   response is produced per report sent, whatever the page asks for. */
+void handle_api_read_all_step(device_t *state) {
+    uint16_t index;
+
+    /* Outside config mode the vendor slot belongs to the helper and every
+       config response is refused, so a walk left running would offer the same
+       field for ever. */
+    if (!state->config_mode_active) {
+        config_read_all_stop(&state->config_read_all);
+        return;
     }
+
+    /* Only ever produce into an idle queue. A Read All is background traffic
+       and the drain stops entirely while the host is not ready for the report
+       at the head, so a walk that kept producing would fill all 256 slots and
+       leave none for the consumer-control and system reports that share them.
+       The old loop was self-limiting at one map's worth; this is what replaces
+       that limit, and it costs nothing when the drain is keeping up. */
+    if (!queue_is_empty(&state->hid_queue_out))
+        return;
+
+    if (!config_read_all_peek(&state->config_read_all, &index))
+        return;
+
+    if (queue_api_value(get_field_map_index(index), state))
+        config_read_all_sent(&state->config_read_all, index);
 }
 
 /* Return metadata (index 0xff) or one six-byte half of a chronological trace

@@ -42,7 +42,7 @@ size_t             get_field_map_length(void);
  *==============================================================================*/
 
 void load_config(device_t *);
-void queue_cfg_packet(uart_packet_t *, device_t *);
+bool queue_cfg_packet(uart_packet_t *, device_t *);
 void reset_config_timer(device_t *);
 void save_config(device_t *);
 bool validate_packet(uart_packet_t *);

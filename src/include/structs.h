@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "config_read_all.h"
 #include "dh_hotkey.h"
 #include "dh_pair.h"
 
@@ -186,6 +187,10 @@ typedef struct {
     bool gaming_mode;        // True when gaming mode is on (relative passthru + lock)
     bool config_mode_active; // True when config mode is active
     bool digitizer_active;   // True when digitizer Win/Mac workaround is active
+
+    /* Where a config Read All has got to, walked one field per HID queue
+       drain so the map never has to fit in the queue (#156). */
+    config_read_all_t config_read_all;
 
     /* A relative-mode output crossing waiting for the source helper's true
        cursor position before its seam mapping is resolved (#30). */

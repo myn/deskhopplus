@@ -191,11 +191,12 @@ const field_map_t api_field_map[] = {
 #undef DH_HOTKEY_ACTION
 };
 
-/* GET_ALL_VALS_MSG queues one HID response for every entry before USB has an
-   opportunity to drain the queue. If the map outgrows the queue, its tail is
-   silently omitted and the config page renders those fields as empty. */
-_Static_assert(ARRAY_SIZE(api_field_map) <= HID_QUEUE_LENGTH,
-               "config read-all responses must fit in the HID queue");
+/* This map used to have to fit inside HID_QUEUE_LENGTH, because
+   GET_ALL_VALS_MSG queued one response per entry before USB had any
+   opportunity to drain them, and a map that outgrew the queue lost its tail
+   silently. It is walked one field per drain pass now (config_read_all.h,
+   #156), so the map and the queue are no longer tied together and the
+   assertion that tied them has gone. */
 
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave
    its tail unreadable, and the config page would show a truncated value as if
@@ -226,7 +227,10 @@ size_t get_field_map_length(void) {
     return ARRAY_SIZE(api_field_map);
 }
 
-void _queue_packet(uint8_t *payload, device_t *state, uint8_t type, uint8_t len, uint8_t id, uint8_t inst) {
+/* False when the queue is full. Its callers differ in what that is worth: a
+   consumer-control keypress is gone either way, but a config Read All offers
+   the refused field again next pass rather than skipping it (#156). */
+bool _queue_packet(uint8_t *payload, device_t *state, uint8_t type, uint8_t len, uint8_t id, uint8_t inst) {
     hid_generic_pkt_t generic_packet = {
         .instance = inst,
         .report_id = id,
@@ -235,10 +239,10 @@ void _queue_packet(uint8_t *payload, device_t *state, uint8_t type, uint8_t len,
     };
 
     memcpy(generic_packet.data, payload, len);
-    queue_try_add(&state->hid_queue_out, &generic_packet);
+    return queue_try_add(&state->hid_queue_out, &generic_packet);
 }
 
-void queue_cfg_packet(uart_packet_t *packet, device_t *state) {
+bool queue_cfg_packet(uart_packet_t *packet, device_t *state) {
     /*
      * The config API and the helper channel share an interface slot, one per
      * mode. Outside config mode that slot is the channel, whose descriptor
@@ -249,17 +253,17 @@ void queue_cfg_packet(uart_packet_t *packet, device_t *state) {
      * over the UART (handle_api_msgs).
      */
     if (!state->config_mode_active)
-        return;
+        return false;
 
     uint8_t raw_packet[RAW_PACKET_LENGTH];
     write_raw_packet(raw_packet, packet);
-    _queue_packet(raw_packet, state, 0, RAW_PACKET_LENGTH, REPORT_ID_VENDOR, ITF_NUM_HID_VENDOR);
+    return _queue_packet(raw_packet, state, 0, RAW_PACKET_LENGTH, REPORT_ID_VENDOR, ITF_NUM_HID_VENDOR);
 }
 
 void queue_cc_packet(uint8_t *payload, device_t *state) {
-    _queue_packet(payload, state, 1, CONSUMER_CONTROL_LENGTH, REPORT_ID_CONSUMER, ITF_NUM_HID);
+    (void)_queue_packet(payload, state, 1, CONSUMER_CONTROL_LENGTH, REPORT_ID_CONSUMER, ITF_NUM_HID);
 }
 
 void queue_system_packet(uint8_t *payload, device_t *state) {
-    _queue_packet(payload, state, 2, SYSTEM_CONTROL_LENGTH, REPORT_ID_SYSTEM, ITF_NUM_HID);
+    (void)_queue_packet(payload, state, 2, SYSTEM_CONTROL_LENGTH, REPORT_ID_SYSTEM, ITF_NUM_HID);
 }

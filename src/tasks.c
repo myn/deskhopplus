@@ -230,6 +230,11 @@ void heartbeat_output_task(device_t *state) {
 void process_hid_queue_task(device_t *state) {
     hid_generic_pkt_t packet;
 
+    /* Refill ahead of the drain: a config Read All produces one response per
+       pass here (#156), so the queue carries a single field at a time instead
+       of the whole map, and a repeated request cannot overflow it. */
+    handle_api_read_all_step(state);
+
     if (!queue_try_peek(&state->hid_queue_out, &packet))
         return;
 

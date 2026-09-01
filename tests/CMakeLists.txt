@@ -193,6 +193,14 @@ add_executable(config_test config_test.c ${FW}/config_store.c ${CORE}/dh_crc32.c
 target_include_directories(config_test PRIVATE ${CORE} ${FW}/include)
 add_test(NAME config_test COMMAND config_test)
 
+# How a config Read All walks the field map (#156). Firmware domain and split
+# out for the same reason as the two either side of it: the arithmetic lived
+# inside a UART handler that needs a device and a pico queue to reach, so the
+# overflow it now prevents could only be argued about, never run.
+add_executable(config_read_all_test config_read_all_test.c ${FW}/config_read_all.c)
+target_include_directories(config_read_all_test PRIVATE ${FW}/include)
+add_test(NAME config_read_all_test COMMAND config_read_all_test)
+
 # What the peer board is running, tracked from its heartbeats (#89). Firmware
 # domain like config_store.c above, and split out for the same reason: behind
 # a UART handler the decision could not be reached by a test.

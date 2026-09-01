@@ -62,6 +62,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/hid_report.c
   ${SRC_DIR}/utils.c
   ${SRC_DIR}/config_store.c
+  ${SRC_DIR}/config_read_all.c
   ${SRC_DIR}/cursor_position.c
   ${SRC_DIR}/cursor_trace.c
   ${SRC_DIR}/identity_store.c
