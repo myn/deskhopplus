@@ -7,9 +7,10 @@
  * session asks — and the session is itself only a binding onto the shared
  * core's machine (helper_session.h). The macOS twin is ChannelTransport.swift.
  *
- * **One thread.** Discovery is a SetupAPI sweep plus WM_DEVICECHANGE on the
- * helper's message-only window; reads are overlapped and their events are
- * pumped alongside that window's messages. CM_Register_Notification would call
+ * **One thread.** Discovery is a SetupAPI sweep, driven by WM_DEVICECHANGE on
+ * the helper's message-only window and by the run loop's own idle rescan;
+ * reads are overlapped and their events are pumped alongside that window's
+ * messages. CM_Register_Notification would call
  * back on a pool thread and need marshalling for no gain, and clipboard
  * ownership pins work to the window thread regardless. There is nothing here
  * to lock (#49).
@@ -57,6 +58,22 @@ class HidTransport {
        retry that matters when another program holds the channel, because that
        program *releasing* its handle produces no device notification at all. */
     void on_device_change(WPARAM event, LPARAM data);
+
+    /* The same sweep, asked for rather than notified. The run loop calls this
+       while has_device() is false — nothing *found*, which is not the same as
+       nothing held — because a sweep can be right and still leave the wrong
+       answer: a board that reboots comes back on a new device path, and a
+       sweep landing in the middle of Windows building those nodes sees
+       nothing and records a departure. That verdict then stood for ever,
+       because refresh() ran nowhere else, and only restarting the helper —
+       which sweeps unconditionally in start() — could correct it. That was
+       #157, confirmed with the device reported OK by Windows while this held
+       no channel at all. Repeating the sweep costs one SetupAPI enumeration
+       per interval and logs nothing while the answer does not change. It
+       stops once a channel is found, so it runs for the whole of config mode,
+       where there are nodes but never a channel — a second of enumeration
+       against five minutes of deliberate configuring. */
+    void rescan();
 
     /* Seize every channel or none (ADR-0002). ADR-0001 measured that even a
        zero-access second open is refused under dwShareMode = 0, so there is no

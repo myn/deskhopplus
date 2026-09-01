@@ -156,7 +156,10 @@ void HidTransport::stop() {
 
 void HidTransport::on_device_change(WPARAM event, LPARAM) {
     if (event != DBT_DEVICEARRIVAL && event != DBT_DEVICEREMOVECOMPLETE) return;
+    rescan();
+}
 
+void HidTransport::rescan() {
     /*
      * Every device event is also a retry of a refused acquisition, which is
      * why this is not just the sweep.
@@ -168,6 +171,10 @@ void HidTransport::on_device_change(WPARAM event, LPARAM) {
      * refused might be free now. The program that held it does not announce
      * letting go, so a helper that only ever retried on *its own* device's
      * events would be waiting for a notification that is never sent.
+     *
+     * The run loop's idle rescan reaches the same two lines for the same
+     * reason: a sweep whose answer has gone stale is indistinguishable from
+     * one that was never asked for.
      */
     const bool announced = refresh();
     if (!announced && has_device() && !holding_channels()) acquire();

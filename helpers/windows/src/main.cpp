@@ -66,6 +66,14 @@ constexpr wchar_t kInstanceMutex[] = L"Local\\deskhopplus-helper";
    leaves room for the wait to be woken by something else first. */
 constexpr uint32_t kTickMs = 250;
 
+/* How often to re-sweep while no channel has been found (#157). Long enough
+   that an absent device costs one SetupAPI enumeration a second and nothing
+   else — the sweep logs only when its answer changes — and short enough that
+   a sweep taken a few milliseconds into a reboot's device rebuild is
+   corrected before the user reaches for the tray. Nothing sweeps once a
+   channel is found. */
+constexpr uint32_t kRescanMs = 1000;
+
 std::string hex(const std::vector<uint8_t> &bytes) {
     std::string out;
     char pair[3];
@@ -159,6 +167,7 @@ class Helper : public HelperEffects {
     OutputDispatch dispatch_{*this};
 
     uint32_t last_tick_{0};
+    uint32_t last_rescan_{0};
     bool retry_pending_{false};
     uint32_t retry_at_{0};
     /*
@@ -351,7 +360,7 @@ bool Helper::start(HINSTANCE instance) {
         feed(session_->transport_failed(reason, now_ms()));
     };
 
-    last_tick_ = now_ms();
+    last_tick_ = last_rescan_ = now_ms();
     log("deskhop helper started; waiting for the channel");
     transport_.start(window_, std::move(events));
     return true;
@@ -390,6 +399,15 @@ int Helper::run() {
             /* Only when there is something to acquire and it is not already
                held — the device may have come back on its own in the meantime. */
             if (transport_.has_device() && !transport_.holding_channels()) transport_.acquire();
+        }
+        /* Unsigned difference, the same shape as the tick below and for the
+           same reason: GetTickCount64 is truncated to 32 bits here and wraps.
+           Guarded on has_device() — nothing found — rather than on
+           holding_channels(), so this can never race the retry above, which
+           runs only when there *is* something to acquire. */
+        if (!transport_.has_device() && now - last_rescan_ >= kRescanMs) {
+            last_rescan_ = now;
+            transport_.rescan();
         }
         if (now - last_tick_ >= kTickMs) {
             last_tick_ = now;
