@@ -608,6 +608,25 @@ static void test_relative_source_crossing_falls_back_on_timeout(void) {
           "source query timeout trapped the cursor at the seam");
 }
 
+static void test_stranded_resuming_crossing_releases_mouse_input(void) {
+    device_t state = pending_relative_crossing();
+    /* Reproduce the captured failure: the pending source query times out, but
+       the transition is no longer actionable when fallback tries to resume
+       it. The old code let RESUMING escape this call indefinitely. */
+    state.config.output[0].border_direction = DH_DIRECTION_LEFT;
+
+    mouse_crossing_task(&state, 30000);
+    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "a stranded RESUMING crossing kept suppressing mouse input");
+
+    state.pointer_x = 16000;
+    state.pointer_y = 16000;
+    mouse_values_t movement = {.move_x = 3, .move_y = 2};
+    update_mouse_position(&state, &movement);
+    CHECK(movement.move_x == 3 && movement.move_y == 2,
+          "the first input after RESUMING recovery was swallowed");
+}
+
 static void test_source_response_away_from_edge_cancels_crossing(void) {
     device_t state = pending_relative_crossing();
     CHECK(apply_helper_cursor_position(&state, 0, 2, 20000, 5000,
@@ -1074,6 +1093,7 @@ int main(void) {
     test_relative_source_crossing_falls_back_without_helper();
     test_relative_source_crossing_falls_back_on_unavailable_reply();
     test_relative_source_crossing_falls_back_on_timeout();
+    test_stranded_resuming_crossing_releases_mouse_input();
     test_source_response_away_from_edge_cancels_crossing();
     test_late_source_response_cannot_satisfy_a_new_crossing();
     test_post_placement_refresh_cannot_satisfy_a_source_query();

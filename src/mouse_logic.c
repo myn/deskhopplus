@@ -379,8 +379,19 @@ void do_screen_switch(device_t *state, int direction) {
 void mouse_crossing_task(device_t *state, uint32_t now_us) {
     cursor_crossing_enter();
     cursor_crossing_t *crossing = &state->cursor_crossing;
-    if (crossing->phase == CURSOR_CROSSING_IDLE ||
-        crossing->phase == CURSOR_CROSSING_RESUMING) {
+    if (crossing->phase == CURSOR_CROSSING_IDLE) {
+        cursor_crossing_exit();
+        return;
+    }
+    /* RESUMING is a synchronous re-entry guard: mouse_crossing_task sets it,
+       drops the lock, and calls do_screen_switch(), which clears it before
+       completing the crossing. If it survives until a later task pass, that
+       call returned without taking the expected output transition. Leaving
+       the guard set makes update_mouse_position suppress every subsequent
+       delta forever (#28). Release the abandoned transaction so input can
+       retry the seam instead of wedging the mouse. */
+    if (crossing->phase == CURSOR_CROSSING_RESUMING) {
+        cursor_crossing_clear(state);
         cursor_crossing_exit();
         return;
     }
@@ -459,6 +470,13 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         cursor_crossing_exit();
     } else {
         do_screen_switch(state, direction);
+        /* A resumed output crossing must complete or be abandoned before this
+           task returns. If the layout or another guard made the transition no
+           longer actionable, do_screen_switch could not consume RESUMING. */
+        cursor_crossing_enter();
+        if (state->cursor_crossing.phase == CURSOR_CROSSING_RESUMING)
+            cursor_crossing_clear(state);
+        cursor_crossing_exit();
     }
 }
 
