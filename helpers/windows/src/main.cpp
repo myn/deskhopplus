@@ -408,6 +408,13 @@ int Helper::run() {
         if (!transport_.has_device() && now - last_rescan_ >= kRescanMs) {
             last_rescan_ = now;
             transport_.rescan();
+            /* Said out loud, because the sweep's own "channel(s) found" line
+               cannot say which caller asked for it, and that is exactly what
+               validating #157 needs to see: a recovery no device event could
+               have delivered. The guard above was false a line ago, so this
+               is only ever the rescan's own doing. */
+            if (transport_.has_device())
+                log("found by the idle rescan, with no device event to prompt it");
         }
         if (now - last_tick_ >= kTickMs) {
             last_tick_ = now;
