@@ -83,8 +83,13 @@ enum class Side { A, B };
 
 /* Two helpers and the link between them. */
 struct Pair {
-    ClipService a{seal_aead(), counter_entropy(1), 64u * 1024u};
-    ClipService b{seal_aead(), counter_entropy(2), 64u * 1024u};
+    explicit Pair(size_t capacity = 64u * 1024u)
+        : capacity(capacity), a(seal_aead(), counter_entropy(1), capacity),
+          b(seal_aead(), counter_entropy(2), capacity) {}
+
+    size_t capacity;
+    ClipService a;
+    ClipService b;
     std::vector<std::vector<uint8_t>> delivered_to_a;
     std::vector<std::vector<uint8_t>> delivered_to_b;
     std::vector<std::string> notes;
@@ -173,7 +178,7 @@ struct Pair {
      * whole asymmetry — its session never ended, and no call on a living
      * service can reproduce this (#151).
      */
-    void restart_a() { a = ClipService(seal_aead(), counter_entropy(3), 64u * 1024u); }
+    void restart_a() { a = ClipService(seal_aead(), counter_entropy(3), capacity); }
 
     void copy_on_a(const std::string &text) {
         settle(a.local_copy(ClipKind::Text, bytes_of(text)), Side::A);
@@ -214,7 +219,7 @@ void test_text_crosses_the_link() {
 void test_image_crosses_the_link() {
     for (size_t size : {size_t{1024}, ClipService::kEagerImageThreshold + 1}) {
         std::vector<uint8_t> png(size, 0x55);
-        Pair pair;
+        Pair pair(png.size() + 1024u);
         pair.settle(pair.a.local_copy(ClipKind::Png, png), Side::A);
         CHECK(pair.delivered_to_b.size() == 1, "the image did not arrive");
         if (pair.delivered_to_b.size() == 1)
