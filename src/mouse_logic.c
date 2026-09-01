@@ -5,6 +5,10 @@
 #define ACCEL_POINTS 7
 #define CURSOR_REANCHOR_TIMEOUT_US 30000u
 
+static uint32_t unsigned_magnitude(int32_t value) {
+    return value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
+}
+
 static dh_mouse_layout_t mouse_layout_for(const output_t *output) {
     return (dh_mouse_layout_t){
         .chain_direction = (dh_direction_t)output->chain_direction,
@@ -156,21 +160,25 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
         const int32_t raw_guard_axis = dh_direction_is_vertical(arrival_guard)
                                            ? values->move_y
                                            : values->move_x;
+        const int32_t raw_cross_axis = dh_direction_is_vertical(arrival_guard)
+                                           ? values->move_x
+                                           : values->move_y;
+        const uint32_t guard_magnitude = unsigned_magnitude(raw_guard_axis);
+        const uint32_t cross_magnitude = unsigned_magnitude(raw_cross_axis);
         const bool moved_inward =
-            (arrival_guard == DH_DIRECTION_LEFT && offset_x > 0) ||
-            (arrival_guard == DH_DIRECTION_RIGHT && offset_x < 0) ||
-            (arrival_guard == DH_DIRECTION_TOP && offset_y > 0) ||
-            (arrival_guard == DH_DIRECTION_BOTTOM && offset_y < 0);
+            guard_magnitude >= cross_magnitude &&
+            ((arrival_guard == DH_DIRECTION_LEFT && offset_x > 0) ||
+             (arrival_guard == DH_DIRECTION_RIGHT && offset_x < 0) ||
+             (arrival_guard == DH_DIRECTION_TOP && offset_y > 0) ||
+             (arrival_guard == DH_DIRECTION_BOTTOM && offset_y < 0));
         const bool moved_reverse =
             (arrival_guard == DH_DIRECTION_LEFT && raw_guard_axis < 0) ||
             (arrival_guard == DH_DIRECTION_RIGHT && raw_guard_axis > 0) ||
             (arrival_guard == DH_DIRECTION_TOP && raw_guard_axis < 0) ||
             (arrival_guard == DH_DIRECTION_BOTTOM && raw_guard_axis > 0);
         if (moved_reverse) {
-            const uint32_t magnitude = raw_guard_axis < 0
-                                           ? (uint32_t)(-raw_guard_axis)
-                                           : (uint32_t)raw_guard_axis;
-            const uint32_t accumulated = state->output_arrival_reverse + magnitude;
+            const uint32_t accumulated =
+                state->output_arrival_reverse + guard_magnitude;
             state->output_arrival_reverse = (uint16_t)(
                 accumulated > UINT16_MAX ? UINT16_MAX : accumulated);
         }

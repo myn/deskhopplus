@@ -961,6 +961,45 @@ static void test_output_arrival_ignores_reverse_jitter_until_motion_turns_inward
           "arrival guard did not re-arm the seam after inward motion");
 }
 
+static void test_output_arrival_survives_perpendicular_monitor_crossing_jitter(void) {
+    device_t state = four_screen_corner_state(RIGHT, BOTTOM);
+    state.active_output = 0;
+    state.config.output[0].os = MACOS;
+    state.config.output[1].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.config.output[1].screen_index = 1;
+    state.config.output[1].chain_direction = DH_DIRECTION_RIGHT;
+    state.config.output[1].speed_x = 16;
+    state.config.output[1].speed_y = 32;
+    state.config.enable_acceleration = true;
+    state.pointer_x = 16769;
+    state.pointer_y = MAX_SCREEN_COORD;
+    global_state = state;
+    output_switches = 0;
+
+    do_screen_switch(&state, BOTTOM);
+    CHECK(state.active_output == 1 && state.config.output[1].screen_index == 1,
+          "perpendicular-jitter setup did not enter Windows screen 1");
+
+    state.pointer_x = 32612;
+    state.pointer_y = 24;
+    mouse_values_t chain_motion = {.move_x = 46, .move_y = 2};
+    const enum screen_pos_e chain_seam = update_mouse_position(&state, &chain_motion);
+    CHECK(chain_seam == RIGHT,
+          "trace replay did not reach the adjacent Windows monitor");
+    do_screen_switch(&state, chain_seam);
+    CHECK(state.active_output == 1 && state.config.output[1].screen_index == 2,
+          "trace replay did not enter Windows screen 2");
+
+    state.pointer_y = 20;
+    mouse_values_t reverse_jitter = {.move_y = -1};
+    const enum screen_pos_e bounced = update_mouse_position(&state, &reverse_jitter);
+    if (bounced != NONE)
+        do_screen_switch(&state, bounced);
+    CHECK(bounced == NONE && state.active_output == 1,
+          "perpendicular monitor crossing jitter cleared the output-arrival guard");
+}
+
 static void test_relative_source_query_retries_transient_interboard_pressure(void) {
     device_t state = stacked_computers_state();
     state.config.output[0].os = WINDOWS;
@@ -1019,6 +1058,7 @@ int main(void) {
     test_macos_chain_requires_the_requested_placement_coordinate();
     test_fast_diagonal_macos_chain_uses_correlated_placement();
     test_output_arrival_ignores_reverse_jitter_until_motion_turns_inward();
+    test_output_arrival_survives_perpendicular_monitor_crossing_jitter();
     test_relative_source_query_retries_transient_interboard_pressure();
     test_relative_source_query_pressure_has_a_bounded_fallback();
     test_perpendicular_seam_crosses_from_any_monitor();
