@@ -145,12 +145,47 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
         screen_boundary_crossing(current, state->pointer_x, offset_x, LEFT, RIGHT);
     const screen_boundary_crossing_t vertical =
         screen_boundary_crossing(current, state->pointer_y, offset_y, TOP, BOTTOM);
-    const bool horizontal_actionable =
+    bool horizontal_actionable =
         actionable_transition_for(state, current, horizontal.direction, values->buttons) !=
         DH_MOUSE_TRANSITION_NONE;
-    const bool vertical_actionable =
+    bool vertical_actionable =
         actionable_transition_for(state, current, vertical.direction, values->buttons) !=
         DH_MOUSE_TRANSITION_NONE;
+    const dh_direction_t arrival_guard = (dh_direction_t)state->output_arrival_guard;
+    if (arrival_guard != DH_DIRECTION_NONE) {
+        const int32_t raw_guard_axis = dh_direction_is_vertical(arrival_guard)
+                                           ? values->move_y
+                                           : values->move_x;
+        const bool moved_inward =
+            (arrival_guard == DH_DIRECTION_LEFT && offset_x > 0) ||
+            (arrival_guard == DH_DIRECTION_RIGHT && offset_x < 0) ||
+            (arrival_guard == DH_DIRECTION_TOP && offset_y > 0) ||
+            (arrival_guard == DH_DIRECTION_BOTTOM && offset_y < 0);
+        const bool moved_reverse =
+            (arrival_guard == DH_DIRECTION_LEFT && raw_guard_axis < 0) ||
+            (arrival_guard == DH_DIRECTION_RIGHT && raw_guard_axis > 0) ||
+            (arrival_guard == DH_DIRECTION_TOP && raw_guard_axis < 0) ||
+            (arrival_guard == DH_DIRECTION_BOTTOM && raw_guard_axis > 0);
+        if (moved_reverse) {
+            const uint32_t magnitude = raw_guard_axis < 0
+                                           ? (uint32_t)(-raw_guard_axis)
+                                           : (uint32_t)raw_guard_axis;
+            const uint32_t accumulated = state->output_arrival_reverse + magnitude;
+            state->output_arrival_reverse = (uint16_t)(
+                accumulated > UINT16_MAX ? UINT16_MAX : accumulated);
+        }
+        const bool deliberate_reverse =
+            state->output_arrival_reverse > state->config.jump_threshold;
+        if (moved_inward || deliberate_reverse) {
+            state->output_arrival_guard = DH_DIRECTION_NONE;
+            state->output_arrival_reverse = 0;
+        } else {
+            if (horizontal.direction == (enum screen_pos_e)arrival_guard)
+                horizontal_actionable = false;
+            if (vertical.direction == (enum screen_pos_e)arrival_guard)
+                vertical_actionable = false;
+        }
+    }
     const enum screen_pos_e direction =
         vertical_actionable &&
                 (!horizontal_actionable || vertical.overshoot > horizontal.overshoot)
@@ -217,8 +252,18 @@ void do_screen_switch(device_t *state, int direction) {
                         cursor_crossing_exit();
                         cursor_trace_event(state, DH_CURSOR_TRACE_QUERY, query_id, 0, 0,
                                            (uint8_t)direction, (uint8_t)transition);
-                        if (channel_query_cursor(state->active_output, query_id))
+                        const cursor_query_result_t query_result =
+                            channel_query_cursor(state->active_output, query_id);
+                        if (query_result != CURSOR_QUERY_UNAVAILABLE) {
+                            if (query_result == CURSOR_QUERY_SENT) {
+                                cursor_crossing_enter();
+                                if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+                                    state->cursor_crossing.query_id == query_id)
+                                    state->cursor_crossing.query_sent = true;
+                                cursor_crossing_exit();
+                            }
                             break;
+                        }
                         cursor_crossing_enter();
                         if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
                             state->cursor_crossing.query_id == query_id)
@@ -251,6 +296,9 @@ void do_screen_switch(device_t *state, int direction) {
                     break;
                 }
                 switch_to_another_pc(state, output, 1 - state->active_output, direction);
+                state->output_arrival_guard = (uint8_t)dh_opposite_direction(
+                    (dh_direction_t)direction);
+                state->output_arrival_reverse = 0;
                 cursor_trace_event(state, DH_CURSOR_TRACE_SWITCH, 0, 0, 0,
                                    (uint8_t)direction, (uint8_t)transition);
                 if (crossing == DH_SEAM_CROSSING_MAPPED) {
@@ -342,6 +390,29 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         cursor_crossing_clear(state);
         cursor_crossing_exit();
         return;
+    }
+    if (crossing->phase == CURSOR_CROSSING_WAITING &&
+        crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR &&
+        !crossing->query_sent) {
+        const uint8_t retry_output = crossing->output;
+        const uint8_t retry_query_id = crossing->query_id;
+        cursor_crossing_exit();
+        const cursor_query_result_t retry_result =
+            channel_query_cursor(retry_output, retry_query_id);
+        cursor_crossing_enter();
+        crossing = &state->cursor_crossing;
+        if (crossing->phase != CURSOR_CROSSING_WAITING ||
+            crossing->kind != CURSOR_CROSSING_SOURCE_REANCHOR ||
+            crossing->output != retry_output || crossing->query_id != retry_query_id) {
+            cursor_crossing_exit();
+            return;
+        }
+        if (retry_result == CURSOR_QUERY_SENT) {
+            crossing->query_sent = true;
+            crossing->started_us = now_us;
+        } else if (retry_result == CURSOR_QUERY_UNAVAILABLE) {
+            crossing->phase = CURSOR_CROSSING_FALLBACK;
+        }
     }
     bool timed_out = false;
     uint8_t timeout_query_id = 0;

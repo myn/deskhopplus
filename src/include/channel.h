@@ -61,7 +61,12 @@ void handle_channel_relay_msg(uart_packet_t *, device_t *);
 /* Is a helper live on this board's channel? The configuration UI shows it
    per side (#50) — the surface that survives the helper being disabled. */
 bool channel_helper_present(void);
-bool channel_query_cursor(uint8_t output, uint8_t query_id);
+typedef enum {
+    CURSOR_QUERY_UNAVAILABLE = 0,
+    CURSOR_QUERY_RETRY,
+    CURSOR_QUERY_SENT,
+} cursor_query_result_t;
+cursor_query_result_t channel_query_cursor(uint8_t output, uint8_t query_id);
 void handle_cursor_query_msg(uart_packet_t *, device_t *);
 
 /* Ask the helper on `output` to place the entry cursor on a mapped monitor.

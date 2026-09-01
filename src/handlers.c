@@ -241,6 +241,8 @@ void handle_mouse_abs_uart_msg(uart_packet_t *packet, device_t *state) {
 /* Function handles request to switch output  */
 void handle_output_select_msg(uart_packet_t *packet, device_t *state) {
     state->active_output = packet->data[0];
+    state->output_arrival_guard = DH_DIRECTION_NONE;
+    state->output_arrival_reverse = 0;
     if (state->tud_connected)
         release_all_keys(state);
 
@@ -515,6 +517,8 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
 /* Update output variable, set LED on/off and notify the other board so they are in sync. */
 void set_active_output(device_t *state, uint8_t new_output) {
     state->active_output = new_output;
+    state->output_arrival_guard = DH_DIRECTION_NONE;
+    state->output_arrival_reverse = 0;
     restore_leds(state);
     (void)send_value(new_output, OUTPUT_SELECT_MSG);
 

@@ -93,6 +93,7 @@ typedef struct {
     uint8_t query_id;
     uint8_t target_screen;
     uint16_t target_position;
+    bool query_sent;
     uint32_t started_us;
 } cursor_crossing_t;
 
@@ -189,6 +190,8 @@ typedef struct {
     /* A relative-mode output crossing waiting for the source helper's true
        cursor position before its seam mapping is resolved (#30). */
     cursor_crossing_t cursor_crossing;
+    uint8_t output_arrival_guard;
+    uint16_t output_arrival_reverse;
     uint8_t next_cursor_query_id;
 
     /* Onboard LED blinky (provide feedback when e.g. mouse connected) */

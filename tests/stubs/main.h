@@ -50,6 +50,7 @@ typedef struct {
     uint8_t query_id;
     uint8_t target_screen;
     uint16_t target_position;
+    bool query_sent;
     uint32_t started_us;
 } cursor_crossing_t;
 
@@ -68,8 +69,16 @@ typedef struct {
     bool gaming_mode;
     bool relative_mouse;
     cursor_crossing_t cursor_crossing;
+    uint8_t output_arrival_guard;
+    uint16_t output_arrival_reverse;
     uint8_t next_cursor_query_id;
 } device_t;
+
+typedef enum {
+    CURSOR_QUERY_UNAVAILABLE = 0,
+    CURSOR_QUERY_RETRY,
+    CURSOR_QUERY_SENT,
+} cursor_query_result_t;
 
 typedef struct {
     uint8_t type;
@@ -90,7 +99,7 @@ extern device_t global_state;
 void switch_to_another_pc(device_t *, output_t *, int, int);
 void switch_virtual_desktop(device_t *, output_t *, int, int);
 void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
-bool channel_query_cursor(uint8_t, uint8_t);
+cursor_query_result_t channel_query_cursor(uint8_t, uint8_t);
 bool channel_place_cursor_correlated(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t, uint8_t);
 void mouse_crossing_task(device_t *, uint32_t);
 void mouse_crossing_query_unavailable(device_t *, uint8_t, uint8_t);

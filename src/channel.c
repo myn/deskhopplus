@@ -338,16 +338,17 @@ bool channel_helper_present(void) {
     return channel.session.present;
 }
 
-bool channel_query_cursor(uint8_t output, uint8_t query_id) {
+cursor_query_result_t channel_query_cursor(uint8_t output, uint8_t query_id) {
     if (output != BOARD_ROLE) {
         uart_packet_t packet = {
             .type = CURSOR_QUERY_MSG,
             .data = {output, query_id},
         };
-        return queue_uart_packet(&packet, &global_state);
+        return queue_uart_packet(&packet, &global_state) ? CURSOR_QUERY_SENT
+                                                         : CURSOR_QUERY_RETRY;
     }
     if (!channel_helper_present())
-        return false;
+        return CURSOR_QUERY_UNAVAILABLE;
     critical_section_enter_blocking(&channel.out_lock);
     const bool accepted = channel.cursor_query_origin == CURSOR_QUERY_NONE;
     if (accepted) {
@@ -355,7 +356,7 @@ bool channel_query_cursor(uint8_t output, uint8_t query_id) {
         channel.cursor_query_id = query_id;
     }
     critical_section_exit(&channel.out_lock);
-    return accepted;
+    return accepted ? CURSOR_QUERY_SENT : CURSOR_QUERY_RETRY;
 }
 
 void handle_cursor_query_msg(uart_packet_t *packet, device_t *state) {

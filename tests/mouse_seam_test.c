@@ -15,6 +15,7 @@ static uint8_t placed_border;
 static uint16_t placed_position;
 static int source_queries;
 static bool source_query_available;
+static int source_query_retries;
 static uint8_t source_query_id;
 static bool placement_query_available;
 static uint8_t placement_query_id;
@@ -56,11 +57,15 @@ void channel_place_cursor(uint8_t output, uint8_t screen, uint8_t chain, uint8_t
     placed_position = position;
 }
 
-bool channel_query_cursor(uint8_t output, uint8_t query_id) {
+cursor_query_result_t channel_query_cursor(uint8_t output, uint8_t query_id) {
     (void)output;
     source_queries++;
     source_query_id = query_id;
-    return source_query_available;
+    if (source_query_retries > 0) {
+        source_query_retries--;
+        return CURSOR_QUERY_RETRY;
+    }
+    return source_query_available ? CURSOR_QUERY_SENT : CURSOR_QUERY_UNAVAILABLE;
 }
 
 bool channel_place_cursor_correlated(uint8_t output, uint8_t screen, uint8_t chain,
@@ -921,6 +926,89 @@ static void test_fast_diagonal_macos_chain_uses_correlated_placement(void) {
     }
 }
 
+static void test_output_arrival_ignores_reverse_jitter_until_motion_turns_inward(void) {
+    device_t state = four_screen_corner_state(RIGHT, BOTTOM);
+    state.active_output = 0;
+    state.config.output[0].screen_index = 1;
+    state.config.output[1].screen_index = 2;
+    state.config.output[1].speed_y = 32;
+    state.pointer_x = 6323;
+    state.pointer_y = MAX_SCREEN_COORD;
+    global_state = state;
+    output_switches = 0;
+
+    do_screen_switch(&state, BOTTOM);
+    CHECK(state.active_output == 1 && state.config.output[1].screen_index == 2,
+          "arrival-jitter setup did not enter Windows screen 2");
+
+    mouse_values_t jitter = {.move_y = -3};
+    const enum screen_pos_e bounced = update_mouse_position(&state, &jitter);
+    if (bounced != NONE)
+        do_screen_switch(&state, bounced);
+    CHECK(bounced == NONE && state.active_output == 1,
+          "tiny reverse jitter immediately bounced back across the output seam");
+
+    jitter.move_y = -3;
+    CHECK(update_mouse_position(&state, &jitter) == TOP,
+          "arrival guard permanently blocked a slow intentional reversal");
+
+    mouse_values_t inward = {.move_y = 3};
+    CHECK(update_mouse_position(&state, &inward) == NONE,
+          "inward arrival motion unexpectedly crossed a seam");
+    state.pointer_y = MIN_SCREEN_COORD;
+    mouse_values_t deliberate_return = {.move_y = -16};
+    CHECK(update_mouse_position(&state, &deliberate_return) == TOP,
+          "arrival guard did not re-arm the seam after inward motion");
+}
+
+static void test_relative_source_query_retries_transient_interboard_pressure(void) {
+    device_t state = stacked_computers_state();
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    state.pointer_y = MIN_SCREEN_COORD;
+    source_query_available = true;
+    source_query_retries = 1;
+    source_queries = 0;
+    output_switches = 0;
+
+    do_screen_switch(&state, TOP);
+    CHECK(output_switches == 0 && source_queries == 1 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "transient inter-board pressure immediately used stale-coordinate fallback");
+    mouse_crossing_task(&state, 30000);
+    CHECK(output_switches == 0 && source_queries == 2 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
+          "query sent at the enqueue deadline timed out before its response window");
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 12000, MIN_SCREEN_COORD,
+                                       state.cursor_crossing.query_id),
+          "retried source query response was refused");
+    mouse_crossing_task(&state, 30001);
+    CHECK(output_switches == 1,
+          "retried source query did not complete the mapped output crossing");
+    source_query_retries = 0;
+    source_query_available = false;
+}
+
+static void test_relative_source_query_pressure_has_a_bounded_fallback(void) {
+    device_t state = stacked_computers_state();
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    state.pointer_y = MIN_SCREEN_COORD;
+    source_query_available = true;
+    source_query_retries = 100;
+    output_switches = 0;
+
+    do_screen_switch(&state, TOP);
+    mouse_crossing_task(&state, 30000);
+    mouse_crossing_task(&state, 30001);
+    CHECK(output_switches == 1 && state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "persistent inter-board pressure trapped the cursor past the enqueue deadline");
+    source_query_retries = 0;
+    source_query_available = false;
+}
+
 int main(void) {
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();
@@ -930,6 +1018,9 @@ int main(void) {
     test_macos_chain_holds_only_position_while_pending();
     test_macos_chain_requires_the_requested_placement_coordinate();
     test_fast_diagonal_macos_chain_uses_correlated_placement();
+    test_output_arrival_ignores_reverse_jitter_until_motion_turns_inward();
+    test_relative_source_query_retries_transient_interboard_pressure();
+    test_relative_source_query_pressure_has_a_bounded_fallback();
     test_perpendicular_seam_crosses_from_any_monitor();
     test_diagonal_push_uses_the_larger_overshoot();
     test_non_transition_and_guarded_edges_clamp_normally();
