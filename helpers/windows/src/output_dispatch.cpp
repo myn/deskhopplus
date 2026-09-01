@@ -107,13 +107,22 @@ void OutputDispatch::emit(const ClipOutput &output) {
     }
 
     case ClipOutput::Kind::Deliver:
-        if (output.payload_kind != static_cast<uint8_t>(ClipKind::Text)) {
+        if (output.payload_kind == static_cast<uint8_t>(ClipKind::Text)) {
+            effects_.deliver_text(output.bytes);
+        } else if (output.payload_kind == static_cast<uint8_t>(ClipKind::Png)) {
+            effects_.deliver_image(output.bytes);
+        } else {
             effects_.log("a payload of kind " + std::to_string(output.payload_kind) +
-                         " arrived, which this slice does not write — images are #55 and files "
-                         "are #56");
-            break;
+                         " arrived, which this slice does not write — files are #56");
         }
-        effects_.deliver_text(output.bytes);
+        break;
+
+    case ClipOutput::Kind::LazyImage:
+        effects_.lazy_image(output.transfer_id, output.total);
+        break;
+
+    case ClipOutput::Kind::CancelLazyImage:
+        effects_.cancel_lazy_image(output.transfer_id);
         break;
 
     case ClipOutput::Kind::Note:

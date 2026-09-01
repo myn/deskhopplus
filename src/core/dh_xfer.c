@@ -336,8 +336,8 @@ bool dh_xfer_chunk_at(const dh_xfer *x, uint32_t seq, dh_clip_chunk *out) {
 
 /* ---- receiver --------------------------------------------------------- */
 
-size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_action *acts,
-                            size_t acts_cap) {
+static size_t handle_offer(dh_xfer *x, const dh_clip_offer *offer, bool lazy,
+                           dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     const uint32_t nchunks = chunk_count(offer->total);
     if (offer->id == 0) {
@@ -360,7 +360,7 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
             return n;
         }
         x->rx.duplicate_offers++;
-        if (!x->rx.active || x->rx.any_seen)
+        if (!x->rx.active || x->rx.any_seen || x->rx.lazy)
             return 0;
         dh_xfer_action *a = emit(acts, &n, acts_cap);
         if (a) {
@@ -397,6 +397,9 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
         return n;
     }
     x->rx.active = true;
+    x->rx.lazy = lazy;
+    if (lazy)
+        return 0;
     dh_xfer_action *a = emit(acts, &n, acts_cap);
     if (a) {
         a->type = DH_XFER_ACT_SEND_REQUEST;
@@ -406,6 +409,33 @@ size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_acti
     if (a) {
         a->type = DH_XFER_ACT_SEND_CREDIT;
         a->id = offer->id;
+        a->credits = DH_XFER_CREDIT_WINDOW;
+    }
+    return n;
+}
+
+size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_action *acts,
+                            size_t acts_cap) {
+    return handle_offer(x, offer, false, acts, acts_cap);
+}
+
+size_t dh_xfer_handle_offer_lazy(dh_xfer *x, const dh_clip_offer *offer,
+                                 dh_xfer_action *acts, size_t acts_cap) {
+    return handle_offer(x, offer, true, acts, acts_cap);
+}
+
+size_t dh_xfer_request_lazy(dh_xfer *x, uint32_t id, dh_xfer_action *acts,
+                            size_t acts_cap) {
+    if (!x->rx.active || !x->rx.lazy || x->rx.id != id)
+        return 0;
+    x->rx.lazy = false;
+    size_t n = 0;
+    dh_xfer_action *a = emit(acts, &n, acts_cap);
+    if (a) { a->type = DH_XFER_ACT_SEND_REQUEST; a->id = id; }
+    a = emit(acts, &n, acts_cap);
+    if (a) {
+        a->type = DH_XFER_ACT_SEND_CREDIT;
+        a->id = id;
         a->credits = DH_XFER_CREDIT_WINDOW;
     }
     return n;
@@ -463,7 +493,8 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
                             size_t acts_cap) {
     size_t n = 0;
     uint16_t credits = 0;
-    if (!x->rx.active || x->rx.id != chunk->id || chunk->seq >= x->rx.nchunks)
+    if (!x->rx.active || x->rx.lazy || x->rx.id != chunk->id ||
+        chunk->seq >= x->rx.nchunks)
         return 0;
 
     if (bit_get(x->rx.received, chunk->seq)) {
@@ -564,7 +595,7 @@ static void rx_sweep_range(dh_xfer *x, uint32_t limit, bool aged, dh_xfer_action
 size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     uint16_t credits = 0;
-    if (!x->rx.active)
+    if (!x->rx.active || x->rx.lazy)
         return 0;
 
     /*
@@ -613,7 +644,7 @@ size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     uint16_t credits = 0;
-    if (!x->rx.active || x->rx.id != id)
+    if (!x->rx.active || x->rx.lazy || x->rx.id != id)
         return 0;
     if (x->rx.nreceived < x->rx.nchunks) {
         /* DONE ends a round: the copy side has sent everything asked of it so

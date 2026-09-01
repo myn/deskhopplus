@@ -19,8 +19,14 @@ with the session — and, since the amendment below, with a fresh incoming seal.
 
 When no chunk has arrived for an identical active offer, the paste side repeats `CLIP_REQUEST` and
 one covering credit window. Once chunks have arrived, or once the transfer completed, it emits
-nothing. This distinction prevents a delayed retry from erasing partial data, delivering twice, or
+nothing. This distinction prevents a late retry from erasing partial data, delivering twice, or
 inflating a streaming sender's credit.
+
+For a **lazy receive that has not been pasted**, an identical offer is silent even though no
+chunk has arrived. The absence of `CLIP_REQUEST` is intentional state: repeating it would turn a
+copy-time offer retry into the paste action and start the transfer early. Once the pasteboard asks
+for the image, the receive leaves that lazy-waiting state and the ordinary request, credit, retry,
+and retransmission rules above apply unchanged.
 
 ## Considered options
 

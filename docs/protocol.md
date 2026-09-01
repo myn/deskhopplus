@@ -801,7 +801,10 @@ between the helpers**; the firmware relays its messages opaquely.
   exactly that size, so a chunk's offset is `seq × chunk_size` and reassembly needs no
   bookkeeping beyond a received-set. A chunk is exactly one CLIP_CHUNK frame's sealed payload.
 - **Streaming starts on request, never before.** An offered transfer emits nothing until
-  CLIP_REQUEST arrives — a lazy payload (files) is not even read until then.
+  CLIP_REQUEST arrives. Text and PNG images up to 256 KiB are requested as soon as their offer
+  arrives. Larger PNG images are retained as a lazy pasteboard format and requested only when
+  an application pastes them; until that callback, duplicate offers are silent and the receive
+  stall clock is not armed. A lazy source payload (files) is not even read until requested.
 - **An offer repeats until it is requested**
   ([#78](https://github.com/myn/deskhopplus/issues/78)). CLIP_OFFER is the one transfer message whose
   loss creates no state at the paste side, so nothing there can time out or ask for it again. The

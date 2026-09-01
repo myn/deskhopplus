@@ -54,6 +54,9 @@ public protocol HelperEffects: AnyObject {
 
     /// This computer's pasteboard.
     func deliver(text: [UInt8])
+    func deliver(image: [UInt8])
+    func lazyImage(id: UInt32, total: UInt64)
+    func cancelLazyImage(id: UInt32)
 
     /// The run loop's retry timer, and the conditions it re-checks when it fires.
     func scheduleRetry(after: TimeInterval)
@@ -162,12 +165,19 @@ public final class OutputDispatch {
             }
 
         case .deliver(let kind, let bytes):
-            guard kind == ClipKind.text.rawValue else {
+            if kind == ClipKind.text.rawValue {
+                effects.deliver(text: bytes)
+            } else if kind == ClipKind.png.rawValue {
+                effects.deliver(image: bytes)
+            } else {
                 effects.note("a payload of kind \(kind) arrived, which this slice does not "
-                             + "write — images are #55 and files are #56")
-                return
+                             + "write — files are #56")
             }
-            effects.deliver(text: bytes)
+
+        case .lazyImage(let id, let total):
+            effects.lazyImage(id: id, total: total)
+        case .cancelLazyImage(let id):
+            effects.cancelLazyImage(id: id)
 
         case .note(let note):
             effects.note(note)

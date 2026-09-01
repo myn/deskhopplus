@@ -33,14 +33,16 @@
 
 namespace deskhop {
 
-/* The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Only text
-   travels in this slice; images are #55 and files are #56. */
+/* The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Text and PNG
+   travel here; files are #56. */
 enum class ClipKind : uint8_t { Text = 0, Png = 1, Files = 2 };
 
 struct ClipOutput {
     enum class Kind {
         Send,    /* a frame body for the session to authenticate and send */
         Deliver, /* a complete payload, for this computer's clipboard */
+        LazyImage, /* install a paste-triggered image placeholder */
+        CancelLazyImage,
         Note,    /* diagnostics, never shown to the user */
         ProtocolError, /* authenticated identity conflict: drop connection */
     };
@@ -48,6 +50,8 @@ struct ClipOutput {
     Kind kind{Kind::Note};
     uint8_t type{0};         /* Send: the message type */
     uint8_t payload_kind{0}; /* Deliver: ClipKind */
+    uint32_t transfer_id{0}; /* LazyImage */
+    uint64_t total{0};       /* LazyImage */
     std::vector<uint8_t> bytes;
     std::string note;
 };
@@ -60,6 +64,7 @@ class ClipService {
      * rather than truncated, so the far end learns why.
      */
     static constexpr size_t kDefaultCapacity = 10u * 1024u * 1024u;
+    static constexpr size_t kEagerImageThreshold = 256u * 1024u;
 
     /*
      * How long an arriving transfer may make no progress before it is given up on.
@@ -118,6 +123,7 @@ class ClipService {
     /* A chance to push more chunks — after every arriving frame, and on the
        tick. Empty when nothing is owed, which is the ordinary answer. */
     std::vector<ClipOutput> pump();
+    std::vector<ClipOutput> request_lazy_image(uint32_t id);
 
     /*
      * Give up on a transfer that has stopped moving.
@@ -225,6 +231,7 @@ class ClipService {
        holds no key for the seal. Once a fresh seal is accepted it has to start
        again, rather than carry on into a far end that never saw its offer. */
     bool reoffer_when_sealed_{false};
+    uint32_t lazy_image_id_{0};
 
     /*
      * Seal-wait, receive-timeout and offer-retry bookkeeping. A copy waiting

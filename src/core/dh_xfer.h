@@ -133,6 +133,7 @@ typedef struct {
     /* incoming transfer */
     struct {
         bool active;
+        bool lazy; /* accepted offer, waiting for a paste-side request */
         bool seen_offer; /* identity remains after completion/refusal */
         uint32_t id;
         uint8_t kind;
@@ -227,6 +228,10 @@ size_t dh_xfer_rx_seal_replaced(dh_xfer *x, dh_xfer_action *acts, size_t acts_ca
 /* Peer messages in. */
 size_t dh_xfer_handle_offer(dh_xfer *x, const dh_clip_offer *offer, dh_xfer_action *acts,
                             size_t acts_cap);
+size_t dh_xfer_handle_offer_lazy(dh_xfer *x, const dh_clip_offer *offer,
+                                 dh_xfer_action *acts, size_t acts_cap);
+size_t dh_xfer_request_lazy(dh_xfer *x, uint32_t id, dh_xfer_action *acts,
+                            size_t acts_cap);
 size_t dh_xfer_handle_request(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 /* A receive completes here, on the chunk that fills the received-set, with
    DH_XFER_ACT_DELIVERED — not at CLIP_DONE (#132). Every chunk is verified on
@@ -292,7 +297,9 @@ size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
  * helper's clipboard service.
  */
 static inline bool dh_xfer_is_sending(const dh_xfer *x) { return x->tx.active; }
-static inline bool dh_xfer_is_receiving(const dh_xfer *x) { return x->rx.active; }
+static inline bool dh_xfer_is_receiving(const dh_xfer *x) {
+    return x->rx.active && !x->rx.lazy;
+}
 
 /*
  * How far each direction has got. A stall says nothing useful without these:

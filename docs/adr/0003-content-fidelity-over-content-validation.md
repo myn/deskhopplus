@@ -81,3 +81,16 @@ peer, so an egress-board validator is not a boundary).
 - **#62 is unchanged but sharpened**: it now stands purely as a firmware-security question, no
   longer entangled with a clipboard containment argument.
 - The glossary (`CONTEXT.md`) defines **Fidelity** as the canonical term for this property.
+
+## Amendment, 2026-09-01 — PNG is the cross-platform image edge encoding
+
+Issue #55 makes the platform-edge image conversion explicit. The wire representation for kind 1
+is PNG. A screenshot pasteboard that exposes only macOS TIFF or Windows bitmap data is encoded to
+PNG once at the copy-side platform boundary; the exact PNG bytes then cross the channel and are
+CRC32-verified without modification. The paste side publishes those bytes as PNG on macOS and as
+the native Windows bitmap representation. This is the image equivalent of the text edge encoding:
+it is required because the platforms have no shared native clipboard representation, and it does
+not permit content validation, filtering, normalization, or firmware inspection.
+
+“Files and images are opaque byte streams” therefore governs the channel after this edge encoding,
+not the platform-native object before it. A PNG already present on macOS is carried as-is.

@@ -18,8 +18,8 @@ import Foundation
  * implementation, and only the joining is written twice.
  */
 
-/// The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Only text
-/// travels in this slice; images are #55 and files are #56.
+/// The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Text and PNG
+/// travel here; files are #56.
 public enum ClipKind: UInt8 {
     case text = 0
     case png = 1
@@ -31,12 +31,15 @@ public enum ClipboardOutput: Equatable {
     case send(type: UInt8, body: [UInt8])
     /// A complete payload, to be written to this computer's pasteboard.
     case deliver(kind: UInt8, bytes: [UInt8])
+    case lazyImage(id: UInt32, total: UInt64)
+    case cancelLazyImage(id: UInt32)
     /// Diagnostics, never shown to the user.
     case note(String)
     case protocolError(String)
 }
 
 public final class ClipboardService {
+    public static let eagerImageThreshold = 256 * 1024
     /*
      * The largest payload this helper will assemble. The spec's default cap is
      * 10 MB; an offer above it is refused by the transfer core with a cancel
@@ -104,6 +107,7 @@ public final class ClipboardService {
      * far end that never saw its offer.
      */
     private var reofferWhenSealed = false
+    private var lazyImageID: UInt32?
 
     /*
      * Seal-wait, receive-timeout and offer-retry bookkeeping. A copy waiting
@@ -201,6 +205,10 @@ public final class ClipboardService {
     /// tick. Empty when nothing is owed, which is the ordinary answer.
     public func pump() -> [ClipboardOutput] {
         render(transfer.pump())
+    }
+
+    public func requestLazyImage(id: UInt32) -> [ClipboardOutput] {
+        render(transfer.requestLazy(id: id))
     }
 
     /*
@@ -379,7 +387,9 @@ public final class ClipboardService {
            seal knocked back to the start. */
         if reofferWhenSealed {
             reofferWhenSealed = false
-            if pending == nil { return render(transfer.reoffer()) }
+            if pending == nil {
+                return render(transfer.reoffer())
+            }
         }
         return startPendingIfSealed()
     }
@@ -446,7 +456,14 @@ public final class ClipboardService {
              * what keeps one out of every path that produces an action.
              */
             let previousID = transfer.receivedOfferID
-            let outputs = render(transfer.handle(offer: offer))
+            let lazy = offer.kind == ClipKind.png.rawValue &&
+                       offer.total > UInt64(Self.eagerImageThreshold)
+            var outputs = render(lazy ? transfer.handleLazy(offer: offer)
+                                      : transfer.handle(offer: offer))
+            if lazy && transfer.receivedOfferID == offer.id {
+                lazyImageID = offer.id
+                outputs.append(.lazyImage(id: offer.id, total: offer.total))
+            }
             if transfer.receivedOfferID != previousID {
                 receivingSince = nil
                 sweptSince = nil
@@ -560,6 +577,7 @@ public final class ClipboardService {
                 outputs.append(.send(type: MessageType.clipCancel, body: ClipCodec.id(action.id)))
             case DH_XFER_ACT_DELIVERED:
                 let payload = transfer.delivered()
+                if lazyImageID == action.id { lazyImageID = nil }
                 outputs.append(.deliver(kind: payload.kind, bytes: payload.bytes))
                 if transfer.duplicateOffers > 0 {
                     outputs.append(.note("a transfer completed after "
@@ -567,17 +585,17 @@ public final class ClipboardService {
                                          + "were observed"))
                 }
             case DH_XFER_ACT_FAILED:
+                if lazyImageID == action.id {
+                    lazyImageID = nil
+                    outputs.append(.cancelLazyImage(id: action.id))
+                }
                 outputs.append(.note("transfer \(action.id) was abandoned: "
                                      + Self.reason(action.reason)))
             case DH_XFER_ACT_PROTOCOL_ERROR:
                 outputs.append(.protocolError("offer \(action.id) reused immutable identity "
                                               + "with different content"))
             case DH_XFER_ACT_NEED_DATA:
-                /* Nothing here offers lazily, so this is the core asking for a
-                   payload that was never promised. Refused rather than left as
-                   a transfer that never finishes. */
-                outputs.append(.note("a lazy payload was asked for, which this slice never "
-                                     + "offers"))
+                outputs.append(.note("a lazy payload was asked for, which this slice never offers"))
                 outputs += render(transfer.provideFail())
             default:
                 outputs.append(.note("the transfer core produced action \(action.type.rawValue), "

@@ -171,6 +171,7 @@ public final class Transfer {
         }
     }
 
+
     /*
      * Offer the payload already in flight again, as a fresh transfer.
      *
@@ -195,6 +196,7 @@ public final class Transfer {
                           UInt16(metaLength), storage.baseAddress, current.total, acts, cap)
         }
     }
+
 
     /// Whether a payload is on its way out — the question a stale seal has to
     /// ask before it knows whether there is anything to start again.
@@ -301,6 +303,21 @@ public final class Transfer {
                 return dh_xfer_handle_offer(machine, &message, acts, cap)
             }
         }
+    }
+
+    public func handleLazy(offer: ClipOffer) -> [TransferAction] {
+        offer.meta.withUnsafeBytes { meta in
+            var message = dh_clip_offer(id: offer.id, kind: offer.kind, total: offer.total,
+                                        meta: meta.isEmpty ? nil : meta.bindMemory(to: UInt8.self).baseAddress,
+                                        meta_len: UInt16(meta.count))
+            return collect { acts, cap in
+                dh_xfer_handle_offer_lazy(machine, &message, acts, cap)
+            }
+        }
+    }
+
+    public func requestLazy(id: UInt32) -> [TransferAction] {
+        collect { acts, cap in dh_xfer_request_lazy(machine, id, acts, cap) }
     }
 
     public func handle(chunk: ClipChunk) -> [TransferAction] {

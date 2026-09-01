@@ -3,7 +3,7 @@ import DeskhopChannel
 import Foundation
 
 /*
- * The clipboard text path (#52), driven as **two helpers talking to each
+ * The clipboard payload path (#52, #55), driven as **two helpers talking to each
  * other** rather than one talking to a script.
  *
  * That is the whole value of the shape. Every rule these exercise — the seal
@@ -18,6 +18,7 @@ import Foundation
 
 let clipboardTests: [(String, () throws -> Void)] = [
     ("text copied on one computer arrives on the other", testTextCrossesTheLink),
+    ("an image copied on one computer arrives byte-identically", testImageCrossesTheLink),
     ("the payload is byte-identical end to end", testFidelityIsPreserved),
     ("nothing leaves before a seal is accepted", testNothingLeavesUnsealed),
     ("a lost seal offer is retried", testALostSealOfferIsRetried),
@@ -83,6 +84,7 @@ private final class Pair {
     var notes: [String] = []
     /// Frames carried across the link, so a test can count what a direction cost.
     var carried = 0
+    var lazyImages = 0
     /*
      * Frames the link loses before they reach the far end, counted down by
      * message type. This is the seam ADR-0005 describes — a bounded queue
@@ -142,6 +144,12 @@ private final class Pair {
             case .deliver(let kind, let bytes):
                 if side == .a { deliveredToA.append((kind, bytes)) }
                 else { deliveredToB.append((kind, bytes)) }
+            case .lazyImage(let id, _):
+                lazyImages += 1
+                let near = side == .a ? a : b
+                queue += near.requestLazyImage(id: id).map { (side, $0) }
+            case .cancelLazyImage:
+                break
             case .note(let note):
                 notes.append("\(side): \(note)")
             case .protocolError(let note):
@@ -186,6 +194,22 @@ private func testTextCrossesTheLink() {
     pair.copyOnB("hello from Windows")
     Check.equal(text(pair.deliveredToA), ["hello from Windows"],
                 "text copied on B did not arrive on A")
+}
+
+private func testImageCrossesTheLink() {
+    for (png, expectedLazy) in [
+        ([UInt8](repeating: 0x55, count: 1024), 0),
+        ([UInt8](repeating: 0xaa, count: ClipboardService.eagerImageThreshold + 1), 1),
+    ] {
+        let pair = Pair(capacity: png.count + 1024)
+        pair.settle(pair.a.localCopy(kind: .png, bytes: png), from: .a)
+        Check.equal(pair.deliveredToB.first?.kind, ClipKind.png.rawValue,
+                    "the payload did not arrive as an image")
+        Check.equal(pair.deliveredToB.first?.bytes, png,
+                    "the eager/lazy image was not byte-identical end to end")
+        Check.equal(pair.lazyImages, expectedLazy,
+                    "the image did not take the threshold-selected path")
+    }
 }
 
 /*

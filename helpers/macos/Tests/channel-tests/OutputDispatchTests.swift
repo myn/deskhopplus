@@ -58,6 +58,9 @@ private final class Recorder: HelperEffects {
     func deliver(text bytes: [UInt8]) {
         effects.append("deliver(\(String(decoding: bytes, as: UTF8.self)))")
     }
+    func deliver(image bytes: [UInt8]) { effects.append("deliverImage(\(bytes.count))") }
+    func lazyImage(id: UInt32, total: UInt64) { effects.append("lazyImage(\(id),\(total))") }
+    func cancelLazyImage(id: UInt32) { effects.append("cancelLazyImage(\(id))") }
     func scheduleRetry(after: TimeInterval) { effects.append("retry(\(after))") }
     func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
         effects.append("clipPolicy(\(flags))")
@@ -102,6 +105,8 @@ private func effectNamed(by output: ClipboardOutput) -> String {
     switch output {
     case .send: return "the body is built into a frame and sent"
     case .deliver: return "the payload reaches this computer's pasteboard"
+    case .lazyImage: return "the lazy image reaches this computer's pasteboard"
+    case .cancelLazyImage: return "the lazy image is removed from the pasteboard"
     case .note: return "the note is logged"
     case .protocolError: return "the connection is dropped"
     }
@@ -281,13 +286,18 @@ private func aTextPayloadReachesThePasteboard() {
     Check.that(recorder.did("deliver(hello)"), effectNamed(by: output))
 }
 
-/* Images are #55 and files are #56. Until then an arriving one is named rather
-   than written as if it were text. */
+private func anImagePayloadReachesThePasteboard() {
+    let (recorder, dispatch) = fixture()
+    dispatch.emit(.deliver(kind: ClipKind.png.rawValue, bytes: [0x89, 0x50, 0x4e, 0x47]))
+    Check.that(recorder.did("deliverImage(4)"), "the PNG reaches the pasteboard")
+}
+
+/* Files are #56. Until then an arriving one is named rather than written. */
 private func aPayloadThisSliceCannotWriteIsNamed() {
     let (recorder, dispatch) = fixture()
-    dispatch.emit(.deliver(kind: ClipKind.png.rawValue, bytes: [UInt8](repeating: 0x44, count: 8)))
+    dispatch.emit(.deliver(kind: ClipKind.files.rawValue, bytes: [UInt8](repeating: 0x44, count: 8)))
 
-    Check.that(recorder.noted("a payload of kind 1 arrived"), "the unwritable kind is named")
+    Check.that(recorder.noted("a payload of kind 2 arrived"), "the unwritable kind is named")
     Check.that(!recorder.wroteToThePasteboard, "nothing is written to the pasteboard")
 }
 
@@ -348,6 +358,7 @@ let outputDispatchTests: [(String, () throws -> Void)] = [
     ("a refused clipboard frame is counted and said out loud",
      aRefusedClipboardFrameIsCountedAndSaidOutLoud),
     ("a text payload reaches the pasteboard", aTextPayloadReachesThePasteboard),
+    ("an image payload reaches the pasteboard", anImagePayloadReachesThePasteboard),
     ("a payload this slice cannot write is named", aPayloadThisSliceCannotWriteIsNamed),
     ("a clipboard note is logged", aClipboardNoteIsLogged),
     ("a protocol error drops the connection", aProtocolErrorDropsTheConnection),

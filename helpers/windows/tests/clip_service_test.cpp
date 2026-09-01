@@ -1,5 +1,5 @@
 /*
- * The clipboard text path (#52), driven as **two helpers talking to each
+ * The clipboard payload path (#52, #55), driven as **two helpers talking to each
  * other** rather than one talking to a script.
  *
  * That is the whole value of the shape. Every rule these exercise — the seal
@@ -90,6 +90,7 @@ struct Pair {
     std::vector<std::string> notes;
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
+    size_t lazy_images = 0;
     /* Every frame put on the link, in order, so a test can hand one over again
        later — the only way to reach a message that was sealed under a key its
        receiver has since replaced. */
@@ -147,6 +148,15 @@ struct Pair {
             case ClipOutput::Kind::Deliver:
                 (side == Side::A ? delivered_to_a : delivered_to_b).push_back(output.bytes);
                 break;
+            case ClipOutput::Kind::LazyImage: {
+                lazy_images++;
+                ClipService &near = side == Side::A ? a : b;
+                for (ClipOutput &item : near.request_lazy_image(output.transfer_id))
+                    queue.emplace_back(side, std::move(item));
+                break;
+            }
+            case ClipOutput::Kind::CancelLazyImage:
+                break;
             case ClipOutput::Kind::Note:
                 notes.push_back(output.note);
                 break;
@@ -199,6 +209,20 @@ void test_text_crosses_the_link() {
     if (pair.delivered_to_a.size() == 1)
         CHECK(text_of(pair.delivered_to_a[0]) == "hello from the Mac",
               "the reverse direction carried the wrong text");
+}
+
+void test_image_crosses_the_link() {
+    for (size_t size : {size_t{1024}, ClipService::kEagerImageThreshold + 1}) {
+        std::vector<uint8_t> png(size, 0x55);
+        Pair pair;
+        pair.settle(pair.a.local_copy(ClipKind::Png, png), Side::A);
+        CHECK(pair.delivered_to_b.size() == 1, "the image did not arrive");
+        if (pair.delivered_to_b.size() == 1)
+            CHECK(pair.delivered_to_b[0] == png,
+                  "the eager/lazy image was not byte-identical end to end");
+        CHECK(pair.lazy_images == (size > ClipService::kEagerImageThreshold ? 1u : 0u),
+              "the image did not take the threshold-selected path");
+    }
 }
 
 /*
@@ -926,6 +950,7 @@ int main() {
     }
 
     test_text_crosses_the_link();
+    test_image_crosses_the_link();
     test_fidelity_is_preserved();
     test_nothing_leaves_unsealed();
     test_a_lost_seal_offer_is_retried();

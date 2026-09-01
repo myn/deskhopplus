@@ -69,6 +69,9 @@ class HelperEffects {
 
     /* This computer's clipboard. */
     virtual void deliver_text(const std::vector<uint8_t> &utf8) = 0;
+    virtual void deliver_image(const std::vector<uint8_t> &png) = 0;
+    virtual void lazy_image(uint32_t id, uint64_t total) = 0;
+    virtual void cancel_lazy_image(uint32_t id) = 0;
 
     /* The run loop's retry timer. The clock and its wrap-safe arithmetic stay
        with the loop that owns them. */

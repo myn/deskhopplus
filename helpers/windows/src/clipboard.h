@@ -3,7 +3,7 @@
  * This computer's clipboard: what was copied here, and what arrives from the
  * other computer (#52).
  *
- * Only text in this slice — images are #55, files are #56.
+ * Text and images are carried; files are #56.
  *
  * ---------------------------------------------------------------------------
  * WHY THIS LIVES ON THE HELPER'S OWN WINDOW, AND NOT A THREAD OF ITS OWN
@@ -20,21 +20,14 @@
  * AddClipboardFormatListener rather than broadcast, so it arrives.
  *
  * ---------------------------------------------------------------------------
- * DELAYED RENDERING, AND WHY THIS SLICE DOES NOT USE IT
+ * WINDOWS DELAYED RENDERING FOR LAZY IMAGES
  *
- * Delayed rendering is the natural fit for *lazy* transfers: the helper claims
- * a format with a null handle and serves WM_RENDERFORMAT when something
- * actually pastes. That message must be serviced **synchronously**, so any
- * channel I/O behind it would hang the application that is pasting for as long
- * as the round trip takes (spec #42).
- *
- * Text is eager. The bytes are already in hand before anything is written, so
- * this writes them directly and there is no round trip to be slow — the hazard
- * is absent rather than mitigated. Nothing here claims a format it cannot
- * immediately produce, which is the property the warning is really about, and
- * it is checked by construction: there is no SetClipboardData(fmt, nullptr) in
- * this file. The lazy path arrives with files (#56) and is where a render
- * handler belongs.
+ * A large image is claimed with a null handle and requested from the copy side
+ * only when WM_RENDERFORMAT says an application pasted it. The handler pumps
+ * the channel and window messages while it waits, bounded by the measured
+ * 49 KB/s route plus margin, so the helper remains live during the synchronous
+ * Win32 callback. Text and small images remain eager and always publish real
+ * handles immediately.
  *
  * ---------------------------------------------------------------------------
  * OPENING THE CLIPBOARD CAN FAIL
@@ -49,6 +42,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +54,8 @@ class Clipboard {
         /* Text copied on this computer, already filtered for this helper's own
            writes. UTF-8. */
         std::function<void(std::vector<uint8_t>)> local_copy;
+        std::function<void(std::vector<uint8_t>)> local_image;
+        std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
         std::function<void(const std::string &)> log;
     };
 
@@ -77,6 +73,9 @@ class Clipboard {
        encoding conversion at this edge. Malformed input converts best-effort
        with the OS default and is never rejected. */
     void deliver_text(const std::vector<uint8_t> &utf8);
+    void deliver_image(const std::vector<uint8_t> &png);
+    void lazy_image(uint32_t id, uint64_t total);
+    void cancel_lazy_image(uint32_t id);
 
   private:
     void read_clipboard();
@@ -94,6 +93,9 @@ class Clipboard {
        clipboard holds *now* — two messages queued behind one change would
        otherwise both read the same clipboard and send the same payload twice. */
     DWORD handled_sequence_{0};
+    ULONG_PTR gdiplus_token_{0};
+    uint32_t lazy_image_id_{0};
+    uint64_t lazy_image_total_{0};
 };
 
 } // namespace deskhop

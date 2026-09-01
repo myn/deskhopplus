@@ -6,7 +6,7 @@ import Foundation
  * This computer's pasteboard: what was copied here, and what arrives from the
  * other computer (#52).
  *
- * Only text in this slice — images are #55, files are #56.
+ * Text and images are carried; files are #56.
  *
  * Two things here are not obvious and are both requirements rather than
  * choices.
@@ -29,6 +29,31 @@ import Foundation
  * invisible when it is missing.
  */
 final class Pasteboard {
+    private final class ImageProvider: NSObject, NSPasteboardItemDataProvider {
+        let id: UInt32
+        let total: UInt64
+        let request: (UInt32) -> Void
+        let timedOut: (UInt32) -> Void
+        var data: Data?
+        init(id: UInt32, total: UInt64, request: @escaping (UInt32) -> Void,
+             timedOut: @escaping (UInt32) -> Void) {
+            self.id = id
+            self.total = total
+            self.request = request
+            self.timedOut = timedOut
+        }
+        func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem,
+                        provideDataForType type: NSPasteboard.PasteboardType) {
+            request(id)
+            let transferSeconds = Double(total) / (49 * 1024)
+            let deadline = Date().addingTimeInterval(max(30, transferSeconds + 30))
+            while data == nil && Date() < deadline {
+                RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.05)))
+            }
+            if let data { item.setData(data, forType: type) }
+            else { timedOut(id) }
+        }
+    }
     /// macOS has no change notification; `changeCount` is the only signal.
     static let pollInterval: TimeInterval = 0.2
 
@@ -44,10 +69,12 @@ final class Pasteboard {
     /// Text copied on this computer, already filtered for this helper's own
     /// writes.
     var onLocalCopy: ((String) -> Void)?
+    var onLocalImage: (([UInt8]) -> Void)?
     var log: ((String) -> Void)?
 
     private let pasteboard = NSPasteboard.general
     private var timer: Timer?
+    private var imageProvider: ImageProvider?
     /*
      * Which changes have been accounted for, including the ones our own writes
      * produced: writing what arrived from the other computer otherwise looks
@@ -80,14 +107,24 @@ final class Pasteboard {
         guard count != watch.settledAt else { return }
 
         let text = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
-        guard case .take(let polls) = watch.looked(at: count, foundText: text != nil),
-              let text
+        let image = pngFromPasteboard()
+        guard case .take(let polls) = watch.looked(at: count,
+                                                   foundText: text != nil || image != nil)
         else { return }
 
         /* More than one means a copy was caught mid-write and waited for —
            the case that used to be dropped in silence. */
         if polls > 1 { log?("a copy took \(polls) polls to become readable") }
-        onLocalCopy?(text)
+        if let image { onLocalImage?(Array(image)) }
+        else if let text { onLocalCopy?(text) }
+    }
+
+    private func pngFromPasteboard() -> Data? {
+        if let png = pasteboard.data(forType: .png), !png.isEmpty { return png }
+        guard let tiff = pasteboard.data(forType: .tiff),
+              let bitmap = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     /*
@@ -150,5 +187,75 @@ final class Pasteboard {
         } else {
             log?("what was on the pasteboard before could not be put back; it is now empty")
         }
+    }
+
+    func deliver(image bytes: [UInt8]) {
+        let data = Data(bytes)
+        if let imageProvider, pasteboard.changeCount == watch.settledAt {
+            imageProvider.data = data
+            self.imageProvider = nil
+            return
+        }
+        imageProvider = nil
+        let displacedType: NSPasteboard.PasteboardType?
+        let displaced: Data?
+        if let png = pasteboard.data(forType: .png) {
+            displacedType = .png
+            displaced = png
+        } else if let tiff = pasteboard.data(forType: .tiff) {
+            displacedType = .tiff
+            displaced = tiff
+        } else {
+            displacedType = nil
+            displaced = nil
+        }
+
+        var delay = Self.firstRetryDelay
+        for attempt in 1...Self.writeAttempts {
+            pasteboard.prepareForNewContents(with: .currentHostOnly)
+            if pasteboard.setData(data, forType: .png) {
+                watch.wrote(changeCount: pasteboard.changeCount)
+                if attempt > 1 { log?("the pasteboard took \(attempt) attempts to accept an image") }
+                return
+            }
+            if attempt < Self.writeAttempts {
+                Thread.sleep(forTimeInterval: delay)
+                delay *= 2
+            }
+        }
+
+        log?("the pasteboard refused \(Self.writeAttempts) attempts to write an image; "
+             + "the content did not arrive")
+        guard let displacedType, let displaced else { return }
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        if pasteboard.setData(displaced, forType: displacedType) {
+            watch.wrote(changeCount: pasteboard.changeCount)
+            log?("what was on the pasteboard before was put back")
+        } else {
+            log?("what was on the pasteboard before could not be put back; it is now empty")
+        }
+    }
+
+    func lazyImage(id: UInt32, total: UInt64, request: @escaping (UInt32) -> Void) {
+        let provider = ImageProvider(id: id, total: total, request: request) { [weak self] id in
+            self?.log?("lazy image \(id) did not arrive before the paste timed out")
+        }
+        let item = NSPasteboardItem()
+        item.setDataProvider(provider, forTypes: [.png])
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        if pasteboard.writeObjects([item]) {
+            imageProvider = provider
+            watch.wrote(changeCount: pasteboard.changeCount)
+        } else {
+            log?("the pasteboard refused a lazy image of \(total) bytes")
+        }
+    }
+
+    func cancelLazyImage(id: UInt32) {
+        guard imageProvider?.id == id else { return }
+        imageProvider = nil
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        watch.wrote(changeCount: pasteboard.changeCount)
+        log?("lazy image \(id) was removed before it could be pasted")
     }
 }

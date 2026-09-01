@@ -3,7 +3,7 @@
  * every channel, introduces itself, keeps the session alive (#49), and carries
  * the clipboard across it (#52).
  *
- * Clipboard text only so far — images are #55, files are #56, and cursor
+ * Clipboard text and images — files are #56, and cursor
  * placement is #51. Nothing needs installing: see helpers/windows/README.md
  * and ADR-0006.
  *
@@ -31,10 +31,13 @@
 #include <shlobj.h>
 
 #include <share.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "autostart.h"
@@ -119,6 +122,12 @@ class Helper : public HelperEffects {
     void deliver_text(const std::vector<uint8_t> &utf8) override {
         clipboard_.deliver_text(utf8);
     }
+    void deliver_image(const std::vector<uint8_t> &png) override {
+        if (waiting_for_image_) awaited_image_ = png;
+        else clipboard_.deliver_image(png);
+    }
+    void lazy_image(uint32_t id, uint64_t total) override { clipboard_.lazy_image(id, total); }
+    void cancel_lazy_image(uint32_t id) override { clipboard_.cancel_lazy_image(id); }
     void schedule_retry(uint32_t after_ms) override {
         /* Compared as an unsigned difference in run(), never as `now >= then`:
            the clock is 32-bit milliseconds and wraps, and a plain comparison
@@ -136,6 +145,7 @@ class Helper : public HelperEffects {
     LRESULT handle(UINT message, WPARAM w, LPARAM l);
 
     void feed(const std::vector<Output> &outputs);
+    std::optional<std::vector<uint8_t>> request_lazy_image(uint32_t id, uint64_t total);
 
     /*
      * Monotonic, deliberately. A wall clock going backwards — routine on a
@@ -177,6 +187,8 @@ class Helper : public HelperEffects {
      * event, so the transition is worked out here.
      */
     bool bulk_was_allowed_{false};
+    bool waiting_for_image_{false};
+    std::optional<std::vector<uint8_t>> awaited_image_;
 };
 
 Helper *Helper::instance_ = nullptr;
@@ -333,6 +345,13 @@ bool Helper::start(HINSTANCE instance) {
         if (!session_->can_send_bulk()) return;
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Text, utf8));
     };
+    clipboard_callbacks.local_image = [this](std::vector<uint8_t> png) {
+        if (!session_->can_send_bulk()) return;
+        dispatch_.emit(clipboard_service_->local_copy(ClipKind::Png, png));
+    };
+    clipboard_callbacks.request_image = [this](uint32_t id, uint64_t total) {
+        return request_lazy_image(id, total);
+    };
     clipboard_.attach(window_, std::move(clipboard_callbacks));
 
     autostart_ = std::make_unique<Autostart>(secrets_.directory(),
@@ -457,6 +476,35 @@ void Helper::feed(const std::vector<Output> &outputs) {
     const bool live = session_->can_send_bulk();
     if (bulk_was_allowed_ && !live) dispatch_.emit(clipboard_service_->session_ended());
     bulk_was_allowed_ = live;
+}
+
+std::optional<std::vector<uint8_t>> Helper::request_lazy_image(uint32_t id, uint64_t total) {
+    awaited_image_.reset();
+    waiting_for_image_ = true;
+    dispatch_.emit(clipboard_service_->request_lazy_image(id));
+    const uint32_t started = now_ms();
+    const uint64_t estimated_ms = total * 1000u / (49u * 1024u);
+    const uint32_t timeout_ms = static_cast<uint32_t>(
+        std::min<uint64_t>(estimated_ms + 30000u, UINT32_MAX / 2u));
+    while (!awaited_image_ && session_->can_send_bulk() &&
+           now_ms() - started < timeout_ms) {
+        transport_.pump_reads();
+        feed(session_->tick(now_ms()));
+        if (session_->can_send_bulk()) dispatch_.emit(clipboard_service_->pump());
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) {
+                waiting_for_image_ = false;
+                PostQuitMessage(static_cast<int>(message.wParam));
+                return std::nullopt;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        Sleep(1);
+    }
+    waiting_for_image_ = false;
+    return std::exchange(awaited_image_, std::nullopt);
 }
 
 Tray::Callbacks Helper::tray_callbacks() {

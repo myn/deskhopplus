@@ -182,7 +182,7 @@ if(WIN32)
     # not a candidate (ADR-0006). bcrypt joins the ADR's list for
     # BCryptGenRandom, the documented system RNG; it ships with Windows like
     # the rest and so is governed by the same rule.
-    user32 shell32 ole32 setupapi hid cfgmgr32 crypt32 bcrypt)
+    user32 shell32 ole32 setupapi hid cfgmgr32 crypt32 bcrypt gdiplus)
 
   if(MSVC)
     target_compile_options(deskhop-helper PRIVATE /WX)

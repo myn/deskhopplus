@@ -163,6 +163,11 @@ std::vector<ClipOutput> ClipService::pump() {
     return render(actions, n);
 }
 
+std::vector<ClipOutput> ClipService::request_lazy_image(uint32_t id) {
+    dh_xfer_action actions[kActionCapacity];
+    return render(actions, dh_xfer_request_lazy(xfer_.get(), id, actions, kActionCapacity));
+}
+
 /* The re-request pair is on both directions and always printed, zeros
    included: a stall where nothing was ever asked for again is a different
    fault from one where it was asked for and nothing came back, and neither end
@@ -513,8 +518,20 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
     dh_xfer_action actions[kActionCapacity];
     const bool had_offer = dh_xfer_rx_has_offer(xfer_.get());
     const uint32_t previous_id = dh_xfer_rx_offer_id(xfer_.get());
-    std::vector<ClipOutput> outputs =
-        render(actions, dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
+    const bool lazy = offer.kind == static_cast<uint8_t>(ClipKind::Png) &&
+                      offer.total > kEagerImageThreshold;
+    std::vector<ClipOutput> outputs = render(
+        actions, lazy ? dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions, kActionCapacity)
+                      : dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
+    if (lazy && dh_xfer_rx_has_offer(xfer_.get()) &&
+        dh_xfer_rx_offer_id(xfer_.get()) == offer.id) {
+        ClipOutput out;
+        out.kind = ClipOutput::Kind::LazyImage;
+        out.transfer_id = offer.id;
+        out.total = offer.total;
+        lazy_image_id_ = offer.id;
+        outputs.push_back(std::move(out));
+    }
     if (!had_offer || dh_xfer_rx_offer_id(xfer_.get()) != previous_id)
         receiving_timed_ = false;
     return outputs;
@@ -670,6 +687,7 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             outputs.push_back(send(DH_MSG_CLIP_CANCEL, encode_id(action.id)));
             break;
         case DH_XFER_ACT_DELIVERED: {
+            if (lazy_image_id_ == action.id) lazy_image_id_ = 0;
             ClipOutput out;
             out.kind = ClipOutput::Kind::Deliver;
             out.payload_kind = dh_xfer_delivered_kind(xfer_.get());
@@ -686,6 +704,13 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             break;
         }
         case DH_XFER_ACT_FAILED:
+            if (lazy_image_id_ == action.id) {
+                lazy_image_id_ = 0;
+                ClipOutput clear;
+                clear.kind = ClipOutput::Kind::CancelLazyImage;
+                clear.transfer_id = action.id;
+                outputs.push_back(std::move(clear));
+            }
             outputs.push_back(note("transfer " + std::to_string(action.id) + " was abandoned: " +
                                    fail_reason(action.reason)));
             break;
@@ -698,14 +723,10 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             break;
         }
         case DH_XFER_ACT_NEED_DATA: {
-            /* Nothing here offers lazily, so this is the core asking for a
-               payload that was never promised. Refused rather than left as a
-               transfer that never finishes. */
-            outputs.push_back(
-                note("a lazy payload was asked for, which this slice never offers"));
             dh_xfer_action more[kActionCapacity];
-            append(outputs,
-                   render(more, dh_xfer_provide_fail(xfer_.get(), more, kActionCapacity)));
+            outputs.push_back(note("a lazy payload was asked for, which this slice never offers"));
+            append(outputs, render(more, dh_xfer_provide_fail(xfer_.get(), more,
+                                                              kActionCapacity)));
             break;
         }
         default:

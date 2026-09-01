@@ -13,8 +13,8 @@
  *
  * So a change is settled when its contents have been read, not when they have
  * been noticed. The wait is bounded, because an unreadable pasteboard is also
- * what a copy this slice does not carry looks like — an image (#55) or a file
- * (#56) — and those must not be re-read for ever.
+ * what a copy this slice does not carry looks like — a file (#56) — and that
+ * must not be re-read for ever.
  *
  * No AppKit here on purpose: this is the part worth testing, and NSPasteboard
  * is not reachable from the host tests.

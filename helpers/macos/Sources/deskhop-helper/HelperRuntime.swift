@@ -138,6 +138,10 @@ final class HelperRuntime: HelperEffects {
             guard self.session.canSendBulk else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
         }
+        pasteboard.onLocalImage = { [weak self] bytes in
+            guard let self, self.session.canSendBulk else { return }
+            self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
+        }
 
         transport.start()
         pasteboard.start()
@@ -224,6 +228,14 @@ final class HelperRuntime: HelperEffects {
     func noteSent() { session.noteSent(at: now) }
     func noteSendRefused() { session.noteSendRefused() }
     func deliver(text bytes: [UInt8]) { pasteboard.deliver(text: bytes) }
+    func deliver(image bytes: [UInt8]) { pasteboard.deliver(image: bytes) }
+    func lazyImage(id: UInt32, total: UInt64) {
+        pasteboard.lazyImage(id: id, total: total) { [weak self] id in
+            guard let self else { return }
+            self.dispatch.emit(self.clipboard.requestLazyImage(id: id))
+        }
+    }
+    func cancelLazyImage(id: UInt32) { pasteboard.cancelLazyImage(id: id) }
     func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
         clipboard.policyChanged(flags: flags)
     }

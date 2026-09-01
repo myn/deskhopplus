@@ -63,6 +63,7 @@ struct side {
     int failed;
     uint8_t fail_reason;
     uint64_t delivered_len;
+    uint8_t delivered_kind;
     /* counters */
     int chunks_sent;
     int retransmits_sent;
@@ -231,6 +232,7 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
     case DH_XFER_ACT_DELIVERED:
         from->delivered++;
         from->delivered_len = dh_xfer_delivered_len(&from->x);
+        from->delivered_kind = dh_xfer_delivered_kind(&from->x);
         return 0;
     case DH_XFER_ACT_FAILED:
         from->failed++;
@@ -376,11 +378,16 @@ static void run_until_quiet(void) {
     }
 }
 
-static void offer_and_run(struct side *from, const uint8_t *data, uint64_t total) {
+static void offer_kind_and_run(struct side *from, uint8_t kind, const uint8_t *data,
+                               uint64_t total) {
     dh_xfer_action acts[ACTS_CAP];
-    size_t n = dh_xfer_offer(&from->x, 0, NULL, 0, data, total, acts, ACTS_CAP);
+    size_t n = dh_xfer_offer(&from->x, kind, NULL, 0, data, total, acts, ACTS_CAP);
     enqueue_actions(from, peer(from), acts, n);
     run_until_quiet();
+}
+
+static void offer_and_run(struct side *from, const uint8_t *data, uint64_t total) {
+    offer_kind_and_run(from, 0, data, total);
 }
 
 /*
@@ -558,7 +565,7 @@ int main(void) {
         plan.drop_seq = 2;
         plan.drop_armed = 1;
         const size_t len = 5 * DH_XFER_CHUNK_SIZE;
-        offer_and_run(&A, payload, len);
+        offer_kind_and_run(&A, 1, payload, len);
         CHECK(B.delivered == 1 && B.delivered_len == len, "drop", "not delivered after loss");
         CHECK(memcmp(B.rx_buf, payload, len) == 0, "drop", "bytes differ after retransmit");
         CHECK(B.retransmits_sent == 1, "drop", "expected exactly one retransmit request");
@@ -653,9 +660,10 @@ int main(void) {
         plan.corrupt_seq = 1;
         plan.corrupt_armed = 1;
         const size_t len = 4 * DH_XFER_CHUNK_SIZE;
-        offer_and_run(&A, payload, len);
+        offer_kind_and_run(&A, 1, payload, len);
         CHECK(B.seal_refused == 1, "corrupt", "the corrupted chunk was not refused by the seal");
         CHECK(B.delivered == 1, "corrupt", "not delivered after corruption");
+        CHECK(B.delivered_kind == 1, "corrupt", "the recovered image changed kind");
         CHECK(memcmp(B.rx_buf, payload, len) == 0, "corrupt", "bytes differ");
         CHECK(B.retransmits_sent == 1, "corrupt", "retransmit not selective");
     }
@@ -1025,6 +1033,26 @@ int main(void) {
         n = dh_xfer_handle_offer(&B.x, &completed, acts, ACTS_CAP);
         CHECK(n == 0 && B.delivered == 1, "offer-idempotent",
               "a completed duplicate recreated or delivered a receive");
+    }
+
+    /* A paste-side lazy offer is silent until the OS asks for it. */
+    {
+        reset_scenario();
+        dh_clip_offer offer = {91, 1, 300000, NULL, 0};
+        dh_xfer_action acts[ACTS_CAP];
+        size_t n = dh_xfer_handle_offer_lazy(&B.x, &offer, acts, ACTS_CAP);
+        CHECK(n == 0 && !dh_xfer_is_receiving(&B.x), "lazy-offer",
+              "the large image started crossing before paste");
+        CHECK(dh_xfer_handle_offer_lazy(&B.x, &offer, acts, ACTS_CAP) == 0,
+              "lazy-offer", "a duplicate offer started the lazy receive");
+        CHECK(dh_xfer_handle_done(&B.x, 91, acts, ACTS_CAP) == 0,
+              "lazy-offer", "an early DONE started the lazy receive");
+        n = dh_xfer_request_lazy(&B.x, 91, acts, ACTS_CAP);
+        CHECK(n == 2 && acts[0].type == DH_XFER_ACT_SEND_REQUEST &&
+                  acts[1].type == DH_XFER_ACT_SEND_CREDIT,
+              "lazy-offer", "paste did not open the transfer window");
+        CHECK(dh_xfer_request_lazy(&B.x, 91, acts, ACTS_CAP) == 0,
+              "lazy-offer", "the same paste requested the transfer twice");
     }
 
     /* Multiple delayed copies of one offer can make all of their response

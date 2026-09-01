@@ -88,6 +88,16 @@ class Recorder : public HelperEffects {
         for (uint8_t byte : utf8) text.push_back(static_cast<char>(byte));
         effects.push_back("deliver_text(" + text + ")");
     }
+    void deliver_image(const std::vector<uint8_t> &bytes) override {
+        effects.push_back("deliver_image(" + std::to_string(bytes.size()) + ")");
+    }
+    void lazy_image(uint32_t id, uint64_t total) override {
+        effects.push_back("lazy_image(" + std::to_string(id) + "," +
+                          std::to_string(total) + ")");
+    }
+    void cancel_lazy_image(uint32_t id) override {
+        effects.push_back("cancel_lazy_image(" + std::to_string(id) + ")");
+    }
     void schedule_retry(uint32_t after_ms) override {
         effects.push_back("retry(" + std::to_string(after_ms) + ")");
     }
@@ -110,7 +120,8 @@ class Recorder : public HelperEffects {
     /* Whether anything at all reached this computer's clipboard. */
     bool wrote_to_the_clipboard() const {
         for (const std::string &effect : effects)
-            if (effect.rfind("deliver_text(", 0) == 0) return true;
+            if (effect.rfind("deliver_text(", 0) == 0 ||
+                effect.rfind("deliver_image(", 0) == 0) return true;
         return false;
     }
 
@@ -157,6 +168,8 @@ static const char *effect_named_by(ClipOutput::Kind kind) {
     switch (kind) {
     case ClipOutput::Kind::Send: return "the body is built into a frame and sent";
     case ClipOutput::Kind::Deliver: return "the payload reaches this computer's clipboard";
+    case ClipOutput::Kind::LazyImage: return "the lazy image reaches this computer's clipboard";
+    case ClipOutput::Kind::CancelLazyImage: return "the lazy image is removed from the clipboard";
     case ClipOutput::Kind::Note: return "the note is logged";
     case ClipOutput::Kind::ProtocolError: return "the connection is dropped";
     }
@@ -398,19 +411,29 @@ static void a_text_payload_reaches_this_computers_clipboard() {
     CHECK(recorder.did("deliver_text(hello)"), effect_named_by(ClipOutput::Kind::Deliver));
 }
 
-/* Images are #55 and files are #56. Until then an arriving one is named rather
-   than written as if it were text. */
+static void an_image_payload_reaches_this_computers_clipboard() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+    ClipOutput output;
+    output.kind = ClipOutput::Kind::Deliver;
+    output.payload_kind = static_cast<uint8_t>(ClipKind::Png);
+    output.bytes = {0x89, 0x50, 0x4e, 0x47};
+    dispatch.emit(output);
+    CHECK(recorder.did("deliver_image(4)"), "the PNG reaches the clipboard");
+}
+
+/* Files are #56. Until then an arriving one is named rather than written. */
 static void a_payload_this_slice_cannot_write_is_named() {
     Recorder recorder;
     OutputDispatch dispatch(recorder);
 
     ClipOutput output;
     output.kind = ClipOutput::Kind::Deliver;
-    output.payload_kind = static_cast<uint8_t>(ClipKind::Png);
+    output.payload_kind = static_cast<uint8_t>(ClipKind::Files);
     output.bytes = std::vector<uint8_t>(8, 0x44);
     dispatch.emit(output);
 
-    CHECK(recorder.logged("a payload of kind 1 arrived"), "the unwritable kind is named");
+    CHECK(recorder.logged("a payload of kind 2 arrived"), "the unwritable kind is named");
     CHECK(!recorder.wrote_to_the_clipboard(), "nothing is written to the clipboard");
 }
 
@@ -484,6 +507,7 @@ int main() {
     a_clipboard_frame_with_no_session_is_dropped_loudly();
     a_refused_clipboard_frame_is_counted_and_said_out_loud();
     a_text_payload_reaches_this_computers_clipboard();
+    an_image_payload_reaches_this_computers_clipboard();
     a_payload_this_slice_cannot_write_is_named();
     a_clipboard_note_is_logged();
     a_protocol_error_drops_the_connection();
