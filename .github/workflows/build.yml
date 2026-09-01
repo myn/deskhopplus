@@ -175,11 +175,13 @@ jobs:
       shell: bash
       run: cmake --build helpers/windows/build --config Release
 
-    # Two things: the autostart ladder's decisions (#86), and the seal's cipher
-    # against the golden vectors (#113). The ladder is the logic most likely to
-    # be wrong on a managed laptop nobody can reproduce, and the Win32 calls
-    # behind it are not reached from here. The seal test is here because CNG is
-    # only here.
+    # The autostart ladder's decisions (#86), the clipboard path (#52), the
+    # shim's dispatch (#152), and the seal's cipher against the golden vectors
+    # (#113). The ladder is the logic most likely to be wrong on a managed
+    # laptop nobody can reproduce, and the dispatch is the layer a service can
+    # emit the right output into and have nothing happen — the Win32 calls
+    # behind both are not reached from here. The seal test is here because CNG
+    # is only here.
     - name: Run the helper tests
       shell: bash
       run: ctest --test-dir helpers/windows/build -C Release --output-on-failure

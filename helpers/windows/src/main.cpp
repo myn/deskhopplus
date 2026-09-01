@@ -19,7 +19,9 @@
  *
  * Nothing in this file decides anything about the session. Every decision is
  * src/core/dh_helper.c, reached through HelperSession. This file carries
- * messages, owns the clock, and turns an output into a log line or a tooltip.
+ * messages and owns the clock. What each output *means* is output_dispatch.cpp,
+ * so that every arm of it is reachable by a test (#152); this file is the Win32
+ * half of that seam.
  * ---------------------------------------------------------------------------
  */
 
@@ -43,10 +45,10 @@
 #include "dh_p256.h"
 #include "helper_session.h"
 #include "hid_transport.h"
+#include "output_dispatch.h"
 #include "seal_aead.h"
 #include "secret_store.h"
 #include "tray.h"
-#include "words.h"
 
 namespace deskhop {
 
@@ -76,19 +78,56 @@ std::string hex(const std::vector<uint8_t> &bytes) {
 
 } // namespace
 
-class Helper {
+/*
+ * The shim. What each output *means* is output_dispatch.cpp's, which is where
+ * a test can watch it (#152); this class is the Win32 half of that seam — the
+ * tray, the transport, this computer's clipboard, the secret store and the
+ * clock — plus the run loop that carries messages between them.
+ */
+class Helper : public HelperEffects {
   public:
     bool start(HINSTANCE instance);
     int run();
     void stop() { PostQuitMessage(0); }
+
+    /* HelperEffects: one line each over the real object. Public because the
+       interface is, and for no other reason — nothing calls them but the
+       dispatch. */
+    bool store_board_key(const std::vector<uint8_t> &key) override {
+        return secrets_.save_board_key(key);
+    }
+    void acquire_channels() override { transport_.acquire(); }
+    void release_channels() override { transport_.release(); }
+    bool send(const std::vector<uint8_t> &frame) override {
+        return transport_.send(frame.data(), frame.size());
+    }
+    bool build_frame(uint8_t type, const std::vector<uint8_t> &body,
+                     std::vector<uint8_t> &out) override {
+        return session_->emit(type, body, out);
+    }
+    void note_sent() override { session_->note_sent(now_ms()); }
+    void note_send_refused() override { session_->note_send_refused(); }
+    void show_state(dh_helper_state state) override { tray_.show(state); }
+    void deliver_text(const std::vector<uint8_t> &utf8) override {
+        clipboard_.deliver_text(utf8);
+    }
+    void schedule_retry(uint32_t after_ms) override {
+        /* Compared as an unsigned difference in run(), never as `now >= then`:
+           the clock is 32-bit milliseconds and wraps, and a plain comparison
+           would fire every retry at once for the 24 days after it does. */
+        retry_pending_ = true;
+        retry_at_ = now_ms() + after_ms;
+    }
+    std::vector<ClipOutput> clip_policy_changed(uint8_t flags) override {
+        return clipboard_service_->policy_changed(flags);
+    }
+    void log(const std::string &message) override;
 
   private:
     static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM w, LPARAM l);
     LRESULT handle(UINT message, WPARAM w, LPARAM l);
 
     void feed(const std::vector<Output> &outputs);
-    void apply(const Output &output);
-    void emit(const std::vector<ClipOutput> &outputs);
 
     /*
      * Monotonic, deliberately. A wall clock going backwards — routine on a
@@ -99,7 +138,6 @@ class Helper {
      */
     uint32_t now_ms() const { return static_cast<uint32_t>(GetTickCount64()); }
 
-    void log(const std::string &message);
     std::string autostart_detail() const;
     Tray::Callbacks tray_callbacks();
 
@@ -118,6 +156,7 @@ class Helper {
     HidTransport transport_;
     Tray tray_;
     Clipboard clipboard_;
+    OutputDispatch dispatch_{*this};
 
     uint32_t last_tick_{0};
     bool retry_pending_{false};
@@ -273,7 +312,7 @@ bool Helper::start(HINSTANCE instance) {
        stream: decode, tag and replay counter are all upstream of this. */
     session_->set_payload_sink([this](uint8_t type, const uint8_t *body, size_t len) {
         if (cursor_placement_->received(type, body, len, now_ms())) return;
-        emit(clipboard_service_->received(type, body, len));
+        dispatch_.emit(clipboard_service_->received(type, body, len));
     });
 
     Clipboard::Callbacks clipboard_callbacks;
@@ -283,7 +322,7 @@ bool Helper::start(HINSTANCE instance) {
            is shown and this answer come from the same core, so a helper that
            says "connected" and refuses a copy is not a state this can reach. */
         if (!session_->can_send_bulk()) return;
-        emit(clipboard_service_->local_copy(ClipKind::Text, utf8));
+        dispatch_.emit(clipboard_service_->local_copy(ClipKind::Text, utf8));
     };
     clipboard_.attach(window_, std::move(clipboard_callbacks));
 
@@ -358,7 +397,7 @@ int Helper::run() {
             /* A chance to push the next credit-gated batch. On the tick as well
                as on arriving frames, so a transfer whose last credit grant was
                lost still finishes rather than sitting still. */
-            if (session_->can_send_bulk()) emit(clipboard_service_->pump());
+            if (session_->can_send_bulk()) dispatch_.emit(clipboard_service_->pump());
             /* And a chance to give up on one that has stopped moving — the far
                helper having crashed leaves this end's session perfectly
                healthy, so nothing else here would ever notice. */
@@ -368,13 +407,13 @@ int Helper::run() {
                tells the clipboard when that was. */
             dh_device_drops drops{};
             const bool stated = session_->device_drops(&drops);
-            emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
+            dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
         }
     }
 }
 
 void Helper::feed(const std::vector<Output> &outputs) {
-    for (const Output &output : outputs) apply(output);
+    dispatch_.apply(outputs);
 
     /*
      * A session that has gone takes the seal and any transfer with it.
@@ -391,125 +430,8 @@ void Helper::feed(const std::vector<Output> &outputs) {
      * matters is the one this misses.
      */
     const bool live = session_->can_send_bulk();
-    if (bulk_was_allowed_ && !live) emit(clipboard_service_->session_ended());
+    if (bulk_was_allowed_ && !live) dispatch_.emit(clipboard_service_->session_ended());
     bulk_was_allowed_ = live;
-}
-
-void Helper::apply(const Output &output) {
-    switch (output.kind) {
-    case Output::Kind::StoreBoardKey:
-        if (!secrets_.save_board_key(output.bytes))
-            log("paired, but the board key could not be stored — pairing will not survive a "
-                "restart");
-        break;
-
-    case Output::Kind::OpenChannels:
-        transport_.acquire();
-        break;
-
-    case Output::Kind::CloseChannels:
-        transport_.release();
-        break;
-
-    case Output::Kind::Send:
-        /* The same rule as a clipboard frame in emit(), and #107 is what it
-           cost to have it in only one of the two places: the idle timer is
-           charged for what the transport actually took. A beat charged for one
-           it refused bought a full interval of silence, and three of those has
-           the board evict this helper. Said out loud too — a refusal here used
-           to be indistinguishable from a healthy quiet link. */
-        if (transport_.send(output.bytes.data(), output.bytes.size()))
-            session_->note_sent(now_ms());
-        else {
-            session_->note_send_refused();
-            log("a session frame was not taken by the transport and is lost");
-        }
-        break;
-
-    case Output::Kind::State:
-        if (!words::state_is_known(output.state))
-            log("the core reported state " + std::to_string(static_cast<int>(output.state)) +
-                ", which this helper has no words for");
-        log("state: " + (words::state_message(output.state).empty()
-                             ? std::string("(nothing to report)")
-                             : words::state_message(output.state)));
-        tray_.show(output.state);
-        break;
-
-    case Output::Kind::ClipPolicy:
-        emit(clipboard_service_->policy_changed(output.clip_flags));
-        break;
-
-    case Output::Kind::Retry:
-        /* Compared as an unsigned difference below, never as `now >= then`:
-           the clock is 32-bit milliseconds and wraps, and a plain comparison
-           would fire every retry at once for the 24 days after it does. */
-        retry_pending_ = true;
-        retry_at_ = now_ms() + output.retry_after_ms;
-        break;
-
-    case Output::Kind::Note:
-        log(output.note);
-        break;
-    }
-}
-
-/*
- * The clipboard's outputs: frames to authenticate and send, payloads to write,
- * and diagnostics.
- *
- * Every frame goes out through `session_->emit`, never with a counter of this
- * file's own — the counter space belongs to the session key and the heartbeat
- * is already writing into it. `note_sent` is what keeps ADR-0004's beat out of
- * a direction that is far from idle.
- */
-void Helper::emit(const std::vector<ClipOutput> &outputs) {
-    for (const ClipOutput &output : outputs) {
-        switch (output.kind) {
-        case ClipOutput::Kind::Send: {
-            std::vector<uint8_t> frame;
-            if (!session_->emit(output.type, output.bytes, frame)) {
-                log("a clipboard frame could not be built; there is no session");
-                break;
-            }
-            /* The idle timer is charged only for a frame the transport
-               actually took. Charging for one it refused would suppress a beat
-               that ADR-0004 owed the board — which is exactly what
-               HelperSession::emit says not to do. */
-            if (transport_.send(frame.data(), frame.size())) {
-                session_->note_sent(now_ms());
-            } else {
-                /* Counted and said out loud, as the session path above does
-                   and as macOS already did here. Dropped in silence, a frame
-                   the transport would not take is indistinguishable from one
-                   lost on the wire, and the two have nothing in common to fix
-                   (#132, #107). */
-                session_->note_send_refused();
-                log("a clipboard frame of type " + std::to_string(output.type) +
-                    " was not taken by the transport and is lost");
-            }
-            break;
-        }
-
-        case ClipOutput::Kind::Deliver:
-            if (output.payload_kind != static_cast<uint8_t>(ClipKind::Text)) {
-                log("a payload of kind " + std::to_string(output.payload_kind) +
-                    " arrived, which this slice does not write — images are #55 and files "
-                    "are #56");
-                break;
-            }
-            clipboard_.deliver_text(output.bytes);
-            break;
-
-        case ClipOutput::Kind::Note:
-            log(output.note);
-            break;
-        case ClipOutput::Kind::ProtocolError:
-            log("clipboard protocol error: " + output.note + "; dropping the connection");
-            transport_.release();
-            break;
-        }
-    }
 }
 
 Tray::Callbacks Helper::tray_callbacks() {

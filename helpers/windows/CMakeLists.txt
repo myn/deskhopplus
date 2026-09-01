@@ -89,6 +89,39 @@ add_executable(autostart_ladder_test tests/autostart_ladder_test.cpp)
 target_link_libraries(autostart_ladder_test PRIVATE ladder)
 add_test(NAME autostart_ladder COMMAND autostart_ladder_test)
 
+# ------------------------------------------------- the shim's dispatch (#152)
+#
+# What each output *does*, with the platform behind an interface — the wiring
+# #93 and #94 were shaped like, which until #152 was verified by reading only.
+#
+# Outside the WIN32 guard for the same reason the ladder is: there is no Win32
+# in output_dispatch.cpp at all — the tray, the transport, the clipboard and
+# the secret store stay in main.cpp — so a developer on any machine can
+# configure this directory and run it. CI runs it on the Windows job with the
+# rest; that it also builds elsewhere is a convenience, not a checked claim.
+#
+# words.cpp comes along because a state output is turned into words before it
+# reaches the tray, and #119 is what an unworded state costs.
+add_executable(output_dispatch_test tests/output_dispatch_test.cpp
+               src/output_dispatch.cpp src/words.cpp)
+target_link_libraries(output_dispatch_test PRIVATE dhcore)
+target_include_directories(output_dispatch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(output_dispatch_test PRIVATE /WX)
+  # The core's headers are C11, and MSVC's C++ compiler does not take the
+  # keyword — the same spelling the helper itself uses, and for the same
+  # reason: the assertion is the firmware's.
+  target_compile_definitions(output_dispatch_test PRIVATE _Static_assert=static_assert)
+else()
+  # An output kind added to a service and left out of a switch must fail here
+  # rather than fall through in silence. The reading CI does is MSVC's — /W4
+  # /WX makes C4062 an error there, and the Windows job is the only one that
+  # configures this directory. This is the same guard for a developer building
+  # on gcc or clang, so the failure arrives before the push rather than after.
+  target_compile_options(output_dispatch_test PRIVATE -Wall -Wextra -Werror=switch)
+endif()
+add_test(NAME output_dispatch COMMAND output_dispatch_test)
+
 if(WIN32)
   # The seal, through the cipher this helper actually ships (#113). Windows
   # only, because BCrypt is — and that is exactly why it is worth having: CNG's
@@ -131,6 +164,7 @@ if(WIN32)
   # and must not flash a console window when it autostarts at logon.
   add_executable(deskhop-helper WIN32
     src/main.cpp
+    src/output_dispatch.cpp
     src/helper_session.cpp
     src/clip_service.cpp
     src/clipboard.cpp

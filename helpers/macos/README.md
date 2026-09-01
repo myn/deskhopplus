@@ -8,7 +8,7 @@ clipboard and cursor placement arrive on the session this establishes.
 
 | Path | What it is |
 | --- | --- |
-| `Sources/DeskhopChannel` | The binding to the shared C core. No IOKit — all of it runs in the tests. |
+| `Sources/DeskhopChannel` | The binding to the shared C core, and what each of its outputs *does* (`OutputDispatch`). No IOKit — all of it runs in the tests. |
 | `Sources/deskhop-helper` | The agent: IOKit transport, run loop, and the state the user is shown. |
 | `Tests/channel-tests` | The host tests. |
 | `LaunchAgent/` | The launchd job that starts it at login and restarts it after a crash. |
@@ -50,7 +50,10 @@ it differently.
 Tests follow the same line. `Tests/channel-tests` describes what the *helper* does and proves the
 binding loses nothing on the way through; the machine's own arithmetic — the beat trace, the
 backoff, the correlation guards — is `tests/helper_test.c`, where the other end of every round
-trip is the real `dh_session` rather than a mock.
+trip is the real `dh_session` rather than a mock. `OutputDispatchTests` covers the last step of
+that path — that each output reaches the effect it names
+([#152](https://github.com/myn/deskhopplus/issues/152)) — with the transport, the pasteboard and
+the Keychain behind an interface, so no IOKit or AppKit call is reached from a test.
 
 ## Build and test
 

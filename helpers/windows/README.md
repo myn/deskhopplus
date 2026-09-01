@@ -31,12 +31,18 @@ The exe lands at `helpers/windows/build/Release/deskhop-helper.exe`. CI builds a
 on every push to `main`, which is what makes the no-install property something a user receives
 rather than something this file asserts.
 
-The tests cover two things: the autostart ladder's decisions, and the clipboard seal's cipher. The
-ladder is the code most likely to be wrong on a managed laptop nobody can reproduce, and it needs
-no registry to be worth checking. The seal test needs Windows because CNG is Windows — and that is
+The tests cover four things: the autostart ladder's decisions, the clipboard path, the seal's
+cipher, and the shim's dispatch — which output reaches which effect. The ladder is the code most
+likely to be wrong on a managed laptop nobody can reproduce, and it needs no registry to be worth
+checking. The dispatch is the layer a service can emit the right output into and have nothing
+happen ([#152](https://github.com/myn/deskhopplus/issues/152)), which is #93 and #94's shape; it
+needs no device and no
+Win32 to run, because the tray, the transport, the clipboard and the secret store sit behind an
+interface a test implements — so it can be run from a developer's own machine as well as from CI. The seal test needs Windows because CNG is Windows — and that is
 exactly why it is here rather than in the shared suite: nobody else's machine can check that
-**CNG's** AES-256-GCM produces the bytes on the wire. The Win32 calls behind the ladder, and the
-transport, are verified by hand and on hardware (#87) — the same line the macOS helper draws.
+**CNG's** AES-256-GCM produces the bytes on the wire. The Win32 calls themselves — the ladder's,
+the transport's, the tray's — are verified by hand and on hardware (#87), the same line the macOS
+helper draws.
 
 ## Pairing
 

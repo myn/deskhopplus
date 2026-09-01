@@ -6,10 +6,15 @@ import Security
 /*
  * The loop: transport events into the session, its outputs back out to the
  * transport. Nothing here is decided here — every decision is the shared C
- * core's, reached through HelperSession. This file carries messages, owns the
- * clock, and turns an output into a log line.
+ * core's, reached through HelperSession. This file carries messages and owns
+ * the clock.
+ *
+ * What each output *means* is OutputDispatch, in DeskhopChannel, so that every
+ * arm of it is reachable by a test (#152). This file is the IOKit-and-AppKit
+ * half of that seam: it implements `HelperEffects` over the real transport,
+ * pasteboard and Keychain, in a line or two each.
  */
-final class HelperRuntime {
+final class HelperRuntime: HelperEffects {
     private let secrets = SecretStore()
     private let session: HelperSession
     private let transport = ChannelTransport()
@@ -24,6 +29,10 @@ final class HelperRuntime {
      * event, so the transition is worked out here.
      */
     private var bulkWasAllowed = false
+
+    /* Lazy so that `self` is fully formed before the dispatch is handed a
+       reference to it. The dispatch holds it unowned; this is the strong half. */
+    private lazy var dispatch = OutputDispatch(effects: self)
 
     init() {
         /*
@@ -116,7 +125,7 @@ final class HelperRuntime {
                 }
                 return
             }
-            self.emit(self.clipboard.received(type: type, body: body))
+            self.dispatch.emit(self.clipboard.received(type: type, body: body))
         }
 
         pasteboard.log = { message in Self.note(message) }
@@ -127,7 +136,7 @@ final class HelperRuntime {
                helper that says "connected" and refuses a copy is not a state
                this can reach. */
             guard self.session.canSendBulk else { return }
-            self.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
+            self.dispatch.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
         }
 
         transport.start()
@@ -142,9 +151,7 @@ final class HelperRuntime {
     }
 
     private func feed(_ input: SessionInput) {
-        for output in session.handle(input, at: now) {
-            apply(output)
-        }
+        dispatch.apply(session.handle(input, at: now))
 
         /*
          * A session that has gone takes the seal and any transfer with it.
@@ -162,7 +169,7 @@ final class HelperRuntime {
          */
         let live = session.canSendBulk
         if bulkWasAllowed && !live {
-            emit(clipboard.sessionEnded())
+            dispatch.emit(clipboard.sessionEnded())
         }
         bulkWasAllowed = live
 
@@ -170,7 +177,7 @@ final class HelperRuntime {
            on arriving frames, so a transfer whose last credit grant was lost
            still finishes rather than sitting still. */
         if live {
-            emit(clipboard.pump())
+            dispatch.emit(clipboard.pump())
         }
         /* And a chance to give up on one that has stopped moving — the far
            helper having crashed leaves this end's session perfectly healthy,
@@ -180,61 +187,14 @@ final class HelperRuntime {
                can quote them (#133). Read here rather than held there: the
                board restates them whenever they move, and nothing tells the
                clipboard when that was. */
-            emit(clipboard.tick(at: now, boardDrops: session.boardDrops))
+            dispatch.emit(clipboard.tick(at: now, boardDrops: session.boardDrops))
         }
     }
 
-    /*
-     * The clipboard's outputs: frames to authenticate and send, payloads to
-     * write, and diagnostics.
-     *
-     * Every frame goes out through `session.emit`, never with a counter of this
-     * file's own — the counter space belongs to the session key and the
-     * heartbeat is already writing into it. `noteSent` is what keeps ADR-0004's
-     * beat out of a direction that is far from idle.
-     */
-    private func emit(_ outputs: [ClipboardOutput]) {
-        for output in outputs {
-            switch output {
-            case .send(let type, let body):
-                guard let frame = session.emit(type: type, body: body) else {
-                    Self.note("a clipboard frame could not be built; there is no session")
-                    continue
-                }
-                /* The idle timer is charged only for a frame the transport
-                   actually took. Charging for one it refused would suppress a
-                   beat that ADR-0004 owed the board — which is exactly what
-                   `HelperSession.emit` says not to do.
-
-                   A refusal is said out loud (#132): dropped here in silence,
-                   a frame the transport would not take is indistinguishable
-                   from one lost on the wire, and the two have nothing in
-                   common to fix. */
-                if transport.send(frame) {
-                    session.noteSent(at: now)
-                } else {
-                    session.noteSendRefused()
-                    Self.note("a clipboard frame of type \(type) was not taken by the "
-                              + "transport and is lost")
-                }
-
-            case .deliver(let kind, let bytes):
-                guard kind == ClipKind.text.rawValue else {
-                    Self.note("a payload of kind \(kind) arrived, which this slice does not "
-                              + "write — images are #55 and files are #56")
-                    continue
-                }
-                pasteboard.deliver(text: bytes)
-
-            case .note(let note):
-                Self.note(note)
-            case .protocolError(let note):
-                Self.note("clipboard protocol error: \(note); dropping the connection")
-                transport.release()
-            }
-        }
-    }
-
+    /* A cursor-position response, which is not an output of either service —
+       the placement machine answers a query directly — so it does not go
+       through the dispatch. The rule it follows is the same one: the idle
+       timer is charged only for a frame the transport actually took. */
     private func sendPayload(type: UInt8, body: [UInt8]) -> Bool {
         guard let frame = session.emit(type: type, body: body) else {
             Self.note("a cursor-position response could not be built; there is no session")
@@ -250,51 +210,37 @@ final class HelperRuntime {
         }
     }
 
-    private func apply(_ output: SessionOutput) {
-        switch output {
-        case .storeBoardKey(let key):
-            if !secrets.saveBoardKey(key) {
-                Self.note("paired, but the board key could not be stored — pairing "
-                          + "will not survive a restart")
+    /* ------------------------------------------------------------ HelperEffects
+       The platform half of OutputDispatch's seam: one line each over the real
+       object. What each output *means* is OutputDispatch's (#152). */
+
+    func storeBoardKey(_ key: [UInt8]) -> Bool { secrets.saveBoardKey(key) }
+    func acquireChannels() { transport.acquire() }
+    func releaseChannels() { transport.release() }
+    func send(_ frame: [UInt8]) -> Bool { transport.send(frame) }
+    func buildFrame(type: UInt8, body: [UInt8]) -> [UInt8]? {
+        session.emit(type: type, body: body)
+    }
+    func noteSent() { session.noteSent(at: now) }
+    func noteSendRefused() { session.noteSendRefused() }
+    func deliver(text bytes: [UInt8]) { pasteboard.deliver(text: bytes) }
+    func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
+        clipboard.policyChanged(flags: flags)
+    }
+    /* Deliberately the same as `Self.note` below, which every other call site
+       in this file uses. An unqualified `note(...)` inside the class reaches
+       this one instead, and lands in the same place. */
+    func note(_ message: String) { Self.note(message) }
+
+    /* The one effect with a condition of its own: the device may have come
+       back by itself while the backoff was running, and re-acquiring channels
+       this end already holds is not a no-op. */
+    func scheduleRetry(after: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
+            guard let self, self.transport.hasDevice, !self.transport.isHoldingChannels else {
+                return
             }
-
-        case .openChannels:
-            transport.acquire()
-
-        case .closeChannels:
-            transport.release()
-
-        case .send(let bytes):
-            /* The same rule as a clipboard frame below, and #107 is what it
-               cost to have it in only one of the two places: the idle timer is
-               charged for what the transport actually took. A beat charged for
-               one it refused bought a full interval of silence, and three of
-               those has the board evict this helper. Said out loud too — a
-               refusal here used to be indistinguishable from a healthy quiet
-               link. */
-            if transport.send(bytes) {
-                session.noteSent(at: now)
-            } else {
-                session.noteSendRefused()
-                Self.note("a session frame was not taken by the transport and is lost")
-            }
-
-        case .state(let state):
-            Self.note("state: \(state.message ?? "(nothing to report)")")
-
-        case .clipPolicy(let flags):
-            emit(clipboard.policyChanged(flags: flags))
-
-        case .retry(let after):
-            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
-                guard let self, self.transport.hasDevice, !self.transport.isHoldingChannels else {
-                    return
-                }
-                self.transport.acquire()
-            }
-
-        case .note(let note):
-            Self.note(note)
+            self.transport.acquire()
         }
     }
 

@@ -33,14 +33,20 @@ let package = Package(
             exclude: ["micro-ecc"],
             publicHeadersPath: "."
         ),
-        /* The binding and the session logic — no IOKit, so it is all testable
-           on a laptop with no device attached. */
+        /* The binding, the session logic, and what each output *does*
+           (OutputDispatch, #152) — no IOKit, so it is all testable on a laptop
+           with no device attached. */
         .target(
             name: "DeskhopChannel",
             dependencies: ["DHCore"],
             path: "helpers/macos/Sources/DeskhopChannel"
         ),
-        /* The background agent: IOKit, run loop, and the state the user sees. */
+        /* The background agent: IOKit, run loop, and the state the user sees.
+           In no test target, and deliberately: what is left here is the
+           platform itself — the transport, the pasteboard, the Keychain — plus
+           one-line implementations of DeskhopChannel's `HelperEffects` over
+           them. The *decisions* those effects serve moved next door so that a
+           test can watch them (#152). */
         .executableTarget(
             name: "deskhop-helper",
             dependencies: ["DeskhopChannel"],
