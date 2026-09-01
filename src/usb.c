@@ -98,6 +98,28 @@ void tud_hid_set_report_cb(uint8_t instance,
 /* Invoked when device is mounted */
 void tud_mount_cb(void) {
     global_state.tud_connected = true;
+
+    /* A modifier is held by the host, not by the board: the OS believes the
+       last report it was given until a later one says otherwise. Any reset
+       that skips the release therefore strands a modifier the board cannot
+       see - reset_usb_boot on the flash path returns immediately, and a
+       watchdog reset or a power cut announce nothing by construction. That
+       was #138, a phantom GUI key after a flash.
+
+       Enumeration is the one moment every one of those has in common, and it
+       is the moment the host's own belief is empty, so an empty report is
+       what agrees with it. Not every mount follows a reboot - a replug or a
+       host resume lands here with RAM intact and a key possibly still held -
+       and clearing unconditionally is still right: the host that just
+       enumerated holds nothing either way, and both state arrays are
+       overwritten wholesale by the next report from their source
+       (update_kbd_state, update_remote_kbd_state), so a key held across the
+       mount is back the moment its keyboard speaks again. handle_output_select_msg
+       already releases on the same reasoning.
+
+       One report per attach, and it drains in config mode too - that identity
+       keeps ITF_NUM_HID. */
+    release_all_keys(&global_state);
 }
 
 /* Invoked when device is unmounted */
