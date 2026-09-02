@@ -460,7 +460,7 @@ public final class ClipboardService {
                        offer.total > UInt64(Self.eagerImageThreshold)
             var outputs = render(lazy ? transfer.handleLazy(offer: offer)
                                       : transfer.handle(offer: offer))
-            if lazy && transfer.receivedOfferID == offer.id {
+            if lazy && previousID != offer.id && transfer.receivedOfferID == offer.id {
                 lazyImageID = offer.id
                 outputs.append(.lazyImage(id: offer.id, total: offer.total))
             }

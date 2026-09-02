@@ -104,11 +104,40 @@ std::vector<uint8_t> wide_to_utf8(const wchar_t *text) {
     return out;
 }
 
+std::vector<uint8_t> global_bytes(HANDLE handle) {
+    if (handle == nullptr) return {};
+    const SIZE_T size = GlobalSize(handle);
+    if (size == 0) return {};
+    const auto *bytes = static_cast<const uint8_t *>(GlobalLock(handle));
+    if (bytes == nullptr) return {};
+    std::vector<uint8_t> result(bytes, bytes + size);
+    GlobalUnlock(handle);
+    return result;
+}
+
+HGLOBAL bytes_to_global(const std::vector<uint8_t> &bytes) {
+    if (bytes.empty()) return nullptr;
+    HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, bytes.size());
+    if (block == nullptr) return nullptr;
+    void *destination = GlobalLock(block);
+    if (destination == nullptr) {
+        GlobalFree(block);
+        return nullptr;
+    }
+    std::memcpy(destination, bytes.data(), bytes.size());
+    GlobalUnlock(block);
+    return block;
+}
+
 } // namespace
 
 void Clipboard::attach(HWND window, Callbacks callbacks) {
     window_ = window;
     callbacks_ = std::move(callbacks);
+    /* Windows applications including the Snipping Tool commonly publish the
+       registered PNG format alongside CF_BITMAP. Prefer those original bytes:
+       the bitmap fallback can discard alpha and other image fidelity. */
+    png_format_ = RegisterClipboardFormatW(L"PNG");
     Gdiplus::GdiplusStartupInput gdiplus_input;
     if (Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplus_input, nullptr) != Gdiplus::Ok) {
         gdiplus_token_ = 0;
@@ -130,23 +159,80 @@ void Clipboard::detach() {
     window_ = nullptr;
     if (gdiplus_token_ != 0) Gdiplus::GdiplusShutdown(gdiplus_token_);
     gdiplus_token_ = 0;
+    png_format_ = 0;
 }
 
-bool Clipboard::handle(UINT message) {
-    if (message == WM_RENDERFORMAT && lazy_image_id_ != 0) {
-        const uint32_t id = lazy_image_id_;
+bool Clipboard::load_lazy_image() {
+    if (!lazy_image_png_.empty()) return true;
+    const uint32_t id = lazy_image_id_;
+    if (id == 0 || !callbacks_.request_image) return false;
+    const auto png = callbacks_.request_image(id, lazy_image_total_);
+    if (!png) {
+        if (callbacks_.log)
+            callbacks_.log("the lazy image did not arrive before the paste timed out");
+        return false;
+    }
+    lazy_image_png_ = *png;
+    lazy_image_id_ = 0;
+    return true;
+}
+
+bool Clipboard::handle(UINT message, WPARAM parameter) {
+    if (message == WM_DESTROYCLIPBOARD) {
+        /* Another owner replaced our lazy placeholder. Forget it before a
+           later transfer cancellation can empty that owner's newer copy. */
         lazy_image_id_ = 0;
-        if (!callbacks_.request_image) return true;
-        const auto png = callbacks_.request_image(id, lazy_image_total_);
-        if (!png) {
-            if (callbacks_.log) callbacks_.log("the lazy image did not arrive before the paste timed out");
+        lazy_image_total_ = 0;
+        lazy_image_png_.clear();
+        return true;
+    }
+    if (message == WM_RENDERFORMAT &&
+        (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
+        if (!load_lazy_image()) return true;
+        if (parameter == png_format_) {
+            HGLOBAL block = bytes_to_global(lazy_image_png_);
+            if (block == nullptr || SetClipboardData(png_format_, block) == nullptr) {
+                if (block) GlobalFree(block);
+                if (callbacks_.log)
+                    callbacks_.log("the lazy image arrived but its PNG format could not be rendered");
+            }
+        } else if (parameter == CF_BITMAP) {
+            HBITMAP bitmap = png_to_bitmap(lazy_image_png_);
+            if (!bitmap || SetClipboardData(CF_BITMAP, bitmap) == nullptr) {
+                if (bitmap) DeleteObject(bitmap);
+                if (callbacks_.log)
+                    callbacks_.log("the lazy image arrived but its bitmap format could not be rendered");
+            }
+        }
+        /* Filling a promised format is our clipboard write too. If Windows
+           advances the sequence for it, its update must not echo the image
+           back across the channel as a new local copy. */
+        self_sequence_ = GetClipboardSequenceNumber();
+        return true;
+    }
+    if (message == WM_RENDERALLFORMATS &&
+        (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
+        /* Windows is about to destroy the owner window. Materialise every
+           promised representation so the clipboard survives helper exit. */
+        if (!load_lazy_image()) return true;
+        const std::vector<uint8_t> png = lazy_image_png_;
+        if (!open_with_retry()) return true;
+        if (GetClipboardOwner() != window_) {
+            CloseClipboard();
             return true;
         }
-        HBITMAP bitmap = png_to_bitmap(*png);
-        if (!bitmap || SetClipboardData(CF_BITMAP, bitmap) == nullptr) {
-            if (bitmap) DeleteObject(bitmap);
-            if (callbacks_.log) callbacks_.log("the lazy image arrived but could not be rendered");
-        }
+        EmptyClipboard();
+        HGLOBAL block = png_format_ != 0 ? bytes_to_global(png) : nullptr;
+        if (block != nullptr && SetClipboardData(png_format_, block) == nullptr)
+            GlobalFree(block);
+        HBITMAP bitmap = gdiplus_token_ != 0 ? png_to_bitmap(png) : nullptr;
+        if (bitmap != nullptr && SetClipboardData(CF_BITMAP, bitmap) == nullptr)
+            DeleteObject(bitmap);
+        self_sequence_ = GetClipboardSequenceNumber();
+        CloseClipboard();
+        lazy_image_id_ = 0;
+        lazy_image_total_ = 0;
+        lazy_image_png_.clear();
         return true;
     }
     if (message != WM_CLIPBOARDUPDATE) return false;
@@ -174,15 +260,23 @@ void Clipboard::lazy_image(uint32_t id, uint64_t total) {
         return;
     }
     EmptyClipboard();
+    bool advertised = false;
+    if (png_format_ != 0) {
+        SetLastError(ERROR_SUCCESS);
+        SetClipboardData(png_format_, nullptr);
+        advertised = GetLastError() == ERROR_SUCCESS;
+    }
     SetLastError(ERROR_SUCCESS);
     SetClipboardData(CF_BITMAP, nullptr);
-    if (GetLastError() != ERROR_SUCCESS) {
+    advertised = advertised || GetLastError() == ERROR_SUCCESS;
+    if (!advertised) {
         CloseClipboard();
         if (callbacks_.log) callbacks_.log("the clipboard refused a lazy image placeholder");
         return;
     }
     lazy_image_id_ = id;
     lazy_image_total_ = total;
+    lazy_image_png_.clear();
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
     if (callbacks_.log)
@@ -192,6 +286,8 @@ void Clipboard::lazy_image(uint32_t id, uint64_t total) {
 void Clipboard::cancel_lazy_image(uint32_t id) {
     if (lazy_image_id_ != id) return;
     lazy_image_id_ = 0;
+    lazy_image_total_ = 0;
+    lazy_image_png_.clear();
     if (open_with_retry()) {
         EmptyClipboard();
         self_sequence_ = GetClipboardSequenceNumber();
@@ -227,15 +323,22 @@ void Clipboard::read_clipboard() {
     /* Ask first so unrelated clipboard formats cost nothing and do not open
        the clipboard against another program that wants it. */
     const bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
-    const bool has_image = gdiplus_token_ != 0 && IsClipboardFormatAvailable(CF_BITMAP) != FALSE;
+    const bool has_png = png_format_ != 0 && IsClipboardFormatAvailable(png_format_) != FALSE;
+    const bool has_bitmap = gdiplus_token_ != 0 && IsClipboardFormatAvailable(CF_BITMAP) != FALSE;
+    const bool has_image = has_png || has_bitmap;
     if (!has_text && !has_image) return;
     if (!open_with_retry()) return;
 
     std::vector<uint8_t> payload;
-    if (has_image) {
+    if (has_png) {
+        payload = global_bytes(GetClipboardData(png_format_));
+    }
+    if (payload.empty() && has_bitmap) {
         if (HBITMAP bitmap = static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)))
             payload = bitmap_to_png(bitmap);
-    } else if (HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
+    }
+    if (!has_image) {
+        HANDLE handle = GetClipboardData(CF_UNICODETEXT);
         if (const auto *text = static_cast<const wchar_t *>(GlobalLock(handle))) {
             payload = wide_to_utf8(text);
             GlobalUnlock(handle);
@@ -261,27 +364,34 @@ void Clipboard::read_clipboard() {
 }
 
 void Clipboard::deliver_image(const std::vector<uint8_t> &png) {
-    if (gdiplus_token_ == 0) {
-        if (callbacks_.log) callbacks_.log("an arriving image could not be decoded; the image codec is unavailable");
-        return;
-    }
-    HBITMAP bitmap = png_to_bitmap(png);
-    if (!bitmap) {
-        if (callbacks_.log) callbacks_.log("an arriving image could not be decoded; nothing was written");
+    HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(png) : nullptr;
+    HBITMAP bitmap = gdiplus_token_ != 0 ? png_to_bitmap(png) : nullptr;
+    if (png_block == nullptr && bitmap == nullptr) {
+        if (callbacks_.log)
+            callbacks_.log("an arriving image had no clipboard representation; nothing was written");
         return;
     }
     if (!open_with_retry()) {
-        DeleteObject(bitmap);
+        if (bitmap) DeleteObject(bitmap);
+        if (png_block) GlobalFree(png_block);
         if (callbacks_.log) callbacks_.log("the image arrived but the clipboard would not open; it was not written");
         return;
     }
     EmptyClipboard();
-    if (SetClipboardData(CF_BITMAP, bitmap) == nullptr) {
+    bool png_written = false;
+    if (png_block != nullptr) {
+        png_written = SetClipboardData(png_format_, png_block) != nullptr;
+        if (!png_written) GlobalFree(png_block);
+    }
+    const bool bitmap_written = bitmap != nullptr && SetClipboardData(CF_BITMAP, bitmap) != nullptr;
+    if (bitmap != nullptr && !bitmap_written) DeleteObject(bitmap);
+    if (!png_written && !bitmap_written) {
         CloseClipboard();
-        DeleteObject(bitmap);
         if (callbacks_.log) callbacks_.log("the clipboard refused an arriving image; it is now empty");
         return;
     }
+    if (!bitmap_written && callbacks_.log)
+        callbacks_.log("the arriving PNG was written, but its bitmap compatibility format was refused");
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
 }

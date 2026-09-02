@@ -65,7 +65,7 @@ class Clipboard {
 
     /* Called from the window procedure. True when the message was this
        object's and needs no further handling. */
-    bool handle(UINT message);
+    bool handle(UINT message, WPARAM parameter = 0);
 
     /* Write what arrived from the other computer. The bytes are handed to the
        platform exactly as they arrived: ADR-0003 makes this channel
@@ -80,6 +80,7 @@ class Clipboard {
   private:
     void read_clipboard();
     bool open_with_retry();
+    bool load_lazy_image();
 
     HWND window_{nullptr};
     bool listening_{false};
@@ -94,8 +95,10 @@ class Clipboard {
        otherwise both read the same clipboard and send the same payload twice. */
     DWORD handled_sequence_{0};
     ULONG_PTR gdiplus_token_{0};
+    UINT png_format_{0};
     uint32_t lazy_image_id_{0};
     uint64_t lazy_image_total_{0};
+    std::vector<uint8_t> lazy_image_png_;
 };
 
 } // namespace deskhop

@@ -397,6 +397,12 @@ int Helper::run() {
             MSG message;
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
                 if (message.message == WM_QUIT) {
+                    /* Destroying the clipboard-owner window gives Windows its
+                       WM_RENDERALLFORMATS chance before the channel stops. */
+                    if (window_ != nullptr) {
+                        DestroyWindow(window_);
+                        window_ = nullptr;
+                    }
                     transport_.stop();
                     clipboard_.detach();
                     tray_.detach();
@@ -565,7 +571,15 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
         /* Something was copied on this computer. Handled on this thread
            because setting clipboard data requires owning a window, and this is
            the window (clipboard.h). */
-        clipboard_.handle(message);
+        clipboard_.handle(message, w);
+        return 0;
+
+    case WM_RENDERFORMAT:
+    case WM_RENDERALLFORMATS:
+    case WM_DESTROYCLIPBOARD:
+        /* Delayed image rendering and ownership loss are directed to the
+           owner window, not delivered as clipboard-update notifications. */
+        clipboard_.handle(message, w);
         return 0;
 
     case Tray::kCallbackMessage:

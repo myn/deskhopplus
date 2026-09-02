@@ -96,6 +96,7 @@ struct Pair {
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
     size_t lazy_images = 0;
+    bool request_lazy_images = true;
     /* Every frame put on the link, in order, so a test can hand one over again
        later — the only way to reach a message that was sealed under a key its
        receiver has since replaced. */
@@ -155,6 +156,7 @@ struct Pair {
                 break;
             case ClipOutput::Kind::LazyImage: {
                 lazy_images++;
+                if (!request_lazy_images) break;
                 ClipService &near = side == Side::A ? a : b;
                 for (ClipOutput &item : near.request_lazy_image(output.transfer_id))
                     queue.emplace_back(side, std::move(item));
@@ -228,6 +230,19 @@ void test_image_crosses_the_link() {
         CHECK(pair.lazy_images == (size > ClipService::kEagerImageThreshold ? 1u : 0u),
               "the image did not take the threshold-selected path");
     }
+}
+
+void test_a_lazy_offer_retry_does_not_reclaim_the_clipboard() {
+    std::vector<uint8_t> png(ClipService::kEagerImageThreshold + 1, 0x55);
+    Pair pair(png.size() + 1024u);
+    pair.request_lazy_images = false;
+    pair.settle(pair.a.local_copy(ClipKind::Png, png), Side::A);
+    CHECK(pair.lazy_images == 1, "the first lazy offer did not claim the clipboard once");
+
+    (void)pair.a.tick(0);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+    CHECK(pair.lazy_images == 1,
+          "an idempotent offer retry reclaimed and erased the clipboard");
 }
 
 /*
@@ -956,6 +971,7 @@ int main() {
 
     test_text_crosses_the_link();
     test_image_crosses_the_link();
+    test_a_lazy_offer_retry_does_not_reclaim_the_clipboard();
     test_fidelity_is_preserved();
     test_nothing_leaves_unsealed();
     test_a_lost_seal_offer_is_retried();

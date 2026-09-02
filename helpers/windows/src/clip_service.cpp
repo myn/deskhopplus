@@ -523,7 +523,7 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
     std::vector<ClipOutput> outputs = render(
         actions, lazy ? dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions, kActionCapacity)
                       : dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
-    if (lazy && dh_xfer_rx_has_offer(xfer_.get()) &&
+    if (lazy && (!had_offer || previous_id != offer.id) && dh_xfer_rx_has_offer(xfer_.get()) &&
         dh_xfer_rx_offer_id(xfer_.get()) == offer.id) {
         ClipOutput out;
         out.kind = ClipOutput::Kind::LazyImage;
