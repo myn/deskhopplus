@@ -56,6 +56,7 @@ class Clipboard {
         std::function<void(std::vector<uint8_t>)> local_copy;
         std::function<void(std::vector<uint8_t>)> local_image;
         std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
+        std::function<void(uint32_t)> lazy_image_replaced;
         std::function<void(const std::string &)> log;
     };
 

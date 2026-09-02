@@ -142,6 +142,10 @@ final class HelperRuntime: HelperEffects {
             guard let self, self.session.canSendBulk else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
+        pasteboard.onLazyImageReplaced = { [weak self] id in
+            guard let self else { return }
+            self.dispatch.emit(self.clipboard.lazyImageWasReplaced(id: id))
+        }
 
         transport.start()
         pasteboard.start()

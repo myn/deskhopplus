@@ -352,6 +352,9 @@ bool Helper::start(HINSTANCE instance) {
     clipboard_callbacks.request_image = [this](uint32_t id, uint64_t total) {
         return request_lazy_image(id, total);
     };
+    clipboard_callbacks.lazy_image_replaced = [this](uint32_t id) {
+        dispatch_.emit(clipboard_service_->lazy_image_was_replaced(id));
+    };
     clipboard_.attach(window_, std::move(clipboard_callbacks));
 
     autostart_ = std::make_unique<Autostart>(secrets_.directory(),

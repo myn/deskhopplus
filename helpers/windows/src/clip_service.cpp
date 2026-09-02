@@ -168,6 +168,12 @@ std::vector<ClipOutput> ClipService::request_lazy_image(uint32_t id) {
     return render(actions, dh_xfer_request_lazy(xfer_.get(), id, actions, kActionCapacity));
 }
 
+std::vector<ClipOutput> ClipService::lazy_image_was_replaced(uint32_t id) {
+    if (lazy_image_id_ != id) return {};
+    dh_xfer_action actions[kActionCapacity];
+    return render(actions, dh_xfer_cancel_rx(xfer_.get(), actions, kActionCapacity));
+}
+
 /* The re-request pair is on both directions and always printed, zeros
    included: a stall where nothing was ever asked for again is a different
    fault from one where it was asked for and nothing came back, and neither end

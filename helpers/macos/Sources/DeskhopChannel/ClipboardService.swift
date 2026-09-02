@@ -211,6 +211,11 @@ public final class ClipboardService {
         render(transfer.requestLazy(id: id))
     }
 
+    public func lazyImageWasReplaced(id: UInt32) -> [ClipboardOutput] {
+        guard lazyImageID == id else { return [] }
+        return render(transfer.cancelIncoming())
+    }
+
     /*
      * Recover an arriving transfer that has stopped moving.
      *

@@ -96,6 +96,7 @@ struct Pair {
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
     size_t lazy_images = 0;
+    uint32_t last_lazy_image_id = 0;
     bool request_lazy_images = true;
     /* Every frame put on the link, in order, so a test can hand one over again
        later — the only way to reach a message that was sealed under a key its
@@ -156,6 +157,7 @@ struct Pair {
                 break;
             case ClipOutput::Kind::LazyImage: {
                 lazy_images++;
+                last_lazy_image_id = output.transfer_id;
                 if (!request_lazy_images) break;
                 ClipService &near = side == Side::A ? a : b;
                 for (ClipOutput &item : near.request_lazy_image(output.transfer_id))
@@ -243,6 +245,20 @@ void test_a_lazy_offer_retry_does_not_reclaim_the_clipboard() {
     pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
     CHECK(pair.lazy_images == 1,
           "an idempotent offer retry reclaimed and erased the clipboard");
+}
+
+void test_replacing_a_lazy_image_cancels_its_receive() {
+    std::vector<uint8_t> png(ClipService::kEagerImageThreshold + 1, 0x55);
+    Pair pair(png.size() + 1024u);
+    pair.request_lazy_images = false;
+    pair.settle(pair.a.local_copy(ClipKind::Png, png), Side::A);
+    CHECK(pair.last_lazy_image_id != 0, "the lazy image never claimed the clipboard");
+
+    pair.settle(pair.b.lazy_image_was_replaced(pair.last_lazy_image_id), Side::B);
+    CHECK(pair.b.request_lazy_image(pair.last_lazy_image_id).empty(),
+          "a replaced lazy image could still start receiving");
+    CHECK(pair.delivered_to_b.empty(),
+          "a replaced lazy image was delivered over the newer local copy");
 }
 
 /*
@@ -972,6 +988,7 @@ int main() {
     test_text_crosses_the_link();
     test_image_crosses_the_link();
     test_a_lazy_offer_retry_does_not_reclaim_the_clipboard();
+    test_replacing_a_lazy_image_cancels_its_receive();
     test_fidelity_is_preserved();
     test_nothing_leaves_unsealed();
     test_a_lost_seal_offer_is_retried();

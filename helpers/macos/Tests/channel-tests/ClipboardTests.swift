@@ -20,6 +20,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("text copied on one computer arrives on the other", testTextCrossesTheLink),
     ("an image copied on one computer arrives byte-identically", testImageCrossesTheLink),
     ("a lazy offer retry does not reclaim the pasteboard", testALazyOfferRetryDoesNotReclaimThePasteboard),
+    ("replacing a lazy image cancels its receive", testReplacingALazyImageCancelsItsReceive),
     ("the payload is byte-identical end to end", testFidelityIsPreserved),
     ("nothing leaves before a seal is accepted", testNothingLeavesUnsealed),
     ("a lost seal offer is retried", testALostSealOfferIsRetried),
@@ -86,6 +87,7 @@ private final class Pair {
     /// Frames carried across the link, so a test can count what a direction cost.
     var carried = 0
     var lazyImages = 0
+    var lastLazyImageID: UInt32?
     var requestLazyImages = true
     /*
      * Frames the link loses before they reach the far end, counted down by
@@ -148,6 +150,7 @@ private final class Pair {
                 else { deliveredToB.append((kind, bytes)) }
             case .lazyImage(let id, _):
                 lazyImages += 1
+                lastLazyImageID = id
                 if !requestLazyImages { continue }
                 let near = side == .a ? a : b
                 queue += near.requestLazyImage(id: id).map { (side, $0) }
@@ -226,6 +229,23 @@ private func testALazyOfferRetryDoesNotReclaimThePasteboard() {
     pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
     Check.equal(pair.lazyImages, 1,
                 "an idempotent offer retry reclaimed and erased the pasteboard")
+}
+
+private func testReplacingALazyImageCancelsItsReceive() {
+    let png = [UInt8](repeating: 0x55, count: ClipboardService.eagerImageThreshold + 1)
+    let pair = Pair(capacity: png.count + 1024)
+    pair.requestLazyImages = false
+    pair.settle(pair.a.localCopy(kind: .png, bytes: png), from: .a)
+    guard let id = pair.lastLazyImageID else {
+        Check.that(false, "the lazy image never claimed the pasteboard")
+        return
+    }
+
+    pair.settle(pair.b.lazyImageWasReplaced(id: id), from: .b)
+    Check.that(pair.b.requestLazyImage(id: id).isEmpty,
+               "a replaced lazy image could still start receiving")
+    Check.that(pair.deliveredToB.isEmpty,
+               "a replaced lazy image was delivered over the newer local copy")
 }
 
 /*

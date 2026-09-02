@@ -70,6 +70,7 @@ final class Pasteboard {
     /// writes.
     var onLocalCopy: ((String) -> Void)?
     var onLocalImage: (([UInt8]) -> Void)?
+    var onLazyImageReplaced: ((UInt32) -> Void)?
     var log: ((String) -> Void)?
 
     private let pasteboard = NSPasteboard.general
@@ -105,6 +106,11 @@ final class Pasteboard {
         /* Read only when something has changed. macOS notices pasteboard
            reads, so there is no reason to make one five times a second. */
         guard count != watch.settledAt else { return }
+
+        if let provider = imageProvider {
+            imageProvider = nil
+            onLazyImageReplaced?(provider.id)
+        }
 
         let text = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
         let image = pngFromPasteboard()

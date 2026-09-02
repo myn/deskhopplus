@@ -181,9 +181,12 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
     if (message == WM_DESTROYCLIPBOARD) {
         /* Another owner replaced our lazy placeholder. Forget it before a
            later transfer cancellation can empty that owner's newer copy. */
+        const uint32_t replaced = lazy_image_id_;
         lazy_image_id_ = 0;
         lazy_image_total_ = 0;
         lazy_image_png_.clear();
+        if (replaced != 0 && callbacks_.lazy_image_replaced)
+            callbacks_.lazy_image_replaced(replaced);
         return true;
     }
     if (message == WM_RENDERFORMAT &&
@@ -288,7 +291,7 @@ void Clipboard::cancel_lazy_image(uint32_t id) {
     lazy_image_id_ = 0;
     lazy_image_total_ = 0;
     lazy_image_png_.clear();
-    if (open_with_retry()) {
+    if (GetClipboardOwner() == window_ && open_with_retry()) {
         EmptyClipboard();
         self_sequence_ = GetClipboardSequenceNumber();
         CloseClipboard();

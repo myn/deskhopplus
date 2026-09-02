@@ -124,6 +124,7 @@ class ClipService {
        tick. Empty when nothing is owed, which is the ordinary answer. */
     std::vector<ClipOutput> pump();
     std::vector<ClipOutput> request_lazy_image(uint32_t id);
+    std::vector<ClipOutput> lazy_image_was_replaced(uint32_t id);
 
     /*
      * Give up on a transfer that has stopped moving.
