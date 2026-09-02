@@ -130,6 +130,15 @@ endif()
 add_test(NAME output_dispatch COMMAND output_dispatch_test)
 
 if(WIN32)
+  add_executable(clipboard_image_test tests/clipboard_image_test.cpp
+                 src/clipboard_image.cpp)
+  target_include_directories(clipboard_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(clipboard_image_test PRIVATE gdiplus ole32)
+  if(MSVC)
+    target_compile_options(clipboard_image_test PRIVATE /WX)
+  endif()
+  add_test(NAME clipboard_image COMMAND clipboard_image_test)
+
   # The seal, through the cipher this helper actually ships (#113). Windows
   # only, because BCrypt is — and that is exactly why it is worth having: CNG's
   # AES-GCM agreeing with the golden vectors is a claim no other machine's
@@ -175,6 +184,7 @@ if(WIN32)
     src/helper_session.cpp
     src/clip_service.cpp
     src/clipboard.cpp
+    src/clipboard_image.cpp
     src/cursor_placement.cpp
     src/words.cpp
     src/secret_store.cpp

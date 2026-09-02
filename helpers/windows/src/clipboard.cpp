@@ -7,6 +7,7 @@
 #include <objidl.h>
 
 #include "clipboard_update.h"
+#include "clipboard_image.h"
 
 namespace deskhop {
 
@@ -26,46 +27,6 @@ std::string clipboard_state(HWND helper) {
            " owner=" + std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
            " helper=" + std::to_string(reinterpret_cast<uintptr_t>(helper)) +
            " opener=" + std::to_string(reinterpret_cast<uintptr_t>(GetOpenClipboardWindow()));
-}
-
-bool png_encoder_clsid(CLSID &out) {
-    UINT count = 0, bytes = 0;
-    Gdiplus::GetImageEncodersSize(&count, &bytes);
-    if (bytes == 0) return false;
-    std::vector<uint8_t> storage(bytes);
-    auto *encoders = reinterpret_cast<Gdiplus::ImageCodecInfo *>(storage.data());
-    if (Gdiplus::GetImageEncoders(count, bytes, encoders) != Gdiplus::Ok) return false;
-    for (UINT i = 0; i < count; ++i) {
-        if (std::wcscmp(encoders[i].MimeType, L"image/png") == 0) {
-            out = encoders[i].Clsid;
-            return true;
-        }
-    }
-    return false;
-}
-
-std::vector<uint8_t> bitmap_to_png(HBITMAP bitmap) {
-    std::vector<uint8_t> result;
-    Gdiplus::Bitmap image(bitmap, nullptr);
-    CLSID encoder{};
-    if (!png_encoder_clsid(encoder)) return result;
-    IStream *stream = nullptr;
-    if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK) return result;
-    if (image.Save(stream, &encoder, nullptr) == Gdiplus::Ok) {
-        HGLOBAL memory = nullptr;
-        if (GetHGlobalFromStream(stream, &memory) == S_OK) {
-            STATSTG stat{};
-            const SIZE_T size = stream->Stat(&stat, STATFLAG_NONAME) == S_OK
-                                    ? static_cast<SIZE_T>(stat.cbSize.QuadPart)
-                                    : 0;
-            if (const auto *bytes = static_cast<const uint8_t *>(GlobalLock(memory))) {
-                result.assign(bytes, bytes + size);
-                GlobalUnlock(memory);
-            }
-        }
-    }
-    stream->Release();
-    return result;
 }
 
 HBITMAP png_to_bitmap(const std::vector<uint8_t> &png) {
@@ -390,19 +351,40 @@ void Clipboard::read_clipboard() {
        the clipboard against another program that wants it. */
     const bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
     const bool has_png = png_format_ != 0 && IsClipboardFormatAvailable(png_format_) != FALSE;
+    const bool has_dibv5 = IsClipboardFormatAvailable(CF_DIBV5) != FALSE;
+    const bool has_dib = IsClipboardFormatAvailable(CF_DIB) != FALSE;
     const bool has_bitmap = gdiplus_token_ != 0 && IsClipboardFormatAvailable(CF_BITMAP) != FALSE;
-    const bool has_image = has_png || has_bitmap;
+    const ClipboardImageFormat image_format =
+        select_clipboard_image_format(has_png, has_dibv5, has_dib, has_bitmap);
+    const bool has_image = image_format != ClipboardImageFormat::None;
     if (!has_text && !has_image) return;
     if (!open_with_retry()) return;
 
     std::vector<uint8_t> payload;
-    if (has_png) {
-        payload = global_bytes(GetClipboardData(png_format_));
-    }
-    if (payload.empty() && has_bitmap) {
+    const char *captured_format = nullptr;
+    switch (image_format) {
+    case ClipboardImageFormat::Png:
+        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(png_format_)));
+        captured_format = "registered PNG";
+        break;
+    case ClipboardImageFormat::DibV5:
+        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIBV5)));
+        captured_format = "CF_DIBV5";
+        break;
+    case ClipboardImageFormat::Dib:
+        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIB)));
+        captured_format = "CF_DIB";
+        break;
+    case ClipboardImageFormat::Bitmap:
         if (HBITMAP bitmap = static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)))
             payload = bitmap_to_png(bitmap);
+        captured_format = "CF_BITMAP";
+        break;
+    case ClipboardImageFormat::None:
+        break;
     }
+    if (!payload.empty() && captured_format != nullptr && callbacks_.log)
+        callbacks_.log(std::string("captured image from ") + captured_format);
     if (!has_image) {
         HANDLE handle = GetClipboardData(CF_UNICODETEXT);
         if (const auto *text = static_cast<const wchar_t *>(GlobalLock(handle))) {
@@ -431,47 +413,59 @@ void Clipboard::read_clipboard() {
 
 bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
                               std::optional<DWORD> expected_sequence) {
-    HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(png) : nullptr;
-    HBITMAP bitmap = gdiplus_token_ != 0 ? png_to_bitmap(png) : nullptr;
-    if (png_block == nullptr && bitmap == nullptr) {
+    const ClipboardImageRepresentations representations = clipboard_image_representations(png);
+    HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(representations.png) : nullptr;
+    HGLOBAL dibv5_block = bytes_to_global(representations.dibv5);
+    HGLOBAL dib_block = bytes_to_global(representations.dib);
+    if (png_block == nullptr || dibv5_block == nullptr || dib_block == nullptr) {
+        if (png_block) GlobalFree(png_block);
+        if (dibv5_block) GlobalFree(dibv5_block);
+        if (dib_block) GlobalFree(dib_block);
         if (callbacks_.log)
-            callbacks_.log("an arriving image had no clipboard representation; nothing was written");
+            callbacks_.log("an arriving image could not build PNG, CF_DIBV5, and CF_DIB; nothing was written");
         return false;
     }
     if (!open_with_retry()) {
-        if (bitmap) DeleteObject(bitmap);
-        if (png_block) GlobalFree(png_block);
+        GlobalFree(png_block);
+        if (dibv5_block) GlobalFree(dibv5_block);
+        if (dib_block) GlobalFree(dib_block);
         if (callbacks_.log) callbacks_.log("the image arrived but the clipboard would not open; it was not written");
         return false;
     }
     if (expected_sequence &&
         !prefetched_image_is_current(*expected_sequence, GetClipboardSequenceNumber())) {
         CloseClipboard();
-        if (bitmap) DeleteObject(bitmap);
-        if (png_block) GlobalFree(png_block);
+        GlobalFree(png_block);
+        if (dibv5_block) GlobalFree(dibv5_block);
+        if (dib_block) GlobalFree(dib_block);
         if (callbacks_.log)
             callbacks_.log("a prefetched image was discarded because a newer Windows copy "
                            "exists");
         return false;
     }
     EmptyClipboard();
-    bool png_written = false;
-    if (png_block != nullptr) {
-        png_written = SetClipboardData(png_format_, png_block) != nullptr;
-        if (!png_written) GlobalFree(png_block);
-    }
-    const bool bitmap_written = bitmap != nullptr && SetClipboardData(CF_BITMAP, bitmap) != nullptr;
-    if (bitmap != nullptr && !bitmap_written) DeleteObject(bitmap);
-    if (!png_written && !bitmap_written) {
+    const bool png_written = SetClipboardData(png_format_, png_block) != nullptr;
+    if (!png_written) {
+        GlobalFree(png_block);
+        if (dibv5_block) GlobalFree(dibv5_block);
+        if (dib_block) GlobalFree(dib_block);
         CloseClipboard();
         if (callbacks_.log) callbacks_.log("the clipboard refused an arriving image; it is now empty");
         return false;
     }
-    if (!bitmap_written && callbacks_.log)
-        callbacks_.log("the arriving PNG was written, but its bitmap compatibility format was refused");
+    const bool dibv5_written =
+        dibv5_block != nullptr && SetClipboardData(CF_DIBV5, dibv5_block) != nullptr;
+    if (dibv5_block != nullptr && !dibv5_written) GlobalFree(dibv5_block);
+    const bool dib_written = dib_block != nullptr && SetClipboardData(CF_DIB, dib_block) != nullptr;
+    if (dib_block != nullptr && !dib_written) GlobalFree(dib_block);
+    if (callbacks_.log)
+        callbacks_.log("published arriving image as registered PNG (exact bytes), CF_DIBV5=" +
+                       std::string(dibv5_written ? "yes" : "no") + " CF_DIB=" +
+                       std::string(dib_written ? "yes" : "no") +
+                       " CF_BITMAP=no (no demonstrated compatibility need)");
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
-    return true;
+    return dibv5_written && dib_written;
 }
 
 void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
