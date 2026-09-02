@@ -240,11 +240,15 @@ void test_a_lazy_offer_retry_does_not_reclaim_the_clipboard() {
     pair.request_lazy_images = false;
     pair.settle(pair.a.local_copy(ClipKind::Png, png), Side::A);
     CHECK(pair.lazy_images == 1, "the first lazy offer did not claim the clipboard once");
+    CHECK(pair.saw_note("[clipboard-debug] lazy offer id="),
+          "the initial lazy offer was not identified in diagnostics");
 
     (void)pair.a.tick(0);
     pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
     CHECK(pair.lazy_images == 1,
           "an idempotent offer retry reclaimed and erased the clipboard");
+    CHECK(pair.saw_note("disposition=duplicate"),
+          "the retried lazy offer was not identified as a duplicate");
 }
 
 void test_replacing_a_lazy_image_cancels_its_receive() {

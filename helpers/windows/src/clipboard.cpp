@@ -19,6 +19,13 @@ namespace {
 constexpr int kOpenAttempts = 5;
 constexpr DWORD kFirstRetryMs = 10;
 
+std::string clipboard_state(HWND helper) {
+    return "sequence=" + std::to_string(GetClipboardSequenceNumber()) +
+           " owner=" + std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
+           " helper=" + std::to_string(reinterpret_cast<uintptr_t>(helper)) +
+           " opener=" + std::to_string(reinterpret_cast<uintptr_t>(GetOpenClipboardWindow()));
+}
+
 bool png_encoder_clsid(CLSID &out) {
     UINT count = 0, bytes = 0;
     Gdiplus::GetImageEncodersSize(&count, &bytes);
@@ -166,6 +173,10 @@ bool Clipboard::load_lazy_image() {
     if (!lazy_image_png_.empty()) return true;
     const uint32_t id = lazy_image_id_;
     if (id == 0 || !callbacks_.request_image) return false;
+    if (callbacks_.log)
+        callbacks_.log("[clipboard-debug] requesting lazy image id=" + std::to_string(id) +
+                       " bytes=" + std::to_string(lazy_image_total_) + " " +
+                       clipboard_state(window_));
     const auto png = callbacks_.request_image(id, lazy_image_total_);
     if (!png) {
         if (callbacks_.log)
@@ -182,6 +193,11 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
         /* Another owner replaced our lazy placeholder. Forget it before a
            later transfer cancellation can empty that owner's newer copy. */
         const uint32_t replaced = lazy_image_id_;
+        if (callbacks_.log)
+            callbacks_.log("[clipboard-debug] WM_DESTROYCLIPBOARD lazy_id=" +
+                           std::to_string(replaced) + " cached_bytes=" +
+                           std::to_string(lazy_image_png_.size()) + " " +
+                           clipboard_state(window_));
         lazy_image_id_ = 0;
         lazy_image_total_ = 0;
         lazy_image_png_.clear();
@@ -189,8 +205,13 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
             callbacks_.lazy_image_replaced(replaced);
         return true;
     }
-    if (message == WM_RENDERFORMAT &&
-        (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
+    if (message == WM_RENDERFORMAT && callbacks_.log)
+        callbacks_.log("[clipboard-debug] WM_RENDERFORMAT format=" +
+                       std::to_string(parameter) + " lazy_id=" +
+                       std::to_string(lazy_image_id_) + " cached_bytes=" +
+                       std::to_string(lazy_image_png_.size()) + " " +
+                       clipboard_state(window_));
+    if (message == WM_RENDERFORMAT && (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
         if (!load_lazy_image()) return true;
         if (parameter == png_format_) {
             HGLOBAL block = bytes_to_global(lazy_image_png_);
@@ -213,6 +234,11 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
         self_sequence_ = GetClipboardSequenceNumber();
         return true;
     }
+    if (message == WM_RENDERALLFORMATS && callbacks_.log)
+        callbacks_.log("[clipboard-debug] WM_RENDERALLFORMATS lazy_id=" +
+                       std::to_string(lazy_image_id_) + " cached_bytes=" +
+                       std::to_string(lazy_image_png_.size()) + " " +
+                       clipboard_state(window_));
     if (message == WM_RENDERALLFORMATS &&
         (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
         /* Windows is about to destroy the owner window. Materialise every
@@ -248,16 +274,41 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
      * link twice.
      */
     const DWORD sequence = GetClipboardSequenceNumber();
+    if (trace_lazy_lifecycle_ && callbacks_.log)
+        callbacks_.log("[clipboard-debug] WM_CLIPBOARDUPDATE sequence=" +
+                       std::to_string(sequence) + " handled=" +
+                       std::to_string(handled_sequence_) + " self=" +
+                       std::to_string(self_sequence_) + " owner=" +
+                       std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
+                       " helper=" + std::to_string(reinterpret_cast<uintptr_t>(window_)) +
+                       " has_text=" +
+                       std::to_string(IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE) +
+                       " has_png=" +
+                       std::to_string(png_format_ != 0 &&
+                                      IsClipboardFormatAvailable(png_format_) != FALSE) +
+                       " has_bitmap=" +
+                       std::to_string(IsClipboardFormatAvailable(CF_BITMAP) != FALSE));
     if (sequence == handled_sequence_) return true;
     handled_sequence_ = sequence;
 
     /* Our own write, echoing back. Without this the two helpers hand the same
        payload back and forth for ever. */
-    if (sequence != self_sequence_) read_clipboard();
+    if (sequence != self_sequence_) {
+        read_clipboard();
+        /* The first external update is the replacement under investigation.
+           One line records it; ordinary copies after it stay off the helper's
+           synchronously flushed diagnostic path. */
+        trace_lazy_lifecycle_ = false;
+    }
     return true;
 }
 
 void Clipboard::lazy_image(uint32_t id, uint64_t total) {
+    trace_lazy_lifecycle_ = true;
+    if (callbacks_.log)
+        callbacks_.log("[clipboard-debug] claiming lazy image id=" + std::to_string(id) +
+                       " bytes=" + std::to_string(total) + " before_" +
+                       clipboard_state(window_));
     if (!open_with_retry()) {
         if (callbacks_.log) callbacks_.log("a lazy image offer could not claim the clipboard");
         return;
@@ -283,10 +334,16 @@ void Clipboard::lazy_image(uint32_t id, uint64_t total) {
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
     if (callbacks_.log)
-        callbacks_.log("a lazy image of " + std::to_string(total) + " bytes is ready to paste");
+        callbacks_.log("a lazy image id=" + std::to_string(id) + " of " +
+                       std::to_string(total) + " bytes is ready to paste; " +
+                       clipboard_state(window_));
 }
 
 void Clipboard::cancel_lazy_image(uint32_t id) {
+    if (callbacks_.log)
+        callbacks_.log("[clipboard-debug] cancel lazy image id=" + std::to_string(id) +
+                       " active_id=" + std::to_string(lazy_image_id_) + " " +
+                       clipboard_state(window_));
     if (lazy_image_id_ != id) return;
     lazy_image_id_ = 0;
     lazy_image_total_ = 0;

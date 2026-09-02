@@ -529,6 +529,27 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
     std::vector<ClipOutput> outputs = render(
         actions, lazy ? dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions, kActionCapacity)
                       : dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
+    if (lazy) {
+        const bool accepted = dh_xfer_rx_has_offer(xfer_.get()) &&
+                              dh_xfer_rx_offer_id(xfer_.get()) == offer.id;
+        bool protocol_error = false;
+        for (const ClipOutput &output : outputs)
+            if (output.kind == ClipOutput::Kind::ProtocolError) protocol_error = true;
+        const bool duplicate = accepted && had_offer && previous_id == offer.id;
+        const char *disposition = protocol_error ? "conflict"
+                                  : !accepted      ? "rejected"
+                                  : duplicate     ? "duplicate"
+                                                  : "new";
+        /* One duplicate establishes that retries reach this helper. The core's
+           aggregate counter retains the total without flooding the log every
+           two seconds (ADR-0009). */
+        if (!duplicate || dh_xfer_rx_duplicate_offers(xfer_.get()) == 1)
+            outputs.push_back(note("[clipboard-debug] lazy offer id=" +
+                                   std::to_string(offer.id) + " bytes=" +
+                                   std::to_string(offer.total) + " disposition=" + disposition +
+                                   " previous_id=" +
+                                   std::to_string(had_offer ? previous_id : 0)));
+    }
     if (lazy && (!had_offer || previous_id != offer.id) && dh_xfer_rx_has_offer(xfer_.get()) &&
         dh_xfer_rx_offer_id(xfer_.get()) == offer.id) {
         ClipOutput out;

@@ -100,6 +100,9 @@ class Clipboard {
     uint32_t lazy_image_id_{0};
     uint64_t lazy_image_total_{0};
     std::vector<uint8_t> lazy_image_png_;
+    /* Temporary #55 diagnostics remain armed just long enough to observe the
+       external copy that replaces a received lazy image. */
+    bool trace_lazy_lifecycle_{false};
 };
 
 } // namespace deskhop
