@@ -6,6 +6,8 @@
 #include <gdiplus.h>
 #include <objidl.h>
 
+#include "clipboard_update.h"
+
 namespace deskhop {
 
 namespace {
@@ -291,9 +293,12 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
     if (sequence == handled_sequence_) return true;
     handled_sequence_ = sequence;
 
-    /* Our own write, echoing back. Without this the two helpers hand the same
-       payload back and forth for ever. */
-    if (sequence != self_sequence_) {
+    /* A delayed-format close can advance the sequence after self_sequence_ was
+       sampled. The owner window remains ours, and is the authoritative second
+       signal that this update must not echo back across the channel. */
+    if (clipboard_update_is_external(
+            sequence, self_sequence_, reinterpret_cast<uintptr_t>(GetClipboardOwner()),
+            reinterpret_cast<uintptr_t>(window_))) {
         read_clipboard();
         /* The first external update is the replacement under investigation.
            One line records it; ordinary copies after it stay off the helper's
