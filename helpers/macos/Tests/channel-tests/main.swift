@@ -60,7 +60,7 @@ enum Check {
 }
 
 let suites: [(String, () throws -> Void)] = bindingTests + helperSessionTests + sealTests
-    + logStampTests + clipboardTests + copyWatchTests + outputDispatchTests
+    + logStampTests + clipboardTests + copyWatchTests + imagePrefetchTests + outputDispatchTests
 
 for (name, body) in suites {
     do {

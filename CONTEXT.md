@@ -103,8 +103,7 @@ _Avoid_: source/destination machine, sender/receiver
 **Eager / Lazy / Prefetched**:
 When bytes move: eager content transfers on copy, lazy content transfers on paste, and prefetched
 content transfers when the paste side accepts an offer but before an application pastes it. Large
-images are prefetched on Windows, where the OS itself consumes advertised lazy formats; files stay
-lazy.
+images are prefetched on both paste-side platforms; files stay lazy.
 _Avoid_: push/pull, immediate/deferred
 
 **Direction toggle**:

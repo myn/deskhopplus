@@ -29,6 +29,7 @@ final class HelperRuntime: HelperEffects {
      * event, so the transition is worked out here.
      */
     private var bulkWasAllowed = false
+    private var imagePrefetch = ImagePrefetch()
 
     /* Lazy so that `self` is fully formed before the dispatch is handed a
        reference to it. The dispatch holds it unowned; this is the strong half. */
@@ -142,8 +143,8 @@ final class HelperRuntime: HelperEffects {
             guard let self, self.session.canSendBulk else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
-        pasteboard.onLazyImageReplaced = { [weak self] id in
-            guard let self else { return }
+        pasteboard.onLocalReplacement = { [weak self] in
+            guard let self, let id = self.imagePrefetch.localReplacement() else { return }
             self.dispatch.emit(self.clipboard.lazyImageWasReplaced(id: id))
         }
 
@@ -232,14 +233,21 @@ final class HelperRuntime: HelperEffects {
     func noteSent() { session.noteSent(at: now) }
     func noteSendRefused() { session.noteSendRefused() }
     func deliver(text bytes: [UInt8]) { pasteboard.deliver(text: bytes) }
-    func deliver(image bytes: [UInt8]) { pasteboard.deliver(image: bytes) }
-    func lazyImage(id: UInt32, total: UInt64) {
-        pasteboard.lazyImage(id: id, total: total) { [weak self] id in
-            guard let self else { return }
-            self.dispatch.emit(self.clipboard.requestLazyImage(id: id))
+    func deliver(image bytes: [UInt8]) {
+        switch imagePrefetch.complete() {
+        case .ordinary:
+            pasteboard.deliver(image: bytes)
+        case .publish(let changeCount):
+            pasteboard.deliver(image: bytes, ifUnchangedSince: changeCount)
         }
     }
-    func cancelLazyImage(id: UInt32) { pasteboard.cancelLazyImage(id: id) }
+    func lazyImage(id: UInt32, total: UInt64) {
+        let requestID = imagePrefetch.begin(id: id, changeCount: pasteboard.changeCount)
+        Self.note("prefetching remote image \(id) of \(total) bytes without claiming the Mac "
+                  + "pasteboard")
+        dispatch.emit(clipboard.requestLazyImage(id: requestID))
+    }
+    func cancelLazyImage(id: UInt32) { imagePrefetch.cancel(id: id) }
     func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
         clipboard.policyChanged(flags: flags)
     }

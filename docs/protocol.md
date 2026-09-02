@@ -802,12 +802,12 @@ between the helpers**; the firmware relays its messages opaquely.
   bookkeeping beyond a received-set. A chunk is exactly one CLIP_CHUNK frame's sealed payload.
 - **Streaming starts on request, never before.** An offered transfer emits nothing until
   CLIP_REQUEST arrives. Text and PNG images up to 256 KiB are requested as soon as their offer
-  arrives. Larger PNG images are retained as a lazy pasteboard format on macOS and requested only
-  when an application pastes them. Windows instead requests them on offer without claiming the OS
-  clipboard, then publishes completed formats only if no newer local copy exists (ADR-0010); delayed
-  bitmap formats are consumed speculatively by Windows itself and cannot represent paste intent.
-  Until either request, duplicate offers are silent and the receive stall clock is not armed. A
-  lazy source payload (files) is not even read until requested.
+  arrives. Larger PNG images are prefetched on offer without claiming the platform clipboard, then
+  published only if no newer local copy exists (ADR-0010). Windows consumes delayed bitmap formats
+  speculatively, while a macOS lazy data provider synchronously blocks the pasting application over
+  the slow link; neither callback reliably represents acceptable paste behavior. Until the request,
+  duplicate offers are silent and the receive stall clock is not armed. A lazy source payload
+  (files) is not even read until requested.
 - **An offer repeats until it is requested**
   ([#78](https://github.com/myn/deskhopplus/issues/78)). CLIP_OFFER is the one transfer message whose
   loss creates no state at the paste side, so nothing there can time out or ask for it again. The
