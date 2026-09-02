@@ -28,6 +28,11 @@ copy-time offer retry into the paste action and start the transfer early. Once t
 for the image, the receive leaves that lazy-waiting state and the ordinary request, credit, retry,
 and retransmission rules above apply unchanged.
 
+ADR-0010 adds one paste-side policy exception without changing this state machine: Windows
+explicitly requests a large image's first offer for background prefetch, because its own preview
+components consume delayed bitmap formats and cannot serve as a reliable paste signal. Duplicate
+offers after that request follow the ordinary data-pending rules above.
+
 ## Considered options
 
 - **Keep the timeout and improve its wording.** Rejected as the primary mechanism: the copy side

@@ -100,9 +100,11 @@ The machine where content was copied, and the machine where it is pasted. Confir
 and lazy transfers belong to the paste side.
 _Avoid_: source/destination machine, sender/receiver
 
-**Eager / Lazy**:
-When bytes move: eager content transfers on copy (text, small images); lazy content transfers on
-paste (files, large payloads).
+**Eager / Lazy / Prefetched**:
+When bytes move: eager content transfers on copy, lazy content transfers on paste, and prefetched
+content transfers when the paste side accepts an offer but before an application pastes it. Large
+images are prefetched on Windows, where the OS itself consumes advertised lazy formats; files stay
+lazy.
 _Avoid_: push/pull, immediate/deferred
 
 **Direction toggle**:

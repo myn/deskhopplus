@@ -123,11 +123,31 @@ class Helper : public HelperEffects {
         clipboard_.deliver_text(utf8);
     }
     void deliver_image(const std::vector<uint8_t> &png) override {
-        if (waiting_for_image_) awaited_image_ = png;
-        else clipboard_.deliver_image(png);
+        if (waiting_for_image_) {
+            awaited_image_ = png;
+            return;
+        }
+        if (prefetched_image_id_ != 0) {
+            prefetched_image_id_ = 0;
+            clipboard_.deliver_image(png, prefetched_image_sequence_);
+            return;
+        }
+        clipboard_.deliver_image(png);
     }
-    void lazy_image(uint32_t id, uint64_t total) override { clipboard_.lazy_image(id, total); }
-    void cancel_lazy_image(uint32_t id) override { clipboard_.cancel_lazy_image(id); }
+    void lazy_image(uint32_t id, uint64_t total) override {
+        prefetched_image_id_ = id;
+        prefetched_image_sequence_ = GetClipboardSequenceNumber();
+        log("prefetching remote image " + std::to_string(id) + " of " +
+            std::to_string(total) + " bytes without claiming the Windows clipboard");
+        dispatch_.emit(clipboard_service_->request_lazy_image(id));
+    }
+    void cancel_lazy_image(uint32_t id) override {
+        if (prefetched_image_id_ == id) {
+            prefetched_image_id_ = 0;
+            return;
+        }
+        clipboard_.cancel_lazy_image(id);
+    }
     void schedule_retry(uint32_t after_ms) override {
         /* Compared as an unsigned difference in run(), never as `now >= then`:
            the clock is 32-bit milliseconds and wraps, and a plain comparison
@@ -146,6 +166,7 @@ class Helper : public HelperEffects {
 
     void feed(const std::vector<Output> &outputs);
     std::optional<std::vector<uint8_t>> request_lazy_image(uint32_t id, uint64_t total);
+    void abandon_prefetched_image();
 
     /*
      * Monotonic, deliberately. A wall clock going backwards — routine on a
@@ -188,6 +209,8 @@ class Helper : public HelperEffects {
      */
     bool bulk_was_allowed_{false};
     bool waiting_for_image_{false};
+    uint32_t prefetched_image_id_{0};
+    uint32_t prefetched_image_sequence_{0};
     std::optional<std::vector<uint8_t>> awaited_image_;
 };
 
@@ -349,6 +372,7 @@ bool Helper::start(HINSTANCE instance) {
         if (!session_->can_send_bulk()) return;
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Png, png));
     };
+    clipboard_callbacks.local_replaced = [this] { abandon_prefetched_image(); };
     clipboard_callbacks.request_image = [this](uint32_t id, uint64_t total) {
         return request_lazy_image(id, total);
     };
@@ -514,6 +538,12 @@ std::optional<std::vector<uint8_t>> Helper::request_lazy_image(uint32_t id, uint
     }
     waiting_for_image_ = false;
     return std::exchange(awaited_image_, std::nullopt);
+}
+
+void Helper::abandon_prefetched_image() {
+    if (prefetched_image_id_ == 0) return;
+    const uint32_t id = std::exchange(prefetched_image_id_, 0);
+    dispatch_.emit(clipboard_service_->lazy_image_was_replaced(id));
 }
 
 Tray::Callbacks Helper::tray_callbacks() {

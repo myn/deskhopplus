@@ -3,6 +3,7 @@
 #include "clipboard_update.h"
 
 using deskhop::clipboard_update_is_external;
+using deskhop::prefetched_image_is_current;
 
 int main() {
     int failures = 0;
@@ -20,6 +21,10 @@ int main() {
           "the exact self sequence was mistaken for an external copy");
     CHECK(clipboard_update_is_external(6321, 6318, 462350, 3612416),
           "a different owner's copy was mistaken for the helper's write");
+    CHECK(prefetched_image_is_current(6343, 6343),
+          "an unchanged clipboard discarded its prefetched image");
+    CHECK(!prefetched_image_is_current(6343, 6364),
+          "a newer local copy was overwritten by a prefetched image");
 
     if (failures != 0) return 1;
     std::printf("clipboard update tests passed\n");

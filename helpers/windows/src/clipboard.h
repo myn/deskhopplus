@@ -55,6 +55,8 @@ class Clipboard {
            writes. UTF-8. */
         std::function<void(std::vector<uint8_t>)> local_copy;
         std::function<void(std::vector<uint8_t>)> local_image;
+        /* Any external sequence, before inspecting its formats or send policy. */
+        std::function<void()> local_replaced;
         std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
         std::function<void(uint32_t)> lazy_image_replaced;
         std::function<void(const std::string &)> log;
@@ -74,7 +76,10 @@ class Clipboard {
        encoding conversion at this edge. Malformed input converts best-effort
        with the OS default and is never rejected. */
     void deliver_text(const std::vector<uint8_t> &utf8);
-    void deliver_image(const std::vector<uint8_t> &png);
+    /* expected_sequence is used by a background prefetch: after opening the
+       clipboard, refuse to overwrite a local copy made while bytes crossed. */
+    bool deliver_image(const std::vector<uint8_t> &png,
+                       std::optional<DWORD> expected_sequence = std::nullopt);
     void lazy_image(uint32_t id, uint64_t total);
     void cancel_lazy_image(uint32_t id);
 

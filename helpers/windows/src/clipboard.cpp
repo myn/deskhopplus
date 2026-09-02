@@ -299,6 +299,7 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
     if (clipboard_update_is_external(
             sequence, self_sequence_, reinterpret_cast<uintptr_t>(GetClipboardOwner()),
             reinterpret_cast<uintptr_t>(window_))) {
+        if (callbacks_.local_replaced) callbacks_.local_replaced();
         read_clipboard();
         /* The first external update is the replacement under investigation.
            One line records it; ordinary copies after it stay off the helper's
@@ -428,19 +429,30 @@ void Clipboard::read_clipboard() {
     else if (callbacks_.local_copy) callbacks_.local_copy(std::move(payload));
 }
 
-void Clipboard::deliver_image(const std::vector<uint8_t> &png) {
+bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
+                              std::optional<DWORD> expected_sequence) {
     HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(png) : nullptr;
     HBITMAP bitmap = gdiplus_token_ != 0 ? png_to_bitmap(png) : nullptr;
     if (png_block == nullptr && bitmap == nullptr) {
         if (callbacks_.log)
             callbacks_.log("an arriving image had no clipboard representation; nothing was written");
-        return;
+        return false;
     }
     if (!open_with_retry()) {
         if (bitmap) DeleteObject(bitmap);
         if (png_block) GlobalFree(png_block);
         if (callbacks_.log) callbacks_.log("the image arrived but the clipboard would not open; it was not written");
-        return;
+        return false;
+    }
+    if (expected_sequence &&
+        !prefetched_image_is_current(*expected_sequence, GetClipboardSequenceNumber())) {
+        CloseClipboard();
+        if (bitmap) DeleteObject(bitmap);
+        if (png_block) GlobalFree(png_block);
+        if (callbacks_.log)
+            callbacks_.log("a prefetched image was discarded because a newer Windows copy "
+                           "exists");
+        return false;
     }
     EmptyClipboard();
     bool png_written = false;
@@ -453,12 +465,13 @@ void Clipboard::deliver_image(const std::vector<uint8_t> &png) {
     if (!png_written && !bitmap_written) {
         CloseClipboard();
         if (callbacks_.log) callbacks_.log("the clipboard refused an arriving image; it is now empty");
-        return;
+        return false;
     }
     if (!bitmap_written && callbacks_.log)
         callbacks_.log("the arriving PNG was written, but its bitmap compatibility format was refused");
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
+    return true;
 }
 
 void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
