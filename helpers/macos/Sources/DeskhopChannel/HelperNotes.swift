@@ -101,6 +101,11 @@ enum HelperNotes {
             return "the last \(a) reconnections came inside \(span(b))"
         case DH_NOTE_BOARD_SILENT_FOR:
             return "the board says it heard nothing for \(a)ms"
+        case DH_NOTE_BOARD_LOST_AT_END:
+            /* Zero here is the useful reading as often as not: it says the
+               board's inbound chain lost nothing, so an eviction it reported is
+               not a dropped report and the cause is elsewhere (#161). */
+            return "the board's inbound lost \(a) report(s) and \(b) peer frame(s)"
         case DH_NOTE_BOARD_AT_END:
             return "at the end the board had accepted \(a) frame(s) from \(b) report(s)"
         case DH_NOTE_BOARD_SENDS:

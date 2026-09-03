@@ -209,6 +209,12 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
         return "device heartbeat quiet for " + seconds(a);
     case DH_NOTE_BOARD_SILENT_FOR:
         return "the board says it heard nothing for " + std::to_string(a) + "ms";
+    case DH_NOTE_BOARD_LOST_AT_END:
+        /* Zero here is the useful reading as often as not: it says the board's
+           inbound chain lost nothing, so an eviction it reported is not a
+           dropped report and the cause is elsewhere (#161). */
+        return "the board's inbound lost " + std::to_string(a) +
+               " report(s) and " + std::to_string(b) + " peer frame(s)";
     case DH_NOTE_BOARD_AT_END:
         return "at the end the board had accepted " + std::to_string(a) + " frame(s) from " +
                std::to_string(b) + " report(s)";

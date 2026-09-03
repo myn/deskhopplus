@@ -329,6 +329,22 @@ typedef enum {
      */
     DH_NOTE_BOARD_SILENT_FOR = 34,
     /*
+     * What the board's *inbound* chain lost, said on every teardown (#161).
+     *
+     * DH_NOTE_BOARD_AT_END next door reports what the board took; this reports
+     * what it could not take, and the two are only useful together. An
+     * eviction where the board says it heard nothing while this end has frames
+     * out over the window is either a report the board dropped — which breaks
+     * the byte stream unrecoverably, so nothing after it completes — or
+     * something else entirely, and until now no log could tell them apart:
+     * the drop totals were printed only by a stalled *transfer*, which an
+     * eviction is not.
+     *
+     * a = inbound reports the board's USB callback could not hand on,
+     * b = frames from the peer board core 0 had not drained.
+     */
+    DH_NOTE_BOARD_LOST_AT_END = 37,
+    /*
      * What the board got out to this helper, said on every teardown (#143).
      *
      * The mirror of DH_NOTE_BOARD_AT_END, which reads the *inbound* chain from

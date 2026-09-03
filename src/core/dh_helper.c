@@ -887,9 +887,15 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
     /* Both halves of the disagreement, in the order they are read: what the
        board says it heard, then what this end says it sent. Said *before*
        drop_connection, because that clears the board's totals (#107). */
-    if (h->have_device_drops)
+    if (h->have_device_drops) {
         put_note(o, DH_NOTE_BOARD_AT_END, (int32_t)h->device_drops.frames_in,
                  (int32_t)h->device_drops.reports_in);
+        /* What it could not take, beside what it took (#161). Said here for the
+           same reason the line above is: drop_connection clears these, so a
+           platform reading them afterwards reads zeros. */
+        put_note(o, DH_NOTE_BOARD_LOST_AT_END, (int32_t)h->device_drops.reports,
+                 (int32_t)h->device_drops.inbound);
+    }
     put_note(o, DH_NOTE_LOCAL_SENDS, (int32_t)h->sends_total, (int32_t)h->sends_refused);
     drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason,
                     (int32_t)sends_in_window(h));
