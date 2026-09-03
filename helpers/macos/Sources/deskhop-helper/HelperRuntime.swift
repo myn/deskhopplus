@@ -116,6 +116,23 @@ final class HelperRuntime: HelperEffects {
     private var now: TimeInterval { Self.elapsed }
 
     func run() {
+        /*
+         * Before anything else, and before anything touches AppKit.
+         *
+         * `NSStatusBar.system` reaches the window server, and a process that
+         * has not created its `NSApplication` has no connection to reach it
+         * through: CoreGraphics asserts inside `CGSConnectionByID` and
+         * **aborts the process**. That is not a theoretical ordering rule —
+         * building the menu bar before this line crash-looped the helper every
+         * ten seconds under launchd, taking cursor placement and the clipboard
+         * with it, while the log showed only the key id and an assertion.
+         *
+         * `.accessory` is what keeps an AppKit application from costing a Dock
+         * icon and an app-switcher entry. This is still a background helper.
+         */
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
+
         transport.log = { message in Self.note(message) }
         transport.onEvent = { [weak self] event in self?.feed(event) }
 
@@ -171,6 +188,26 @@ final class HelperRuntime: HelperEffects {
            working on (FileStore). */
         files.collectGarbage()
 
+        /*
+         * The menu bar is an enhancement, never a dependency — the same rule
+         * #42 states for the helper itself, applied one layer in. Placement
+         * and the clipboard are what this process is for, and neither may be
+         * lost because a status item could not be made.
+         *
+         * Guarded rather than trusted, because the failure is an abort inside
+         * CoreGraphics that no `catch` in this language can see: a process
+         * outside a GUI login session has no session dictionary, and asking
+         * first is the only way to not ask the window server at all.
+         */
+        guard MenuBar.canAttach else {
+            Self.note("no window server in this login session, so there is no menu bar; "
+                      + "cursor placement and the clipboard are unaffected")
+            startTimersAndTransport()
+            application.run()
+            return
+        }
+
+        menuBar.log = { message in Self.note(message) }
         menuBar.attach(callbacks: MenuBar.Callbacks(
             acceptFiles: { [weak self] id in
                 guard let self else { return }
@@ -191,31 +228,26 @@ final class HelperRuntime: HelperEffects {
             },
             quit: { NSApplication.shared.terminate(nil) }))
 
+        startTimersAndTransport()
+        /* Separate from the session tick, and slower: what the menu bar shows
+           changes at human speed. */
+        Timer.scheduledTimer(withTimeInterval: MenuBar.progressInterval,
+                             repeats: true) { [weak self] _ in
+            self?.refreshProgress()
+        }
+        application.run()
+    }
+
+    /// Everything the helper needs to do its job, with no user interface in it.
+    private func startTimersAndTransport() {
         transport.start()
         pasteboard.start()
 
         Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
             self?.feed(.tick)
         }
-        /* Separate from the session tick, and slower: what the menu bar shows
-           changes at human speed, and rebuilding a menu the user has open
-           closes it under them. */
-        Timer.scheduledTimer(withTimeInterval: MenuBar.progressInterval,
-                             repeats: true) { [weak self] _ in
-            self?.refreshProgress()
-        }
 
         Self.note("deskhop helper started; waiting for the channel")
-        /*
-         * `NSApplication.run`, not `RunLoop.current.run`: the menu bar item is
-         * AppKit and needs an application to belong to. Every timer above is
-         * on the main run loop, which this turns.
-         *
-         * `.accessory` is what keeps that from costing a Dock icon and an app
-         * switcher entry — this is a background helper, and it stays one.
-         */
-        NSApplication.shared.setActivationPolicy(.accessory)
-        NSApplication.shared.run()
     }
 
     /// Push the arriving transfer's progress to the menu bar, and only when it

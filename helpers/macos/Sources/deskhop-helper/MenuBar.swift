@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import DeskhopChannel
 import Foundation
 
@@ -53,6 +54,9 @@ final class MenuBar: NSObject, NSMenuDelegate {
     /// is not paying for its own progress display.
     static let progressInterval: TimeInterval = 0.5
 
+    /// Diagnostics, never shown to the user.
+    var log: ((String) -> Void)?
+
     private var item: NSStatusItem?
     private var callbacks: Callbacks?
     private var state: HelperState = .quiet
@@ -60,7 +64,38 @@ final class MenuBar: NSObject, NSMenuDelegate {
     private var panel: NSPanel?
     private var progress: (received: UInt64, total: UInt64)?
 
+    /*
+     * Whether there is a window server to attach to.
+     *
+     * `NSStatusBar.system` does not fail politely without one: CoreGraphics
+     * asserts and aborts the process, which no `catch` in this language can
+     * see. So the question is asked before the window server is touched at
+     * all, and a login session that has none — an ssh login, a launchd job
+     * outside the GUI domain — simply gets no menu bar.
+     *
+     * The session dictionary is the documented way to ask. It is nil outside a
+     * GUI login session and is safe to call with no connection, which is the
+     * whole reason it is what is asked.
+     */
+    static var canAttach: Bool { CGSessionCopyCurrentDictionary() != nil }
+
     func attach(callbacks: Callbacks) {
+        /*
+         * `NSApp` is nil until something has created the application, and
+         * `NSStatusBar.system` reached before that aborts the process inside
+         * CoreGraphics rather than failing. Checked here, at the one place
+         * that touches the status bar, so that getting the caller's ordering
+         * wrong costs a log line and no menu bar — never the helper.
+         *
+         * The rule this enforces is #42's, one layer in: cursor placement and
+         * the clipboard are what this process is for, and neither may be lost
+         * because a status item could not be made.
+         */
+        guard NSApp != nil else {
+            log?("the menu bar was asked for before the application existed, so there is none; "
+                 + "cursor placement and the clipboard are unaffected")
+            return
+        }
         self.callbacks = callbacks
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = Self.idleTitle
