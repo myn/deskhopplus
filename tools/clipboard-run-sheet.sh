@@ -4,6 +4,7 @@
 # hand and written up by hand, and both halves of that are avoidable.
 #
 #   ./tools/clipboard-run-sheet.sh files     make the fixtures, once
+#   ./tools/clipboard-run-sheet.sh mark      draw a line under the logs, before a sitting
 #   ./tools/clipboard-run-sheet.sh sheet     print the steps to work through
 #   ./tools/clipboard-run-sheet.sh watch     follow both logs and say what happens
 #   ./tools/clipboard-run-sheet.sh report    what the logs say about the last run
@@ -25,6 +26,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 MAC_LOG="${MAC_LOG:-/tmp/deskhop-helper.log}"
 WIN_LOG="${WIN_LOG:-/Volumes/Share/deleteme/deskhop-helper-windows/helper.log}"
 FIXTURES="${FIXTURES:-$HOME/deskhop-clipboard-fixtures}"
+MARKS="${MARKS:-$HOME/.deskhop-run-sheet-marks}"
 
 bold=$'\033[1m'; dim=$'\033[2m'; red=$'\033[31m'; green=$'\033[32m'
 yellow=$'\033[33m'; blue=$'\033[34m'; off=$'\033[0m'
@@ -79,6 +81,7 @@ sheet() {
 ${bold}The clipboard run sheet — #56${off}
 
 Fixtures: $FIXTURES   (run '$0 files' first)
+Run '$0 mark' first, so the counts cover this sitting only.
 Start '$0 watch' in another window. It will say what each step did.
 
 ${bold}Before anything${off}
@@ -155,7 +158,9 @@ interpret() {
         *"no longer waiting to be asked for"*) out="accepted too late; the transfer had already gone"; level="bad" ;;
         *"size cap is now"*)                 out="${line#*] }" ;;
         *"clipboard policy"*)                out="${line#*: }" ;;
-        *"liveness timeout"*)                out="EVICTED BY THE BOARD MID-TRANSFER (#161)"; level="bad" ;;
+        *"liveness timeout"*)                out="EVICTED — the board saw no sign of life (#161)"; level="bad" ;;
+        *"stream had a gap in it"*)          out="EVICTED — the board dropped a report (#161)"; level="bad" ;;
+        *"inbound lost"*)                    out="${line#*: }" ;;
         *"Reconnecting repeatedly"*)         out="reconnecting repeatedly (#161)"; level="bad" ;;
         *"made no progress for 30s"*)        out="a transfer was abandoned after 30s of silence"; level="bad" ;;
         *"made no progress for 2s"*)         out="a receive stalled and asked again" ;;
@@ -193,13 +198,42 @@ decode_stream() {
 
 # ------------------------------------------------------------------ report
 
+# Both logs are appended to forever, so a plain count reports every crash and
+# eviction the machine has ever had. A mark records where each log stands now,
+# and `report` counts only past it — which is what a sitting actually wants to
+# know.
+mark() {
+    : > "$MARKS"
+    local path n
+    for path in "$MAC_LOG" "$WIN_LOG"; do
+        n=0
+        [ -f "$path" ] && n="$(wc -c < "$path" | tr -d " ")"
+        printf '%s\t%s\n' "$path" "$n" >> "$MARKS"
+    done
+    printf '%s\n' "${green}marked — report now counts only what happens from here${off}"
+}
+
+# Bytes to skip in one log. Zero when there is no mark, and zero again when the
+# log is shorter than its mark, which means it was rotated or replaced.
+mark_offset() {
+    local path="$1" want size
+    want="$(awk -F'\t' -v p="$path" '$1 == p { print $2 }' "$MARKS" 2>/dev/null)"
+    [ -n "${want:-}" ] || { echo 0; return; }
+    size="$(wc -c < "$path" 2>/dev/null | tr -d " ")"
+    [ "${size:-0}" -lt "$want" ] && { echo 0; return; }
+    echo "$want"
+}
+
 report() {
     printf '%s\n' "${bold}What the logs say about the last run${off}"
+    [ -f "$MARKS" ] || printf '%s\n' \
+        "${yellow}no mark set — these are whole-log totals, including old runs.${off}"
     for pair in "mac:$MAC_LOG" "windows:$WIN_LOG"; do
         local name="${pair%%:*}" path="${pair#*:}"
         echo
         printf '%s\n' "${bold}$name${off}  $path"
         [ -f "$path" ] || { printf '  %s\n' "${yellow}not readable${off}"; continue; }
+        OFF="$(mark_offset "$path")"
         count "$path" "offers put to the user"        "offered from the other computer"
         count "$path" "accepted"                      "were accepted here and asked for"
         count "$path" "declined"                      "were declined here"
@@ -208,7 +242,8 @@ report() {
         count "$path" "offers refused"                "so it was refused"
         count "$path" "payload/list mismatches"       "did not match the"       bad
         count "$path" "accepted too late"             "no longer waiting to be asked for" bad
-        count "$path" "board evictions (#161)"        "liveness timeout"        bad
+        count "$path" "evicted, no sign of life (#161)" "liveness timeout"      bad
+        count "$path" "evicted, lost report (#161)"    "stream had a gap in it"  bad
         count "$path" "helper crashes"                "Assertion failed"        bad
     done
     echo
@@ -219,7 +254,8 @@ count() {
     local path="$1" label="$2" needle="$3" level="${4:-}"
     # grep -c prints the count and still exits 1 when it is zero, so the exit
     # status is discarded and the number it printed is kept.
-    local n; n="$(grep -cF -- "$needle" "$path" 2>/dev/null)" || true
+    local n; n="$(tail -c "+$(( ${OFF:-0} + 1 ))" "$path" 2>/dev/null |
+                  grep -cF -- "$needle")" || true
     n="${n:-0}"
     local mark="  "
     [ "$level" = bad ] && [ "$n" -gt 0 ] && mark="${red}!!${off}"
@@ -228,8 +264,9 @@ count() {
 
 case "${1:-sheet}" in
     files)  make_files ;;
+    mark)   mark ;;
     sheet)  sheet ;;
     watch)  watch_logs | decode_stream ;;
     report) report ;;
-    *)      printf 'usage: %s {files|sheet|watch|report}\n' "$0"; exit 2 ;;
+    *)      printf 'usage: %s {files|mark|sheet|watch|report}\n' "$0"; exit 2 ;;
 esac
