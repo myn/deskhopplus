@@ -68,6 +68,9 @@ constexpr wchar_t kInstanceMutex[] = L"Local\\deskhopplus-helper";
    macOS helper ticks at. ADR-0004's interval is a second; a quarter of it
    leaves room for the wait to be woken by something else first. */
 constexpr uint32_t kTickMs = 250;
+/* The timer that keeps the beat alive inside a modal message loop; see
+   WM_TIMER in Helper::on_message (#161). */
+constexpr UINT_PTR kBeatTimerId = 1;
 
 /* How often to re-sweep while no channel has been found (#157). Long enough
    that an absent device costs one SetupAPI enumeration a second and nothing
@@ -457,6 +460,9 @@ bool Helper::start(HINSTANCE instance) {
     };
 
     last_tick_ = last_rescan_ = now_ms();
+    /* Runs for the life of the window, so that every modal loop is covered and
+       not just the tray menu (#161). */
+    SetTimer(window_, kBeatTimerId, kTickMs, nullptr);
     log("deskhop helper started; waiting for the channel");
     transport_.start(window_, std::move(events));
     return true;
@@ -660,6 +666,27 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
     }
 
     switch (message) {
+    case WM_TIMER:
+        /*
+         * The heartbeat, kept going while something else owns this thread.
+         *
+         * `TrackPopupMenu` runs its own message loop and does not return until
+         * the user picks or dismisses, so the loop in `run()` — and with it the
+         * beat ADR-0004 owes the board — stopped for as long as the tray menu
+         * was open. The board evicts a helper it has not heard from for three
+         * seconds, so opening the menu to accept a file was the thing that
+         * killed the transfer (#161).
+         *
+         * A timer on this window is dispatched by a modal loop as well as by
+         * ours, so this covers every one of them rather than the menu alone.
+         * Only the session tick: the clipboard pump can wait for the menu to
+         * close, where the beat cannot.
+         */
+        if (w == kBeatTimerId) {
+            feed(session_->tick(now_ms()));
+            return 0;
+        }
+        break;
     case WM_DEVICECHANGE:
         /*
          * Any device event re-sweeps, and re-sweeping is also how a refusal

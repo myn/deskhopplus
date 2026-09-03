@@ -166,6 +166,7 @@ interpret() {
         *"liveness timeout"*)                out="EVICTED — the board saw no sign of life (#161)"; level="bad" ;;
         *"stream had a gap in it"*)          out="EVICTED — the board dropped a report (#161)"; level="bad" ;;
         *"inbound lost"*)                    out="${line#*: }" ;;
+        *"before that the board's USB took"*) out="${line#*: }"; level="bad" ;;
         *"Reconnecting repeatedly"*)         out="reconnecting repeatedly (#161)"; level="bad" ;;
         *"made no progress for 30s"*)        out="a transfer was abandoned after 30s of silence"; level="bad" ;;
         *"made no progress for 2s"*)         out="a receive stalled and asked again" ;;

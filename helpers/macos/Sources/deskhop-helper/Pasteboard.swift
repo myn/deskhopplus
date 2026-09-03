@@ -86,10 +86,13 @@ final class Pasteboard {
     }
 
     func start() {
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) {
-            [weak self] _ in
+        /* `.common`, not the default mode `Timer.scheduledTimer` would give it:
+           a menu open on screen must not stop the helper noticing a copy. See
+           HelperRuntime.everyMode for what that cost (#161). */
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
 

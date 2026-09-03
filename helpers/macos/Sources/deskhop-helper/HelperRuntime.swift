@@ -239,10 +239,7 @@ final class HelperRuntime: HelperEffects {
         startTimersAndTransport()
         /* Separate from the session tick, and slower: what the menu bar shows
            changes at human speed. */
-        Timer.scheduledTimer(withTimeInterval: MenuBar.progressInterval,
-                             repeats: true) { [weak self] _ in
-            self?.refreshProgress()
-        }
+        Self.everyMode(MenuBar.progressInterval) { [weak self] in self?.refreshProgress() }
         application.run()
     }
 
@@ -251,11 +248,32 @@ final class HelperRuntime: HelperEffects {
         transport.start()
         pasteboard.start()
 
-        Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
-            self?.feed(.tick)
-        }
+        Self.everyMode(Self.tickInterval) { [weak self] in self?.feed(.tick) }
 
         Self.note("deskhop helper started; waiting for the channel")
+    }
+
+    /*
+     * A repeating timer that keeps running while the user is in a menu.
+     *
+     * `Timer.scheduledTimer` puts a timer in the run loop's *default* mode
+     * only, and AppKit runs the loop in `.eventTracking` for as long as a menu
+     * is open — so every timer here stopped the moment the user opened the
+     * menu bar item, and started again when they closed it. That is: the tick
+     * that sends the heartbeat stopped, the board heard nothing, and it evicted
+     * the helper after three seconds. Opening the menu to accept a file was
+     * therefore the thing that killed the transfer (#161).
+     *
+     * `.common` is the set that includes both, which is what a timer doing work
+     * on the helper's behalf — rather than driving something the user is
+     * looking at — has always wanted.
+     */
+    @discardableResult
+    private static func everyMode(_ interval: TimeInterval,
+                                  _ body: @escaping () -> Void) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in body() }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
     }
 
     /// Push the arriving transfer's progress to the menu bar, and only when it
