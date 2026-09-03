@@ -94,9 +94,14 @@ private let threeFilePayload: [UInt8] = Array("helloworld other".utf8)
  * transfer is a fraction of a second and asking about it is how the prompt
  * that matters gets dismissed unread.
  */
-private let bigFiles = [FileListEntry(name: "big.bin", size: 300 * 1024)]
-private let bigPayload = [UInt8](repeating: 0x5a, count: 300 * 1024)
-private func bigPair() -> Pair { Pair(capacity: 1024 * 1024) }
+/* Derived from the threshold, never written out. A fixture pinned to whatever
+   the constant happened to be when it was written stops testing the question
+   the moment the constant moves past it — quietly, which is worse than a
+   failure. */
+private let bigSize = ClipboardService.filePromptThreshold + 1024
+private let bigFiles = [FileListEntry(name: "big.bin", size: UInt64(bigSize))]
+private let bigPayload = [UInt8](repeating: 0x5a, count: bigSize)
+private func bigPair() -> Pair { Pair(capacity: bigSize + 4096) }
 
 private func testFilesCrossTheLink() {
     let pair = Pair()
@@ -490,12 +495,16 @@ private func testAnAcceptedTransferReportsProgress() {
 
     Check.that(pair.b.arriving == nil, "a held offer reported itself as arriving")
     guard let offer = pair.fileQuestions.first?.offer else {
-        Check.that(false, "no question was asked about a 300 KB set")
+        Check.that(false, "no question was asked about a set over the line")
         return
     }
-    Check.equal(offer.total, 300 * 1024, "the question named the wrong size")
-    Check.that(offer.estimatedSeconds >= 6,
-               "the estimate for 300 KB at the measured rate is implausibly short")
+    Check.equal(offer.total, UInt64(bigSize), "the question named the wrong size")
+    /* The estimate is the whole point of the question: it is what the user
+       weighs. Checked against the rate rather than a number, so it stays a
+       check on the arithmetic and not on today's constants. */
+    let expected = bigSize / ClipboardService.measuredBytesPerSecond
+    Check.that(offer.estimatedSeconds >= expected,
+               "the estimate is shorter than the measured rate allows")
 
     pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
     Check.equal(pair.filesToB.count, 1, "the accepted set did not arrive")

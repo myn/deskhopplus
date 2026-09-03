@@ -1062,10 +1062,18 @@ std::vector<uint8_t> three_file_payload() { return bytes_of("helloworld other");
    The set above deliberately is not: below the threshold a transfer is a
    fraction of a second, and asking about it is how the prompt that matters
    gets dismissed unread. */
+/* Derived from the threshold, never written out. A fixture pinned to whatever
+   the constant happened to be when it was written stops testing the question
+   the moment the constant moves past it — quietly, which is worse than a
+   failure. `big_capacity` sizes the pair that carries it. */
+constexpr uint64_t big_size = ClipService::kFilePromptThreshold + 1024u;
+constexpr size_t big_capacity = static_cast<size_t>(big_size) + 4096u;
 std::vector<deskhop::FileEntry> big_files() {
-    return {deskhop::FileEntry{"big.bin", 300u * 1024u}};
+    return {deskhop::FileEntry{"big.bin", big_size}};
 }
-std::vector<uint8_t> big_payload() { return std::vector<uint8_t>(300u * 1024u, 0x5a); }
+std::vector<uint8_t> big_payload() {
+    return std::vector<uint8_t>(static_cast<size_t>(big_size), 0x5a);
+}
 
 /*
  * A copy made while the link is reconnecting is held, not thrown away.
@@ -1078,7 +1086,7 @@ std::vector<uint8_t> big_payload() { return std::vector<uint8_t>(300u * 1024u, 0
  * out, and the wait is on the record.
  */
 void test_a_copy_waiting_for_a_seal_survives_a_session_end() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
 
     /* The seal offer is lost, so the copy has no key and has to wait. */
     pair.drop_next[DH_MSG_SEAL_OFFER] = 1;
@@ -1116,7 +1124,7 @@ void test_files_cross_the_link() {
 /* The whole of #56, in one check: a copy costs nothing until someone on the
    other computer says yes. */
 void test_files_are_not_read_until_accepted() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     int reads = 0;
 
@@ -1138,7 +1146,7 @@ void test_files_are_not_read_until_accepted() {
 }
 
 void test_declining_files_reads_nothing() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.accept_file_offers = false;
     int reads = 0;
 
@@ -1161,7 +1169,7 @@ void test_small_file_sets_skip_the_question() {
 }
 
 void test_several_files_split_correctly() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     const std::vector<deskhop::FileEntry> files = {deskhop::FileEntry{"a", 1000},
                                                    deskhop::FileEntry{"b", 1},
                                                    deskhop::FileEntry{"c", 2000}};
@@ -1264,7 +1272,7 @@ void test_files_over_the_cap_are_refused() {
 }
 
 void test_the_boards_size_cap_is_applied() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
 
     /* The board says one megabyte. What was already in force is irrelevant —
@@ -1282,7 +1290,7 @@ void test_the_boards_size_cap_is_applied() {
 }
 
 void test_a_held_question_is_withdrawn() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");
@@ -1307,7 +1315,7 @@ void test_a_held_question_is_withdrawn() {
  * directions (#136), so the id on the failure cannot say which one it was.
  */
 void test_a_failed_send_leaves_a_healthy_receive_alone() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");
@@ -1350,7 +1358,7 @@ void test_a_failed_send_leaves_a_healthy_receive_alone() {
  * does nothing and says nothing either.
  */
 void test_a_newer_copy_withdraws_a_held_question() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");
@@ -1375,7 +1383,7 @@ void test_a_newer_copy_withdraws_a_held_question() {
  * the size cap sizes stays pinned while it stands.
  */
 void test_an_unanswered_question_is_declined_in_the_end() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");
@@ -1430,7 +1438,7 @@ void test_an_over_cap_set_is_never_put_to_the_user() {
  * Hardware, 2026-09-02: one file produced three toasts and three Accepts.
  */
 void test_offer_retries_do_not_re_ask_after_the_answer() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");
@@ -1478,17 +1486,21 @@ void test_an_accept_that_cannot_run_poisons_nothing() {
 }
 
 void test_an_accepted_transfer_reports_progress() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
 
     CHECK(!pair.b.arriving(nullptr, nullptr, nullptr),
           "a held offer reported itself as arriving");
-    CHECK(!pair.file_questions.empty(), "no question was asked about a 300 KB set");
+    CHECK(!pair.file_questions.empty(), "no question was asked about a set over the line");
     if (pair.file_questions.empty()) return;
-    CHECK(pair.file_questions[0].total == 300u * 1024u, "the question named the wrong size");
-    CHECK(pair.file_questions[0].estimated_seconds() >= 6,
-          "the estimate for 300 KB at the measured rate is implausibly short");
+    CHECK(pair.file_questions[0].total == big_size, "the question named the wrong size");
+    /* The estimate is the whole point of the question: it is what the user
+       weighs. Checked against the rate rather than a number, so it stays a
+       check on the arithmetic and not on today's constants. */
+    CHECK(pair.file_questions[0].estimated_seconds() >=
+              big_size / ClipService::kMeasuredBytesPerSecond,
+          "the estimate is shorter than the measured rate allows");
 
     pair.settle(pair.b.accept_files(pair.file_questions[0].id), Side::B);
     CHECK(pair.files_to_b.size() == 1, "the accepted set did not arrive");
@@ -1497,7 +1509,7 @@ void test_an_accepted_transfer_reports_progress() {
 }
 
 void test_a_transfer_can_be_aborted_here() {
-    Pair pair(1024u * 1024u);
+    Pair pair(big_capacity);
     pair.answer_file_offers = false;
     pair.copy_files_on_a(big_files(), big_payload());
     CHECK(!pair.file_questions.empty(), "no question was asked");

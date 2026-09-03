@@ -915,6 +915,13 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
         have_incoming_files_ = true;
         append(outputs, render(actions, dh_xfer_request_lazy(xfer_.get(), offer.id, actions,
                                                              kActionCapacity)));
+        /* Said out loud. A set under the line crosses with no question, and from
+           the desk that is indistinguishable from a question that failed to
+           appear — which is exactly how it was reported. */
+        outputs.push_back(note(std::to_string(files.size()) + " file(s), " +
+                               std::to_string(offer.total) + " bytes, are under the " +
+                               std::to_string(kFilePromptThreshold / (1024u * 1024u)) +
+                               " MB line, so they were taken without asking"));
         return outputs;
     }
 

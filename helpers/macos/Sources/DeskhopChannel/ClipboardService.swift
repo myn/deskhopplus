@@ -78,7 +78,7 @@ public final class ClipboardService {
      * quarter-second transfer is a dialog the user learns to dismiss without
      * reading — which is how the one that matters gets dismissed too.
      */
-    public static let filePromptThreshold = 256 * 1024
+    public static let filePromptThreshold = 1024 * 1024
 
     /*
      * The end-to-end rate #39 measured, in bytes per second. It is what turns
@@ -859,7 +859,13 @@ public final class ClipboardService {
 
         if offer.total <= UInt64(Self.filePromptThreshold) {
             incomingFiles = files
+            /* Said out loud. A set under the line crosses with no question, and
+               from the desk that is indistinguishable from a question that
+               failed to appear — which is exactly how it was reported. */
             return outputs + render(transfer.requestLazy(id: offer.id))
+                + [.note("\(files.count) file(s), \(offer.total) bytes, are under the "
+                         + "\(Self.filePromptThreshold / (1024 * 1024)) MB line, so they were "
+                         + "taken without asking")]
         }
         heldFileOffer = waiting
         /* Armed by the tick that follows, not here: no clock is read on a path

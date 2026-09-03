@@ -109,7 +109,7 @@ class ClipService {
      * quarter-second transfer is a dialog the user learns to dismiss without
      * reading — which is how the one that matters gets dismissed too.
      */
-    static constexpr uint64_t kFilePromptThreshold = 256u * 1024u;
+    static constexpr uint64_t kFilePromptThreshold = 1024u * 1024u;
 
     /*
      * The end-to-end rate #39 measured, in bytes per second, which is what

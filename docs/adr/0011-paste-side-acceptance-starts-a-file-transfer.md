@@ -24,7 +24,7 @@ offer carries the file list alone, and a folder copied and never pasted is never
 transfer then runs with progress and a cancel, and the files are published as ordinary references
 once complete, so the paste itself is instant and no application is ever blocked.
 
-**Sets at or below 256 KB are accepted without asking**, and that is a second deviation from the
+**Sets at or below 1 MB are accepted without asking**, and that is a second deviation from the
 same criterion rather than a detail of the first: their bytes cross on the copy, with no paste and
 no decision. It buys back what acceptance costs for the common case — under a second at the
 measured rate — and the alternative is worse than the deviation, because a dialog for a

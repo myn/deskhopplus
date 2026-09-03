@@ -40,10 +40,10 @@ yellow=$'\033[33m'; blue=$'\033[34m'; off=$'\033[0m'
 # far side of a boundary the code actually branches on.
 make_files() {
     mkdir -p "$FIXTURES"
-    # Under the 256 KB prompt threshold: must cross with no question at all.
+    # Under the 1 MB prompt threshold: must cross with no question at all.
     mk 200K quiet-200K.bin
-    # Over the prompt threshold, under every cap: one question, one transfer.
-    mk 400K asks-400K.bin
+    # Under the 1 MB prompt threshold as well — still no question.
+    mk 400K quiet-400K.bin
     # Over a 2 MB cap, under the 10 MB default. The pair for the cap test.
     mk 2600K over-2mb-cap.bin
     # Comfortably under the default cap, long enough to watch progress move.
@@ -94,7 +94,8 @@ ${bold}Before anything${off}
 
 ${bold}Mac to Windows${off}
   1. quiet-200K.bin        expect: arrives, ${bold}no question${off}
-  2. asks-400K.bin         expect: one question, accept, arrives
+  2. quiet-400K.bin        expect: arrives, ${bold}still no question${off}
+                           (the line is 1 MB — a set under it never asks)
   3. set-of-three/         copy all three files together
                            expect: one question, all three arrive, the empty
                            one is empty and the third is not truncated
@@ -116,7 +117,7 @@ ${bold}The size cap${off}
   9. Set the cap to 2 MB on the config page (field ${bold}Clipboard size cap (MB)${off}),
      on ${bold}both boards${off}.
  10. over-2mb-cap.bin      expect: ${bold}refused, no question${off}
- 11. asks-400K.bin         expect: still works
+ 11. quiet-400K.bin        expect: still works
  12. Put the cap back to 10.
 
 ${bold}Lifecycle${off}
