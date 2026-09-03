@@ -1,5 +1,7 @@
 #include "clip_service.h"
 
+#include <algorithm>
+
 #include <cstring>
 
 #include "dh_clip.h"
@@ -345,6 +347,10 @@ std::vector<ClipOutput> ClipService::session_ended() {
     have_incoming_files_ = false;
     incoming_files_.clear();
     reoffer_when_sealed_ = false;
+    /* Both halves of the exchange belong to the session that made them. */
+    outstanding_offer_.clear();
+    answered_offer_.clear();
+    last_accept_.clear();
 
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> rendered;
@@ -552,7 +558,7 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
                                "s and was abandoned (" + board + ")"));
     } else if (now_ms - seal_retry_since_ >= kSweepDelayMs) {
         seal_retry_since_ = now_ms;
-        append(outputs, offer_seal());
+        append(outputs, resend_seal_offer());
     }
 
     /* Unsigned differences throughout, so a wrapping millisecond counter is
@@ -679,6 +685,19 @@ std::vector<ClipOutput> ClipService::received(uint8_t type, const uint8_t *body,
  * state in which it cannot be sending anything.
  */
 std::vector<ClipOutput> ClipService::on_seal_offered(const uint8_t *body, size_t len) {
+    /*
+     * The same offer again, compared as bytes — a retry re-sends it verbatim,
+     * so equality is the whole test and no parse of the body is needed.
+     * Answering it with a freshly derived key would leave this end holding one
+     * the offerer can never arrive at, because the offerer is still answering
+     * the first accept; it would also reset a receive that is not being
+     * replaced at all.
+     */
+    if (!answered_offer_.empty() && answered_offer_.size() == len &&
+        std::equal(answered_offer_.begin(), answered_offer_.end(), body)) {
+        return {send(DH_MSG_SEAL_ACCEPT, last_accept_.data(), last_accept_.size())};
+    }
+
     uint8_t reply[DH_SEAL_EXCHANGE_LEN];
     uint8_t nonce[DH_NONCE_SIZE];
     draw(nonce, sizeof nonce);
@@ -696,6 +715,8 @@ std::vector<ClipOutput> ClipService::on_seal_offered(const uint8_t *body, size_t
         const dh_seal_result rc = dh_seal_rx_offered(&seal_rx_, body, len, eph_private, nonce,
                                                      reply, sizeof reply, &written);
         if (rc == DH_SEAL_OK) {
+            answered_offer_.assign(body, body + len);
+            last_accept_.assign(reply, reply + written);
             std::vector<ClipOutput> outputs{send(DH_MSG_SEAL_ACCEPT, reply, written)};
             dh_xfer_action actions[kActionCapacity];
             const size_t n = dh_xfer_rx_seal_replaced(xfer_.get(), actions, kActionCapacity);
@@ -712,6 +733,7 @@ std::vector<ClipOutput> ClipService::on_seal_accepted(const uint8_t *body, size_
     const dh_seal_result rc = dh_seal_tx_accepted(&seal_tx_, body, len);
     if (rc != DH_SEAL_OK)
         return {note("a seal accept could not be used: error " + std::to_string(rc))};
+    outstanding_offer_.clear();
 
     /* The copy that was waiting for exactly this, or the transfer a stale seal
        knocked back to the start. */
@@ -730,6 +752,7 @@ std::vector<ClipOutput> ClipService::on_seal_stale(const uint8_t *body, size_t l
     /* A stale naming some other seal changes nothing: this end has already
        moved on, and re-offering would restart a transfer that is working. */
     if (!dh_seal_tx_stale(&seal_tx_, seal_id)) return {};
+    outstanding_offer_.clear();
 
     if (!have_pending_) {
         dh_clip_offer current{};
@@ -1108,7 +1131,30 @@ std::vector<ClipOutput> ClipService::reoffer() {
     return render(actions, n);
 }
 
+/*
+ * Ask for a seal, if this end has not asked already. Sending the outstanding
+ * offer again belongs to `resend_seal_offer` and not here: two identical offers
+ * in one pass buy nothing and make the peer answer twice.
+ */
 std::vector<ClipOutput> ClipService::offer_seal() {
+    if (!outstanding_offer_.empty()) return {};
+    return resend_seal_offer();
+}
+
+/*
+ * The retry: the same bytes again, because the peer may be answering them at
+ * this moment.
+ *
+ * `dh_seal_tx_offer` draws a new seal id and a new ephemeral key — the offerer
+ * owns the seal — so minting a fresh offer on every retry threw away the key
+ * the peer was answering, and the accept came back naming an id this end no
+ * longer knew (DH_SEAL_ERR_UNKNOWN_ID). On a link whose round trip runs past
+ * kSweepDelayMs that is a livelock, not a race: nothing is ever sealed and no
+ * file is ever offered (#161).
+ */
+std::vector<ClipOutput> ClipService::resend_seal_offer() {
+    if (!outstanding_offer_.empty())
+        return {send(DH_MSG_SEAL_OFFER, outstanding_offer_.data(), outstanding_offer_.size())};
     if (aead_ == nullptr) {
         have_pending_ = false;
         pending_.clear();
@@ -1133,7 +1179,10 @@ std::vector<ClipOutput> ClipService::offer_seal() {
         size_t written = 0;
         const dh_seal_result rc = dh_seal_tx_offer(&seal_tx_, seal_id, eph_private, nonce, out,
                                                    sizeof out, &written);
-        if (rc == DH_SEAL_OK) return {send(DH_MSG_SEAL_OFFER, out, written)};
+        if (rc == DH_SEAL_OK) {
+            outstanding_offer_.assign(out, out + written);
+            return {send(DH_MSG_SEAL_OFFER, out, written)};
+        }
         if (rc != DH_SEAL_ERR_KEY) break;
     }
 

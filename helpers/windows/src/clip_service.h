@@ -300,6 +300,7 @@ class ClipService {
     std::vector<ClipOutput> start_pending_if_sealed();
     std::string describe_pending() const;
     std::vector<ClipOutput> offer_seal();
+    std::vector<ClipOutput> resend_seal_offer();
     std::vector<ClipOutput> stale_reply(uint8_t type, const uint8_t *body, size_t len);
     std::vector<ClipOutput> render(const dh_xfer_action *actions, size_t count);
     std::vector<ClipOutput> sealed_offer();
@@ -354,6 +355,12 @@ class ClipService {
        holds no key for the seal. Once a fresh seal is accepted it has to start
        again, rather than carry on into a far end that never saw its offer. */
     bool reoffer_when_sealed_{false};
+    /* The exchange, made idempotent under retransmission (#161): the offer this
+       end is still waiting on, and the answer it already gave to an offer, both
+       repeated verbatim rather than derived again. */
+    std::vector<uint8_t> outstanding_offer_;
+    std::vector<uint8_t> answered_offer_;
+    std::vector<uint8_t> last_accept_;
     uint32_t lazy_image_id_{0};
 
     /*

@@ -217,6 +217,24 @@ public final class ClipboardService {
      * far end that never saw its offer.
      */
     private var reofferWhenSealed = false
+    /*
+     * The handshake, made idempotent under retransmission (#161).
+     *
+     * `Seal.offer()` draws a new seal id and a new ephemeral key on every call
+     * — the offerer owns the seal — and `Seal.accept(offer:)` draws a fresh one
+     * on every call too. So a retry of either half silently replaced the key
+     * the other half was at that moment answering. On a link whose round trip
+     * runs past `sweepDelay` that is a livelock, not a race: every accept names
+     * an offer already superseded, nothing is ever sealed, and no file is ever
+     * offered.
+     *
+     * Both halves are now repeated verbatim. A retry re-sends the outstanding
+     * offer, and an offer already answered is answered with the same accept —
+     * which is the idempotence ADR-0009 gives the transfer layer, applied to
+     * the exchange underneath it.
+     */
+    private var outstandingSealOffer: [UInt8]?
+    private var lastSealAnswer: (offer: [UInt8], accept: [UInt8])?
     private var lazyImageID: UInt32?
 
     /*
@@ -439,6 +457,9 @@ public final class ClipboardService {
         reofferWhenSealed = false
         outgoingProvider = nil
         incomingFiles = nil
+        /* Both halves of the exchange belong to the session that made them. */
+        outstandingSealOffer = nil
+        lastSealAnswer = nil
         /*
          * A copy still waiting for a seal is *kept*. What is on the clipboard
          * does not change because the link wobbled, and the pasteboard is only
@@ -547,7 +568,7 @@ public final class ClipboardService {
                                  + "\(Int(Self.stallTimeout))s and was abandoned (\(drops))"))
         } else if now - (sealRetrySince ?? now) >= Self.sweepDelay {
             sealRetrySince = now
-            outputs += offerSeal()
+            outputs += resendSealOffer()
         }
 
         if !transfer.isSending {
@@ -662,12 +683,24 @@ public final class ClipboardService {
      * exactly the state in which it cannot be sending anything.
      */
     private func onSealOffered(_ body: [UInt8]) -> [ClipboardOutput] {
+        /*
+         * The same offer again, compared as bytes — a retry re-sends it
+         * verbatim, so equality is the whole test and no parse of the body is
+         * needed. Answering it with a freshly derived key would leave this end
+         * holding one the offerer can never arrive at, because the offerer is
+         * still answering the first accept; it would also reset a receive that
+         * is not being replaced at all.
+         */
+        if let last = lastSealAnswer, last.offer == body {
+            return [.send(type: MessageType.sealAccept, body: last.accept)]
+        }
         let accept: [UInt8]
         do {
             accept = try seal.accept(offer: body)
         } catch {
             return [.note("a seal offer could not be accepted: \(error)")]
         }
+        lastSealAnswer = (body, accept)
         return [.send(type: MessageType.sealAccept, body: accept)]
             + render(transfer.incomingSealReplaced())
     }
@@ -675,6 +708,7 @@ public final class ClipboardService {
     private func onSealAccepted(_ body: [UInt8]) -> [ClipboardOutput] {
         do {
             try seal.accepted(body)
+            outstandingSealOffer = nil
         } catch {
             return [.note("a seal accept could not be used: \(error)")]
         }
@@ -699,6 +733,7 @@ public final class ClipboardService {
         guard let sealID = ClipboardSeal.sealID(fromStale: body) else {
             return [.note("a SEAL_STALE would not decode")]
         }
+        outstandingSealOffer = nil
         guard seal.discardSeal(sealID) else {
             /* Naming some other seal changes nothing: this end has already
                moved on, and re-offering would restart a transfer that is
@@ -962,13 +997,29 @@ public final class ClipboardService {
         }
     }
 
+    /// Ask for a seal, if this end has not asked already. Sending the
+    /// outstanding offer again belongs to the retry and not here: two identical
+    /// offers in one pass buy nothing and make the peer answer twice.
     private func offerSeal() -> [ClipboardOutput] {
+        if outstandingSealOffer != nil { return [] }
+        return resendSealOffer()
+    }
+
+    /// The retry: the same bytes again, because the peer may be answering them
+    /// at this moment. Only a handshake this end has abandoned mints a new one.
+    private func resendSealOffer() -> [ClipboardOutput] {
+        if let outstanding = outstandingSealOffer {
+            return [.send(type: MessageType.sealOffer, body: outstanding)]
+        }
         do {
-            return [.send(type: MessageType.sealOffer, body: try seal.offer())]
+            let body = try seal.offer()
+            outstandingSealOffer = body
+            return [.send(type: MessageType.sealOffer, body: body)]
         } catch {
             pending = nil
             sealWaitingSince = nil
             sealRetrySince = nil
+            outstandingSealOffer = nil
             return [.note("a seal could not be offered, so nothing can be sent: \(error)")]
         }
     }

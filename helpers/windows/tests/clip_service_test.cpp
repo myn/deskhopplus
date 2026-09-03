@@ -382,6 +382,44 @@ void test_a_lost_seal_accept_is_retried() {
           "a copy did not recover after its SEAL_ACCEPT was lost");
 }
 
+/*
+ * A SEAL_ACCEPT that is slow rather than lost.
+ *
+ * `dh_seal_tx_offer` draws a new seal id and a new ephemeral key on every call
+ * — the offerer owns the seal — so a retry threw away the key the peer was at
+ * that moment answering, and the accept came back naming an id this end no
+ * longer knew (DH_SEAL_ERR_UNKNOWN_ID). On a link whose round trip runs past
+ * kSweepDelayMs that is not a race but a livelock: every accept answers an
+ * offer already replaced, so nothing is ever sealed and no file is ever
+ * offered. Observed on hardware as "no toast, nothing at all".
+ *
+ * The invariant: an accept for an offer this end made stays usable across a
+ * retry of that same handshake.
+ */
+void test_a_slow_seal_accept_survives_a_retry() {
+    Pair pair;
+    /* Both accepts are held back, so the only one this end sees is the first —
+       handed over by hand below, after a retry has gone out. */
+    pair.drop_next[DH_MSG_SEAL_ACCEPT] = 2;
+    pair.copy_on_a("survives a slow seal accept");
+
+    std::vector<uint8_t> held;
+    for (const auto &frame : pair.carried_frames)
+        if (frame.first == DH_MSG_SEAL_ACCEPT) { held = frame.second; break; }
+    CHECK(!held.empty(), "no seal accept was ever built");
+    if (held.empty()) return;
+
+    (void)pair.a.tick(0);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+
+    /* And now the slow one lands. */
+    pair.settle(pair.a.received(DH_MSG_SEAL_ACCEPT, held.data(), held.size()), Side::A);
+    CHECK(!pair.saw_note("seal accept could not be used"),
+          "a retry replaced the key the in-flight accept was answering");
+    CHECK(pair.delivered_to_b.size() == 1,
+          "the copy never crossed, so nothing was ever sealed");
+}
+
 void test_seal_retries_do_not_extend_the_copy_deadline() {
     Pair pair;
     pair.drop_next[DH_MSG_SEAL_OFFER] = 100;
@@ -1551,6 +1589,7 @@ int main() {
     test_nothing_leaves_unsealed();
     test_a_lost_seal_offer_is_retried();
     test_a_lost_seal_accept_is_retried();
+    test_a_slow_seal_accept_survives_a_retry();
     test_seal_retries_do_not_extend_the_copy_deadline();
     test_a_multi_chunk_payload_arrives();
     test_a_second_copy_supersedes();

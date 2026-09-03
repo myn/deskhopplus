@@ -25,6 +25,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("nothing leaves before a seal is accepted", testNothingLeavesUnsealed),
     ("a lost seal offer is retried", testALostSealOfferIsRetried),
     ("a lost seal accept is retried", testALostSealAcceptIsRetried),
+    ("a slow seal accept survives a retry", testASlowSealAcceptSurvivesARetry),
     ("seal retries do not extend the copy deadline", testSealRetriesDoNotExtendTheCopyDeadline),
     ("a payload larger than one chunk is reassembled", testAMultiChunkPayloadArrives),
     ("a second copy supersedes the first", testASecondCopySupersedes),
@@ -828,6 +829,43 @@ private func testALostSealAcceptIsRetried() {
 
     Check.equal(text(pair.deliveredToB), ["survives a lost seal accept"],
                 "a copy did not recover after its SEAL_ACCEPT was lost")
+}
+
+/*
+ * A SEAL_ACCEPT that is slow rather than lost.
+ *
+ * `Seal.offer()` draws a new seal id and a new ephemeral key on every call —
+ * "the offerer owns the seal" — so a retry threw away the key the peer was at
+ * that moment answering, and the accept came back naming an id this end no
+ * longer knew (DH_SEAL_ERR_UNKNOWN_ID). On a link whose round trip runs past
+ * `sweepDelay` that is not a race but a livelock: every accept is answering an
+ * offer that has already been replaced, so nothing is ever sealed and no file
+ * is ever offered. Observed on hardware as "no toast, nothing at all".
+ *
+ * The invariant: an accept for an offer this end made stays usable across a
+ * retry of that same handshake.
+ */
+private func testASlowSealAcceptSurvivesARetry() {
+    let pair = Pair()
+    /* Both accepts are held back, so the only one this end ever sees is the
+       first — handed over by hand below, after a retry has gone out. */
+    pair.dropNext[MessageType.sealAccept] = 2
+    pair.copyOnA("survives a slow seal accept")
+
+    guard let held = pair.carriedFrames.last(where: { $0.type == MessageType.sealAccept }) else {
+        Check.that(false, "no seal accept was ever built")
+        return
+    }
+
+    _ = pair.a.tick(at: 0)
+    pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
+
+    /* And now the slow one lands. */
+    pair.settle(pair.a.received(type: held.type, body: held.body), from: .a)
+    Check.that(!pair.sawNote(containing: "seal accept could not be used"),
+               "a retry replaced the key the in-flight accept was answering")
+    Check.equal(text(pair.deliveredToB), ["survives a slow seal accept"],
+                "the copy never crossed, so nothing was ever sealed")
 }
 
 private func testSealRetriesDoNotExtendTheCopyDeadline() {
