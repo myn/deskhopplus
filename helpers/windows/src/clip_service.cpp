@@ -543,7 +543,18 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
         }
     }
 
-    if (!have_pending_ || seal_tx_.live) {
+    if (have_pending_ && seal_tx_.live) {
+        /*
+         * Sealed while a copy was parked. The flush normally happens on the
+         * accept that made it usable; this is the one place that guarantees it,
+         * and it exists because the state it covers is silent. Grouped with
+         * "no pending" before, a parked copy under a live seal was neither
+         * offered nor abandoned nor mentioned — it simply never happened,
+         * which is how it was reported (#161).
+         */
+        seal_waiting_timed_ = false;
+        append(outputs, start_pending_if_sealed());
+    } else if (!have_pending_) {
         seal_waiting_timed_ = false;
     } else if (!seal_waiting_timed_) {
         seal_waiting_timed_ = true;
@@ -734,14 +745,22 @@ std::vector<ClipOutput> ClipService::on_seal_accepted(const uint8_t *body, size_
     if (rc != DH_SEAL_OK)
         return {note("a seal accept could not be used: error " + std::to_string(rc))};
     outstanding_offer_.clear();
+    const ClipOutput sealed_note = note("the seal is live; this end can send now");
 
     /* The copy that was waiting for exactly this, or the transfer a stale seal
-       knocked back to the start. */
+       knocked back to the start. The note goes last, not first: a caller that
+       reads the leading output is reading for a frame. */
     if (reoffer_when_sealed_) {
         reoffer_when_sealed_ = false;
-        if (!have_pending_) return reoffer();
+        if (!have_pending_) {
+            std::vector<ClipOutput> outputs = reoffer();
+            outputs.push_back(sealed_note);
+            return outputs;
+        }
     }
-    return start_pending_if_sealed();
+    std::vector<ClipOutput> outputs = start_pending_if_sealed();
+    outputs.push_back(sealed_note);
+    return outputs;
 }
 
 std::vector<ClipOutput> ClipService::on_seal_stale(const uint8_t *body, size_t len) {
@@ -1181,7 +1200,12 @@ std::vector<ClipOutput> ClipService::resend_seal_offer() {
                                                    sizeof out, &written);
         if (rc == DH_SEAL_OK) {
             outstanding_offer_.assign(out, out + written);
-            return {send(DH_MSG_SEAL_OFFER, out, written)};
+            /* The exchange had no line in the log at all, which is why two
+               faults in it were diagnosed by inference rather than by reading
+               (#161). Said on the mint and on the accept only — a retry is
+               silent, so this stays two lines per exchange. */
+            return {send(DH_MSG_SEAL_OFFER, out, written),
+                    note("offering a seal so this end can send")};
         }
         if (rc != DH_SEAL_ERR_KEY) break;
     }

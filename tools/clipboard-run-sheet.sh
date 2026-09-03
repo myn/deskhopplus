@@ -154,6 +154,10 @@ interpret() {
         *"written and put on the"*)          out="files written and put on the clipboard"; level="good" ;;
         *"were offered without being read"*) out="offered — nothing read yet, which is the point" ;;
         *"waiting for a seal before"*)       out="copied here, held until the link is ready" ;;
+        *"offering a seal so this end"*)     out="asking the far helper for a shared key" ;;
+        *"the seal is live"*)                out="shared key agreed; this end can send"; level="good" ;;
+        *"seal accept could not be used"*)   out="THE KEY EXCHANGE FAILED — nothing can be sent"; level="bad" ;;
+        *"under the .* line, so they were"*) out="${line#*: }"; level="good" ;;
         *"still waiting for one that can"*)  out="the link dropped; the copy is still held" ;;
         *"the copied files were read"*)      out="files read on the copy side" ;;
         *"could not be read"*)               out="the copied files could not be read"; level="bad" ;;

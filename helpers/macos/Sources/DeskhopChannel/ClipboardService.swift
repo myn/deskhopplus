@@ -554,7 +554,19 @@ public final class ClipboardService {
                                  + "\(wanted / (1024 * 1024)) MB"))
         }
 
-        if pending == nil || seal.canSeal {
+        if pending != nil, seal.canSeal {
+            /*
+             * Sealed while a copy was parked. The flush normally happens on the
+             * accept that made it usable; this is the one place that guarantees
+             * it, and it exists because the state it covers is silent. Grouped
+             * with `pending == nil` before, a parked copy under a live seal was
+             * neither offered nor abandoned nor mentioned — it simply never
+             * happened, which is how it was reported (#161).
+             */
+            sealWaitingSince = nil
+            sealRetrySince = nil
+            outputs += startPendingIfSealed()
+        } else if pending == nil {
             sealWaitingSince = nil
             sealRetrySince = nil
         } else if sealWaitingSince == nil {
@@ -712,15 +724,18 @@ public final class ClipboardService {
         } catch {
             return [.note("a seal accept could not be used: \(error)")]
         }
+        /* Appended after whatever this produces, not before it: a caller that
+           reads the first output is reading for a frame. */
+        let sealedNote = ClipboardOutput.note("the seal is live; this end can send now")
         /* The copy that was waiting for exactly this, or the transfer a stale
            seal knocked back to the start. */
         if reofferWhenSealed {
             reofferWhenSealed = false
             if pending == nil {
-                return render(transfer.reoffer())
+                return render(transfer.reoffer()) + [sealedNote]
             }
         }
-        return startPendingIfSealed()
+        return startPendingIfSealed() + [sealedNote]
     }
 
     /*
@@ -1014,7 +1029,12 @@ public final class ClipboardService {
         do {
             let body = try seal.offer()
             outstandingSealOffer = body
-            return [.send(type: MessageType.sealOffer, body: body)]
+            /* The exchange had no line in the log at all, which is why two
+               faults in it were diagnosed by inference rather than by reading
+               (#161). Said on the mint and on the accept only — a retry is
+               silent, so this stays two lines per exchange. */
+            return [.send(type: MessageType.sealOffer, body: body),
+                    .note("offering a seal so this end can send")]  // frame first
         } catch {
             pending = nil
             sealWaitingSince = nil
