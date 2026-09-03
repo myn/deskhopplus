@@ -151,6 +151,16 @@ final class MenuBar: NSObject, NSMenuDelegate {
         updateTitle()
     }
 
+    /// The user has done something else, so the last complaint is stale
+    /// whatever it said. A copy that is *also* refused sets a new one straight
+    /// after this, so the warning still stands where it should.
+    func clearNotice() {
+        guard notice != nil else { return }
+        notice = nil
+        noticeAt = nil
+        updateTitle()
+    }
+
     /// Drop a notice old enough to be confusing. Called from the same timer
     /// that refreshes progress.
     func expireNotice() {

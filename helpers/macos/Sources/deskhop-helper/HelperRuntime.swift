@@ -171,14 +171,20 @@ final class HelperRuntime: HelperEffects {
          */
         pasteboard.onLocalCopy = { [weak self] text in
             guard let self else { return }
+            self.menuBar.clearNotice()
             self.dispatch.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
         }
         pasteboard.onLocalImage = { [weak self] bytes in
             guard let self else { return }
+            self.menuBar.clearNotice()
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
         pasteboard.onLocalFiles = { [weak self] copied in
             guard let self else { return }
+            /* Cleared before the copy is handed over, not after: a copy that is
+               itself refused sets a fresh notice on its way through, and
+               clearing afterwards would wipe the one that had just been set. */
+            self.menuBar.clearNotice()
             /* The list goes out now; `read` is not called until the other
                computer's user accepts the transfer. That is the whole of #56's
                "transfer begins on paste, not on copy". */
