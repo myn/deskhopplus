@@ -119,14 +119,24 @@ typedef struct {
     uint8_t clip_block_a_to_b;
     uint8_t clip_block_b_to_a;
 
-    /* Named, not left to the compiler: _reserved needs 4-byte alignment, so
-       a byte sits here either way — and it is inside the checksummed range. As
-       padding its contents are indeterminate, so a config_t built by aggregate
-       initialisation rather than copied whole would be sealed over undefined
-       bytes and refused on the next boot. That is #74's failure mode with a
-       different cause. A named member is zeroed by initialisation and copied
-       deterministically, which removes it. */
-    uint8_t _pad[1];
+    /*
+     * The largest clipboard payload a helper may accept, in megabytes (#56).
+     * Ten by default, and up to DH_CLIP_CAP_MB_MAX; the board states it in
+     * CLIP_POLICY, because the device is the single source of truth for
+     * settings and a helper holds no cap of its own (#42).
+     *
+     * **Zero means the default**, which is what makes this free: the byte it
+     * occupies was already here as `_pad`, so every configuration already
+     * written reads as the default and no CURRENT_CONFIG_VERSION bump is owed
+     * — the same move the two toggles above made, and for the same reason.
+     * (The byte itself is here because _reserved needs 4-byte alignment. As
+     * padding its contents were indeterminate, so a config_t built by
+     * aggregate initialisation would be sealed over undefined bytes and
+     * refused on the next boot — #74's failure mode with a different cause.
+     * A named member is zeroed by initialisation and copied deterministically,
+     * which removes it, and that is as true of a member carrying a setting.)
+     */
+    uint8_t clip_cap_mb;
 
     /* Two words, so the struct ends exactly on the checksum. #46's 17 bytes
        rounded config_t up to 160 and left four bytes of padding *behind* the
@@ -171,3 +181,10 @@ _Static_assert(CONFIG_FLASH_BYTES <= CONFIG_FLASH_SECTOR_SIZE,
  */
 _Static_assert(offsetof(config_t, _reserved) == offsetof(config_t, channel_paired) + 4,
                "config_t: the clipboard toggles must fit the padding, not extend the struct");
+
+/* The size cap took the padding byte the toggles left behind, so the same
+   claim holds for it and for the same reason (#56). Spelled separately because
+   the two arrived years apart and a single assertion would not say which of
+   them a future field had displaced. */
+_Static_assert(offsetof(config_t, clip_cap_mb) == offsetof(config_t, clip_block_b_to_a) + 1,
+               "config_t: the clipboard size cap must fit the padding, not extend the struct");

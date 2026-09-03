@@ -1,9 +1,12 @@
 #pragma once
 /*
  * This computer's clipboard: what was copied here, and what arrives from the
- * other computer (#52).
+ * other computer (#52, #55, #56).
  *
- * Text and images are carried; files are #56.
+ * Text, images and files are carried. A file copy is read as a *list* and not
+ * as bytes — the contents are not touched until the other computer's user
+ * accepts the transfer, which is the whole of #56 and the reason `local_files`
+ * hands over a callable rather than a payload.
  *
  * ---------------------------------------------------------------------------
  * WHY THIS LIVES ON THE HELPER'S OWN WINDOW, AND NOT A THREAD OF ITS OWN
@@ -46,6 +49,8 @@
 #include <string>
 #include <vector>
 
+#include "clip_service.h"
+
 namespace deskhop {
 
 class Clipboard {
@@ -59,6 +64,11 @@ class Clipboard {
         std::function<void()> local_replaced;
         std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
         std::function<void(uint32_t)> lazy_image_replaced;
+        /* Files copied here (#56): what they are called and how long they are,
+           plus the callable that reads them — invoked only if the transfer is
+           accepted on the other computer. */
+        std::function<void(std::vector<FileEntry>,
+                           std::function<bool(std::vector<uint8_t> &)>)> local_files;
         std::function<void(const std::string &)> log;
     };
 
@@ -83,8 +93,19 @@ class Clipboard {
     void lazy_image(uint32_t id, uint64_t total);
     void cancel_lazy_image(uint32_t id);
 
+    /* Put references to files that arrived on the clipboard as CF_HDROP. The
+       files themselves are already on disk (FileStore); this is only what the
+       user pastes. */
+    bool deliver_files(const std::vector<std::wstring> &paths);
+
   private:
     void read_clipboard();
+    /* The files on the clipboard, if any, as a list and a way to read them
+       later. Called with the clipboard already open, and it does not invoke the
+       callback — the caller closes the clipboard first, because the clipboard
+       is a machine-wide lock and that callback runs the whole offer path. */
+    bool read_files(std::vector<FileEntry> &entries,
+                    std::function<bool(std::vector<uint8_t> &)> &read);
     bool open_with_retry();
     bool load_lazy_image();
 

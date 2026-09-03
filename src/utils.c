@@ -10,6 +10,7 @@
  */
 
 #include "main.h"
+#include "core/dh_session.h"
 
 /* ================================================== *
  * ==============  Checksum Functions  ============== *
@@ -127,6 +128,17 @@ void load_config(device_t *state) {
     if (!config_is_valid(running_config) ||
         !dh_hotkey_table_is_valid(running_config->hotkeys, DH_HOTKEY_ACTION_COUNT))
         memcpy(running_config, &default_config, sizeof(config_t));
+
+    /*
+     * A configuration written before the clipboard size cap existed holds zero
+     * in the byte it took, which means "the default" everywhere that reads it
+     * (dh_clip_cap_mb) — but the config page shows the stored byte, and a
+     * slider whose range starts at one would show a board capping the
+     * clipboard at nothing. Normalised here, in memory only: no flash write on
+     * boot, and the first Save persists the number the page already showed.
+     */
+    if (running_config->clip_cap_mb == 0)
+        running_config->clip_cap_mb = dh_clip_cap_mb(0);
 
     prepare_hotkeys(running_config->hotkeys);
 }

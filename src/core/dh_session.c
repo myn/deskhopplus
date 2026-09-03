@@ -192,9 +192,14 @@ bool dh_listener_alert_decode(const uint8_t *body, size_t len, dh_listener_alert
     return true;
 }
 
-bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags) {
-    if (body == NULL || flags == NULL || len != DH_CLIP_POLICY_LEN) return false;
+bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags, uint8_t *cap_mb) {
+    if (body == NULL || flags == NULL || cap_mb == NULL) return false;
+    if (len != DH_CLIP_POLICY_LEN && len != DH_CLIP_POLICY_LEN_V1) return false;
     *flags = body[0];
+    /* A board that predates the cap says nothing about it, which is not the
+       same as saying zero — dh_clip_cap_mb reads both as the default, but only
+       one of them can ever be corrected by a later board. */
+    *cap_mb = len == DH_CLIP_POLICY_LEN ? body[1] : 0u;
     return true;
 }
 
@@ -293,9 +298,10 @@ void dh_session_drop(dh_session *s) {
        session's to throw away. */
 }
 
-void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags) {
-    if (s->clip_flags == clip_flags) return;
+void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags, uint8_t cap_mb) {
+    if (s->clip_flags == clip_flags && s->clip_cap_mb == cap_mb) return;
     s->clip_flags = clip_flags;
+    s->clip_cap_mb = cap_mb;
     if (s->present) s->clip_policy_owed = true;
 }
 
@@ -785,7 +791,7 @@ dh_frame_result dh_session_tick(dh_session *s, uint32_t now_ms, uint8_t *out, si
      * released only by dh_session_note_owed_sent.
      */
     if (s->clip_policy_owed) {
-        const uint8_t body[DH_CLIP_POLICY_LEN] = {s->clip_flags};
+        const uint8_t body[DH_CLIP_POLICY_LEN] = {s->clip_flags, s->clip_cap_mb};
         const dh_frame_result rc = encode_tagged(DH_MSG_CLIP_POLICY, 0, s->k_b2h, s->tx_counter,
                                                  body, sizeof body, out, out_cap, out_len);
         if (rc == DH_FRAME_OK) {

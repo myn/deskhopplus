@@ -102,6 +102,11 @@ CONFIG_ = [
     FormField(1004, "Clipboard", elem="label"),
     FormField(89, "Block clipboard A to B", None, {}, "uint8", "checkbox"),
     FormField(90, "Block clipboard B to A", None, {}, "uint8", "checkbox"),
+    # The largest payload a helper will accept, in megabytes (#56). The device
+    # is the single source of truth for settings, so this is the only place it
+    # is set and both helpers are told it on every session (#42).
+    FormField(100, "Clipboard size cap (MB)", 10,
+              {"min": 1, "max": 64}, "uint8", "range"),
 
     FormField(1006, "Hotkeys", elem="label"),
 ]

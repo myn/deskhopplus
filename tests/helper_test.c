@@ -2306,10 +2306,40 @@ static void test_the_board_states_the_clipboard_policy(void) {
     CHECK(h.have_clip_policy, name, "a stated policy was not recorded as stated");
     no_overflow(name);
 
+    /*
+     * A board that predates the size cap sends the flags alone, and is still
+     * understood — the cap joined this message rather than arriving as one of
+     * its own precisely so that an older board and a newer helper still agree
+     * (#56, #131). A cap it did not state resolves to the default.
+     */
+    CHECK(dh_helper_clip_cap_mb(&h) == DH_CLIP_CAP_MB_DEFAULT, name,
+          "a one-byte policy did not leave the size cap at the default");
+
+    /* And the cap the board did state is the one reported. */
+    const uint8_t with_cap[2] = {DH_CLIP_MAY_RECEIVE, 64};
+    CHECK(board_frame(DH_MSG_CLIP_POLICY, with_cap, sizeof with_cap, frame, sizeof frame, &len),
+          name, "the policy frame carrying a cap would not build");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 150, &out);
+    const dh_helper_output *capped = first_of(&out, DH_HELPER_OUT_CLIP_POLICY);
+    CHECK(capped != NULL && capped->b == 64, name, "the stated size cap was not reported");
+    CHECK(dh_helper_clip_cap_mb(&h) == 64, name, "the stated size cap was not recorded");
+
+    /* Out of range is clamped rather than refused: the byte reaches a helper
+       with nowhere to report a complaint, and clamping is the answer that
+       still leaves the clipboard working. */
+    const uint8_t absurd[2] = {DH_CLIP_MAY_RECEIVE, 255};
+    CHECK(board_frame(DH_MSG_CLIP_POLICY, absurd, sizeof absurd, frame, sizeof frame, &len),
+          name, "the policy frame carrying an absurd cap would not build");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 160, &out);
+    CHECK(dh_helper_clip_cap_mb(&h) == DH_CLIP_CAP_MB_MAX, name,
+          "a size cap past the maximum was not clamped to it");
+
     /* A policy that will not decode changes nothing. Reading a half-arrived
        flags byte as "both off" would turn a corrupt frame into a clipboard
        that has silently stopped working. */
-    const uint8_t too_long[2] = {DH_CLIP_MAY_SEND, 0};
+    const uint8_t too_long[3] = {DH_CLIP_MAY_SEND, 0, 0};
     CHECK(board_frame(DH_MSG_CLIP_POLICY, too_long, sizeof too_long, frame, sizeof frame, &len),
           name, "the malformed frame would not build");
     dh_helper_outputs_reset(&out);
@@ -2319,6 +2349,8 @@ static void test_the_board_states_the_clipboard_policy(void) {
     CHECK(saw_note(&out, DH_NOTE_UNDECODABLE), name, "a malformed policy was not traced");
     CHECK(!dh_helper_may_send_clip(&h) && dh_helper_may_receive_clip(&h), name,
           "a malformed policy overwrote the one that was understood");
+    CHECK(dh_helper_clip_cap_mb(&h) == DH_CLIP_CAP_MB_MAX, name,
+          "a malformed policy overwrote the size cap that was understood");
     no_overflow(name);
 }
 

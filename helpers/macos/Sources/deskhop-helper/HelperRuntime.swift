@@ -1,3 +1,4 @@
+import AppKit
 import DeskhopChannel
 import DHCore
 import Foundation
@@ -21,6 +22,10 @@ final class HelperRuntime: HelperEffects {
     private let clipboard: ClipboardService
     private let pasteboard = Pasteboard()
     private let cursorPlacement = CursorPlacement()
+    /* Where files that arrive are written, and the menu bar that asks about
+       them, shows how far they have got, and lets the user stop them (#56). */
+    private let files = FileStore()
+    private let menuBar = MenuBar()
 
     /*
      * Whether the last thing the session said was that bulk may cross. The
@@ -30,6 +35,10 @@ final class HelperRuntime: HelperEffects {
      */
     private var bulkWasAllowed = false
     private var imagePrefetch = ImagePrefetch()
+
+    /* What the menu bar last showed, so the twice-a-second refresh only
+       touches it when something has actually moved. */
+    private var shownProgress: (received: UInt64, total: UInt64)?
 
     /* Lazy so that `self` is fully formed before the dispatch is handed a
        reference to it. The dispatch holds it unowned; this is the strong half. */
@@ -143,10 +152,44 @@ final class HelperRuntime: HelperEffects {
             guard let self, self.session.canSendBulk else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
+        pasteboard.onLocalFiles = { [weak self] copied in
+            guard let self, self.session.canSendBulk else { return }
+            /* The list goes out now; `read` is not called until the other
+               computer's user accepts the transfer. That is the whole of #56's
+               "transfer begins on paste, not on copy". */
+            self.dispatch.emit(self.clipboard.localCopy(files: copied.entries,
+                                                        provider: copied.read))
+        }
         pasteboard.onLocalReplacement = { [weak self] in
             guard let self, let id = self.imagePrefetch.localReplacement() else { return }
             self.dispatch.emit(self.clipboard.lazyImageWasReplaced(id: id))
         }
+
+        files.log = { message in Self.note(message) }
+        /* Emptied at start, and only at start: a helper that crashes never
+           runs an exit path, and a timer would delete a file the user is still
+           working on (FileStore). */
+        files.collectGarbage()
+
+        menuBar.attach(callbacks: MenuBar.Callbacks(
+            acceptFiles: { [weak self] id in
+                guard let self else { return }
+                self.dispatch.emit(self.clipboard.acceptFiles(id: id))
+            },
+            declineFiles: { [weak self] id in
+                guard let self else { return }
+                self.dispatch.emit(self.clipboard.declineFiles(id: id))
+            },
+            abortTransfer: { [weak self] in
+                guard let self else { return }
+                self.dispatch.emit(self.clipboard.abortReceive())
+            },
+            isSending: { [weak self] in self?.clipboard.awaitingSend ?? false },
+            abortSend: { [weak self] in
+                guard let self else { return }
+                self.dispatch.emit(self.clipboard.abortSend())
+            },
+            quit: { NSApplication.shared.terminate(nil) }))
 
         transport.start()
         pasteboard.start()
@@ -154,9 +197,37 @@ final class HelperRuntime: HelperEffects {
         Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
             self?.feed(.tick)
         }
+        /* Separate from the session tick, and slower: what the menu bar shows
+           changes at human speed, and rebuilding a menu the user has open
+           closes it under them. */
+        Timer.scheduledTimer(withTimeInterval: MenuBar.progressInterval,
+                             repeats: true) { [weak self] _ in
+            self?.refreshProgress()
+        }
 
         Self.note("deskhop helper started; waiting for the channel")
-        RunLoop.current.run()
+        /*
+         * `NSApplication.run`, not `RunLoop.current.run`: the menu bar item is
+         * AppKit and needs an application to belong to. Every timer above is
+         * on the main run loop, which this turns.
+         *
+         * `.accessory` is what keeps that from costing a Dock icon and an app
+         * switcher entry — this is a background helper, and it stays one.
+         */
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.run()
+    }
+
+    /// Push the arriving transfer's progress to the menu bar, and only when it
+    /// has moved.
+    private func refreshProgress() {
+        let arriving = clipboard.arriving
+        let now = arriving.map { (received: $0.received, total: $0.total) }
+        let changed = now?.received != shownProgress?.received
+            || now?.total != shownProgress?.total
+        guard changed else { return }
+        shownProgress = now
+        menuBar.show(progress: now)
     }
 
     private func feed(_ input: SessionInput) {
@@ -232,6 +303,7 @@ final class HelperRuntime: HelperEffects {
     }
     func noteSent() { session.noteSent(at: now) }
     func noteSendRefused() { session.noteSendRefused() }
+    func show(state: HelperState) { menuBar.show(state: state) }
     func deliver(text bytes: [UInt8]) { pasteboard.deliver(text: bytes) }
     func deliver(image bytes: [UInt8]) {
         switch imagePrefetch.complete() {
@@ -248,8 +320,32 @@ final class HelperRuntime: HelperEffects {
         dispatch.emit(clipboard.requestLazyImage(id: requestID))
     }
     func cancelLazyImage(id: UInt32) { imagePrefetch.cancel(id: id) }
-    func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
-        clipboard.policyChanged(flags: flags)
+
+    func askAboutFiles(_ offer: FileOffer) {
+        Self.note("\(offer.files.count) file(s), \(offer.total) bytes, offered from the other "
+                  + "computer; waiting for an answer here before anything crosses")
+        menuBar.ask(about: offer)
+    }
+
+    func withdrawFileQuestion(id: UInt32) { menuBar.withdrawQuestion(id: id) }
+
+    /* Written first, then referenced. The order is the guarantee: a reference
+       only ever points at a set that is complete on disk, so a failed write
+       leaves the pasteboard alone rather than pointing at half a file. */
+    func deliver(files delivery: FileDelivery) {
+        guard let written = self.files.write(delivery) else {
+            Self.note("\(delivery.files.count) file(s) arrived and could not be written; "
+                      + "nothing was put on the pasteboard")
+            return
+        }
+        if pasteboard.deliver(files: written.urls) {
+            Self.note("\(written.urls.count) file(s) written to \(written.directory.path) and "
+                      + "put on the pasteboard")
+        }
+    }
+
+    func clipPolicyChanged(flags: UInt8, capMegabytes: UInt8) -> [ClipboardOutput] {
+        clipboard.policyChanged(flags: flags) + clipboard.capacityChanged(megabytes: capMegabytes)
     }
     /* Deliberately the same as `Self.note` below, which every other call site
        in this file uses. An unqualified `note(...)` inside the class reaches

@@ -18,12 +18,36 @@ import Foundation
  * implementation, and only the joining is written twice.
  */
 
-/// The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Text and PNG
-/// travel here; files are #56.
+/// The payload kinds on the wire (docs/protocol.md, CLIP_OFFER).
 public enum ClipKind: UInt8 {
     case text = 0
     case png = 1
     case files = 2
+}
+
+/// Files the other computer has offered, waiting for this computer's user to
+/// say yes (#56). Nothing crosses the link until they do.
+public struct FileOffer: Equatable {
+    public let id: UInt32
+    public let total: UInt64
+    public let files: [FileListEntry]
+
+    /// How long the transfer will take at the route's measured rate, in
+    /// seconds. Stated because a cap the user can raise to something that
+    /// takes a quarter of an hour deserves a duration in the dialog, not just
+    /// a size (#39, #56).
+    public var estimatedSeconds: Int {
+        Int((total + UInt64(ClipboardService.measuredBytesPerSecond) - 1)
+            / UInt64(ClipboardService.measuredBytesPerSecond))
+    }
+}
+
+/// Files that arrived whole, ready to be written somewhere real. The bytes are
+/// every file's contents run together in `files` order — the transfer carries
+/// no boundaries of its own, which is what the list is for.
+public struct FileDelivery: Equatable {
+    public let files: [FileListEntry]
+    public let bytes: [UInt8]
 }
 
 public enum ClipboardOutput: Equatable {
@@ -33,6 +57,13 @@ public enum ClipboardOutput: Equatable {
     case deliver(kind: UInt8, bytes: [UInt8])
     case lazyImage(id: UInt32, total: UInt64)
     case cancelLazyImage(id: UInt32)
+    /// Files are being offered and nothing has moved yet: ask the user.
+    case fileOffer(FileOffer)
+    /// That question no longer stands — answered, superseded, or gone.
+    case fileOfferWithdrawn(id: UInt32)
+    /// A complete set of files, to be written and put on this computer's
+    /// pasteboard as references.
+    case deliverFiles(FileDelivery)
     /// Diagnostics, never shown to the user.
     case note(String)
     case protocolError(String)
@@ -40,6 +71,40 @@ public enum ClipboardOutput: Equatable {
 
 public final class ClipboardService {
     public static let eagerImageThreshold = 256 * 1024
+
+    /*
+     * Files at or below this size are accepted without asking. At the route's
+     * measured rate they are a fraction of a second, and a dialog for a
+     * quarter-second transfer is a dialog the user learns to dismiss without
+     * reading — which is how the one that matters gets dismissed too.
+     */
+    public static let filePromptThreshold = 256 * 1024
+
+    /*
+     * The end-to-end rate #39 measured, in bytes per second. It is what turns
+     * a size into a duration in the prompt, and it is deliberately the
+     * *measured* figure rather than the arithmetic ~64 KB/s the transport was
+     * specified at: the prompt exists so the user can decide whether to wait,
+     * and an estimate a quarter short of the truth is worse than none.
+     */
+    public static let measuredBytesPerSecond = 49 * 1024
+
+    /*
+     * How long a file offer waits for an answer before it is declined for the
+     * user.
+     *
+     * It has to expire, and not because the question is urgent. An offer that
+     * has been accepted-as-lazy and never requested leaves the *copy* side
+     * awaiting a request, which it asks for again every two seconds for as
+     * long as the session lasts (#78) — so an ignored prompt is a frame every
+     * two seconds for ever. It also pins the receive buffer, which is what the
+     * size cap sizes, so the cap cannot change while the question stands.
+     *
+     * Two minutes is human-scaled: long enough to finish a sentence and look
+     * up, short enough that walking away from the desk costs a re-copy rather
+     * than a link that never goes quiet.
+     */
+    public static let holdTimeout: TimeInterval = 120
     /*
      * The largest payload this helper will assemble. The spec's default cap is
      * 10 MB; an offer above it is refused by the transfer core with a cancel
@@ -97,7 +162,52 @@ public final class ClipboardService {
      * supersedes it, because what the user last copied is what they mean to
      * paste.
      */
-    private var pending: (kind: UInt8, bytes: [UInt8])?
+    private enum PendingCopy {
+        /// Text and images: the bytes are already in hand.
+        case eager(kind: UInt8, bytes: [UInt8])
+        /// Files: only the list is in hand, and the bytes are read if and when
+        /// the other computer asks for them.
+        case files(files: [FileListEntry], meta: [UInt8], total: UInt64,
+                   provider: () -> [UInt8]?)
+    }
+    private var pending: PendingCopy?
+
+    /*
+     * How the bytes of the outgoing file transfer are produced, held for as
+     * long as that transfer could still ask for them.
+     *
+     * Separate from `pending` because the two have different lifetimes: a
+     * pending copy ends the moment the offer goes out, and this ends when the
+     * transfer does — NEED_DATA can arrive minutes later, once someone on the
+     * other computer has said yes.
+     */
+    private var outgoingProvider: (() -> [UInt8]?)?
+
+    /*
+     * A file offer that has arrived and is waiting for this computer's user.
+     *
+     * The offer is *accepted* into the transfer machine as lazy, so the far end
+     * knows it was heard and stops retrying (#78) — but no request goes out, so
+     * not one byte crosses until `acceptFiles`. Exactly one, like `pending`:
+     * a newer offer supersedes it, because what was last copied is what the
+     * user means to paste.
+     */
+    private var heldFileOffer: FileOffer?
+
+    /// The file list of the transfer now arriving, so that what is delivered
+    /// can be split back into files without parsing the metadata twice.
+    private var incomingFiles: [FileListEntry]?
+
+    /*
+     * The largest payload this helper will accept, and a change to it that is
+     * waiting for the link to go quiet.
+     *
+     * The board is the single source of truth for the cap (#42), so it can
+     * change while this helper is running; the receive buffer is sized against
+     * it and cannot move under a transfer, so a change that arrives mid-flight
+     * waits for the tick after it ends.
+     */
+    private var wantedCapacity: Int?
 
     /*
      * A transfer that was already on its way out when the far helper said it
@@ -135,6 +245,8 @@ public final class ClipboardService {
     private var receivingSince: TimeInterval?
     private var receivingMark: UInt32 = 0
     private var sweptSince: TimeInterval?
+    /// When the offer now being held was first put to the user.
+    private var heldSince: TimeInterval?
 
     public init(entropy: @escaping (Int) -> [UInt8], capacity: Int = ClipboardService.defaultCapacity) {
         seal = ClipboardSeal(entropy: entropy)
@@ -152,11 +264,126 @@ public final class ClipboardService {
         }
         guard !bytes.isEmpty else { return [] }
 
-        pending = (kind.rawValue, bytes)
+        pending = .eager(kind: kind.rawValue, bytes: bytes)
         sealWaitingSince = nil
         sealRetrySince = nil
         return startPendingIfSealed()
     }
+
+    /*
+     * Files were copied here (#56). Lazy: what goes out now is the list and
+     * nothing else, and `provider` is called only if the other computer's user
+     * accepts the transfer — so copying a folder you never paste costs one
+     * small frame and never opens a file.
+     *
+     * `provider` returns every file's contents run together in `files` order,
+     * or nil when they can no longer be read. The sizes it produces must match
+     * the ones offered; a file edited between the copy and the paste is
+     * therefore a failed transfer rather than a truncated one.
+     */
+    public func localCopy(files: [FileListEntry],
+                          provider: @escaping () -> [UInt8]?) -> [ClipboardOutput] {
+        guard maySend else {
+            return [.note("a file copy was not offered: the board has clipboard sending turned "
+                          + "off in this direction")]
+        }
+        guard !files.isEmpty else { return [] }
+        guard let meta = FileList.encode(files) else {
+            return [.note("\(files.count) file(s) were copied and their names would not fit one "
+                          + "offer, so nothing was sent")]
+        }
+
+        var total: UInt64 = 0
+        for file in files {
+            guard total <= UInt64.max - file.size else {
+                return [.note("the copied files add up to more than can be transferred")]
+            }
+            total += file.size
+        }
+
+        pending = .files(files: files, meta: meta, total: total, provider: provider)
+        sealWaitingSince = nil
+        sealRetrySince = nil
+        return startPendingIfSealed()
+    }
+
+    /*
+     * The user accepted the files the other computer offered. This is where a
+     * file transfer actually begins — on a decision made here, never on the
+     * copy made over there (#56, ADR-0011).
+     */
+    public func acceptFiles(id: UInt32) -> [ClipboardOutput] {
+        guard let offer = heldFileOffer, offer.id == id else { return [] }
+        heldFileOffer = nil
+        heldSince = nil
+        incomingFiles = offer.files
+        return render(transfer.requestLazy(id: id))
+            + [.note("\(offer.files.count) file(s), \(offer.total) bytes, were accepted here "
+                     + "and asked for")]
+    }
+
+    /// The user declined them. The far end is told, so its copy stops waiting
+    /// and its offer retries stop.
+    public func declineFiles(id: UInt32) -> [ClipboardOutput] {
+        guard let offer = heldFileOffer, offer.id == id else { return [] }
+        heldFileOffer = nil
+        heldSince = nil
+        return render(transfer.cancelIncoming())
+            + [.fileOfferWithdrawn(id: id),
+               .note("\(offer.files.count) file(s) offered from the other computer were "
+                     + "declined here")]
+    }
+
+    /// The user gave up on a transfer that is already running. Nothing partial
+    /// is ever delivered, so this loses the whole of it.
+    public func abortReceive() -> [ClipboardOutput] {
+        if let offer = heldFileOffer { return declineFiles(id: offer.id) }
+        guard transfer.isReceiving else { return [] }
+        return render(transfer.cancelIncoming())
+            + [.note("an arriving transfer was cancelled here; nothing partial is kept")]
+    }
+
+    /// The user gave up on a transfer going out.
+    public func abortSend() -> [ClipboardOutput] {
+        pending = nil
+        outgoingProvider = nil
+        guard transfer.isSending else { return [] }
+        return render(transfer.cancelOutgoing())
+            + [.note("a transfer leaving this computer was cancelled here")]
+    }
+
+    /*
+     * The board stated the clipboard size cap (#56). The receive buffer is
+     * sized against it, and cannot move while anything is arriving — so a
+     * change that lands mid-transfer is remembered and applied on the tick
+     * after that transfer ends.
+     */
+    public func capacityChanged(megabytes: UInt8) -> [ClipboardOutput] {
+        let bytes = Int(dh_clip_cap_bytes(megabytes))
+        guard bytes != transfer.receiveCapacity else {
+            wantedCapacity = nil
+            return []
+        }
+        if transfer.setReceiveCapacity(bytes) {
+            wantedCapacity = nil
+            return [.note("the clipboard size cap is now \(megabytes) MB")]
+        }
+        wantedCapacity = bytes
+        return [.note("the clipboard size cap changed to \(megabytes) MB and will take effect "
+                      + "when nothing is arriving")]
+    }
+
+    /// What is arriving, for a progress display. Nil when nothing is.
+    public var arriving: (kind: UInt8, received: UInt64, total: UInt64)? { transfer.arriving }
+
+    /// The file offer waiting on this computer's user, if there is one.
+    public var awaitingDecision: FileOffer? { heldFileOffer }
+
+    /// Whether anything is still on its way out of this computer. False after a
+    /// transfer the far end declined or that could not be read — the two ways a
+    /// lazy send ends without delivering.
+    public var awaitingSend: Bool { transfer.isSending }
+
 
     /// The board stated its clipboard policy. A direction turned off takes any
     /// transfer already crossing it with it — otherwise turning a toggle off
@@ -173,11 +400,18 @@ public final class ClipboardService {
             sealWaitingSince = nil
             sealRetrySince = nil
             reofferWhenSealed = false
+            outgoingProvider = nil
             outputs += render(transfer.cancelOutgoing())
             outputs.append(.note("clipboard sending was turned off; anything in flight was "
                                  + "abandoned"))
         }
         if couldReceive && !mayReceive {
+            if let held = heldFileOffer {
+                heldFileOffer = nil
+                heldSince = nil
+                outputs.append(.fileOfferWithdrawn(id: held.id))
+            }
+            incomingFiles = nil
             outputs += render(transfer.cancelIncoming())
             outputs.append(.note("clipboard receiving was turned off; anything in flight was "
                                  + "abandoned"))
@@ -193,7 +427,15 @@ public final class ClipboardService {
         sealWaitingSince = nil
         sealRetrySince = nil
         reofferWhenSealed = false
-        let outputs = render(transfer.linkDown())
+        outgoingProvider = nil
+        incomingFiles = nil
+        var withdrawn: [ClipboardOutput] = []
+        if let held = heldFileOffer {
+            heldFileOffer = nil
+            heldSince = nil
+            withdrawn.append(.fileOfferWithdrawn(id: held.id))
+        }
+        let outputs = withdrawn + render(transfer.linkDown())
         seal.reset()
         /* Sends produced here have nowhere to go: there is no session to
            authenticate them. Dropped rather than handed on, so a caller cannot
@@ -242,6 +484,31 @@ public final class ClipboardService {
     public func tick(at now: TimeInterval, boardDrops: BoardDrops? = nil) -> [ClipboardOutput] {
         var outputs: [ClipboardOutput] = []
         let drops = boardDrops?.line ?? "the board has stated no drop totals"
+
+        /* A size cap that changed while something was arriving (#56). Tried
+           here rather than remembered for ever, because the transfer it waited
+           on ends without telling anyone. */
+        /* A question nobody answered. See `holdTimeout` for why it cannot be
+           left standing: the copy side re-offers every two seconds until it is
+           requested, and the buffer the size cap sizes stays pinned. */
+        if let held = heldFileOffer {
+            if heldSince == nil {
+                heldSince = now
+            } else if now - heldSince! >= Self.holdTimeout {
+                outputs += declineFiles(id: held.id)
+                outputs.append(.note("a file offer went unanswered for "
+                                     + "\(Int(Self.holdTimeout))s and was declined"))
+            }
+        } else {
+            heldSince = nil
+        }
+
+        if let wanted = wantedCapacity, transfer.canSetReceiveCapacity,
+           transfer.setReceiveCapacity(wanted) {
+            wantedCapacity = nil
+            outputs.append(.note("the clipboard size cap that was waiting is now in force: "
+                                 + "\(wanted / (1024 * 1024)) MB"))
+        }
 
         if pending == nil || seal.canSeal {
             sealWaitingSince = nil
@@ -432,6 +699,24 @@ public final class ClipboardService {
 
     // MARK: - Receiving a payload
 
+    /*
+     * A newer offer replaces whatever was arriving, and a question that was
+     * being held about the old one no longer stands.
+     *
+     * Needed on the *non-file* path too, which is what makes it worth having
+     * once: a text or image copy supersedes a held file offer inside the
+     * transfer machine, and without this the menu bar goes on offering Accept
+     * for a transfer the far end has already moved past — where accepting does
+     * nothing at all and says nothing either.
+     */
+    private func withdrawHeldOffer(supersededBy id: UInt32) -> [ClipboardOutput] {
+        guard let held = heldFileOffer, held.id != id else { return [] }
+        heldFileOffer = nil
+        heldSince = nil
+        incomingFiles = nil
+        return [.fileOfferWithdrawn(id: held.id)]
+    }
+
     private func onOffer(_ body: [UInt8]) -> [ClipboardOutput] {
         /*
          * Refused before the seal is opened, deliberately. A helper told not to
@@ -461,10 +746,14 @@ public final class ClipboardService {
              * what keeps one out of every path that produces an action.
              */
             let previousID = transfer.receivedOfferID
+            if offer.kind == ClipKind.files.rawValue {
+                return onFileOffer(offer, previousID: previousID)
+            }
             let lazy = offer.kind == ClipKind.png.rawValue &&
                        offer.total > UInt64(Self.eagerImageThreshold)
-            var outputs = render(lazy ? transfer.handleLazy(offer: offer)
-                                      : transfer.handle(offer: offer))
+            var outputs = withdrawHeldOffer(supersededBy: offer.id)
+            outputs += render(lazy ? transfer.handleLazy(offer: offer)
+                                   : transfer.handle(offer: offer))
             if lazy && previousID != offer.id && transfer.receivedOfferID == offer.id {
                 lazyImageID = offer.id
                 outputs.append(.lazyImage(id: offer.id, total: offer.total))
@@ -479,6 +768,71 @@ public final class ClipboardService {
         } catch {
             return [.note("an offer could not be opened: \(error)")]
         }
+    }
+
+    /*
+     * Files are offered from the other computer.
+     *
+     * Accepted into the transfer machine as **lazy** and then left there: the
+     * far end learns its offer was heard and stops repeating it (#78), while
+     * not one byte crosses the link until this computer's user says so. Small
+     * sets skip the question — see `filePromptThreshold` for why a prompt for
+     * a quarter-second transfer makes the prompt that matters worthless.
+     *
+     * The metadata is checked before anything is accepted, and a list that
+     * does not add up to the offer's own total is refused. Those two numbers
+     * come from the same far helper, so a disagreement is that helper being
+     * wrong or being tampered with, and either way this end would otherwise
+     * write files by slicing a payload at offsets it has no reason to trust.
+     */
+    private func onFileOffer(_ offer: ClipOffer, previousID: UInt32?) -> [ClipboardOutput] {
+        guard let listed = FileList.decode(offer.meta) else {
+            return [.send(type: MessageType.clipCancel, body: ClipCodec.id(offer.id)),
+                    .note("a file offer named files this helper will not write, so it was "
+                          + "refused")]
+        }
+        /*
+         * The list's own total, as the core summed it, against the total the
+         * same offer promises. Both come from the same far helper, so a
+         * disagreement is that helper being wrong or being tampered with — and
+         * either way this end would otherwise write files by slicing a payload
+         * at offsets it has no reason to trust.
+         */
+        guard listed.total == offer.total else {
+            return [.send(type: MessageType.clipCancel, body: ClipCodec.id(offer.id)),
+                    .note("a file offer promised \(offer.total) bytes and listed "
+                          + "\(listed.total), so it was refused")]
+        }
+        let files = listed.files
+
+        /* An identical retry of the offer already being held is the far end
+           repeating itself, not a second question to ask (#78, ADR-0009). */
+        let waiting = FileOffer(id: offer.id, total: offer.total, files: files)
+        if heldFileOffer == waiting { return [] }
+
+        var outputs = withdrawHeldOffer(supersededBy: offer.id)
+        heldFileOffer = nil
+        heldSince = nil
+        outputs += render(transfer.handleLazy(offer: offer))
+        /* Refused by the machine — over the size cap, or an older id — so
+           there is nothing to ask about. */
+        guard transfer.receivedOfferID == offer.id else { return outputs }
+
+        if transfer.receivedOfferID != previousID {
+            receivingSince = nil
+            sweptSince = nil
+        }
+
+        if offer.total <= UInt64(Self.filePromptThreshold) {
+            incomingFiles = files
+            return outputs + render(transfer.requestLazy(id: offer.id))
+        }
+        heldFileOffer = waiting
+        /* Armed by the tick that follows, not here: no clock is read on a path
+           that produces actions, which is the same rule the deadlines above
+           follow. */
+        heldSince = nil
+        return outputs + [.fileOffer(waiting)]
     }
 
     private func onChunk(_ body: [UInt8]) -> [ClipboardOutput] {
@@ -538,7 +892,17 @@ public final class ClipboardService {
         pending = nil
         sealWaitingSince = nil
         sealRetrySince = nil
-        return render(transfer.offer(kind: waiting.kind, data: waiting.bytes))
+        switch waiting {
+        case .eager(let kind, let bytes):
+            outgoingProvider = nil
+            return render(transfer.offer(kind: kind, data: bytes))
+        case .files(let files, let meta, let total, let provider):
+            outgoingProvider = provider
+            return render(transfer.offerLazy(kind: ClipKind.files.rawValue, meta: meta,
+                                             total: total))
+                + [.note("\(files.count) file(s), \(total) bytes, were offered without being "
+                         + "read")]
+        }
     }
 
     private func offerSeal() -> [ClipboardOutput] {
@@ -583,7 +947,11 @@ public final class ClipboardService {
             case DH_XFER_ACT_DELIVERED:
                 let payload = transfer.delivered()
                 if lazyImageID == action.id { lazyImageID = nil }
-                outputs.append(.deliver(kind: payload.kind, bytes: payload.bytes))
+                if payload.kind == ClipKind.files.rawValue {
+                    outputs += deliverFiles(payload.bytes)
+                } else {
+                    outputs.append(.deliver(kind: payload.kind, bytes: payload.bytes))
+                }
                 if transfer.duplicateOffers > 0 {
                     outputs.append(.note("a transfer completed after "
                                          + "\(transfer.duplicateOffers) duplicate offer(s) "
@@ -594,20 +962,108 @@ public final class ClipboardService {
                     lazyImageID = nil
                     outputs.append(.cancelLazyImage(id: action.id))
                 }
+                /*
+                 * Which direction failed is asked of the machine, not of the
+                 * id: ids are per direction and collide across the two (#136),
+                 * so a send that failed would otherwise throw away a healthy
+                 * receive's file list — and the receive would then arrive with
+                 * nothing to split it by.
+                 */
+                if !transfer.isIncomingBusy {
+                    if let held = heldFileOffer {
+                        heldFileOffer = nil
+                        heldSince = nil
+                        outputs.append(.fileOfferWithdrawn(id: held.id))
+                    }
+                    incomingFiles = nil
+                }
+                if !transfer.isSending { outgoingProvider = nil }
                 outputs.append(.note("transfer \(action.id) was abandoned: "
                                      + Self.reason(action.reason)))
             case DH_XFER_ACT_PROTOCOL_ERROR:
                 outputs.append(.protocolError("offer \(action.id) reused immutable identity "
                                               + "with different content"))
             case DH_XFER_ACT_NEED_DATA:
-                outputs.append(.note("a lazy payload was asked for, which this slice never offers"))
-                outputs += render(transfer.provideFail())
+                guard let provider = outgoingProvider else {
+                    outputs.append(.note("a lazy payload was asked for and this end promised "
+                                         + "none"))
+                    outputs += render(transfer.provideFail())
+                    break
+                }
+                /*
+                 * Read here and nowhere earlier: this is the moment #56 exists
+                 * for, when someone on the other computer has said yes.
+                 *
+                 * It costs a pause and it costs memory, and both are bounded
+                 * and accepted rather than overlooked. The whole set is read
+                 * into RAM and then copied once into the transfer's own
+                 * storage, so a 64 MB paste — the largest cap the board can
+                 * state — peaks at roughly twice that. The read happens on the
+                 * run loop, which also carries the heartbeat: at SSD speeds
+                 * that is tens of milliseconds against a three-second
+                 * deadline, and input itself never touches this helper, so
+                 * what a long read could cost is one late cursor placement.
+                 * Streaming from disk instead would mean the transfer core
+                 * holding a callback rather than a pointer, which is a change
+                 * to the shared machine both helpers run.
+                 */
+                guard let bytes = provider() else {
+                    outgoingProvider = nil
+                    outputs.append(.note("the copied files could not be read, so the transfer "
+                                         + "was abandoned rather than sent short"))
+                    outputs += render(transfer.provideFail())
+                    break
+                }
+                /*
+                 * The offer promised a length and the core will read exactly
+                 * that many bytes from what it is given, so a short read here
+                 * is an overread there. It is also the ordinary case of a file
+                 * edited between the copy and the paste — which must fail the
+                 * transfer rather than truncate it.
+                 */
+                let promised = transfer.outgoingOffer()?.total ?? 0
+                guard UInt64(bytes.count) == promised else {
+                    outgoingProvider = nil
+                    outputs.append(.note("the copied files were \(bytes.count) bytes and "
+                                         + "\(promised) were offered, so the transfer was "
+                                         + "abandoned rather than sent short"))
+                    outputs += render(transfer.provideFail())
+                    break
+                }
+                outputs.append(.note("the copied files were read: \(bytes.count) bytes"))
+                outputs += render(transfer.provide(data: bytes))
             default:
                 outputs.append(.note("the transfer core produced action \(action.type.rawValue), "
                                      + "which this helper does not carry"))
             }
         }
         return outputs
+    }
+
+    /*
+     * Split a delivered file payload back into files.
+     *
+     * The list comes from the offer, checked against that offer's own total
+     * before a single byte was asked for — so the offsets here are arithmetic
+     * over numbers already agreed, not a second parse of anything the far end
+     * says now. The bounds check stays all the same: a payload shorter than
+     * the list claims is a bug on this path, and the answer to one is a
+     * refused delivery, never a short file presented as whole.
+     */
+    private func deliverFiles(_ bytes: [UInt8]) -> [ClipboardOutput] {
+        guard let files = incomingFiles else {
+            return [.note("a file payload arrived with no list to split it by; nothing was "
+                          + "written")]
+        }
+        incomingFiles = nil
+
+        let listed = files.reduce(UInt64(0)) { $0 &+ $1.size }
+        guard listed == UInt64(bytes.count) else {
+            return [.note("a file payload of \(bytes.count) bytes did not match the "
+                          + "\(listed) its list named; nothing was written")]
+        }
+        return [.deliverFiles(FileDelivery(files: files, bytes: bytes)),
+                .note("\(files.count) file(s), \(bytes.count) bytes, arrived whole")]
     }
 
     private func sealedOffer() -> [ClipboardOutput] {

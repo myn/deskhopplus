@@ -96,6 +96,21 @@ void dh_xfer_init(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap) {
     x->next_id = 1;
 }
 
+bool dh_xfer_set_rx_buffer(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap) {
+    if (x == NULL || rx_buf == NULL || rx_cap == 0) return false;
+    /*
+     * Any incoming transfer blocks the swap, including a lazy one that is
+     * holding an accepted offer and no bytes yet. That offer's total was
+     * measured against the *old* capacity, and nothing re-measures it when the
+     * request finally goes out — so a buffer that shrank underneath it would
+     * be written past its end by a payload the machine already agreed to.
+     */
+    if (x->rx.active) return false;
+    x->rx_buf = rx_buf;
+    x->rx_cap = rx_cap;
+    return true;
+}
+
 /* ---- sender ----------------------------------------------------------- */
 
 size_t dh_xfer_offer(dh_xfer *x, uint8_t kind, const uint8_t *meta, uint16_t meta_len,

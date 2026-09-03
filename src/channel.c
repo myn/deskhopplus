@@ -1048,7 +1048,8 @@ void channel_task(device_t *state) {
     dh_session_set_clip_policy(&channel.session,
                                dh_clip_policy_for(state->board_role,
                                                   state->config.clip_block_a_to_b != 0,
-                                                  state->config.clip_block_b_to_a != 0));
+                                                  state->config.clip_block_b_to_a != 0),
+                               state->config.clip_cap_mb);
 
     /*
      * Whichever the session owes its helper: the clipboard policy a fresh or

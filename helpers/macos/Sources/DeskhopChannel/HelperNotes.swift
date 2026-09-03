@@ -117,7 +117,7 @@ enum HelperNotes {
         case DH_NOTE_LOCAL_SENDS:
             return "this helper has written \(a) frame(s) since boot, \(b) refused by the transport"
         case DH_NOTE_CLIP_POLICY:
-            return "the board's clipboard policy: " + clipPolicy(a)
+            return "the board's clipboard policy: " + clipPolicy(a) + ", size cap \(b) MB"
         default:
             /* A code this helper has no words for. Printed rather than dropped:
                a note nobody can read still says something happened. */

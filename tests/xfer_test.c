@@ -352,6 +352,16 @@ static void enqueue_actions(struct side *from, struct side *to, const dh_xfer_ac
 
 static struct side *peer(struct side *s) { return s == &A ? &B : &A; }
 
+/* Carry exactly one queued message, so a scenario can observe a transfer
+   mid-flight rather than only at rest. */
+static void deliver_one(void) {
+    if (q_head >= q_tail) return;
+    struct queued q = queue[q_head++];
+    dh_xfer_action acts[ACTS_CAP];
+    size_t n = dispatch(q.to, &q.m, acts);
+    enqueue_actions(q.to, peer(q.to), acts, n);
+}
+
 static void run_until_quiet(void) {
     int spins = 0;
     for (;;) {
@@ -521,6 +531,88 @@ int main(void) {
         CHECK(!A.x.tx.active, "cap", "sender kept a refused transfer");
         offer_and_run(&A, payload, 100);
         CHECK(B.delivered == 1, "cap", "next transfer failed");
+    }
+
+    /*
+     * The receive buffer is swapped when the board states a new size cap
+     * (#56). The buffer has to move because the cap is what it is sized
+     * against, and a helper that allocated the 64 MB maximum against a 10 MB
+     * default would hold six times the memory it can ever use.
+     *
+     * What must survive the swap is the *sending* direction: offer ids are
+     * ordered in this helper's own namespace, and restarting them mid-session
+     * is exactly what the far end reads as this process having restarted
+     * (#151). So the id after a swap is the next one, not one.
+     */
+    {
+        reset_scenario();
+        static uint8_t small[8u * 1024u];
+        dh_xfer_action acts[ACTS_CAP];
+
+        offer_and_run(&A, payload, 100);
+        CHECK(B.delivered == 1, "capswap", "the transfer before the swap did not arrive");
+        const uint32_t next_id = B.x.next_id;
+
+        CHECK(dh_xfer_set_rx_buffer(&B.x, small, sizeof small), "capswap",
+              "an idle receiver refused a new buffer");
+        CHECK(B.x.next_id == next_id, "capswap", "the swap restarted this end's offer ids");
+
+        /* The new cap is the one enforced, in both directions of the change. */
+        size_t n = dh_xfer_offer(&A.x, 0, NULL, 0, NULL, sizeof small + 1, acts, ACTS_CAP);
+        enqueue_actions(&A, &B, acts, n);
+        run_until_quiet();
+        CHECK(B.delivered == 1, "capswap", "an offer over the lowered cap was accepted");
+
+        offer_and_run(&A, payload, 4u * 1024u);
+        CHECK(B.delivered == 2, "capswap", "a transfer inside the lowered cap did not arrive");
+    }
+
+    /*
+     * A receive in progress owns the buffer it is assembling into, so the swap
+     * waits. Refusing is the whole of the rule: the caller re-offers the new
+     * cap when the transfer ends, and the alternative — moving the buffer
+     * under a half-assembled payload — is a truncated file presented as
+     * complete, which is the one outcome #56 names as unacceptable.
+     */
+    {
+        reset_scenario();
+        static uint8_t small[8u * 1024u];
+        dh_xfer_action acts[ACTS_CAP];
+
+        size_t n = dh_xfer_offer(&A.x, 0, NULL, 0, payload, 8u * DH_XFER_CHUNK_SIZE, acts,
+                                 ACTS_CAP);
+        enqueue_actions(&A, &B, acts, n);
+        deliver_one();
+        deliver_one();
+        CHECK(dh_xfer_is_receiving(&B.x), "capswap", "the receive under test never started");
+        CHECK(!dh_xfer_set_rx_buffer(&B.x, small, sizeof small), "capswap",
+              "the buffer moved under a receive in progress");
+
+        run_until_quiet();
+        CHECK(B.delivered == 1 && B.delivered_len == 8u * DH_XFER_CHUNK_SIZE, "capswap",
+              "the receive did not finish into the buffer it started in");
+        CHECK(dh_xfer_set_rx_buffer(&B.x, small, sizeof small), "capswap",
+              "the swap was still refused once the receive had finished");
+    }
+
+    /*
+     * A lazy offer is being *held* — accepted, awaiting the paste side's
+     * decision, not one byte arrived — and it blocks the swap too. Its total
+     * was measured against the capacity in force when it arrived, and nothing
+     * measures it again when the request finally goes out, so a buffer that
+     * shrank in between would be written past its end.
+     */
+    {
+        reset_scenario();
+        static uint8_t small[8u * 1024u];
+        dh_xfer_action acts[ACTS_CAP];
+
+        const dh_clip_offer offer = {1, 2, 32u * 1024u, NULL, 0};
+        CHECK(dh_xfer_handle_offer_lazy(&B.x, &offer, acts, ACTS_CAP) == 0, "capswap",
+              "accepting a lazy offer asked for it straight away");
+        CHECK(B.x.rx.active && B.x.rx.lazy, "capswap", "the held offer under test never arrived");
+        CHECK(!dh_xfer_set_rx_buffer(&B.x, small, sizeof small), "capswap",
+              "the buffer shrank under an offer already accepted against the old one");
     }
 
     /* No streaming before a request (ported: the lazy-files bug). */

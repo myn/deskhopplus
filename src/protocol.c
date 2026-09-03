@@ -113,6 +113,16 @@ const field_map_t api_field_map[] = {
     { 89, false, UINT8,  1, offsetof(device_t, config.clip_block_a_to_b) },
     { 90, false, UINT8,  1, offsetof(device_t, config.clip_block_b_to_a) },
 
+    /* The clipboard size cap in megabytes (#56). Writable, and written to both
+       boards like the toggles above — a helper reads it from its own board, so
+       a cap set on one board only would give the two computers different
+       answers to the same question.
+
+       Zero is the default rather than "no clipboard at all"; the page renders
+       a range that cannot produce zero, and dh_clip_cap_mb is what resolves a
+       stored zero for every reader. */
+    { 100, false, UINT8, 1, offsetof(device_t, config.clip_cap_mb) },
+
     /*
      * What this board has dropped on the helper channel, since boot.
      *

@@ -13,6 +13,12 @@ constexpr UINT kIdStatus = 1;
 constexpr UINT kIdAutostart = 2;
 constexpr UINT kIdAutostartDetail = 3;
 constexpr UINT kIdQuit = 4;
+constexpr UINT kIdFileSummary = 5;
+constexpr UINT kIdAcceptFiles = 6;
+constexpr UINT kIdDeclineFiles = 7;
+constexpr UINT kIdProgress = 8;
+constexpr UINT kIdAbortTransfer = 9;
+constexpr UINT kIdAbortSend = 10;
 
 std::wstring widen(const std::string &text) {
     if (text.empty()) return {};
@@ -77,8 +83,17 @@ void Tray::update_tooltip() {
     if (!icon_shown_ || !window_) return;
     NOTIFYICONDATAW data = base(window_);
     data.uFlags = NIF_TIP;
+    /* What is happening now takes precedence over what the device is doing:
+       a question waiting for an answer and a transfer under way are both
+       things the user is meant to act on, and the state is one hover away. */
+    std::string tip = words::state_message(state_);
+    if (have_question_) {
+        tip = "Files offered: " + summary(question_);
+    } else if (progress_total_ > 0) {
+        tip = "Receiving " + size_text(progress_received_) + " of " + size_text(progress_total_);
+    }
     copy_into(data.szTip, sizeof(data.szTip) / sizeof(wchar_t),
-              L"deskhopplus — " + widen(words::state_message(state_)));
+              L"deskhopplus — " + widen(tip));
     Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
@@ -130,6 +145,31 @@ void Tray::show_menu() {
     const std::string status = words::state_message(state_);
     AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdStatus,
                 widen(status.empty() ? "Looking for the device" : status).c_str());
+
+    if (have_question_) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdFileSummary,
+                    widen(summary(question_)).c_str());
+        AppendMenuW(menu, MF_STRING, kIdAcceptFiles, L"Accept and start the transfer");
+        AppendMenuW(menu, MF_STRING, kIdDeclineFiles, L"Decline");
+    }
+
+    if (progress_total_ > 0) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        const unsigned percent =
+            static_cast<unsigned>(progress_received_ * 100u / progress_total_);
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress,
+                    widen("Receiving " + size_text(progress_received_) + " of " +
+                          size_text(progress_total_) + " \xe2\x80\x94 " +
+                          std::to_string(percent) + "%").c_str());
+        AppendMenuW(menu, MF_STRING, kIdAbortTransfer, L"Cancel this transfer");
+    }
+
+    if (callbacks_.is_sending && callbacks_.is_sending()) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kIdAbortSend, L"Cancel what is being sent");
+    }
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     const bool enabled = callbacks_.autostart_enabled && callbacks_.autostart_enabled();
@@ -155,6 +195,70 @@ void Tray::show_menu() {
 
     if (chosen == kIdAutostart && callbacks_.toggle_autostart) callbacks_.toggle_autostart();
     else if (chosen == kIdQuit && callbacks_.quit) callbacks_.quit();
+    else if (chosen == kIdAcceptFiles && have_question_) {
+        const uint32_t id = question_.id;
+        have_question_ = false;
+        update_tooltip();
+        if (callbacks_.accept_files) callbacks_.accept_files(id);
+    } else if (chosen == kIdDeclineFiles && have_question_) {
+        const uint32_t id = question_.id;
+        have_question_ = false;
+        update_tooltip();
+        if (callbacks_.decline_files) callbacks_.decline_files(id);
+    } else if (chosen == kIdAbortTransfer && callbacks_.abort_transfer) {
+        callbacks_.abort_transfer();
+    } else if (chosen == kIdAbortSend && callbacks_.abort_send) {
+        callbacks_.abort_send();
+    }
+}
+
+void Tray::ask_about_files(const deskhop::FileOffer &offer) {
+    question_ = offer;
+    have_question_ = true;
+    /* The icon may not be showing: the quiet state hides it, and a question
+       the user cannot see is a transfer that never happens. */
+    add_icon();
+    update_tooltip();
+    balloon("Files from the other computer: " + summary(offer) +
+            " Use the deskhopplus icon to accept or decline.");
+}
+
+void Tray::withdraw_file_question(uint32_t id) {
+    if (!have_question_ || question_.id != id) return;
+    have_question_ = false;
+    update_tooltip();
+}
+
+void Tray::show_progress(uint64_t received, uint64_t total) {
+    progress_received_ = received;
+    progress_total_ = total;
+    update_tooltip();
+}
+
+std::string Tray::summary(const deskhop::FileOffer &offer) {
+    const std::string what = offer.files.size() == 1
+                                 ? offer.files.front().name
+                                 : std::to_string(offer.files.size()) + " files";
+    return what + " \xe2\x80\x94 " + size_text(offer.total) + ", about " +
+           duration_text(offer.estimated_seconds()) + ".";
+}
+
+/* Integer arithmetic, and truncating rather than rounding — the same spelling
+   as `MenuBar.size` on the other computer, so the two ends quote one transfer
+   at one size. */
+std::string Tray::size_text(uint64_t bytes) {
+    if (bytes >= 1024u * 1024u) {
+        const uint64_t tenths = (bytes * 10u) / (1024u * 1024u);
+        return std::to_string(tenths / 10u) + "." + std::to_string(tenths % 10u) + " MB";
+    }
+    if (bytes >= 1024u) return std::to_string(bytes / 1024u) + " KB";
+    return std::to_string(bytes) + " bytes";
+}
+
+std::string Tray::duration_text(uint32_t seconds) {
+    if (seconds < 60u) return std::to_string(seconds < 1u ? 1u : seconds) + " seconds";
+    const uint32_t minutes = (seconds + 59u) / 60u;
+    return minutes == 1u ? std::string("a minute") : std::to_string(minutes) + " minutes";
 }
 
 } // namespace deskhop

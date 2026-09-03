@@ -29,6 +29,7 @@
 #include <functional>
 #include <string>
 
+#include "clip_service.h"
 #include "dh_helper.h"
 
 namespace deskhop {
@@ -47,6 +48,23 @@ class Tray {
         std::function<std::string()> autostart_detail;
         std::function<void()> toggle_autostart;
         std::function<void()> quit;
+
+        /* The paste-side acceptance and abort (#56). Nothing has crossed the
+           link when `accept_files` is offered, and nothing will until it or
+           `decline_files` is called.
+
+           Last in the struct, and deliberately: this is initialised
+           positionally at its one call site, so a field added in the middle
+           would silently shift every callback after it onto the wrong slot. */
+        std::function<void(uint32_t)> accept_files;
+        std::function<void(uint32_t)> decline_files;
+        std::function<void()> abort_transfer;
+        /* Whether something is on its way *out* of this computer, and how to
+           stop it (#42, story 7 — a mis-copied folder must not hold anyone
+           hostage). Asked rather than pushed: the menu is built when it is
+           opened, so it can simply look. */
+        std::function<bool()> is_sending;
+        std::function<void()> abort_send;
     };
 
     ~Tray();
@@ -56,6 +74,30 @@ class Tray {
 
     /* Adds, updates or removes the icon to match the state. */
     void show(dh_helper_state state);
+
+    /*
+     * Files are being offered from the other computer (#56).
+     *
+     * A balloon *and* two menu entries. The balloon is what makes it a prompt
+     * rather than something to discover — a transfer that can take minutes
+     * must be agreed to, not stumbled upon — and the menu is what makes a
+     * missed balloon recoverable. Neither takes focus from what the user is
+     * typing into, which a modal dialog would.
+     */
+    void ask_about_files(const deskhop::FileOffer &offer);
+    void withdraw_file_question(uint32_t id);
+
+    /* How far the arriving transfer has got. `total` of zero means nothing is
+       arriving. */
+    void show_progress(uint64_t received, uint64_t total);
+
+    /* What the user is being asked to agree to: how many files, how big, and
+       how long it will take. The duration is the point — a size alone does not
+       tell anyone whether to wait (#39, #56). Static so a test can read it
+       without a window. */
+    static std::string summary(const deskhop::FileOffer &offer);
+    static std::string size_text(uint64_t bytes);
+    static std::string duration_text(uint32_t seconds);
 
     /* A kCallbackMessage arrived. */
     void on_callback(LPARAM what);
@@ -71,6 +113,12 @@ class Tray {
     Callbacks callbacks_;
     bool icon_shown_{false};
     dh_helper_state state_{DH_HELPER_QUIET};
+    /* The offer waiting on this computer's user, and the transfer running now.
+       Both are what the menu grows extra entries for. */
+    bool have_question_{false};
+    deskhop::FileOffer question_;
+    uint64_t progress_received_{0};
+    uint64_t progress_total_{0};
     /* A balloon fires on *entering* a state, not on every call saying it.
        The core emits a state output only on a change, so this is not guarding
        against it — it guards the paths that re-assert the current state

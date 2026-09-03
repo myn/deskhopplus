@@ -171,6 +171,48 @@ typedef struct {
 void dh_xfer_init(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap);
 
 /*
+ * Point the receive buffer somewhere else, without disturbing anything else
+ * the machine holds.
+ *
+ * The buffer is sized against the clipboard size cap, and the board is the
+ * single source of truth for that cap (#42, #56) — so it is stated per
+ * session and can change while a helper is running. Allocating the 64 MB
+ * maximum against a 10 MB default would hold six times the memory the helper
+ * can ever use, which on the managed laptop this runs on is not free.
+ *
+ * False while anything is arriving, which is the whole of the rule. A payload
+ * mid-assembly would be truncated and delivered as complete; a *lazy* offer
+ * that is merely being held is refused for a sharper reason still, as its
+ * total was measured against the old capacity and nothing measures it again
+ * when the request goes out. The caller re-offers the change once the
+ * transfer ends.
+ *
+ * The sending direction is untouched on purpose. Offer ids are ordered in this
+ * helper's own namespace, and restarting them mid-session is precisely what
+ * the far end reads as this process having restarted (#151) — so this is not
+ * dh_xfer_init with a different buffer.
+ */
+bool dh_xfer_set_rx_buffer(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap);
+
+/*
+ * Whether anything at all is incoming — a payload assembling, or a lazy offer
+ * being held for a decision. Wider than dh_xfer_is_receiving, which excludes
+ * the held case.
+ *
+ * It is what a caller needs to answer "is my incoming transfer over?" after a
+ * FAILED action, because a transfer id cannot answer it: ids are per direction
+ * and collide across the two (#136), so a failure of the outgoing transfer
+ * would otherwise be read as the incoming one's and throw its state away.
+ */
+static inline bool dh_xfer_rx_busy(const dh_xfer *x) { return x->rx.active; }
+
+/* Whether that swap would be accepted right now. Asked *before* a caller
+   allocates the replacement: a helper that retries a refused swap on every
+   tick would otherwise allocate and free up to 64 MB several times a second
+   for the whole of the transfer it is waiting on. */
+static inline bool dh_xfer_can_set_rx_buffer(const dh_xfer *x) { return !dh_xfer_rx_busy(x); }
+
+/*
  * Every call below returns the number of actions written to acts (at most
  * acts_cap). DH_XFER_BATCH_MAX + 2 suffices for every call except
  * dh_xfer_handle_done, whose sweep wants one action per missing chunk plus

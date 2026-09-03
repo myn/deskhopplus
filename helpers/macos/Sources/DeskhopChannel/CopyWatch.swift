@@ -13,8 +13,8 @@
  *
  * So a change is settled when its contents have been read, not when they have
  * been noticed. The wait is bounded, because an unreadable pasteboard is also
- * what a copy this slice does not carry looks like — a file (#56) — and that
- * must not be re-read for ever.
+ * what a copy this helper does not carry looks like — a folder, or a format
+ * belonging to one application — and that must not be re-read for ever.
  *
  * No AppKit here on purpose: this is the part worth testing, and NSPasteboard
  * is not reachable from the host tests.
@@ -28,7 +28,7 @@ public struct CopyWatch {
         /// Readable. `afterPolls` is how many polls it took; 1 is the ordinary
         /// case, and more than 1 means a copy was caught mid-write.
         case take(afterPolls: Int)
-        /// Waited long enough. Not something this slice sends.
+        /// Waited long enough. Not something this helper sends.
         case giveUp
     }
 
@@ -52,8 +52,9 @@ public struct CopyWatch {
     /// two helpers hand the same payload back and forth for ever.
     public mutating func wrote(changeCount: Int) { settle(changeCount) }
 
-    /// One poll. `foundText` is whether the pasteboard yielded usable text.
-    public mutating func looked(at changeCount: Int, foundText: Bool) -> Step {
+    /// One poll. `foundContent` is whether the pasteboard yielded anything
+    /// this helper carries — text, an image, or a list of files (#56).
+    public mutating func looked(at changeCount: Int, foundContent: Bool) -> Step {
         guard changeCount != settled else { return .ignore }
         if pending != changeCount {
             pending = changeCount
@@ -61,7 +62,7 @@ public struct CopyWatch {
         }
         polls += 1
 
-        if foundText {
+        if foundContent {
             let waited = polls
             settle(changeCount)
             return .take(afterPolls: waited)

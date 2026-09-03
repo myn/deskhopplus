@@ -4,9 +4,12 @@ import Foundation
 
 /*
  * This computer's pasteboard: what was copied here, and what arrives from the
- * other computer (#52).
+ * other computer (#52, #55, #56).
  *
- * Text and images are carried; files are #56.
+ * Text, images and files are carried. A file copy is read as a *list* and not
+ * as bytes — the contents are not touched until the other computer's user
+ * accepts the transfer, which is the whole of #56 and the reason `onLocalFiles`
+ * hands over a closure rather than a payload.
  *
  * Two things here are not obvious and are both requirements rather than
  * choices.
@@ -29,6 +32,16 @@ import Foundation
  * invisible when it is missing.
  */
 final class Pasteboard {
+    /// Files copied on this computer, and how to read them when asked.
+    struct LocalFiles {
+        let entries: [FileListEntry]
+        /// Every file's contents run together in `entries` order, or nil if any
+        /// of them can no longer be read at the promised length. Nil rather
+        /// than short: a file edited between the copy and the paste must fail
+        /// the transfer, not truncate it.
+        let read: () -> [UInt8]?
+    }
+
     /// macOS has no change notification; `changeCount` is the only signal.
     static let pollInterval: TimeInterval = 0.2
 
@@ -45,6 +58,10 @@ final class Pasteboard {
     /// writes.
     var onLocalCopy: ((String) -> Void)?
     var onLocalImage: (([UInt8]) -> Void)?
+    /// Files copied here: what they are called and how long they are, plus the
+    /// closure that reads them, which is called only if the transfer is
+    /// accepted on the other computer.
+    var onLocalFiles: ((LocalFiles) -> Void)?
     /// Every non-self pasteboard transition, before its formats are inspected.
     var onLocalReplacement: (() -> Void)?
     var log: ((String) -> Void)?
@@ -92,17 +109,107 @@ final class Pasteboard {
             onLocalReplacement?()
         }
 
-        let text = pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 }
-        let image = pngFromPasteboard()
-        guard case .take(let polls) = watch.looked(at: count,
-                                                   foundText: text != nil || image != nil)
+        /* Files first: copying one in Finder also puts its path on the
+           pasteboard as a string, so reading text first would send the path
+           instead of the file. */
+        let files = filesFromPasteboard()
+        let text = files == nil
+            ? pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 } : nil
+        let image = files == nil ? pngFromPasteboard() : nil
+        guard case .take(let polls) = watch.looked(
+            at: count, foundContent: files != nil || text != nil || image != nil)
         else { return }
 
         /* More than one means a copy was caught mid-write and waited for —
            the case that used to be dropped in silence. */
         if polls > 1 { log?("a copy took \(polls) polls to become readable") }
-        if let image { onLocalImage?(Array(image)) }
+        if let files { onLocalFiles?(files) }
+        else if let image { onLocalImage?(Array(image)) }
         else if let text { onLocalCopy?(text) }
+    }
+
+    /*
+     * The files on the pasteboard, as a list and a way to read them later.
+     *
+     * Directories are skipped rather than walked. A folder is a tree, and the
+     * offer's metadata is a flat list of names with no room for the paths
+     * inside one — so carrying a folder would need a wire change, not a loop
+     * here. Skipped visibly, because a copied folder that silently transfers
+     * nothing is the kind of quiet failure #42 exists to avoid.
+     */
+    private func filesFromPasteboard() -> LocalFiles? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self],
+                                                options: options) as? [URL],
+              !urls.isEmpty
+        else { return nil }
+
+        var entries: [FileListEntry] = []
+        var readable: [(url: URL, size: UInt64)] = []
+        var skipped = 0
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true, let size = values?.fileSize else {
+                skipped += 1
+                continue
+            }
+            entries.append(FileListEntry(name: url.lastPathComponent, size: UInt64(size)))
+            readable.append((url, UInt64(size)))
+        }
+        if skipped > 0 {
+            log?("\(skipped) copied item(s) were not ordinary files — a folder is not carried "
+                 + "— and were left out")
+        }
+        guard !entries.isEmpty else { return nil }
+
+        return LocalFiles(entries: entries) {
+            var payload: [UInt8] = []
+            for file in readable {
+                /*
+                 * Measured again, not assumed from the offer. A file that has
+                 * *grown* since the copy would otherwise have its first bytes
+                 * sent as the whole thing — a truncated file presented as
+                 * complete, which is the one outcome #56 names as
+                 * unacceptable. Reading the whole file and comparing catches
+                 * that as well as a file that shrank.
+                 */
+                guard let bytes = try? Data(contentsOf: file.url),
+                      UInt64(bytes.count) == file.size
+                else { return nil }
+                payload += bytes
+            }
+            return payload
+        }
+    }
+
+    /*
+     * Write file references for a set that arrived. The files themselves are
+     * already on disk (FileStore) — this is only the reference the user pastes.
+     *
+     * Host-only, exactly as text and images are: a project whose premise is
+     * removing the radio between these two computers would otherwise put every
+     * received file straight back onto Universal Clipboard.
+     */
+    @discardableResult
+    func deliver(files urls: [URL]) -> Bool {
+        var delay = Self.firstRetryDelay
+        for attempt in 1...Self.writeAttempts {
+            pasteboard.prepareForNewContents(with: .currentHostOnly)
+            if pasteboard.writeObjects(urls as [NSURL]) {
+                watch.wrote(changeCount: pasteboard.changeCount)
+                if attempt > 1 {
+                    log?("the pasteboard took \(attempt) attempts to accept the files")
+                }
+                return true
+            }
+            if attempt < Self.writeAttempts {
+                Thread.sleep(forTimeInterval: delay)
+                delay *= 2
+            }
+        }
+        log?("the pasteboard refused \(Self.writeAttempts) attempts to write \(urls.count) "
+             + "file reference(s); the files are on disk but cannot be pasted")
+        return false
     }
 
     private func pngFromPasteboard() -> Data? {

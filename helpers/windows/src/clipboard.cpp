@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cwchar>
 #include <propidl.h>
+#include <shellapi.h>
+#include <shlobj.h>
 #include <gdiplus.h>
 #include <objidl.h>
 
@@ -72,6 +74,12 @@ std::vector<uint8_t> wide_to_utf8(const wchar_t *text) {
        end pastes exactly what was selected. */
     out.pop_back();
     return out;
+}
+
+/* The same conversion, as a std::string — what a file name is carried in. */
+std::string wide_to_utf8_string(const wchar_t *text) {
+    const std::vector<uint8_t> bytes = wide_to_utf8(text);
+    return std::string(bytes.begin(), bytes.end());
 }
 
 std::vector<uint8_t> global_bytes(HANDLE handle) {
@@ -345,8 +353,117 @@ bool Clipboard::open_with_retry() {
     return false;
 }
 
+/*
+ * The files on the clipboard, as a list and a way to read them later.
+ *
+ * Directories are skipped rather than walked. A folder is a tree, and the
+ * offer's metadata is a flat list of names with no room for the paths inside
+ * one — so carrying a folder would need a wire change, not a loop here.
+ * Skipped visibly, because a copied folder that silently transfers nothing is
+ * the kind of quiet failure #42 exists to avoid.
+ *
+ * Called with the clipboard already open. It does **not** invoke the callback:
+ * the caller closes the clipboard first, because that callback runs the whole
+ * offer path — sealing, framing, the transport — and the clipboard is a
+ * machine-wide lock that every other application is waiting on.
+ */
+bool Clipboard::read_files(std::vector<FileEntry> &entries,
+                           std::function<bool(std::vector<uint8_t> &)> &read) {
+    HANDLE handle = GetClipboardData(CF_HDROP);
+    if (handle == nullptr) return false;
+    auto *drop = static_cast<HDROP>(handle);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
+
+    entries.clear();
+    std::vector<std::pair<std::wstring, uint64_t>> readable;
+    unsigned skipped = 0;
+    for (UINT i = 0; i < count; i++) {
+        wchar_t path[MAX_PATH]{};
+        if (DragQueryFileW(drop, i, path, MAX_PATH) == 0) {
+            skipped++;
+            continue;
+        }
+        WIN32_FILE_ATTRIBUTE_DATA attributes{};
+        if (!GetFileAttributesExW(path, GetFileExInfoStandard, &attributes) ||
+            (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            skipped++;
+            continue;
+        }
+        const uint64_t size = (static_cast<uint64_t>(attributes.nFileSizeHigh) << 32) |
+                              attributes.nFileSizeLow;
+        const wchar_t *name = wcsrchr(path, L'\\');
+        name = name != nullptr ? name + 1 : path;
+        entries.push_back(FileEntry{wide_to_utf8_string(name), size});
+        readable.emplace_back(path, size);
+    }
+    if (skipped > 0 && callbacks_.log)
+        callbacks_.log(std::to_string(skipped) +
+                       " copied item(s) were not ordinary files — a folder is not carried — "
+                       "and were left out");
+    if (entries.empty()) return false;
+
+    read = [readable](std::vector<uint8_t> &payload) -> bool {
+        payload.clear();
+        for (const auto &file : readable) {
+            HANDLE handle = CreateFileW(file.first.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) return false;
+            /*
+             * Measured again, not assumed from the offer. Reading the promised
+             * length out of a file that has *grown* since the copy would take
+             * its first bytes and send them as the whole thing — a truncated
+             * file presented as complete, which is the one outcome #56 names
+             * as unacceptable. A file that shrank is caught by the read
+             * falling short; only this catches one that grew.
+             */
+            LARGE_INTEGER now{};
+            if (!GetFileSizeEx(handle, &now) ||
+                static_cast<uint64_t>(now.QuadPart) != file.second) {
+                CloseHandle(handle);
+                return false;
+            }
+            const size_t at = payload.size();
+            payload.resize(at + static_cast<size_t>(file.second));
+            uint64_t left = file.second;
+            uint8_t *out = payload.data() + at;
+            bool ok = true;
+            while (left > 0) {
+                const DWORD ask = left > 0x100000u ? 0x100000u : static_cast<DWORD>(left);
+                DWORD got = 0;
+                if (!ReadFile(handle, out, ask, &got, nullptr) || got == 0) {
+                    ok = false;
+                    break;
+                }
+                out += got;
+                left -= got;
+            }
+            CloseHandle(handle);
+            /* Short is not "nearly": the offer promised this length, so a file
+               edited since the copy fails the transfer rather than truncating
+               it. */
+            if (!ok) return false;
+        }
+        return true;
+    };
+    return true;
+}
+
 void Clipboard::read_clipboard() {
-    if (!callbacks_.local_copy && !callbacks_.local_image) return;
+    if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) return;
+
+    /* Files first: copying one in Explorer also puts its path on the clipboard
+       as text, so reading text first would send the path instead of the file. */
+    if (callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
+        if (!open_with_retry()) return;
+        std::vector<FileEntry> files;
+        std::function<bool(std::vector<uint8_t> &)> read;
+        const bool found = read_files(files, read);
+        CloseClipboard();
+        if (found) {
+            callbacks_.local_files(std::move(files), std::move(read));
+            return;
+        }
+    }
     /* Ask first so unrelated clipboard formats cost nothing and do not open
        the clipboard against another program that wants it. */
     const bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
@@ -409,6 +526,59 @@ void Clipboard::read_clipboard() {
     }
     if (has_image && callbacks_.local_image) callbacks_.local_image(std::move(payload));
     else if (callbacks_.local_copy) callbacks_.local_copy(std::move(payload));
+}
+
+/*
+ * References to files that arrived, as CF_HDROP: a DROPFILES header followed
+ * by a double-null-terminated list of wide paths.
+ *
+ * Host-only has no equivalent here and needs none — Windows has no Universal
+ * Clipboard of its own to leak onto, which is why only the macOS side carries
+ * that flag.
+ */
+bool Clipboard::deliver_files(const std::vector<std::wstring> &paths) {
+    if (paths.empty()) return false;
+
+    size_t characters = 1; /* the second terminator */
+    for (const std::wstring &path : paths) characters += path.size() + 1;
+    HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, sizeof(DROPFILES) + characters * sizeof(wchar_t));
+    if (block == nullptr) {
+        if (callbacks_.log) callbacks_.log("a file list could not be allocated");
+        return false;
+    }
+    auto *drop = static_cast<DROPFILES *>(GlobalLock(block));
+    if (drop == nullptr) {
+        GlobalFree(block);
+        return false;
+    }
+    *drop = DROPFILES{};
+    drop->pFiles = sizeof(DROPFILES);
+    drop->fWide = TRUE;
+    auto *out = reinterpret_cast<wchar_t *>(reinterpret_cast<uint8_t *>(drop) + sizeof(DROPFILES));
+    for (const std::wstring &path : paths) {
+        std::memcpy(out, path.c_str(), (path.size() + 1) * sizeof(wchar_t));
+        out += path.size() + 1;
+    }
+    *out = L'\0';
+    GlobalUnlock(block);
+
+    if (!open_with_retry()) {
+        GlobalFree(block);
+        if (callbacks_.log)
+            callbacks_.log("the clipboard would not open for " + std::to_string(paths.size()) +
+                           " arriving file(s); they are on disk but cannot be pasted");
+        return false;
+    }
+    EmptyClipboard();
+    const bool wrote = SetClipboardData(CF_HDROP, block) != nullptr;
+    /* Ownership passes to the clipboard only on success. */
+    if (!wrote) GlobalFree(block);
+    self_sequence_ = GetClipboardSequenceNumber();
+    CloseClipboard();
+    if (!wrote && callbacks_.log)
+        callbacks_.log("the clipboard refused a list of " + std::to_string(paths.size()) +
+                       " arriving file(s)");
+    return wrote;
 }
 
 bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
@@ -503,7 +673,7 @@ void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
     }
 
     EmptyClipboard();
-    /* A real handle, never nullptr: this slice claims no format it cannot
+    /* A real handle, never nullptr: this claims no format it cannot
        immediately produce, which is what keeps a pasting application from ever
        waiting on this helper. See clipboard.h. */
     if (SetClipboardData(CF_UNICODETEXT, block) == nullptr) {

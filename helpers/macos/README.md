@@ -1,17 +1,30 @@
 # The macOS helper
 
 A background agent that finds the device, seizes every vendor HID channel, introduces itself, and
-keeps the session alive ([#45](https://github.com/myn/deskhopplus/issues/45)). No payloads yet:
-clipboard and cursor placement arrive on the session this establishes.
+keeps the session alive ([#45](https://github.com/myn/deskhopplus/issues/45)). It carries the
+clipboard — text, images and files — and places the cursor on the session this establishes.
+
+It needs a window server, because it has a menu-bar item
+([#54](https://github.com/myn/deskhopplus/issues/54)'s first slice, built for
+[#56](https://github.com/myn/deskhopplus/issues/56)'s acceptance and progress). The LaunchAgent
+runs it in the user's GUI session, so it has one; running it over ssh with nobody logged in does
+not, and is not a supported arrangement — reading this machine's pasteboard needs the same
+session.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
 | `Sources/DeskhopChannel` | The binding to the shared C core, and what each of its outputs *does* (`OutputDispatch`). No IOKit — all of it runs in the tests. |
-| `Sources/deskhop-helper` | The agent: IOKit transport, run loop, and the state the user is shown. |
+| `Sources/deskhop-helper` | The agent: IOKit transport, run loop, menu bar, received-file store, and the state the user is shown. |
 | `Tests/channel-tests` | The host tests. |
 | `LaunchAgent/` | The launchd job that starts it at login and restarts it after a crash. |
+
+Files arriving from the other computer are **offered, not pushed**
+([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
+256 KB waits in the menu bar until it is accepted here, and only then does anything cross the
+link. They are written under the per-user temporary directory, which is emptied when the helper
+starts.
 
 The Swift package manifest is `Package.swift` at the **repository root**, because the `DHCore`
 target compiles `src/core` in place — the same sources the firmware compiles. A copy of the codec

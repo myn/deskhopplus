@@ -27,15 +27,47 @@
 #include <string>
 #include <vector>
 
+#include "dh_file_list.h"
 #include "dh_seal.h"
 #include "dh_session.h"
 #include "dh_xfer.h"
 
 namespace deskhop {
 
-/* The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). Text and PNG
-   travel here; files are #56. */
+/* The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). */
 enum class ClipKind : uint8_t { Text = 0, Png = 1, Files = 2 };
+
+/* One file in a transfer: what it is called, and how many bytes of the payload
+   belong to it. Twin: FileListEntry.swift. */
+struct FileEntry {
+    std::string name;
+    uint64_t size{0};
+
+    bool operator==(const FileEntry &other) const {
+        return name == other.name && size == other.size;
+    }
+};
+
+/* Files the other computer has offered, waiting for this computer's user to say
+   yes (#56). Nothing crosses the link until they do. */
+struct FileOffer {
+    uint32_t id{0};
+    uint64_t total{0};
+    std::vector<FileEntry> files;
+
+    /* How long the transfer will take at the route's measured rate, in
+       seconds — stated because a cap the user can raise to something taking a
+       quarter of an hour deserves a duration in the dialog, not just a size. */
+    uint32_t estimated_seconds() const;
+};
+
+/* Files that arrived whole. The bytes are every file's contents run together in
+   `files` order; the transfer carries no boundaries of its own, which is what
+   the list is for. */
+struct FileDelivery {
+    std::vector<FileEntry> files;
+    std::vector<uint8_t> bytes;
+};
 
 struct ClipOutput {
     enum class Kind {
@@ -43,6 +75,9 @@ struct ClipOutput {
         Deliver, /* a complete payload, for this computer's clipboard */
         LazyImage, /* install a paste-triggered image placeholder */
         CancelLazyImage,
+        FileOffer,          /* ask the user: nothing has crossed the link yet */
+        FileOfferWithdrawn, /* that question no longer stands */
+        DeliverFiles,       /* a complete set, to be written and referenced */
         Note,    /* diagnostics, never shown to the user */
         ProtocolError, /* authenticated identity conflict: drop connection */
     };
@@ -51,8 +86,10 @@ struct ClipOutput {
     uint8_t type{0};         /* Send: the message type */
     uint8_t payload_kind{0}; /* Deliver: ClipKind */
     uint32_t transfer_id{0}; /* LazyImage */
-    uint64_t total{0};       /* LazyImage */
+    uint64_t total{0};       /* LazyImage, FileOffer */
     std::vector<uint8_t> bytes;
+    /* FileOffer and DeliverFiles: what the transfer names. */
+    std::vector<FileEntry> files;
     std::string note;
 };
 
@@ -65,6 +102,40 @@ class ClipService {
      */
     static constexpr size_t kDefaultCapacity = 10u * 1024u * 1024u;
     static constexpr size_t kEagerImageThreshold = 256u * 1024u;
+
+    /*
+     * Files at or below this size are accepted without asking. At the route's
+     * measured rate they are a fraction of a second, and a dialog for a
+     * quarter-second transfer is a dialog the user learns to dismiss without
+     * reading — which is how the one that matters gets dismissed too.
+     */
+    static constexpr uint64_t kFilePromptThreshold = 256u * 1024u;
+
+    /*
+     * The end-to-end rate #39 measured, in bytes per second, which is what
+     * turns a size into a duration in the prompt. Deliberately the measured
+     * figure rather than the arithmetic ~64 KB/s the transport was specified
+     * at: the prompt exists so the user can decide whether to wait, and an
+     * estimate a quarter short of the truth is worse than none.
+     */
+    static constexpr uint64_t kMeasuredBytesPerSecond = 49u * 1024u;
+
+    /*
+     * How long a file offer waits for an answer before it is declined for the
+     * user.
+     *
+     * It has to expire, and not because the question is urgent. An offer
+     * accepted-as-lazy and never requested leaves the *copy* side awaiting a
+     * request, which it asks for again every two seconds for as long as the
+     * session lasts (#78) — so an ignored prompt is a frame every two seconds
+     * for ever. It also pins the receive buffer, which is what the size cap
+     * sizes, so the cap cannot change while the question stands.
+     *
+     * Two minutes is human-scaled: long enough to finish a sentence and look
+     * up, short enough that walking away from the desk costs a re-copy rather
+     * than a link that never goes quiet.
+     */
+    static constexpr uint32_t kHoldTimeoutMs = 120000;
 
     /*
      * How long an arriving transfer may make no progress before it is given up on.
@@ -110,6 +181,48 @@ class ClipService {
     /* Something was copied here. Eager: the bytes go now, so that pasting on
        the other computer never waits for a round trip. */
     std::vector<ClipOutput> local_copy(ClipKind kind, const std::vector<uint8_t> &bytes);
+
+    /*
+     * Files were copied here (#56). Lazy: what goes out now is the list and
+     * nothing else, and `provider` is called only if the other computer's user
+     * accepts the transfer — so copying a folder you never paste costs one
+     * small frame and never opens a file.
+     *
+     * `provider` fills its argument with every file's contents run together in
+     * `files` order and returns true, or returns false when they can no longer
+     * be read. The length it produces must equal what was offered; a file
+     * edited between the copy and the paste is a failed transfer rather than a
+     * truncated one.
+     */
+    std::vector<ClipOutput> local_copy_files(
+        const std::vector<FileEntry> &files,
+        std::function<bool(std::vector<uint8_t> &)> provider);
+
+    /* The user accepted the files the other computer offered. This is where a
+       file transfer actually begins — on a decision made here, never on the
+       copy made over there (ADR-0011). */
+    std::vector<ClipOutput> accept_files(uint32_t id);
+    /* The user declined. The far end is told, so its offer stops repeating. */
+    std::vector<ClipOutput> decline_files(uint32_t id);
+    /* The user gave up on a transfer already running. Nothing partial is ever
+       delivered, so this loses the whole of it. */
+    std::vector<ClipOutput> abort_receive();
+    std::vector<ClipOutput> abort_send();
+
+    /*
+     * The board stated the clipboard size cap (#56). The receive buffer is
+     * sized against it and cannot move while anything is arriving, so a change
+     * landing mid-transfer is remembered and applied on the tick after that
+     * transfer ends.
+     */
+    std::vector<ClipOutput> capacity_changed(uint8_t megabytes);
+
+    /* What is arriving, for a progress display. False when nothing is. */
+    bool arriving(uint8_t *kind, uint64_t *received, uint64_t *total) const;
+    /* The file offer waiting on this computer's user, or null. */
+    const deskhop::FileOffer *awaiting_decision() const;
+    /* Whether anything is still on its way out of this computer. */
+    bool awaiting_send() const { return dh_xfer_is_sending(xfer_.get()); }
 
     /* The board stated its clipboard policy (DH_CLIP_MAY_*). A direction turned
        off takes any transfer already crossing it with it. */
@@ -174,6 +287,14 @@ class ClipService {
     std::vector<ClipOutput> on_seal_accepted(const uint8_t *body, size_t len);
     std::vector<ClipOutput> on_seal_stale(const uint8_t *body, size_t len);
     std::vector<ClipOutput> on_offer(const uint8_t *body, size_t len);
+    std::vector<ClipOutput> on_file_offer(const dh_clip_offer &offer, bool had_offer,
+                                          uint32_t previous_id);
+    /* A newer offer replaces whatever was arriving, so a question being held
+       about the old one no longer stands. Needed on the *non-file* path too,
+       which is what makes it worth having once: without it the tray goes on
+       offering Accept for a transfer the far end has already moved past. */
+    std::vector<ClipOutput> withdraw_held_offer(uint32_t superseded_by);
+    std::vector<ClipOutput> deliver_files(const uint8_t *bytes, size_t len);
     std::vector<ClipOutput> on_chunk(const uint8_t *body, size_t len);
 
     std::vector<ClipOutput> start_pending_if_sealed();
@@ -233,6 +354,39 @@ class ClipService {
        again, rather than carry on into a far end that never saw its offer. */
     bool reoffer_when_sealed_{false};
     uint32_t lazy_image_id_{0};
+
+    /*
+     * The outgoing file transfer (#56).
+     *
+     * `tx_meta_` outlives the offer because the core keeps a bare pointer into
+     * it, exactly as `tx_payload_` does. `outgoing_provider_` has a different
+     * lifetime from `pending_provider_`: a pending copy ends when the offer
+     * goes out, and the provider ends when the transfer does — NEED_DATA can
+     * arrive minutes later, once someone on the other computer has said yes.
+     */
+    bool pending_is_files_{false};
+    std::vector<FileEntry> pending_files_;
+    std::vector<uint8_t> pending_meta_;
+    uint64_t pending_total_{0};
+    std::function<bool(std::vector<uint8_t> &)> pending_provider_;
+    std::function<bool(std::vector<uint8_t> &)> outgoing_provider_;
+    std::vector<uint8_t> tx_meta_;
+
+    /*
+     * The incoming half: an offer being *held* for an answer, and the list of
+     * the transfer now arriving so that what is delivered can be split back
+     * into files without parsing the metadata twice.
+     */
+    bool have_held_offer_{false};
+    deskhop::FileOffer held_offer_;
+    /* When the offer now being held was first put to the user. */
+    bool held_timed_{false};
+    uint32_t held_since_{0};
+    bool have_incoming_files_{false};
+    std::vector<FileEntry> incoming_files_;
+
+    /* A size cap change waiting for the link to go quiet; zero means none. */
+    size_t wanted_capacity_{0};
 
     /*
      * Seal-wait, receive-timeout and offer-retry bookkeeping. A copy waiting

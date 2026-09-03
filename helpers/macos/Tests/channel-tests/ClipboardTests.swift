@@ -50,7 +50,381 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a restarted far helper's reused id is not a conflict", testARestartedIdIsNotAConflict),
     ("a receive under a replaced seal is abandoned", testAReplacedSealAbandonsTheReceive),
     ("an offer under the replaced seal cannot revive it", testADelayedOfferCannotRevive),
+    ("files copied on one computer arrive on the other", testFilesCrossTheLink),
+    ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
+    ("declining files reads nothing and delivers nothing", testDecliningFilesReadsNothing),
+    ("a small set of files skips the question", testSmallFileSetsSkipTheQuestion),
+    ("several files arrive in order and split correctly", testSeveralFilesSplitCorrectly),
+    ("a file list that does not add up is refused", testAMismatchedFileListIsRefused),
+    ("a payload that is not the length offered fails", testAShortReadFailsRatherThanTruncates),
+    ("files over the size cap are refused before anything crosses", testFilesOverTheCapAreRefused),
+    ("a size cap the board states is applied", testTheBoardsSizeCapIsApplied),
+    ("files that cannot be read fail rather than truncate", testUnreadableFilesFailTheTransfer),
+    ("a held question is withdrawn when the session goes", testAHeldQuestionIsWithdrawn),
+    ("an accepted transfer reports its progress", testAnAcceptedTransferReportsProgress),
+    ("a transfer can be abandoned from the pasting side", testATransferCanBeAbortedHere),
+    ("a failed send leaves a healthy receive alone", testAFailedSendLeavesAHealthyReceiveAlone),
+    ("a newer copy withdraws a held question", testANewerCopyWithdrawsAHeldQuestion),
+    ("an unanswered question is declined in the end", testAnUnansweredQuestionIsDeclinedInTheEnd),
 ]
+
+// MARK: - Files (#56)
+
+/*
+ * The file list these tests copy, and the payload it names. Written out rather
+ * than generated, so that a change to how sizes and offsets are handled has a
+ * fixed set of numbers to disagree with.
+ */
+private let threeFiles = [
+    FileListEntry(name: "notes.txt", size: 5),
+    FileListEntry(name: "empty.bin", size: 0),
+    FileListEntry(name: "data.png", size: 11),
+]
+private let threeFilePayload: [UInt8] = Array("helloworld other".utf8)
+
+/*
+ * A set over `filePromptThreshold`, which is the only kind that is put to the
+ * user. The small set above deliberately is not: below the threshold a
+ * transfer is a fraction of a second and asking about it is how the prompt
+ * that matters gets dismissed unread.
+ */
+private let bigFiles = [FileListEntry(name: "big.bin", size: 300 * 1024)]
+private let bigPayload = [UInt8](repeating: 0x5a, count: 300 * 1024)
+private func bigPair() -> Pair { Pair(capacity: 1024 * 1024) }
+
+private func testFilesCrossTheLink() {
+    let pair = Pair()
+    pair.copyFilesOnA(threeFiles, bytes: threeFilePayload)
+
+    Check.equal(pair.filesToB.count, 1, "the files copied on A did not arrive on B")
+    Check.equal(pair.filesToB.first?.files, threeFiles, "the file list did not survive the link")
+    Check.equal(pair.filesToB.first?.bytes, threeFilePayload,
+                "the file payload was not byte-identical end to end")
+    Check.that(pair.filesToA.isEmpty, "A was handed its own files back")
+}
+
+/*
+ * The whole of #56, in one check: a copy costs nothing until someone on the
+ * other computer says yes. Everything else here is machinery for this.
+ */
+private func testFilesAreNotReadUntilAccepted() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    var reads = 0
+
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: &reads)
+    Check.equal(reads, 0, "the copied files were read before anyone accepted them")
+    Check.equal(pair.fileQuestions.count, 1, "B was not asked about the files")
+    Check.equal(pair.fileQuestions.first?.offer.files, bigFiles,
+                "the question did not name the files that were offered")
+    Check.that(pair.filesToB.isEmpty, "files were delivered without being accepted")
+    Check.equal(pair.b.awaitingDecision?.id, pair.fileQuestions.first?.offer.id,
+                "the offer is not being held for an answer")
+
+    /* And now the answer, which is what starts it. */
+    guard let offer = pair.fileQuestions.first?.offer else { return }
+    pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
+    Check.equal(reads, 1, "accepting the files did not read them exactly once")
+    Check.equal(pair.filesToB.first?.bytes, bigPayload, "the accepted files did not arrive")
+    Check.that(pair.b.awaitingDecision == nil, "the offer is still being held after an answer")
+}
+
+private func testDecliningFilesReadsNothing() {
+    let pair = bigPair()
+    pair.acceptFileOffers = false
+    var reads = 0
+
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: &reads)
+    Check.equal(reads, 0, "declined files were read anyway")
+    Check.that(pair.filesToB.isEmpty, "declined files were delivered")
+    Check.that(pair.withdrawnQuestions.contains(where: { _ in true }),
+               "declining did not take the question back")
+    /* The copy side is told, so its offer stops repeating. */
+    Check.that(!pair.a.awaitingSend, "the declined transfer is still being offered")
+}
+
+private func testSmallFileSetsSkipTheQuestion() {
+    let pair = Pair()
+    pair.answerFileOffers = false
+    let small = [FileListEntry(name: "tiny.txt", size: 4)]
+
+    pair.copyFilesOnA(small, bytes: Array("abcd".utf8))
+    Check.that(pair.fileQuestions.isEmpty,
+               "a set well under the threshold asked a question anyway")
+    Check.equal(pair.filesToB.first?.bytes, Array("abcd".utf8),
+                "a set under the threshold did not arrive on its own")
+}
+
+private func testSeveralFilesSplitCorrectly() {
+    let pair = Pair(capacity: 1024 * 1024)
+    let files = [
+        FileListEntry(name: "a", size: 1000),
+        FileListEntry(name: "b", size: 1),
+        FileListEntry(name: "c", size: 2000),
+    ]
+    let payload = [UInt8](repeating: 0x11, count: 1000) + [0x22]
+        + [UInt8](repeating: 0x33, count: 2000)
+    pair.copyFilesOnA(files, bytes: payload)
+
+    guard let delivery = pair.filesToB.first else {
+        Check.that(false, "the three files did not arrive")
+        return
+    }
+    Check.equal(delivery.files, files, "the sizes did not survive")
+    var at = 0
+    for (index, file) in delivery.files.enumerated() {
+        let slice = Array(delivery.bytes[at..<(at + Int(file.size))])
+        let expected: UInt8 = [0x11, 0x22, 0x33][index]
+        Check.that(slice.allSatisfy { $0 == expected },
+                   "file \(file.name) did not slice out of the payload at the right offset")
+        at += Int(file.size)
+    }
+}
+
+/*
+ * The offer's total and its list come from the same far helper, so a
+ * disagreement between them is that helper being wrong or being tampered with
+ * — and this end would otherwise write files by slicing a payload at offsets
+ * it has no reason to trust.
+ *
+ * Checked at the codec's own seam. The sum is the core's — it adds the sizes
+ * once, with an overflow check, and hands the total back — so what is asserted
+ * here is that the total which comes back is the one the service compares.
+ */
+private func testAMismatchedFileListIsRefused() {
+    guard let meta = FileList.encode(threeFiles), let listed = FileList.decode(meta) else {
+        Check.that(false, "the three-file list would not round trip")
+        return
+    }
+    Check.equal(listed.total, 16, "the core's total is not the sum of the list")
+    Check.equal(listed.files, threeFiles, "the list did not survive the round trip")
+
+    /* And sizes that overflow their total are refused outright, so no total
+       ever comes back for the service to compare. */
+    let overflowing = "[{\"name\":\"a\",\"size\":18446744073709551615},{\"name\":\"b\",\"size\":1}]"
+    Check.that(FileList.decode(Array(overflowing.utf8)) == nil,
+               "sizes that overflow their total were accepted")
+}
+
+/*
+ * A file edited between the copy and the paste no longer reads at the length
+ * that was offered. The core is about to read exactly the offered length from
+ * whatever it is handed, so a short read here would be an overread there — and
+ * a long one would deliver bytes nobody offered.
+ */
+private func testAShortReadFailsRatherThanTruncates() {
+    for wrong in [[UInt8](repeating: 1, count: 8), [UInt8](repeating: 1, count: 32)] {
+        let pair = Pair()
+        pair.settle(pair.a.localCopy(files: threeFiles, provider: { wrong }), from: .a)
+        Check.that(pair.filesToB.isEmpty,
+                   "a payload of \(wrong.count) bytes against a 16-byte offer was delivered")
+        Check.that(pair.sawNote(containing: "abandoned rather than sent short"),
+                   "a payload that did not match its offer failed silently")
+        Check.that(!pair.a.awaitingSend, "the mismatched transfer is still being offered")
+    }
+}
+
+private func testFilesOverTheCapAreRefused() {
+    let pair = Pair(capacity: 64 * 1024)
+    pair.answerFileOffers = false
+    var reads = 0
+    let big = [FileListEntry(name: "big.bin", size: 128 * 1024)]
+
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 128 * 1024), reads: &reads)
+    Check.that(pair.fileQuestions.isEmpty,
+               "a set over the size cap was put to the user rather than refused")
+    Check.equal(reads, 0, "a set over the size cap was read anyway")
+    Check.that(pair.filesToB.isEmpty, "a set over the size cap was delivered")
+}
+
+private func testTheBoardsSizeCapIsApplied() {
+    let pair = Pair(capacity: 1024 * 1024)
+    pair.answerFileOffers = false
+
+    /* The board says one megabyte. What was already in force is irrelevant —
+       the device is the single source of truth (#42). */
+    pair.settle(pair.b.capacityChanged(megabytes: 1), from: .b)
+
+    var reads = 0
+    let big = [FileListEntry(name: "big.bin", size: 2 * 1024 * 1024)]
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 2 * 1024 * 1024), reads: &reads)
+    Check.that(pair.filesToB.isEmpty, "a set over the board's cap was delivered")
+    Check.equal(reads, 0, "a set over the board's cap was read")
+
+    /* And a set inside the new cap still crosses, so the cap narrowed rather
+       than broke the direction. */
+    pair.copyFilesOnA(threeFiles, bytes: threeFilePayload)
+    Check.equal(pair.filesToB.count, 1, "a set inside the board's cap did not arrive")
+}
+
+/*
+ * A file edited between the copy and the paste can no longer be read at the
+ * length that was promised. That has to fail the transfer: a payload short of
+ * its offer would be delivered as a complete file.
+ */
+private func testUnreadableFilesFailTheTransfer() {
+    let pair = Pair()
+    pair.settle(pair.a.localCopy(files: threeFiles, provider: { nil }), from: .a)
+
+    Check.that(pair.filesToB.isEmpty, "files that could not be read were delivered anyway")
+    Check.that(pair.sawNote(containing: "could not be read"),
+               "files that could not be read failed silently")
+    Check.that(!pair.a.awaitingSend, "the failed transfer is still being offered")
+}
+
+private func testAHeldQuestionIsWithdrawn() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    pair.settle(pair.b.sessionEnded(), from: .b)
+    Check.that(pair.withdrawnQuestions.contains(offer.id),
+               "a session that ended left a question standing over a transfer that is gone")
+    Check.that(pair.b.awaitingDecision == nil, "the offer is still held after the session ended")
+}
+
+/*
+ * The two directions are independent, and a failure in one must not take the
+ * other's state with it. Reachable in the ordinary way: this computer offers
+ * files whose bytes can no longer be read while it is still holding a question
+ * about files the other computer offered. Transfer ids collide across the two
+ * directions (#136), so the id on the failure cannot say which one it was.
+ */
+private func testAFailedSendLeavesAHealthyReceiveAlone() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    /* B now tries to send files of its own, and cannot read them. */
+    pair.settle(pair.b.localCopy(files: threeFiles, provider: { nil }), from: .b)
+    Check.that(pair.sawNote(containing: "could not be read"), "B's send did not fail")
+
+    Check.equal(pair.b.awaitingDecision?.id, offer.id,
+                "a failed send withdrew the question B was still holding")
+    Check.that(pair.withdrawnQuestions.isEmpty,
+               "a failed send took back a question about the other direction")
+
+    /*
+     * How far this can be taken today. The receive does *not* complete, and
+     * for a reason outside this file: B's cancel names its own transfer id,
+     * A's outgoing transfer holds the same id, and A abandons it
+     * (#136 — "transfer ids collide across directions"). That is a live bug
+     * with a ticket of its own, and #56 gives it a new way to happen, since a
+     * file send that cannot read its files is a fresh source of CLIP_CANCEL.
+     *
+     * What is asserted above is the part this file owns: the *state* is kept.
+     * When #136 lands, the check below becomes a delivery.
+     */
+    /*
+     * How far this can be taken today. Accepting does *not* deliver, and for a
+     * reason outside this file: B's cancel names its own transfer id, A's
+     * outgoing transfer holds the same id, and A abandons it (#136 —
+     * "transfer ids collide across directions"). That is a live bug with a
+     * ticket of its own, and #56 gives it a new way to happen, since a file
+     * send that cannot read its files is a fresh source of CLIP_CANCEL.
+     *
+     * What is asserted above is the part this file owns: the state is kept, so
+     * the acceptance still reaches a transfer rather than falling on the floor.
+     * When #136 lands, this becomes a delivery.
+     */
+    pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
+    Check.that(pair.sawNote(containing: "were accepted here and asked for"),
+               "the acceptance did not reach a transfer at all")
+}
+
+/*
+ * A text copy made while a file question is still standing supersedes it
+ * inside the transfer machine. The question has to go with it: left up, the
+ * menu goes on offering Accept for a transfer the far end has moved past,
+ * where accepting does nothing and says nothing either.
+ */
+private func testANewerCopyWithdrawsAHeldQuestion() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    pair.copyOnA("something else entirely")
+    Check.that(pair.withdrawnQuestions.contains(offer.id),
+               "a newer copy left the question about the old transfer standing")
+    Check.that(pair.b.awaitingDecision == nil, "the superseded offer is still held")
+    Check.equal(text(pair.deliveredToB), ["something else entirely"],
+                "the newer copy did not arrive")
+}
+
+/*
+ * A question nobody answers cannot stand for ever. The copy side re-offers
+ * every two seconds until its offer is requested, so an ignored prompt is a
+ * frame every two seconds for the life of the session — and the receive buffer
+ * the size cap sizes stays pinned while it stands.
+ */
+private func testAnUnansweredQuestionIsDeclinedInTheEnd() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    /* The first tick arms the deadline; nothing expires on it. */
+    pair.settle(pair.b.tick(at: 1000), from: .b)
+    Check.equal(pair.b.awaitingDecision?.id, offer.id, "the first tick declined it outright")
+
+    pair.settle(pair.b.tick(at: 1000 + ClipboardService.holdTimeout - 1), from: .b)
+    Check.equal(pair.b.awaitingDecision?.id, offer.id, "it was declined a second early")
+
+    pair.settle(pair.b.tick(at: 1000 + ClipboardService.holdTimeout), from: .b)
+    Check.that(pair.b.awaitingDecision == nil, "an unanswered question stood past its deadline")
+    Check.that(pair.withdrawnQuestions.contains(offer.id),
+               "the expired question was not taken back")
+    Check.that(pair.filesToB.isEmpty, "an expired question delivered its files anyway")
+    Check.that(!pair.a.awaitingSend, "the copy side is still offering a declined transfer")
+}
+
+private func testAnAcceptedTransferReportsProgress() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+
+    Check.that(pair.b.arriving == nil, "a held offer reported itself as arriving")
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked about a 300 KB set")
+        return
+    }
+    Check.equal(offer.total, 300 * 1024, "the question named the wrong size")
+    Check.that(offer.estimatedSeconds >= 6,
+               "the estimate for 300 KB at the measured rate is implausibly short")
+
+    pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
+    Check.equal(pair.filesToB.count, 1, "the accepted set did not arrive")
+    Check.that(pair.b.arriving == nil, "a finished transfer still reports itself as arriving")
+}
+
+private func testATransferCanBeAbortedHere() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard pair.fileQuestions.first?.offer != nil else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    pair.settle(pair.b.abortReceive(), from: .b)
+    Check.that(pair.filesToB.isEmpty, "an aborted transfer was delivered")
+    Check.that(pair.b.awaitingDecision == nil, "the aborted offer is still held")
+}
 
 /*
  * Entropy that is deterministic but not constant: a seal needs a fresh
@@ -89,6 +463,19 @@ private final class Pair {
     var lazyImages = 0
     var lastLazyImageID: UInt32?
     var requestLazyImages = true
+    /*
+     * The paste-side acceptance (#56). Every file offer that reaches a side
+     * is recorded, and — unless a test says otherwise — answered the way a user
+     * clicking Accept would. A test that wants the *held* state, which is the
+     * whole point of the gate, sets `answerFileOffers` to false and the offer
+     * stays waiting.
+     */
+    var fileQuestions: [(side: Side, offer: FileOffer)] = []
+    var withdrawnQuestions: [UInt32] = []
+    var answerFileOffers = true
+    var acceptFileOffers = true
+    var filesToA: [FileDelivery] = []
+    var filesToB: [FileDelivery] = []
     /*
      * Frames the link loses before they reach the far end, counted down by
      * message type. This is the seam ADR-0005 describes — a bounded queue
@@ -156,6 +543,16 @@ private final class Pair {
                 queue += near.requestLazyImage(id: id).map { (side, $0) }
             case .cancelLazyImage:
                 break
+            case .fileOffer(let offer):
+                fileQuestions.append((side, offer))
+                guard answerFileOffers else { continue }
+                let near = side == .a ? a : b
+                queue += (acceptFileOffers ? near.acceptFiles(id: offer.id)
+                                           : near.declineFiles(id: offer.id)).map { (side, $0) }
+            case .fileOfferWithdrawn(let id):
+                withdrawnQuestions.append(id)
+            case .deliverFiles(let delivery):
+                if side == .a { filesToA.append(delivery) } else { filesToB.append(delivery) }
             case .note(let note):
                 notes.append("\(side): \(note)")
             case .protocolError(let note):
@@ -172,6 +569,19 @@ private final class Pair {
 
     func copyOnB(_ text: String) {
         settle(b.localCopy(kind: .text, bytes: Array(text.utf8)), from: .b)
+    }
+
+    /// Files copied on A, with a provider that hands over `bytes` — the read
+    /// that must not happen until the far side accepts.
+    @discardableResult
+    func copyFilesOnA(_ files: [FileListEntry], bytes: [UInt8],
+                      reads: UnsafeMutablePointer<Int>? = nil) -> [ClipboardOutput] {
+        let outputs = a.localCopy(files: files, provider: {
+            reads?.pointee += 1
+            return bytes
+        })
+        settle(outputs, from: .a)
+        return outputs
     }
 
     func sawNote(containing fragment: String) -> Bool {

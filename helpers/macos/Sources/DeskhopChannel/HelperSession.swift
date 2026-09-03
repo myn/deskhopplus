@@ -70,7 +70,7 @@ public enum SessionOutput: Equatable {
     /* The board's clipboard direction policy (#52); the flags are
        DH_CLIP_MAY_SEND / DH_CLIP_MAY_RECEIVE. The device is the single source
        of truth for settings, so this is the only place a helper learns it. */
-    case clipPolicy(flags: UInt8)
+    case clipPolicy(flags: UInt8, capMegabytes: UInt8)
 }
 
 public struct Negotiated: Equatable {
@@ -453,7 +453,8 @@ public final class HelperSession {
         case DH_HELPER_OUT_RETRY:
             return .retry(after: TimeInterval(item.a) / 1000)
         case DH_HELPER_OUT_CLIP_POLICY:
-            return .clipPolicy(flags: UInt8(truncatingIfNeeded: item.a))
+            return .clipPolicy(flags: UInt8(truncatingIfNeeded: item.a),
+                               capMegabytes: UInt8(truncatingIfNeeded: item.b))
         case DH_HELPER_OUT_NOTE:
             return .note(HelperNotes.line(dh_helper_note(rawValue: UInt32(item.note)),
                                           a: item.a, b: item.b,

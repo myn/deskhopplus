@@ -50,7 +50,7 @@ void OutputDispatch::apply(const Output &output) {
         break;
 
     case Output::Kind::ClipPolicy:
-        emit(effects_.clip_policy_changed(output.clip_flags));
+        emit(effects_.clip_policy_changed(output.clip_flags, output.clip_cap_mb));
         break;
 
     case Output::Kind::Retry:
@@ -113,7 +113,7 @@ void OutputDispatch::emit(const ClipOutput &output) {
             effects_.deliver_image(output.bytes);
         } else {
             effects_.log("a payload of kind " + std::to_string(output.payload_kind) +
-                         " arrived, which this slice does not write — files are #56");
+                         " arrived, which this helper does not write");
         }
         break;
 
@@ -123,6 +123,19 @@ void OutputDispatch::emit(const ClipOutput &output) {
 
     case ClipOutput::Kind::CancelLazyImage:
         effects_.cancel_lazy_image(output.transfer_id);
+        break;
+
+    case ClipOutput::Kind::FileOffer:
+        effects_.ask_about_files(
+            deskhop::FileOffer{output.transfer_id, output.total, output.files});
+        break;
+
+    case ClipOutput::Kind::FileOfferWithdrawn:
+        effects_.withdraw_file_question(output.transfer_id);
+        break;
+
+    case ClipOutput::Kind::DeliverFiles:
+        effects_.deliver_files(FileDelivery{output.files, output.bytes});
         break;
 
     case ClipOutput::Kind::Note:

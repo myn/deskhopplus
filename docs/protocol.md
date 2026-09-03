@@ -506,7 +506,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x01 | HELLO | h→d | `k_hello` | `proto_version:u16` `os:u8` (1=mac, 2=windows) `build_type:u8` (0=release, 1=development) `channel_count:u8` (requested) `max_chunk:u16` (requested, bytes) `correlation:u64` (fresh random, per hello) `helper_key_id:8` `helper_nonce:16` (fresh random, per hello). 39 bytes; counter is always 0. |
 | 0x02 | HELLO_ACK | d→h | `k_b2h` | `correlation:u64` (echoed) `proto_version:u16` `build_type:u8` `channel_count:u8` (effective) `max_chunk:u16` (effective) `board_nonce:16`. 30 bytes; counter is always 0. Sent only on success — there is no failure form. |
 | 0x03 | LISTENER_ALERT | d→h | `k_b2h` | `window_ms:u32` `refused:u32` — frames that failed authentication in that window. A rate, not an event. |
-| 0x04 | CLIP_POLICY | d→h | `k_b2h` | `flags:u8` — bit 0 **may send** (clipboard copied on this computer may leave it), bit 1 **may receive** (content arriving may be written here). The board's answer to its own two direction toggles, for the helper on *its* side; `dh_clip_policy_for` is the single place the two are turned into each other. Sent once per session and again whenever the setting changes. A helper that has been told nothing allows both, which is what the toggles default to. |
+| 0x04 | CLIP_POLICY | d→h | `k_b2h` | `flags:u8` `cap_mb:u8` (the second byte since #56; a one-byte body from an older board reads as an unstated cap, which resolves to the 10 MB default). `flags` bit 0 **may send** (clipboard copied on this computer may leave it), bit 1 **may receive** (content arriving may be written here). The board's answer to its own two direction toggles, for the helper on *its* side; `dh_clip_policy_for` is the single place the two are turned into each other. Sent once per session and again whenever the setting changes. A helper that has been told nothing allows both, which is what the toggles default to. |
 | 0x05 | HEARTBEAT | h→d | `k_h2b` | empty (id kept from mkroamer) |
 | 0x06 | DEVICE_HEARTBEAT | d→h | `k_b2h` | empty. The device's own beat, sent only while a session exists, so its absence is meaningful. Idle-gated — see Liveness. |
 | 0x07 | SESSION_END | d→h | `k_b2h` | `reason:u8` (0=unspecified, 1=liveness_timeout, 2=protocol_error, 3=unpaired — the configuration holding the registration was wiped). An unknown reason reads as unspecified rather than as an error, so a later device may end a session for a reason this helper predates. |
@@ -518,7 +518,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x20 | PLACE | d→h | `k_b2h` | `chain_index:u8` `chain_direction:u8` (the configured direction in which indices increase) `border_direction:u8` (which side of the target output is entered) `entry_pos:u16` (0–65535 normalized within the target monitor). Fire-and-forget; no reply path. Authenticated, **not** sealed — coordinates cross in the clear. |
 | 0x21 | POS_QUERY | d→h | `k_b2h` | `query_id:u8` (`0` denotes the post-placement refresh) |
 | 0x22 | POS_RESPONSE | h→d | `k_h2b` | `query_id:u8` `chain_index:u8` `x:u16` `y:u16` (the query ID is echoed; coordinates are 0–65535 normalized within the current monitor) |
-| 0x30 | CLIP_OFFER | h↔h | per hop | `id:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `kind:u8` (0=utf8-text, 1=png, 2=file-list) `total_size:u64` `meta_len:u16` `meta:bytes` (kind 2: UTF-8 JSON array of `{name,size}`). AAD is the 16 clear bytes. |
+| 0x30 | CLIP_OFFER | h↔h | per hop | `id:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `kind:u8` (0=utf8-text, 1=png, 2=file-list) `total_size:u64` `meta_len:u16` `meta:bytes`. AAD is the 16 clear bytes. Kind 2's metadata is a UTF-8 JSON array of `{"name":…,"size":…}` objects **in that key order, with no escapes anywhere in it** — `dh_file_list.h` is the codec, and it cleans every name on the way out so that the two characters JSON would have to escape are already illegal in it. At most 64 files, each name at most 255 bytes, and the whole array must fit one offer. The sizes must sum to `total_size`; a receiver that finds otherwise refuses the transfer rather than slicing the payload at offsets it cannot trust. |
 | 0x31 | CLIP_REQUEST | h↔h | per hop | `id:u32` |
 | 0x32 | CLIP_CHUNK | h↔h | per hop | `id:u32` `seq:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `crc32:u32` (of `data`, the end-to-end integrity check) `data:bytes`. AAD is the 20 clear bytes. |
 | 0x33 | CLIP_DONE | h↔h | per hop | `id:u32` |
@@ -725,6 +725,15 @@ Clipboard sharing has one toggle per direction — **A→B** and **B→A** — b
 device is the single source of truth for settings, so a helper stores neither: it is told, in
 `CLIP_POLICY`, and it acts on what it was last told.
 
+**The size cap travels with it** (#56). One byte of megabytes in the same frame: 10 by default and
+up to 64, with zero meaning "not stated" so that the byte could come out of configuration padding
+every existing board already holds as zero. It joined this message rather than arriving as one of
+its own because a new message type puts every older helper into a hot reconnect loop
+([#131](https://github.com/myn/deskhopplus/issues/131)) — an older *board* sending one byte is
+still understood, and its unstated cap resolves to the default. A helper sizes its receive buffer
+against the cap and refuses any offer above it; a cap that changes while a payload is arriving
+takes effect once that transfer ends, because the buffer it names cannot move under one.
+
 The translation is the whole of the design, and it is one function
 (`dh_clip_policy_for`, `dh_session.h`). A helper cannot act on a *direction* — it has no way to
 know which end of "A to B" it is standing at — but it can act on two verbs: **may I send what
@@ -808,6 +817,19 @@ between the helpers**; the firmware relays its messages opaquely.
   the slow link; neither callback reliably represents acceptable paste behavior. Until the request,
   duplicate offers are silent and the receive stall clock is not armed. A lazy source payload
   (files) is not even read until requested.
+
+  **Files wait for the paste side's user** (ADR-0011). A kind-2 offer over 256 KiB is accepted as
+  lazy and then held: the far end knows it was heard and stops retrying, and no CLIP_REQUEST goes
+  out until someone on the receiving computer accepts it in the menu bar or tray. That acceptance
+  is what starts the transfer; the copy side then reads the files for the first time, answering
+  NEED_DATA with exactly the length its offer promised — a file edited in between fails the
+  transfer rather than truncating it. A set at or below 256 KiB is requested straight away —
+  under a second at the measured rate, and the one case where file bytes still cross on the copy
+  rather than on a decision (ADR-0011 records that as a deviation, not a detail). Declining sends
+  CLIP_CANCEL, and the size cap is enforced before the question is asked at all, so an offer past
+  it is refused rather than put to the user. A question left unanswered for two minutes is
+  declined, because a held offer leaves the copy side re-offering every two seconds and pins the
+  buffer the size cap sizes.
 - **An offer repeats until it is requested**
   ([#78](https://github.com/myn/deskhopplus/issues/78)). CLIP_OFFER is the one transfer message whose
   loss creates no state at the paste side, so nothing there can time out or ask for it again. The

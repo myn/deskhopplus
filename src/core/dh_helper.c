@@ -904,20 +904,27 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
 static void on_clip_policy(dh_helper *h, const dh_frame_view *f, const uint8_t *body,
                            size_t body_len, dh_helper_outputs *o) {
     uint8_t flags = 0;
-    if (!dh_clip_policy_decode(body, body_len, &flags)) {
+    uint8_t cap_mb = 0;
+    if (!dh_clip_policy_decode(body, body_len, &flags, &cap_mb)) {
         put_note(o, DH_NOTE_UNDECODABLE, f->hdr.type, 0);
         return;
     }
 
     h->clip_flags = flags;
+    /* Stored as the *effective* cap rather than as the byte, so that "the
+       board said nothing" and "the board said something out of range" are
+       resolved once, here, and every reader downstream sees a number it can
+       act on (#56). */
+    h->clip_cap_mb = dh_clip_cap_mb(cap_mb);
     h->have_clip_policy = true;
 
     dh_helper_output *item = slot(o);
     if (item != NULL) {
         item->kind = DH_HELPER_OUT_CLIP_POLICY;
         item->a = (int32_t)flags;
+        item->b = (int32_t)h->clip_cap_mb;
     }
-    put_note(o, DH_NOTE_CLIP_POLICY, (int32_t)flags, 0);
+    put_note(o, DH_NOTE_CLIP_POLICY, (int32_t)flags, (int32_t)h->clip_cap_mb);
 }
 
 /*

@@ -8,8 +8,13 @@ requirement rather than a convenience.
 
 Finds the board by its USB identifier and serial, takes exclusive hold of every channel, says
 hello, keeps the session alive, and reconnects on its own when the device goes away and comes
-back. It shows what it is doing in the notification area, and can be asked to start itself at
-logon.
+back. It carries the clipboard — text, images and files — and places the cursor. It shows what it
+is doing in the notification area, and can be asked to start itself at logon.
+
+Files arriving from the other computer are **offered, not pushed**
+([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
+256 KB waits in the notification area until it is accepted here, and only then does anything cross
+the link. They are written under `%TEMP%\deskhopplus`, which is emptied when the helper starts.
 
 **It decides none of that.** The session machine is `src/core/dh_helper.c`, compiled in place —
 the same code the firmware ships and the macOS helper drives. This helper is a transport and a

@@ -101,8 +101,21 @@ class Recorder : public HelperEffects {
     void schedule_retry(uint32_t after_ms) override {
         effects.push_back("retry(" + std::to_string(after_ms) + ")");
     }
-    std::vector<ClipOutput> clip_policy_changed(uint8_t flags) override {
-        effects.push_back("clip_policy(" + std::to_string(flags) + ")");
+    void ask_about_files(const deskhop::FileOffer &offer) override {
+        effects.push_back("ask_about_files(" + std::to_string(offer.id) + "," +
+                          std::to_string(offer.files.size()) + "," +
+                          std::to_string(offer.total) + ")");
+    }
+    void withdraw_file_question(uint32_t id) override {
+        effects.push_back("withdraw_file_question(" + std::to_string(id) + ")");
+    }
+    void deliver_files(const FileDelivery &delivery) override {
+        effects.push_back("deliver_files(" + std::to_string(delivery.files.size()) + "," +
+                          std::to_string(delivery.bytes.size()) + ")");
+    }
+    std::vector<ClipOutput> clip_policy_changed(uint8_t flags, uint8_t cap_mb) override {
+        effects.push_back("clip_policy(" + std::to_string(flags) + "," +
+                          std::to_string(cap_mb) + ")");
         return policy_reply;
     }
     void log(const std::string &message) override { effects.push_back("log: " + message); }
@@ -172,6 +185,11 @@ static const char *effect_named_by(ClipOutput::Kind kind) {
     case ClipOutput::Kind::CancelLazyImage: return "the lazy image is removed from the clipboard";
     case ClipOutput::Kind::Note: return "the note is logged";
     case ClipOutput::Kind::ProtocolError: return "the connection is dropped";
+    case ClipOutput::Kind::FileOffer: return "the user is asked about the files";
+    case ClipOutput::Kind::FileOfferWithdrawn:
+        return "the question about the files is taken back";
+    case ClipOutput::Kind::DeliverFiles:
+        return "the files are written and put on the clipboard";
     }
     return "";
 }
@@ -309,9 +327,10 @@ static void a_clip_policy_reaches_the_service_and_its_reply_is_carried_out() {
     Output output;
     output.kind = Output::Kind::ClipPolicy;
     output.clip_flags = 0x01;
+    output.clip_cap_mb = 32;
     dispatch.apply(output);
 
-    CHECK(recorder.did("clip_policy(1)"), effect_named_by(Output::Kind::ClipPolicy));
+    CHECK(recorder.did("clip_policy(1,32)"), effect_named_by(Output::Kind::ClipPolicy));
     CHECK(recorder.logged("the far end may no longer receive"),
           "what the clipboard service answers is carried out, not dropped");
 }
@@ -422,8 +441,8 @@ static void an_image_payload_reaches_this_computers_clipboard() {
     CHECK(recorder.did("deliver_image(4)"), "the PNG reaches the clipboard");
 }
 
-/* Files are #56. Until then an arriving one is named rather than written. */
-static void a_payload_this_slice_cannot_write_is_named() {
+/* A kind this helper does not carry is named rather than written. */
+static void a_payload_this_helper_cannot_write_is_named() {
     Recorder recorder;
     OutputDispatch dispatch(recorder);
 
@@ -491,6 +510,55 @@ static void a_batch_is_carried_out_in_order() {
     CHECK(recorder.did("release"), "the second output is carried out too");
 }
 
+/*
+ * Files (#56). The acceptance is an output like any other, and the arm that
+ * carries it is exactly what a service could emit into and have nothing
+ * happen: nothing crosses the link until the user answers, so a dropped
+ * question is a transfer that silently never starts.
+ */
+static void a_file_offer_reaches_the_user() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+
+    ClipOutput output;
+    output.kind = ClipOutput::Kind::FileOffer;
+    output.transfer_id = 9;
+    output.total = 300u * 1024u;
+    output.files = {deskhop::FileEntry{"a.txt", 200u * 1024u},
+                    deskhop::FileEntry{"b.txt", 100u * 1024u}};
+    dispatch.emit(output);
+
+    CHECK(recorder.did("ask_about_files(9,2,307200)"),
+          effect_named_by(ClipOutput::Kind::FileOffer));
+}
+
+static void a_withdrawn_question_reaches_the_tray() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+
+    ClipOutput output;
+    output.kind = ClipOutput::Kind::FileOfferWithdrawn;
+    output.transfer_id = 9;
+    dispatch.emit(output);
+
+    CHECK(recorder.did("withdraw_file_question(9)"),
+          effect_named_by(ClipOutput::Kind::FileOfferWithdrawn));
+}
+
+static void arriving_files_reach_the_disk_and_the_clipboard() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+
+    ClipOutput output;
+    output.kind = ClipOutput::Kind::DeliverFiles;
+    output.files = {deskhop::FileEntry{"a.txt", 3}};
+    output.bytes = {1, 2, 3};
+    dispatch.emit(output);
+
+    CHECK(recorder.did("deliver_files(1,3)"),
+          effect_named_by(ClipOutput::Kind::DeliverFiles));
+}
+
 int main() {
     store_board_key_reaches_the_secret_store();
     a_refused_board_key_is_said_out_loud();
@@ -508,9 +576,12 @@ int main() {
     a_refused_clipboard_frame_is_counted_and_said_out_loud();
     a_text_payload_reaches_this_computers_clipboard();
     an_image_payload_reaches_this_computers_clipboard();
-    a_payload_this_slice_cannot_write_is_named();
+    a_payload_this_helper_cannot_write_is_named();
     a_clipboard_note_is_logged();
     a_protocol_error_drops_the_connection();
+    a_file_offer_reaches_the_user();
+    a_withdrawn_question_reaches_the_tray();
+    arriving_files_reach_the_disk_and_the_clipboard();
     a_batch_is_carried_out_in_order();
 
     if (failures) {

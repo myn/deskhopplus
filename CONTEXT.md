@@ -101,10 +101,26 @@ and lazy transfers belong to the paste side.
 _Avoid_: source/destination machine, sender/receiver
 
 **Eager / Lazy / Prefetched**:
-When bytes move: eager content transfers on copy, lazy content transfers on paste, and prefetched
-content transfers when the paste side accepts an offer but before an application pastes it. Large
-images are prefetched on both paste-side platforms; files stay lazy.
+When bytes move: eager content transfers on copy, lazy content transfers only once they are asked
+for, and prefetched content transfers when the paste side accepts an offer but before an
+application pastes it. Large images are prefetched on both paste-side platforms. Files are lazy on
+the copy side — never read until requested — and their request waits on the **acceptance** below,
+so a copy the user never pastes costs one small frame and opens nothing.
 _Avoid_: push/pull, immediate/deferred
+
+**Acceptance**:
+The paste side's user agreeing to a file transfer, in the menu bar or the tray, which is what
+starts it (ADR-0011). Not a paste: both platforms' paste-triggered APIs block the pasting
+application for the whole transfer, which at the measured rate is minutes. A set at or below the
+prompt threshold is accepted without asking.
+_Avoid_: confirmation (the dialog is one way of asking; the acceptance is the decision), approval,
+consent
+
+**Size cap**:
+The largest payload a helper will assemble, stated by the board in `CLIP_POLICY` — 10 MB by
+default and up to 64. The device is the single source of truth for it, as for every setting, so no
+helper holds a cap of its own.
+_Avoid_: limit, maximum size, quota
 
 **Direction toggle**:
 One of the two settings that turn clipboard sharing off for A→B or B→A, both defaulting on.

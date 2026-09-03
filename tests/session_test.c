@@ -347,17 +347,21 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
     const struct {
         const char *name;
         uint8_t expected;
+        uint8_t expected_cap_mb;
     } policies[] = {
-        {"clip_policy_both", (uint8_t)(DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE)},
-        {"clip_policy_receive_only", (uint8_t)DH_CLIP_MAY_RECEIVE},
+        {"clip_policy_both", (uint8_t)(DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE), 64},
+        {"clip_policy_receive_only", (uint8_t)DH_CLIP_MAY_RECEIVE, 32},
     };
     for (size_t i = 0; i < sizeof policies / sizeof policies[0]; i++) {
         const struct vector *p_v = find(policies[i].name);
         if (!p_v || !decoded_body(p_v->f[0], p_v->len[0], &v, &body, &body_len)) continue;
         CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, policies[i].name, "wrong message type");
         uint8_t flags = 0;
-        CHECK(dh_clip_policy_decode(body, body_len, &flags), policies[i].name, "decode failed");
+        uint8_t cap_mb = 0;
+        CHECK(dh_clip_policy_decode(body, body_len, &flags, &cap_mb), policies[i].name,
+              "decode failed");
         CHECK(flags == policies[i].expected, policies[i].name, "wrong flags");
+        CHECK(cap_mb == policies[i].expected_cap_mb, policies[i].name, "wrong size cap");
     }
 
     /* The seven drop totals (#133). Decode only, like the policy above: the
@@ -1585,9 +1589,15 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
     CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, "policy", "the first frame is not the policy");
 
     uint8_t flags = 0;
-    CHECK(dh_clip_policy_decode(body, body_len, &flags), "policy", "decode failed");
+    uint8_t cap_mb = 0;
+    CHECK(dh_clip_policy_decode(body, body_len, &flags, &cap_mb), "policy", "decode failed");
     CHECK(flags == (DH_CLIP_MAY_SEND | DH_CLIP_MAY_RECEIVE), "policy",
           "a board that was told nothing did not report both directions allowed");
+    /* Zero on the wire is "not stated", which dh_clip_cap_mb reads as the
+       default — so a board with no stored cap still leaves the clipboard
+       working rather than capping it at nothing (#56). */
+    CHECK(cap_mb == 0 && dh_clip_cap_mb(cap_mb) == DH_CLIP_CAP_MB_DEFAULT, "policy",
+          "an unstated size cap did not resolve to the default");
 
     /* Until something takes the frame, it is still owed: a helper never told is
        a helper working from whatever it last heard, with nothing following to
@@ -1602,21 +1612,35 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy", "the policy was sent twice");
 
     /* The config page writes a toggle. The live session hears about it. */
-    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE);
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE, 32);
     len = tick(&s, now, reply, sizeof reply);
     CHECK(decoded_body(reply, len, &v, &body, &body_len), "policy",
           "a changed toggle was not sent to the live session");
     CHECK(v.hdr.type == DH_MSG_CLIP_POLICY, "policy", "the change is not a policy frame");
-    CHECK(dh_clip_policy_decode(body, body_len, &flags) && flags == DH_CLIP_MAY_RECEIVE, "policy",
-          "the change carried the wrong flags");
+    CHECK(dh_clip_policy_decode(body, body_len, &flags, &cap_mb) && flags == DH_CLIP_MAY_RECEIVE &&
+              cap_mb == 32,
+          "policy", "the change carried the wrong flags or size cap");
     dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
     dh_session_note_sent(&s, now);
 
     /* Setting the same value again is not a change, so it is not traffic. A
        board calls this every pass; a frame per pass would fill the link. */
-    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE);
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE, 32);
     CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy",
           "an unchanged toggle was sent anyway");
+
+    /* The cap moves on its own, with the toggles unchanged. It is the same
+       frame, so a change to either has to reach a live session (#56). */
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE, 64);
+    len = tick(&s, now, reply, sizeof reply);
+    CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_CLIP_POLICY &&
+              dh_clip_policy_decode(body, body_len, &flags, &cap_mb) && cap_mb == 64,
+          "policy", "a changed size cap was not sent to the live session");
+    dh_session_note_owed_sent(&s, DH_MSG_CLIP_POLICY);
+    dh_session_note_sent(&s, now);
+    dh_session_set_clip_policy(&s, DH_CLIP_MAY_RECEIVE, 64);
+    CHECK(tick(&s, now, reply, sizeof reply) == 0, "policy",
+          "an unchanged size cap was sent anyway");
 
     /* A second helper arrives after the first is gone. It has been told
        nothing, so it is told — and it is told what the board holds now, not
@@ -1629,8 +1653,9 @@ static void test_every_session_is_told_the_clipboard_policy(void) {
     len = tick(&s, now, reply, sizeof reply);
     CHECK(decoded_body(reply, len, &v, &body, &body_len) && v.hdr.type == DH_MSG_CLIP_POLICY,
           "policy", "the second session was not told the policy");
-    CHECK(dh_clip_policy_decode(body, body_len, &flags) && flags == DH_CLIP_MAY_RECEIVE, "policy",
-          "the second session was told the default rather than what is set");
+    CHECK(dh_clip_policy_decode(body, body_len, &flags, &cap_mb) &&
+              flags == DH_CLIP_MAY_RECEIVE && cap_mb == 64,
+          "policy", "the second session was told the default rather than what is set");
 }
 
 /*

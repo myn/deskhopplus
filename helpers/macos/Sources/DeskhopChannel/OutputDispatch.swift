@@ -52,19 +52,32 @@ public protocol HelperEffects: AnyObject {
     func noteSent()
     func noteSendRefused()
 
+    /*
+     * The menu bar. Its Windows twin has had this since #85; macOS had nowhere
+     * to put a state until #56 gave it one, so the state output was logged and
+     * nothing else. Logged *as well*, because the log is still where a fault is
+     * read back from afterwards.
+     */
+    func show(state: HelperState)
+
     /// This computer's pasteboard.
     func deliver(text: [UInt8])
     func deliver(image: [UInt8])
     func lazyImage(id: UInt32, total: UInt64)
     func cancelLazyImage(id: UInt32)
+    /* Files (#56). `askAboutFiles` puts the acceptance to the user: nothing has
+       crossed the link yet, and nothing will until the user answers. */
+    func askAboutFiles(_ offer: FileOffer)
+    func withdrawFileQuestion(id: UInt32)
+    func deliver(files: FileDelivery)
 
     /// The run loop's retry timer, and the conditions it re-checks when it fires.
     func scheduleRetry(after: TimeInterval)
 
     /* The clipboard service. The board is the single source of truth for the
-       policy, so a direction turning off has to reach the service that
-       honours it. */
-    func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput]
+       policy and the size cap, so a direction turning off — or a cap moving —
+       has to reach the service that honours it (#52, #56). */
+    func clipPolicyChanged(flags: UInt8, capMegabytes: UInt8) -> [ClipboardOutput]
 
     func note(_ message: String)
 }
@@ -115,9 +128,10 @@ public final class OutputDispatch {
 
         case .state(let state):
             effects.note("state: \(state.message ?? "(nothing to report)")")
+            effects.show(state: state)
 
-        case .clipPolicy(let flags):
-            emit(effects.clipPolicyChanged(flags: flags))
+        case .clipPolicy(let flags, let capMegabytes):
+            emit(effects.clipPolicyChanged(flags: flags, capMegabytes: capMegabytes))
 
         case .retry(let after):
             effects.scheduleRetry(after: after)
@@ -170,14 +184,21 @@ public final class OutputDispatch {
             } else if kind == ClipKind.png.rawValue {
                 effects.deliver(image: bytes)
             } else {
-                effects.note("a payload of kind \(kind) arrived, which this slice does not "
-                             + "write — files are #56")
+                effects.note("a payload of kind \(kind) arrived, which this helper does not "
+                             + "write")
             }
 
         case .lazyImage(let id, let total):
             effects.lazyImage(id: id, total: total)
         case .cancelLazyImage(let id):
             effects.cancelLazyImage(id: id)
+
+        case .fileOffer(let offer):
+            effects.askAboutFiles(offer)
+        case .fileOfferWithdrawn(let id):
+            effects.withdrawFileQuestion(id: id)
+        case .deliverFiles(let delivery):
+            effects.deliver(files: delivery)
 
         case .note(let note):
             effects.note(note)

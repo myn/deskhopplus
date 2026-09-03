@@ -55,15 +55,23 @@ private final class Recorder: HelperEffects {
     }
     func noteSent() { effects.append("noteSent") }
     func noteSendRefused() { effects.append("noteSendRefused") }
+    func show(state: HelperState) { effects.append("showState(\(state.rawValue))") }
     func deliver(text bytes: [UInt8]) {
         effects.append("deliver(\(String(decoding: bytes, as: UTF8.self)))")
     }
     func deliver(image bytes: [UInt8]) { effects.append("deliverImage(\(bytes.count))") }
     func lazyImage(id: UInt32, total: UInt64) { effects.append("lazyImage(\(id),\(total))") }
     func cancelLazyImage(id: UInt32) { effects.append("cancelLazyImage(\(id))") }
+    func askAboutFiles(_ offer: FileOffer) {
+        effects.append("askAboutFiles(\(offer.id),\(offer.files.count),\(offer.total))")
+    }
+    func withdrawFileQuestion(id: UInt32) { effects.append("withdrawFileQuestion(\(id))") }
+    func deliver(files delivery: FileDelivery) {
+        effects.append("deliverFiles(\(delivery.files.count),\(delivery.bytes.count))")
+    }
     func scheduleRetry(after: TimeInterval) { effects.append("retry(\(after))") }
-    func clipPolicyChanged(flags: UInt8) -> [ClipboardOutput] {
-        effects.append("clipPolicy(\(flags))")
+    func clipPolicyChanged(flags: UInt8, capMegabytes: UInt8) -> [ClipboardOutput] {
+        effects.append("clipPolicy(\(flags),\(capMegabytes))")
         return policyReply
     }
     func note(_ message: String) { effects.append("note: " + message) }
@@ -94,7 +102,7 @@ private func effectNamed(by output: SessionOutput) -> String {
     case .openChannels: return "the channels are acquired"
     case .closeChannels: return "the channels are released"
     case .send: return "the frame goes to the transport"
-    case .state: return "the state is logged in this helper's own words"
+    case .state: return "the state is logged and shown in this helper's own words"
     case .retry: return "a retry is scheduled"
     case .note: return "the note is logged"
     case .clipPolicy: return "the clipboard service is told"
@@ -109,6 +117,9 @@ private func effectNamed(by output: ClipboardOutput) -> String {
     case .cancelLazyImage: return "the lazy image is removed from the pasteboard"
     case .note: return "the note is logged"
     case .protocolError: return "the connection is dropped"
+    case .fileOffer: return "the user is asked about the files"
+    case .fileOfferWithdrawn: return "the question about the files is taken back"
+    case .deliverFiles: return "the files are written and put on the pasteboard"
     }
 }
 
@@ -184,6 +195,11 @@ private func aStateIsLoggedInWords() {
     Check.that(recorder.noted("state: "), effectNamed(by: output))
     Check.that(!recorder.noted("state: (nothing to report)"),
                "a state with words does not read as the quiet one")
+    /* And the menu bar, which is what the user actually has in front of them.
+       Logged as well as shown, because the log is where a fault is read back
+       from afterwards. */
+    Check.that(recorder.did("showState(\(HelperState.deviceAbsent.rawValue))"),
+               "the state did not reach the menu bar")
 }
 
 /* The quiet state shows nothing at all — a device that disappears for a moment
@@ -195,6 +211,8 @@ private func theQuietStateStillReachesTheLog() {
 
     Check.that(recorder.noted("state: (nothing to report)"),
                "the quiet state is logged as having nothing to report")
+    Check.that(recorder.did("showState(\(HelperState.quiet.rawValue))"),
+               "the quiet state did not reach the menu bar, which decides what to show")
 }
 
 /* The board is the single source of truth for the policy, so the output has to
@@ -203,10 +221,10 @@ private func theQuietStateStillReachesTheLog() {
 private func aClipPolicyReachesTheServiceAndItsReplyIsCarriedOut() {
     let (recorder, dispatch) = fixture()
     recorder.policyReply = [.note("the far end may no longer receive")]
-    let output = SessionOutput.clipPolicy(flags: 0x01)
+    let output = SessionOutput.clipPolicy(flags: 0x01, capMegabytes: 32)
     dispatch.apply(output)
 
-    Check.that(recorder.did("clipPolicy(1)"), effectNamed(by: output))
+    Check.that(recorder.did("clipPolicy(1,32)"), effectNamed(by: output))
     Check.that(recorder.noted("the far end may no longer receive"),
                "what the clipboard service answers is carried out, not dropped")
 }
@@ -292,8 +310,8 @@ private func anImagePayloadReachesThePasteboard() {
     Check.that(recorder.did("deliverImage(4)"), "the PNG reaches the pasteboard")
 }
 
-/* Files are #56. Until then an arriving one is named rather than written. */
-private func aPayloadThisSliceCannotWriteIsNamed() {
+/* A kind this helper does not carry is named rather than written. */
+private func aPayloadThisHelperCannotWriteIsNamed() {
     let (recorder, dispatch) = fixture()
     dispatch.emit(.deliver(kind: ClipKind.files.rawValue, bytes: [UInt8](repeating: 0x44, count: 8)))
 
@@ -359,7 +377,7 @@ let outputDispatchTests: [(String, () throws -> Void)] = [
      aRefusedClipboardFrameIsCountedAndSaidOutLoud),
     ("a text payload reaches the pasteboard", aTextPayloadReachesThePasteboard),
     ("an image payload reaches the pasteboard", anImagePayloadReachesThePasteboard),
-    ("a payload this slice cannot write is named", aPayloadThisSliceCannotWriteIsNamed),
+    ("a payload this helper cannot write is named", aPayloadThisHelperCannotWriteIsNamed),
     ("a clipboard note is logged", aClipboardNoteIsLogged),
     ("a protocol error drops the connection", aProtocolErrorDropsTheConnection),
     ("a batch of clipboard outputs is carried out in order",

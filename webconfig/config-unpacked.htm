@@ -2316,6 +2316,42 @@ img {
 
 
 
+  <div class="clearfix">
+    <form>
+
+<label class="label-inline"> Clipboard size cap (MB)=</label>
+
+
+
+<input class="input-inline" type="number" name="aInput100" data-type="uint8" data-key="100"
+  onchange="valueChangedHandler(this)"
+
+        readonly oninput="this.form.aRange100.value=this.value" />
+
+
+<input class="range api" type="range" name="aRange100" data-type="uint8" data-key="100"
+  onchange="valueChangedHandler(this)"
+
+        min="1" max="64" oninput="this.form.aInput100.value=this.value" />
+    </form>
+
+  </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 <label class=""> Hotkeys</label>
 

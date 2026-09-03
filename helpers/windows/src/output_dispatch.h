@@ -72,14 +72,20 @@ class HelperEffects {
     virtual void deliver_image(const std::vector<uint8_t> &png) = 0;
     virtual void lazy_image(uint32_t id, uint64_t total) = 0;
     virtual void cancel_lazy_image(uint32_t id) = 0;
+    /* Files (#56). `ask_about_files` puts the acceptance to the user: nothing
+       has crossed the link yet, and nothing will until the user answers. */
+    virtual void ask_about_files(const deskhop::FileOffer &offer) = 0;
+    virtual void withdraw_file_question(uint32_t id) = 0;
+    virtual void deliver_files(const FileDelivery &delivery) = 0;
 
     /* The run loop's retry timer. The clock and its wrap-safe arithmetic stay
        with the loop that owns them. */
     virtual void schedule_retry(uint32_t after_ms) = 0;
 
-    /* ClipService. The board is the single source of truth for the policy, so
-       a direction turning off has to reach the service that honours it. */
-    virtual std::vector<ClipOutput> clip_policy_changed(uint8_t flags) = 0;
+    /* ClipService. The board is the single source of truth for the policy and
+       the size cap, so a direction turning off — or a cap moving — has to reach
+       the service that honours it (#52, #56). */
+    virtual std::vector<ClipOutput> clip_policy_changed(uint8_t flags, uint8_t cap_mb) = 0;
 
     virtual void log(const std::string &message) = 0;
 };

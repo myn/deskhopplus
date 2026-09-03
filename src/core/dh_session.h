@@ -159,7 +159,17 @@ _Static_assert(DH_SESSION_MAX_CHUNK <= DH_SESSION_CHUNK_CEILING,
 #define DH_PAIR_GRANT_LEN (8u + DH_P256_PUBLIC_SIZE)
 #define DH_PAIR_REFUSED_LEN 9u
 #define DH_HELLO_REFUSED_LEN 11u
-#define DH_CLIP_POLICY_LEN 1u
+/*
+ * CLIP_POLICY: `flags:u8 cap_mb:u8`.
+ *
+ * The second byte joined the first for #56, and it joined *this* message
+ * rather than arriving as one of its own because a new message type puts every
+ * older helper into a hot reconnect loop (#131). A board that predates the cap
+ * sends one byte, so the decoder takes either length and reads a missing cap
+ * as "not stated" — which `dh_clip_cap_mb` already turns into the default.
+ */
+#define DH_CLIP_POLICY_LEN 2u
+#define DH_CLIP_POLICY_LEN_V1 1u
 
 /*
  * The largest complete frame this layer emits: a PAIR_GRANT, 4 header bytes
@@ -212,6 +222,32 @@ typedef enum {
  */
 #define DH_CLIP_MAY_SEND 0x01u
 #define DH_CLIP_MAY_RECEIVE 0x02u
+
+/*
+ * The clipboard size cap (#56), in megabytes, as the board stores it.
+ *
+ * **Zero means the default**, which is what let the stored byte land in
+ * padding that every existing configuration already holds as zero
+ * (config_layout.h). A stored value above the maximum is clamped rather than
+ * refused: the number reaches a helper as one byte with nowhere to report a
+ * complaint, and clamping is the answer that still leaves the clipboard
+ * working.
+ *
+ * The megabyte here is 1024 * 1024 bytes, stated because the cap sizes a
+ * buffer and the two meanings of "MB" differ by five per cent at 64.
+ */
+#define DH_CLIP_CAP_MB_DEFAULT 10u
+#define DH_CLIP_CAP_MB_MAX 64u
+
+static inline uint8_t dh_clip_cap_mb(uint8_t stored) {
+    if (stored == 0) return DH_CLIP_CAP_MB_DEFAULT;
+    return stored > DH_CLIP_CAP_MB_MAX ? DH_CLIP_CAP_MB_MAX : stored;
+}
+
+/* The same answer in bytes, which is what a receive buffer is sized in. */
+static inline uint32_t dh_clip_cap_bytes(uint8_t stored) {
+    return (uint32_t)dh_clip_cap_mb(stored) * 1024u * 1024u;
+}
 
 /*
  * `board_role` is 0 for board A and 1 for board B. The two blocks are the
@@ -455,8 +491,9 @@ dh_frame_result dh_pair_refused_encode(const dh_pair_refused *in, uint8_t *out, 
 
 bool dh_listener_alert_decode(const uint8_t *body, size_t len, dh_listener_alert *out);
 
-/* CLIP_POLICY carries one byte of DH_CLIP_MAY_* flags. */
-bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags);
+/* CLIP_POLICY carries the flags and the size cap. `cap_mb` is set to zero —
+   "not stated" — for a one-byte body from a board that predates the cap. */
+bool dh_clip_policy_decode(const uint8_t *body, size_t len, uint8_t *flags, uint8_t *cap_mb);
 
 /* DEVICE_DROPS carries the seven totals as little-endian uint32s. */
 bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *out);
@@ -558,6 +595,7 @@ typedef struct {
      */
     uint8_t clip_flags;
     bool clip_policy_owed;
+    uint8_t clip_cap_mb; /* as stored: zero is "not stated" (#56) */
 
     /*
      * The drop totals this board last set, whether the helper has yet to be
@@ -678,7 +716,7 @@ void dh_session_note_owed_sent(dh_session *s, uint8_t type);
  * config page's *next* write take effect on a live session, without the caller
  * having to notice that a setting changed.
  */
-void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags);
+void dh_session_set_clip_policy(dh_session *s, uint8_t clip_flags, uint8_t cap_mb);
 
 /*
  * Set the drop totals this board's helper is to be told about (#133).

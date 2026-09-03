@@ -171,6 +171,14 @@ add_executable(xfer_test xfer_test.c aes_gcm_ref.c ${CORE}/dh_xfer.c ${CORE}/dh_
 target_include_directories(xfer_test PRIVATE ${CORE})
 add_test(NAME xfer_test COMMAND xfer_test)
 
+# The file list a kind-2 offer carries (#56). Its refusals are the security
+# boundary: a name arriving from the other computer becomes a path in this
+# one's temporary directory, so `../` has to stop here rather than at a
+# filesystem call. No seal and no transfer machine — it is a codec.
+add_executable(file_list_test file_list_test.c ${CORE}/dh_file_list.c)
+target_include_directories(file_list_test PRIVATE ${CORE})
+add_test(NAME file_list_test COMMAND file_list_test)
+
 # The end-to-end clipboard seal (#113). Gated by both vector files: the frames
 # carry the sealed bodies an independent implementation produced, and the
 # primitives carry the key material they were produced from. It drives a real

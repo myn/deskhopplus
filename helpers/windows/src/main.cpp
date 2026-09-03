@@ -3,8 +3,7 @@
  * every channel, introduces itself, keeps the session alive (#49), and carries
  * the clipboard across it (#52).
  *
- * Clipboard text and images — files are #56, and cursor
- * placement is #51. Nothing needs installing: see helpers/windows/README.md
+ * Clipboard text, images and files (#52, #55, #56); cursor placement is #53. Nothing needs installing: see helpers/windows/README.md
  * and ADR-0006.
  *
  * ---------------------------------------------------------------------------
@@ -46,6 +45,7 @@
 #include "clipboard.h"
 #include "cursor_placement.h"
 #include "dh_p256.h"
+#include "file_store.h"
 #include "helper_session.h"
 #include "hid_transport.h"
 #include "output_dispatch.h"
@@ -155,8 +155,32 @@ class Helper : public HelperEffects {
         retry_pending_ = true;
         retry_at_ = now_ms() + after_ms;
     }
-    std::vector<ClipOutput> clip_policy_changed(uint8_t flags) override {
-        return clipboard_service_->policy_changed(flags);
+    void ask_about_files(const deskhop::FileOffer &offer) override {
+        log(std::to_string(offer.files.size()) + " file(s), " + std::to_string(offer.total) +
+            " bytes, offered from the other computer; waiting for an answer here before "
+            "anything crosses");
+        tray_.ask_about_files(offer);
+    }
+    void withdraw_file_question(uint32_t id) override { tray_.withdraw_file_question(id); }
+    /* Written first, then referenced. The order is the guarantee: a reference
+       only ever points at a set that is complete on disk, so a failed write
+       leaves the clipboard alone rather than pointing at half a file. */
+    void deliver_files(const FileDelivery &delivery) override {
+        FileStore::Written written;
+        if (!files_.write(delivery, written)) {
+            log(std::to_string(delivery.files.size()) +
+                " file(s) arrived and could not be written; nothing was put on the clipboard");
+            return;
+        }
+        if (clipboard_.deliver_files(written.paths))
+            log(std::to_string(written.paths.size()) +
+                " file(s) written and put on the clipboard");
+    }
+    std::vector<ClipOutput> clip_policy_changed(uint8_t flags, uint8_t cap_mb) override {
+        std::vector<ClipOutput> outputs = clipboard_service_->policy_changed(flags);
+        for (ClipOutput &item : clipboard_service_->capacity_changed(cap_mb))
+            outputs.push_back(std::move(item));
+        return outputs;
     }
     void log(const std::string &message) override;
 
@@ -195,6 +219,8 @@ class Helper : public HelperEffects {
     HidTransport transport_;
     Tray tray_;
     Clipboard clipboard_;
+    /* Where files that arrive are written, emptied at start (#56). */
+    FileStore files_;
     OutputDispatch dispatch_{*this};
 
     uint32_t last_tick_{0};
@@ -209,6 +235,10 @@ class Helper : public HelperEffects {
      */
     bool bulk_was_allowed_{false};
     bool waiting_for_image_{false};
+    /* What the tray last showed, so the tick only touches it when the transfer
+       has actually moved. */
+    uint64_t shown_received_{0};
+    uint64_t shown_total_{0};
     uint32_t prefetched_image_id_{0};
     uint32_t prefetched_image_sequence_{0};
     std::optional<std::vector<uint8_t>> awaited_image_;
@@ -379,7 +409,21 @@ bool Helper::start(HINSTANCE instance) {
     clipboard_callbacks.lazy_image_replaced = [this](uint32_t id) {
         dispatch_.emit(clipboard_service_->lazy_image_was_replaced(id));
     };
+    clipboard_callbacks.local_files = [this](std::vector<FileEntry> files,
+                                             std::function<bool(std::vector<uint8_t> &)> read) {
+        if (!session_->can_send_bulk()) return;
+        /* The list goes out now; `read` is not called until the other
+           computer's user accepts the transfer. That is the whole of #56's
+           "transfer begins on paste, not on copy". */
+        dispatch_.emit(clipboard_service_->local_copy_files(files, std::move(read)));
+    };
     clipboard_.attach(window_, std::move(clipboard_callbacks));
+
+    files_.log = [this](const std::string &m) { log(m); };
+    /* Emptied at start, and only at start: a helper that crashes never runs an
+       exit path, and a timer would delete a file the user is still working on
+       (file_store.h). */
+    files_.collect_garbage();
 
     autostart_ = std::make_unique<Autostart>(secrets_.directory(),
                                              [this](const std::string &m) { log(m); });
@@ -485,6 +529,21 @@ int Helper::run() {
             dh_device_drops drops{};
             const bool stated = session_->device_drops(&drops);
             dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
+
+            /* What the tray shows about the arriving transfer, refreshed only
+               when it has moved — rebuilding the menu under a user who has it
+               open would close it (#56). */
+            uint64_t received = 0;
+            uint64_t total = 0;
+            if (!clipboard_service_->arriving(nullptr, &received, &total)) {
+                received = 0;
+                total = 0;
+            }
+            if (received != shown_received_ || total != shown_total_) {
+                shown_received_ = received;
+                shown_total_ = total;
+                tray_.show_progress(received, total);
+            }
         }
     }
 }
@@ -557,6 +616,12 @@ Tray::Callbacks Helper::tray_callbacks() {
             else autostart_->enable();
         },
         [this] { stop(); },
+        /* The paste-side acceptance and abort (#56). */
+        [this](uint32_t id) { dispatch_.emit(clipboard_service_->accept_files(id)); },
+        [this](uint32_t id) { dispatch_.emit(clipboard_service_->decline_files(id)); },
+        [this] { dispatch_.emit(clipboard_service_->abort_receive()); },
+        [this] { return clipboard_service_->awaiting_send(); },
+        [this] { dispatch_.emit(clipboard_service_->abort_send()); },
     };
 }
 

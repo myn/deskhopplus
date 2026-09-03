@@ -55,7 +55,11 @@ add_library(dhcore STATIC
   # The chunked transfer machine (#48) and the CRC32 that is its fidelity
   # check (ADR-0003). Both arrive with the first real payload (#52).
   ${CORE}/dh_xfer.c
-  ${CORE}/dh_crc32.c)
+  ${CORE}/dh_crc32.c
+  # The file list a kind-2 offer carries (#56), and the boundary that stops a
+  # name from the other computer naming somewhere outside the temporary
+  # directory it is about to be written into.
+  ${CORE}/dh_file_list.c)
 target_include_directories(dhcore PUBLIC ${CORE})
 
 if(MSVC)
@@ -185,6 +189,8 @@ if(WIN32)
     src/clip_service.cpp
     src/clipboard.cpp
     src/clipboard_image.cpp
+    # Where files that arrive are written, emptied at start (#56).
+    src/file_store.cpp
     src/cursor_placement.cpp
     src/words.cpp
     src/secret_store.cpp

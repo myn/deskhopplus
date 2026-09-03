@@ -111,7 +111,10 @@ public final class Transfer {
     /* Heap-allocated with stable addresses: `dh_xfer` is far too large to copy
        in and out of a Swift value, and the core keeps `rx_buf` for its life. */
     private let machine = UnsafeMutablePointer<dh_xfer>.allocate(capacity: 1)
-    private let rxBuffer: UnsafeMutableBufferPointer<UInt8>
+    /* Not `let`: the buffer is sized against the board's clipboard size cap,
+       which the board states per session and can change while this helper is
+       running (#56). */
+    private var rxBuffer: UnsafeMutableBufferPointer<UInt8>
 
     /*
      * The payload being sent, if any. It is *this* helper's copy, at an address
@@ -127,11 +130,12 @@ public final class Transfer {
      * back from `dh_xfer_offer_info` on every re-offer, so a pointer borrowed
      * for the duration of one `withUnsafeBufferPointer` call would dangle.
      *
-     * Nothing in this slice offers metadata — text carries none — so today this
-     * is always empty. It is here rather than left as `nil, 0` because the
-     * dangling read would appear the moment #55 or #56 adds a field, and it
-     * would appear as a payload that is occasionally wrong rather than as a
-     * crash.
+     * Text and images carry none; a file offer's list lives here for the whole
+     * of the transfer, which since #56 is minutes rather than moments — the
+     * offer goes out, is held for the user, and is re-offered on every seal
+     * that goes stale in between. A pointer borrowed for one call would dangle
+     * across all of that, and would appear as a payload occasionally wrong
+     * rather than as a crash.
      */
     private var metaStorage: UnsafeMutableBufferPointer<UInt8>?
 
@@ -157,6 +161,7 @@ public final class Transfer {
     /// stay put. A new offer supersedes anything already in flight.
     public func offer(kind: UInt8, meta: [UInt8] = [], data: [UInt8]) -> [TransferAction] {
         releaseOutgoing()
+        txAwaitingData = false
         let storage = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: max(data.count, 1))
         _ = storage.initialize(from: data)
         txStorage = storage
@@ -173,6 +178,85 @@ public final class Transfer {
 
 
     /*
+     * Offer a payload that has not been read yet (#56).
+     *
+     * Files are lazy because reading them costs real time and real memory, and
+     * a copy the user never pastes should cost neither. Nothing leaves until
+     * the far end asks — and on this project the far end asks only once its
+     * own user has said yes, so a copied folder that is never pasted is never
+     * even opened.
+     *
+     * `total` is what the offer promises and what `provide` must then deliver
+     * exactly; the metadata is where the file names and their individual sizes
+     * live (FileList).
+     */
+    public func offerLazy(kind: UInt8, meta: [UInt8], total: UInt64) -> [TransferAction] {
+        releaseOutgoing()
+        txAwaitingData = true
+
+        let metaCopy = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: max(meta.count, 1))
+        _ = metaCopy.initialize(from: meta)
+        metaStorage = metaCopy
+
+        return collect { acts, cap in
+            dh_xfer_offer(machine, kind, meta.isEmpty ? nil : metaCopy.baseAddress,
+                          UInt16(meta.count), nil, total, acts, cap)
+        }
+    }
+
+    /// Answer NEED_DATA with the bytes. Copied, for the reason `offer` copies:
+    /// the core keeps a pointer to them until the transfer ends.
+    public func provide(data: [UInt8]) -> [TransferAction] {
+        txAwaitingData = false
+        let storage = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: max(data.count, 1))
+        _ = storage.initialize(from: data)
+        /* Handed over before the old buffer is released, not after: between the
+           two the core is holding whichever pointer it was last given, and it
+           must never be one that has been freed. */
+        let actions = collect { acts, cap in
+            dh_xfer_provide(machine, storage.baseAddress, acts, cap)
+        }
+        let previous = txStorage
+        txStorage = storage
+        previous?.deallocate()
+        return actions
+    }
+
+    /*
+     * Point the receive buffer at a buffer of a different size, because the
+     * board stated a different clipboard size cap (#56).
+     *
+     * False when the core refuses — something is arriving, and it is
+     * assembling into the buffer this would move. The old buffer is kept in
+     * that case rather than freed, because the core is still writing into it.
+     */
+    public func setReceiveCapacity(_ bytes: Int) -> Bool {
+        guard bytes > 0 else { return false }
+        guard bytes != rxBuffer.count else { return true }
+        /* Asked before the allocation, not after: a caller retrying a refused
+           swap on its tick would otherwise allocate and free up to 64 MB
+           several times a second for the whole of the transfer it is waiting
+           on. */
+        guard canSetReceiveCapacity else { return false }
+        let replacement = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: bytes)
+        replacement.initialize(repeating: 0)
+        guard dh_xfer_set_rx_buffer(machine, replacement.baseAddress, bytes) else {
+            replacement.deallocate()
+            return false
+        }
+        rxBuffer.deallocate()
+        rxBuffer = replacement
+        return true
+    }
+
+    /// How large a payload this end will accept, in bytes.
+    public var receiveCapacity: Int { rxBuffer.count }
+
+    /// Whether a change of capacity would be accepted right now. False while
+    /// anything is arriving, a held offer included.
+    public var canSetReceiveCapacity: Bool { dh_xfer_can_set_rx_buffer(machine) }
+
+    /*
      * Offer the payload already in flight again, as a fresh transfer.
      *
      * This is what a SEAL_STALE costs: the far end holds no key for the seal
@@ -185,7 +269,21 @@ public final class Transfer {
      * this costs no copy of the payload.
      */
     public func reoffer() -> [TransferAction] {
-        guard let storage = txStorage, let current = outgoingOffer() else { return [] }
+        guard let current = outgoingOffer() else { return [] }
+        /* A lazy transfer whose payload was never asked for has no bytes to
+           point at, and must not acquire any here: re-offering it eagerly
+           would read the files at the moment a seal went stale rather than at
+           the moment someone asked for them (#56). */
+        if txAwaitingData || txStorage == nil {
+            let meta = metaStorage
+            let metaLength = Int(current.meta.count)
+            txAwaitingData = true
+            return collect { acts, cap in
+                dh_xfer_offer(machine, current.kind, metaLength > 0 ? meta?.baseAddress : nil,
+                              UInt16(metaLength), nil, current.total, acts, cap)
+            }
+        }
+        guard let storage = txStorage else { return [] }
         /* `metaStorage` is the same buffer the core is already holding, so this
            re-offers the metadata in place rather than handing over a pointer
            that dies with this call. */
@@ -198,12 +296,33 @@ public final class Transfer {
     }
 
 
+    /// Whether the outgoing transfer is a lazy one whose payload has not been
+    /// read yet. A stale seal re-offers such a transfer lazily, and a NEED_DATA
+    /// for one this end never promised is a defect rather than a request.
+    public private(set) var txAwaitingData = false
+
+    /// What is arriving: its kind, how much is promised, and how much of it has
+    /// landed. Nil when nothing is. `received` is chunk-granular and never
+    /// overstates — the last chunk is short and the total is what bounds it.
+    public var arriving: (kind: UInt8, received: UInt64, total: UInt64)? {
+        guard isReceiving else { return nil }
+        let total = dh_xfer_delivered_len(machine)
+        let assembled = UInt64(receivedChunks) * UInt64(DH_XFER_CHUNK_SIZE)
+        return (dh_xfer_delivered_kind(machine), min(assembled, total), total)
+    }
+
     /// Whether a payload is on its way out — the question a stale seal has to
     /// ask before it knows whether there is anything to start again.
     public var isSending: Bool { dh_xfer_is_sending(machine) }
 
     /// Whether a payload is arriving.
     public var isReceiving: Bool { dh_xfer_is_receiving(machine) }
+
+    /// Whether anything at all is incoming, a lazy offer held for a decision
+    /// included. Wider than `isReceiving`, and the honest way to ask whether an
+    /// incoming transfer is over — a transfer id cannot answer that, because
+    /// ids collide across the two directions (#136).
+    public var isIncomingBusy: Bool { dh_xfer_rx_busy(machine) }
 
     /// How far each direction has got, for a stall that has to say more than
     /// "no progress" — which covers a transfer whose chunks never arrived and
@@ -261,11 +380,11 @@ public final class Transfer {
         dh_xfer_rx_has_offer(machine) ? dh_xfer_rx_offer_id(machine) : nil
     }
 
-    /// Answer NEED_DATA with a refusal. Nothing in this slice offers lazily, so
-    /// reaching it means the core asked for a payload this end never promised —
-    /// said out loud by the caller rather than left as a transfer that hangs.
+    /// Answer NEED_DATA with a refusal: the files could not be read. The
+    /// transfer fails rather than hanging, and the far end is told.
     public func provideFail() -> [TransferAction] {
-        collect { acts, cap in dh_xfer_provide_fail(machine, acts, cap) }
+        txAwaitingData = false
+        return collect { acts, cap in dh_xfer_provide_fail(machine, acts, cap) }
     }
 
     public func cancelOutgoing() -> [TransferAction] {
@@ -382,6 +501,7 @@ public final class Transfer {
     // MARK: - Internals
 
     private func releaseOutgoing() {
+        txAwaitingData = false
         txStorage?.deallocate()
         txStorage = nil
         metaStorage?.deallocate()

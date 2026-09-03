@@ -165,6 +165,7 @@ std::vector<Output> HelperSession::collect(const std::string &transport_reason) 
         case DH_HELPER_OUT_CLIP_POLICY:
             out.kind = Output::Kind::ClipPolicy;
             out.clip_flags = static_cast<uint8_t>(item.a);
+            out.clip_cap_mb = static_cast<uint8_t>(item.b);
             break;
         default:
             /* Unreachable while both sides come out of one build — and said

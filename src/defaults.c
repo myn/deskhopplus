@@ -11,11 +11,16 @@
  */
 #include "main.h"
 #include "core/dh_hotkey_defaults.h"
+#include "core/dh_session.h"
 
 /* Default configuration */
 const config_t default_config = {
     .magic_header = CONFIG_MAGIC_HEADER,
     .version = CURRENT_CONFIG_VERSION,
+    /* Stated rather than left at zero so the config page shows the number in
+       force. Zero would mean the same thing (dh_clip_cap_mb), but only to a
+       reader who knows that (#56). */
+    .clip_cap_mb = DH_CLIP_CAP_MB_DEFAULT,
     .output[OUTPUT_A] =
         {
             .number = OUTPUT_A,

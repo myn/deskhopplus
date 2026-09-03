@@ -329,11 +329,14 @@ def build():
     # 4 refused frames in a 10 s window: a rate, not an event.
     v.append(("listener_alert", frame(0x03, struct.pack("<II", 10000, 4), K_B2H, 5)))
 
-    # The clipboard's two directions, as the two verbs a helper acts on (#52).
-    # Both forms, because the interesting failure is a flags byte read the
-    # wrong way round and the all-allowed case cannot show one.
-    v.append(("clip_policy_both", frame(0x04, bytes([0x03]), K_B2H, 8)))
-    v.append(("clip_policy_receive_only", frame(0x04, bytes([0x02]), K_B2H, 9)))
+    # The clipboard's two directions, as the two verbs a helper acts on (#52),
+    # and the size cap beside them (#56). Both flag forms, because the
+    # interesting failure is a flags byte read the wrong way round and the
+    # all-allowed case cannot show one; two different caps for the same reason,
+    # and neither is the default, so a cap silently dropped on the floor cannot
+    # pass as the value the board meant.
+    v.append(("clip_policy_both", frame(0x04, bytes([0x03, 0x40]), K_B2H, 8)))
+    v.append(("clip_policy_receive_only", frame(0x04, bytes([0x02, 0x20]), K_B2H, 9)))
 
     # The twelve totals (#133, #142, #107), each a different value so that a field
     # read in the wrong order cannot pass. The first seven are in the order the

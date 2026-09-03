@@ -64,6 +64,7 @@ struct Output {
     dh_helper_state state{DH_HELPER_QUIET};
     uint32_t retry_after_ms{0};
     uint8_t clip_flags{0};      /* ClipPolicy: DH_CLIP_MAY_* */
+    uint8_t clip_cap_mb{0};     /* ClipPolicy: the size cap in MB (#56) */
     std::vector<uint8_t> bytes; /* StoreBoardKey: the board's key. Send: a frame. */
     std::string note;           /* Note: already in words. */
 };
@@ -105,6 +106,7 @@ class HelperSession {
     /* What the board last said about the clipboard's two directions (#52).
        Both allowed until it has said anything, matching the stored default. */
     uint8_t clip_flags() const { return dh_helper_clip_flags(machine_.get()); }
+    uint8_t clip_cap_mb() const { return dh_helper_clip_cap_mb(machine_.get()); }
 
     /* What the board says it has dropped, or false if it has stated nothing
        this session (#133). False is not the same answer as all-zero, and a

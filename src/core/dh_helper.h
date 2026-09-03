@@ -249,10 +249,11 @@ typedef enum {
     DH_HELPER_OUT_RETRY = 5, /* `a` is the delay in milliseconds */
     DH_HELPER_OUT_NOTE = 6,  /* diagnostics, never shown to the user */
     /*
-     * The board's clipboard direction policy (#52); `a` is the DH_CLIP_MAY_*
-     * flags. Emitted whenever the board states one, which is at least once per
+     * The board's clipboard policy (#52); `a` is the DH_CLIP_MAY_* flags and
+     * `b` is the size cap in megabytes (#56), already resolved so it is never
+     * zero. Emitted whenever the board states one, which is at least once per
      * session and again on any change — so a platform that only ever reads
-     * this output is never working from a stale toggle.
+     * this output is never working from a stale toggle or a stale cap.
      */
     DH_HELPER_OUT_CLIP_POLICY = 7,
 } dh_helper_output_kind;
@@ -301,7 +302,7 @@ typedef enum {
     DH_NOTE_DEVICE_SILENT = 28,       /* a = ms of silence */
     DH_NOTE_TRANSPORT_FAILED = 29,
     DH_NOTE_RECONNECTION_RATE = 30,   /* a = drops counted, b = ms they spanned */
-    DH_NOTE_CLIP_POLICY = 31,         /* a = DH_CLIP_MAY_* flags the board stated */
+    DH_NOTE_CLIP_POLICY = 31,         /* a = DH_CLIP_MAY_* flags, b = size cap in MB */
     /*
      * This end's side of the inbound chain, reported beside every session end
      * so it can be read against the board's own totals in one place (#107).
@@ -496,6 +497,10 @@ typedef struct {
      * flight.
      */
     uint8_t clip_flags;
+    /* The size cap the board stated, already resolved through dh_clip_cap_mb —
+       so it is a number to act on, never zero, even before the board has said
+       anything (#56). */
+    uint8_t clip_cap_mb;
     bool have_clip_policy;
 
     /*
@@ -634,6 +639,13 @@ void dh_helper_set_payload_sink(dh_helper *h, dh_helper_payload_fn fn, void *ctx
 /* What the board last said about the clipboard's two directions (#52). Both
    allowed until it has said anything, which is what the toggles default to. */
 static inline uint8_t dh_helper_clip_flags(const dh_helper *h) { return h->clip_flags; }
+
+/* The clipboard size cap the board last stated, in megabytes (#56). Never
+   zero: a helper that has been told nothing uses the default, which is what
+   the stored setting means. */
+static inline uint8_t dh_helper_clip_cap_mb(const dh_helper *h) {
+    return dh_clip_cap_mb(h->clip_cap_mb);
+}
 
 /*
  * The board's drop totals, if it has stated any this session (#133). False

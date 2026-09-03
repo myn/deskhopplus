@@ -29,7 +29,11 @@
 #include <utility>
 #include <vector>
 
+#include <set>
+
 #include "clip_service.h"
+#include "dh_file_list.h"
+#include "file_naming.h"
 #include "dh_session.h"
 #include "seal_aead.h"
 
@@ -98,6 +102,19 @@ struct Pair {
     size_t lazy_images = 0;
     uint32_t last_lazy_image_id = 0;
     bool request_lazy_images = true;
+    /*
+     * The paste-side acceptance (#56). Every file offer that reaches a side
+     * is recorded, and — unless a test says otherwise — answered the way a user
+     * clicking Accept would. A test that wants the *held* state, which is the
+     * whole point of the gate, sets `answer_file_offers` to false and the offer
+     * stays waiting.
+     */
+    std::vector<deskhop::FileOffer> file_questions;
+    std::vector<uint32_t> withdrawn_questions;
+    bool answer_file_offers = true;
+    bool accept_file_offers = true;
+    std::vector<deskhop::FileDelivery> files_to_a;
+    std::vector<deskhop::FileDelivery> files_to_b;
     /* Every frame put on the link, in order, so a test can hand one over again
        later — the only way to reach a message that was sealed under a key its
        receiver has since replaced. */
@@ -166,6 +183,24 @@ struct Pair {
             }
             case ClipOutput::Kind::CancelLazyImage:
                 break;
+            case ClipOutput::Kind::FileOffer: {
+                file_questions.push_back(
+                    deskhop::FileOffer{output.transfer_id, output.total, output.files});
+                if (!answer_file_offers) break;
+                ClipService &near = side == Side::A ? a : b;
+                for (ClipOutput &item : accept_file_offers
+                                            ? near.accept_files(output.transfer_id)
+                                            : near.decline_files(output.transfer_id))
+                    queue.emplace_back(side, std::move(item));
+                break;
+            }
+            case ClipOutput::Kind::FileOfferWithdrawn:
+                withdrawn_questions.push_back(output.transfer_id);
+                break;
+            case ClipOutput::Kind::DeliverFiles:
+                (side == Side::A ? files_to_a : files_to_b)
+                    .push_back(deskhop::FileDelivery{output.files, output.bytes});
+                break;
             case ClipOutput::Kind::Note:
                 notes.push_back(output.note);
                 break;
@@ -186,6 +221,19 @@ struct Pair {
 
     void copy_on_a(const std::string &text) {
         settle(a.local_copy(ClipKind::Text, bytes_of(text)), Side::A);
+    }
+
+    /* Files copied on A, with a provider that hands over `bytes` — the read
+       that must not happen until the far side accepts. */
+    void copy_files_on_a(const std::vector<deskhop::FileEntry> &files,
+                         const std::vector<uint8_t> &bytes, int *reads = nullptr) {
+        settle(a.local_copy_files(files,
+                                  [bytes, reads](std::vector<uint8_t> &out) {
+                                      if (reads != nullptr) (*reads)++;
+                                      out = bytes;
+                                      return true;
+                                  }),
+               Side::A);
     }
 
     void copy_on_b(const std::string &text) {
@@ -983,6 +1031,379 @@ void test_a_delayed_offer_cannot_revive() {
 
 } // namespace
 
+
+/* -------------------------------------------------------------- files (#56)
+ *
+ * The twin of ClipboardTests.swift's file section, checking the same claims.
+ * The two suites existing separately is the point: a divergence between them
+ * is a clipboard that works on one computer and not the other.
+ */
+
+/* The file list these copy, and the payload it names. Written out rather than
+   generated, so a change to how sizes and offsets are handled has a fixed set
+   of numbers to disagree with. */
+std::vector<deskhop::FileEntry> three_files() {
+    return {deskhop::FileEntry{"notes.txt", 5}, deskhop::FileEntry{"empty.bin", 0},
+            deskhop::FileEntry{"data.png", 11}};
+}
+std::vector<uint8_t> three_file_payload() { return bytes_of("helloworld other"); }
+
+/* A set over kFilePromptThreshold, which is the only kind put to the user.
+   The set above deliberately is not: below the threshold a transfer is a
+   fraction of a second, and asking about it is how the prompt that matters
+   gets dismissed unread. */
+std::vector<deskhop::FileEntry> big_files() {
+    return {deskhop::FileEntry{"big.bin", 300u * 1024u}};
+}
+std::vector<uint8_t> big_payload() { return std::vector<uint8_t>(300u * 1024u, 0x5a); }
+
+void test_files_cross_the_link() {
+    Pair pair;
+    pair.copy_files_on_a(three_files(), three_file_payload());
+
+    CHECK(pair.files_to_b.size() == 1, "the files copied on A did not arrive on B");
+    if (pair.files_to_b.empty()) return;
+    CHECK(pair.files_to_b[0].files == three_files(), "the file list did not survive the link");
+    CHECK(pair.files_to_b[0].bytes == three_file_payload(),
+          "the file payload was not byte-identical end to end");
+    CHECK(pair.files_to_a.empty(), "A was handed its own files back");
+}
+
+/* The whole of #56, in one check: a copy costs nothing until someone on the
+   other computer says yes. */
+void test_files_are_not_read_until_accepted() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    int reads = 0;
+
+    pair.copy_files_on_a(big_files(), big_payload(), &reads);
+    CHECK(reads == 0, "the copied files were read before anyone accepted them");
+    CHECK(pair.file_questions.size() == 1, "B was not asked about the files");
+    if (pair.file_questions.empty()) return;
+    CHECK(pair.file_questions[0].files == big_files(),
+          "the question did not name the files that were offered");
+    CHECK(pair.files_to_b.empty(), "files were delivered without being accepted");
+    CHECK(pair.b.awaiting_decision() != nullptr, "the offer is not being held for an answer");
+
+    pair.settle(pair.b.accept_files(pair.file_questions[0].id), Side::B);
+    CHECK(reads == 1, "accepting the files did not read them exactly once");
+    CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].bytes == big_payload(),
+          "the accepted files did not arrive");
+    CHECK(pair.b.awaiting_decision() == nullptr,
+          "the offer is still being held after an answer");
+}
+
+void test_declining_files_reads_nothing() {
+    Pair pair(1024u * 1024u);
+    pair.accept_file_offers = false;
+    int reads = 0;
+
+    pair.copy_files_on_a(big_files(), big_payload(), &reads);
+    CHECK(reads == 0, "declined files were read anyway");
+    CHECK(pair.files_to_b.empty(), "declined files were delivered");
+    CHECK(!pair.withdrawn_questions.empty(), "declining did not take the question back");
+    CHECK(!pair.a.awaiting_send(), "the declined transfer is still being offered");
+}
+
+void test_small_file_sets_skip_the_question() {
+    Pair pair;
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a({deskhop::FileEntry{"tiny.txt", 4}}, bytes_of("abcd"));
+
+    CHECK(pair.file_questions.empty(),
+          "a set well under the threshold asked a question anyway");
+    CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].bytes == bytes_of("abcd"),
+          "a set under the threshold did not arrive on its own");
+}
+
+void test_several_files_split_correctly() {
+    Pair pair(1024u * 1024u);
+    const std::vector<deskhop::FileEntry> files = {deskhop::FileEntry{"a", 1000},
+                                                   deskhop::FileEntry{"b", 1},
+                                                   deskhop::FileEntry{"c", 2000}};
+    std::vector<uint8_t> payload(1000, 0x11);
+    payload.push_back(0x22);
+    payload.insert(payload.end(), 2000, 0x33);
+    pair.copy_files_on_a(files, payload);
+
+    CHECK(pair.files_to_b.size() == 1, "the three files did not arrive");
+    if (pair.files_to_b.empty()) return;
+    CHECK(pair.files_to_b[0].files == files, "the sizes did not survive");
+    const uint8_t expected[3] = {0x11, 0x22, 0x33};
+    size_t at = 0;
+    for (size_t i = 0; i < pair.files_to_b[0].files.size(); i++) {
+        const size_t size = static_cast<size_t>(pair.files_to_b[0].files[i].size);
+        bool all = true;
+        for (size_t j = 0; j < size; j++)
+            if (pair.files_to_b[0].bytes[at + j] != expected[i]) all = false;
+        CHECK(all, "a file did not slice out of the payload at the right offset");
+        at += size;
+    }
+}
+
+/*
+ * The offer's total and its list come from the same far helper, so a
+ * disagreement between them is that helper being wrong or being tampered with.
+ *
+ * Checked at the codec's own seam. The sum is the core's — it adds the sizes
+ * once, with an overflow check, and hands the total back — so what is asserted
+ * here is that the total which comes back is the one the service compares.
+ */
+void test_a_mismatched_file_list_is_refused() {
+    std::vector<dh_file_entry> raw;
+    const std::vector<deskhop::FileEntry> files = three_files();
+    for (const deskhop::FileEntry &file : files)
+        raw.push_back(dh_file_entry{file.name.data(),
+                                    static_cast<uint16_t>(file.name.size()), file.size});
+    std::vector<char> buffer(dh_file_list_encode_max());
+    const int written = dh_file_list_encode(raw.data(), static_cast<uint16_t>(raw.size()),
+                                            buffer.data(), buffer.size());
+    CHECK(written > 0, "the three-file list would not encode");
+
+    dh_file_list list{};
+    CHECK(dh_file_list_decode(buffer.data(), static_cast<size_t>(written), &list),
+          "the encoded list would not decode");
+    CHECK(list.total == 16, "the core's total is not the sum of the list");
+    CHECK(list.count == files.size(), "the list did not survive the round trip");
+
+    /* And sizes that overflow their total are refused outright, so no total
+       ever comes back for the service to compare. */
+    static const char *const overflowing =
+        "[{\"name\":\"a\",\"size\":18446744073709551615},{\"name\":\"b\",\"size\":1}]";
+    CHECK(!dh_file_list_decode(overflowing, std::strlen(overflowing), &list),
+          "sizes that overflow their total were accepted");
+}
+
+/*
+ * A file edited between the copy and the paste no longer reads at the length
+ * that was offered. The core is about to read exactly the offered length from
+ * whatever it is handed, so a short read here would be an overread there.
+ */
+void test_a_short_read_fails_rather_than_truncates() {
+    for (size_t wrong : {size_t{8}, size_t{32}}) {
+        Pair pair;
+        const std::vector<uint8_t> payload(wrong, 1);
+        pair.settle(pair.a.local_copy_files(three_files(),
+                                            [payload](std::vector<uint8_t> &out) {
+                                                out = payload;
+                                                return true;
+                                            }),
+                    Side::A);
+        CHECK(pair.files_to_b.empty(), "a payload of the wrong length was delivered");
+        CHECK(pair.saw_note("abandoned rather than sent short"),
+              "a payload that did not match its offer failed silently");
+        CHECK(!pair.a.awaiting_send(), "the mismatched transfer is still being offered");
+    }
+}
+
+void test_unreadable_files_fail_the_transfer() {
+    Pair pair;
+    pair.settle(pair.a.local_copy_files(three_files(),
+                                        [](std::vector<uint8_t> &) { return false; }),
+                Side::A);
+    CHECK(pair.files_to_b.empty(), "files that could not be read were delivered anyway");
+    CHECK(pair.saw_note("could not be read"), "files that could not be read failed silently");
+    CHECK(!pair.a.awaiting_send(), "the failed transfer is still being offered");
+}
+
+void test_files_over_the_cap_are_refused() {
+    Pair pair(64u * 1024u);
+    pair.answer_file_offers = false;
+    int reads = 0;
+    pair.copy_files_on_a({deskhop::FileEntry{"big.bin", 128u * 1024u}},
+                         std::vector<uint8_t>(128u * 1024u, 0), &reads);
+
+    CHECK(pair.file_questions.empty(),
+          "a set over the size cap was put to the user rather than refused");
+    CHECK(reads == 0, "a set over the size cap was read anyway");
+    CHECK(pair.files_to_b.empty(), "a set over the size cap was delivered");
+}
+
+void test_the_boards_size_cap_is_applied() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+
+    /* The board says one megabyte. What was already in force is irrelevant —
+       the device is the single source of truth (#42). */
+    pair.settle(pair.b.capacity_changed(1), Side::B);
+
+    int reads = 0;
+    pair.copy_files_on_a({deskhop::FileEntry{"big.bin", 2u * 1024u * 1024u}},
+                         std::vector<uint8_t>(2u * 1024u * 1024u, 0), &reads);
+    CHECK(pair.files_to_b.empty(), "a set over the board's cap was delivered");
+    CHECK(reads == 0, "a set over the board's cap was read");
+
+    pair.copy_files_on_a(three_files(), three_file_payload());
+    CHECK(pair.files_to_b.size() == 1, "a set inside the board's cap did not arrive");
+}
+
+void test_a_held_question_is_withdrawn() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    pair.settle(pair.b.session_ended(), Side::B);
+    bool withdrawn = false;
+    for (uint32_t seen : pair.withdrawn_questions)
+        if (seen == id) withdrawn = true;
+    CHECK(withdrawn,
+          "a session that ended left a question standing over a transfer that is gone");
+    CHECK(pair.b.awaiting_decision() == nullptr,
+          "the offer is still held after the session ended");
+}
+
+/*
+ * The two directions are independent, and a failure in one must not take the
+ * other's state with it. Reachable in the ordinary way: this computer offers
+ * files whose bytes can no longer be read while it is still holding a question
+ * about files the other computer offered. Transfer ids collide across the two
+ * directions (#136), so the id on the failure cannot say which one it was.
+ */
+void test_a_failed_send_leaves_a_healthy_receive_alone() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    /* B now tries to send files of its own, and cannot read them. */
+    pair.settle(pair.b.local_copy_files(three_files(),
+                                        [](std::vector<uint8_t> &) { return false; }),
+                Side::B);
+    CHECK(pair.saw_note("could not be read"), "B's send did not fail");
+
+    CHECK(pair.b.awaiting_decision() != nullptr &&
+              pair.b.awaiting_decision()->id == id,
+          "a failed send withdrew the question B was still holding");
+    CHECK(pair.withdrawn_questions.empty(),
+          "a failed send took back a question about the other direction");
+
+    /*
+     * How far this can be taken today. Accepting does *not* deliver, and for a
+     * reason outside this file: B's cancel names its own transfer id, A's
+     * outgoing transfer holds the same id, and A abandons it (#136 —
+     * "transfer ids collide across directions"). That is a live bug with a
+     * ticket of its own, and #56 gives it a new way to happen, since a file
+     * send that cannot read its files is a fresh source of CLIP_CANCEL.
+     *
+     * What is asserted above is the part this file owns: the state is kept, so
+     * the acceptance still reaches a transfer rather than falling on the floor.
+     * When #136 lands, this becomes a delivery.
+     */
+    pair.settle(pair.b.accept_files(id), Side::B);
+    CHECK(pair.saw_note("were accepted here and asked for"),
+          "the acceptance did not reach a transfer at all");
+}
+
+/*
+ * A text copy made while a file question is still standing supersedes it inside
+ * the transfer machine. The question has to go with it: left up, the tray goes
+ * on offering Accept for a transfer the far end has moved past, where accepting
+ * does nothing and says nothing either.
+ */
+void test_a_newer_copy_withdraws_a_held_question() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    pair.copy_on_a("something else entirely");
+    bool withdrawn = false;
+    for (uint32_t seen : pair.withdrawn_questions)
+        if (seen == id) withdrawn = true;
+    CHECK(withdrawn, "a newer copy left the question about the old transfer standing");
+    CHECK(pair.b.awaiting_decision() == nullptr, "the superseded offer is still held");
+    CHECK(!pair.delivered_to_b.empty() &&
+              text_of(pair.delivered_to_b.back()) == "something else entirely",
+          "the newer copy did not arrive");
+}
+
+/*
+ * A question nobody answers cannot stand for ever. The copy side re-offers
+ * every two seconds until its offer is requested, so an ignored prompt is a
+ * frame every two seconds for the life of the session — and the receive buffer
+ * the size cap sizes stays pinned while it stands.
+ */
+void test_an_unanswered_question_is_declined_in_the_end() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    /* The first tick arms the deadline; nothing expires on it. */
+    pair.settle(pair.b.tick(1000), Side::B);
+    CHECK(pair.b.awaiting_decision() != nullptr, "the first tick declined it outright");
+
+    pair.settle(pair.b.tick(1000 + ClipService::kHoldTimeoutMs - 1), Side::B);
+    CHECK(pair.b.awaiting_decision() != nullptr, "it was declined a millisecond early");
+
+    pair.settle(pair.b.tick(1000 + ClipService::kHoldTimeoutMs), Side::B);
+    CHECK(pair.b.awaiting_decision() == nullptr,
+          "an unanswered question stood past its deadline");
+    bool withdrawn = false;
+    for (uint32_t seen : pair.withdrawn_questions)
+        if (seen == id) withdrawn = true;
+    CHECK(withdrawn, "the expired question was not taken back");
+    CHECK(pair.files_to_b.empty(), "an expired question delivered its files anyway");
+    CHECK(!pair.a.awaiting_send(), "the copy side is still offering a declined transfer");
+}
+
+void test_an_accepted_transfer_reports_progress() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+
+    CHECK(!pair.b.arriving(nullptr, nullptr, nullptr),
+          "a held offer reported itself as arriving");
+    CHECK(!pair.file_questions.empty(), "no question was asked about a 300 KB set");
+    if (pair.file_questions.empty()) return;
+    CHECK(pair.file_questions[0].total == 300u * 1024u, "the question named the wrong size");
+    CHECK(pair.file_questions[0].estimated_seconds() >= 6,
+          "the estimate for 300 KB at the measured rate is implausibly short");
+
+    pair.settle(pair.b.accept_files(pair.file_questions[0].id), Side::B);
+    CHECK(pair.files_to_b.size() == 1, "the accepted set did not arrive");
+    CHECK(!pair.b.arriving(nullptr, nullptr, nullptr),
+          "a finished transfer still reports itself as arriving");
+}
+
+void test_a_transfer_can_be_aborted_here() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+
+    pair.settle(pair.b.abort_receive(), Side::B);
+    CHECK(pair.files_to_b.empty(), "an aborted transfer was delivered");
+    CHECK(pair.b.awaiting_decision() == nullptr, "the aborted offer is still held");
+}
+
+/* Colliding names are renamed, never overwritten — the rule both helpers
+   follow, so a delivery comes back under the names it went out as. */
+void test_colliding_names_are_renamed() {
+    std::set<std::string> used;
+    CHECK(deskhop::unused_file_name("report.pdf", used) == "report.pdf", "the first was renamed");
+    CHECK(deskhop::unused_file_name("report.pdf", used) == "report-2.pdf",
+          "the second did not get a suffix before the extension");
+    CHECK(deskhop::unused_file_name("report.pdf", used) == "report-3.pdf",
+          "the third collided with the second");
+    CHECK(deskhop::unused_file_name("noext", used) == "noext", "a name with no extension");
+    CHECK(deskhop::unused_file_name("noext", used) == "noext-2",
+          "a name with no extension got a stray dot");
+
+    std::set<std::string> hidden{".gitignore"};
+    CHECK(deskhop::unused_file_name(".gitignore", hidden) == ".gitignore-2",
+          "a leading dot was treated as an extension");
+}
+
 int main() {
     if (seal_aead() == nullptr) {
         std::printf("FAIL this machine has no AES-GCM provider; nothing here can run\n");
@@ -1020,6 +1441,24 @@ int main() {
     test_a_restarted_id_is_not_a_conflict();
     test_a_replaced_seal_abandons_the_receive();
     test_a_delayed_offer_cannot_revive();
+
+    test_files_cross_the_link();
+    test_files_are_not_read_until_accepted();
+    test_declining_files_reads_nothing();
+    test_small_file_sets_skip_the_question();
+    test_several_files_split_correctly();
+    test_a_mismatched_file_list_is_refused();
+    test_a_short_read_fails_rather_than_truncates();
+    test_unreadable_files_fail_the_transfer();
+    test_files_over_the_cap_are_refused();
+    test_the_boards_size_cap_is_applied();
+    test_a_held_question_is_withdrawn();
+    test_an_accepted_transfer_reports_progress();
+    test_a_transfer_can_be_aborted_here();
+    test_a_failed_send_leaves_a_healthy_receive_alone();
+    test_a_newer_copy_withdraws_a_held_question();
+    test_an_unanswered_question_is_declined_in_the_end();
+    test_colliding_names_are_renamed();
 
     if (failures > 0) {
         std::printf("%d clipboard check(s) failed\n", failures);
