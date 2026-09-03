@@ -227,6 +227,8 @@ class Helper : public HelperEffects {
     OutputDispatch dispatch_{*this};
 
     uint32_t last_tick_{0};
+    /* Set while the WM_TIMER beat is running; see WM_TIMER in on_message. */
+    bool in_beat_{false};
     uint32_t last_rescan_{0};
     bool retry_pending_{false};
     uint32_t retry_at_{0};
@@ -683,7 +685,16 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
          * close, where the beat cannot.
          */
         if (w == kBeatTimerId) {
+            /* Reads as well as the beat. A helper that sends while a menu is
+               open but never *reads* sees nothing from the board and drops the
+               session itself ("nothing from the device in 3.0s") — the same
+               eviction from the other end. Re-entrancy guarded because the
+               image prefetch pumps messages while it waits. */
+            if (in_beat_) return 0;
+            in_beat_ = true;
+            transport_.pump_reads();
             feed(session_->tick(now_ms()));
+            in_beat_ = false;
             return 0;
         }
         break;

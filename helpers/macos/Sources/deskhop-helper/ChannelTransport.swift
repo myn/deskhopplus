@@ -85,7 +85,20 @@ final class ChannelTransport {
             Unmanaged<ChannelTransport>.fromOpaque(context).takeUnretainedValue().removed(device)
         }, context)
 
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        /*
+         * `.commonModes`, not `.defaultMode`. AppKit runs the loop in
+         * `.eventTracking` for as long as a menu is open, and a source
+         * scheduled in the default mode alone is not serviced in it — so with
+         * the menu bar item open this helper stopped *reading* from the board.
+         * Its own liveness check then fired ("nothing from the device in
+         * 3.0s") and it dropped a session that was perfectly healthy.
+         *
+         * The twin of what HelperRuntime.everyMode fixes for the sending
+         * direction. Both had to move: a beat that goes out while nothing comes
+         * in still ends the session, just from the other end (#161).
+         */
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(),
+                                        CFRunLoopMode.commonModes.rawValue)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
