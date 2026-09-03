@@ -256,7 +256,12 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
            about each. */
         return std::string("the board's clipboard policy: ") +
                ((a & DH_CLIP_MAY_SEND) ? "may send" : "may not send") + ", " +
-               ((a & DH_CLIP_MAY_RECEIVE) ? "may receive" : "may not receive");
+               ((a & DH_CLIP_MAY_RECEIVE) ? "may receive" : "may not receive") +
+               /* And the size cap beside them (#56). Its absence from this line
+                  is what made a 2 MB cap unreadable in a log where a 2.5 MB
+                  file was being offered — the macOS twin has printed it since
+                  the cap existed. */
+               ", size cap " + std::to_string(b) + " MB";
     }
 
     /* A code this helper has no words for. Printed rather than dropped: a note

@@ -451,19 +451,6 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
 void Clipboard::read_clipboard() {
     if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) return;
 
-    /* Files first: copying one in Explorer also puts its path on the clipboard
-       as text, so reading text first would send the path instead of the file. */
-    if (callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
-        if (!open_with_retry()) return;
-        std::vector<FileEntry> files;
-        std::function<bool(std::vector<uint8_t> &)> read;
-        const bool found = read_files(files, read);
-        CloseClipboard();
-        if (found) {
-            callbacks_.local_files(std::move(files), std::move(read));
-            return;
-        }
-    }
     /* Ask first so unrelated clipboard formats cost nothing and do not open
        the clipboard against another program that wants it. */
     const bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
@@ -474,6 +461,33 @@ void Clipboard::read_clipboard() {
     const ClipboardImageFormat image_format =
         select_clipboard_image_format(has_png, has_dibv5, has_dib, has_bitmap);
     const bool has_image = image_format != ClipboardImageFormat::None;
+
+    /*
+     * Image first, then files, then text — the same order as the macOS twin,
+     * and a divergence here is a clipboard that behaves differently on each
+     * computer.
+     *
+     * **Files before text**, because copying one in Explorer also puts its
+     * path on the clipboard as text, and reading text first would send the
+     * path instead of the file.
+     *
+     * **An image before files**, because a screenshot tool writes its capture
+     * to a temporary file and puts *both* on the clipboard — the image and a
+     * path to it. Reading files first sent the screenshot as a file, so it
+     * pasted into Explorer as a .png and would not paste into an image editor
+     * at all, which is what a screenshot is for.
+     */
+    if (!has_image && callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
+        if (!open_with_retry()) return;
+        std::vector<FileEntry> files;
+        std::function<bool(std::vector<uint8_t> &)> read;
+        const bool found = read_files(files, read);
+        CloseClipboard();
+        if (found) {
+            callbacks_.local_files(std::move(files), std::move(read));
+            return;
+        }
+    }
     if (!has_text && !has_image) return;
     if (!open_with_retry()) return;
 

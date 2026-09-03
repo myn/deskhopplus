@@ -66,6 +66,9 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a failed send leaves a healthy receive alone", testAFailedSendLeavesAHealthyReceiveAlone),
     ("a newer copy withdraws a held question", testANewerCopyWithdrawsAHeldQuestion),
     ("an unanswered question is declined in the end", testAnUnansweredQuestionIsDeclinedInTheEnd),
+    ("a set past the size cap is never put to the user", testAnOverCapSetIsNeverPutToTheUser),
+    ("offer retries do not re-ask after the answer", testOfferRetriesDoNotReAskAfterTheAnswer),
+    ("an accept that cannot run poisons nothing", testAnAcceptThatCannotRunPoisonsNothing),
 ]
 
 // MARK: - Files (#56)
@@ -391,6 +394,90 @@ private func testAnUnansweredQuestionIsDeclinedInTheEnd() {
                "the expired question was not taken back")
     Check.that(pair.filesToB.isEmpty, "an expired question delivered its files anyway")
     Check.that(!pair.a.awaitingSend, "the copy side is still offering a declined transfer")
+}
+
+/*
+ * A set past the size cap is *refused*, not put to the user.
+ *
+ * Hardware, 2026-09-02: with the cap at 2 MB a 2.46 MB file was toasted on
+ * Windows, Accept did nothing, and the file never arrived. The predicate asked
+ * whether an offer had been *seen*, which stays true for one the machine has
+ * already cancelled — so the question was asked about a transfer that was
+ * already declined.
+ */
+private func testAnOverCapSetIsNeverPutToTheUser() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.settle(pair.b.capacityChanged(megabytes: 2), from: .b)
+
+    let reads = Reads()
+    let big = [FileListEntry(name: "big.bin", size: 2_581_661)]
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 2_581_661), reads: reads)
+
+    Check.that(pair.fileQuestions.isEmpty,
+               "a set past the size cap was put to the user rather than refused")
+    Check.equal(reads.count, 0, "a set past the size cap was read")
+    Check.that(pair.filesToB.isEmpty, "a set past the size cap was delivered")
+    Check.that(pair.b.awaitingDecision == nil, "a refused offer is being held for an answer")
+}
+
+/*
+ * The copy side repeats its offer every two seconds until it is requested
+ * (#78). Once the answer has gone out, those repeats must not ask again.
+ *
+ * Hardware, 2026-09-02: one file produced three toasts and three Accepts.
+ */
+private func testOfferRetriesDoNotReAskAfterTheAnswer() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+    guard let sent = pair.carriedFrames.last(where: { $0.type == MessageType.clipOffer }) else {
+        Check.that(false, "no offer crossed the link")
+        return
+    }
+    pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
+    Check.equal(pair.fileQuestions.count, 1, "accepting re-asked the question")
+
+    /*
+     * The copy side's retry, arriving *after* the answer — the frame that
+     * crossed with the request on hardware. Handed over again as-is, which is
+     * exactly what the copy side repeats.
+     */
+    for _ in 0..<3 {
+        pair.settle(pair.b.received(type: sent.type, body: sent.body), from: .b)
+    }
+    Check.equal(pair.fileQuestions.count, 1,
+                "an offer retry re-asked a question the user had already answered")
+    Check.equal(pair.filesToB.count, 1, "the accepted transfer did not arrive")
+}
+
+/*
+ * Accepting an offer the machine is no longer holding must not remember its
+ * file list. It did, and the *next* transfer was then split by the wrong list
+ * and silently written nowhere — which at the desk is a paste that never
+ * happens, with the log line blaming a length mismatch.
+ */
+private func testAnAcceptThatCannotRunPoisonsNothing() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.settle(pair.b.capacityChanged(megabytes: 2), from: .b)
+
+    /* Refused for being over the cap, so nothing is held — but ask anyway, as
+       a stale menu item would. */
+    let big = [FileListEntry(name: "big.bin", size: 2_581_661)]
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 2_581_661))
+    pair.settle(pair.b.acceptFiles(id: 1), from: .b)
+
+    /* And now a transfer that is entirely fine. */
+    pair.answerFileOffers = true
+    pair.copyFilesOnA(threeFiles, bytes: threeFilePayload)
+    Check.equal(pair.filesToB.count, 1, "a healthy transfer did not arrive after a dead accept")
+    Check.equal(pair.filesToB.first?.bytes, threeFilePayload,
+                "a healthy transfer was split by a dead transfer's list")
 }
 
 private func testAnAcceptedTransferReportsProgress() {

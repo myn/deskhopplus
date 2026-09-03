@@ -1363,6 +1363,83 @@ void test_an_unanswered_question_is_declined_in_the_end() {
     CHECK(!pair.a.awaiting_send(), "the copy side is still offering a declined transfer");
 }
 
+/*
+ * A set past the size cap is *refused*, not put to the user.
+ *
+ * Hardware, 2026-09-02: with the cap at 2 MB a 2.46 MB file was toasted, Accept
+ * did nothing, and the file never arrived. The predicate asked whether an offer
+ * had been *seen*, which stays true for one the machine has already cancelled.
+ */
+void test_an_over_cap_set_is_never_put_to_the_user() {
+    Pair pair(1024u * 1024u * 4u);
+    pair.answer_file_offers = false;
+    pair.settle(pair.b.capacity_changed(2), Side::B);
+
+    int reads = 0;
+    pair.copy_files_on_a({deskhop::FileEntry{"big.bin", 2581661}},
+                         std::vector<uint8_t>(2581661, 0), &reads);
+
+    CHECK(pair.file_questions.empty(),
+          "a set past the size cap was put to the user rather than refused");
+    CHECK(reads == 0, "a set past the size cap was read");
+    CHECK(pair.files_to_b.empty(), "a set past the size cap was delivered");
+    CHECK(pair.b.awaiting_decision() == nullptr, "a refused offer is being held for an answer");
+}
+
+/*
+ * The copy side repeats its offer every two seconds until it is requested
+ * (#78). Once the answer has gone out, those repeats must not ask again.
+ *
+ * Hardware, 2026-09-02: one file produced three toasts and three Accepts.
+ */
+void test_offer_retries_do_not_re_ask_after_the_answer() {
+    Pair pair(1024u * 1024u);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+
+    std::pair<uint8_t, std::vector<uint8_t>> sent;
+    bool have_sent = false;
+    for (const auto &frame : pair.carried_frames)
+        if (frame.first == DH_MSG_CLIP_OFFER) { sent = frame; have_sent = true; }
+    CHECK(have_sent, "no offer crossed the link");
+    if (!have_sent) return;
+
+    pair.settle(pair.b.accept_files(pair.file_questions[0].id), Side::B);
+    CHECK(pair.file_questions.size() == 1, "accepting re-asked the question");
+
+    /* The copy side's retry, arriving after the answer — the frame that
+       crossed with the request on hardware. */
+    for (int i = 0; i < 3; i++)
+        pair.settle(pair.b.received(sent.first, sent.second.data(), sent.second.size()), Side::B);
+
+    CHECK(pair.file_questions.size() == 1,
+          "an offer retry re-asked a question the user had already answered");
+    CHECK(pair.files_to_b.size() == 1, "the accepted transfer did not arrive");
+}
+
+/*
+ * Accepting an offer the machine is no longer holding must not remember its
+ * file list. It did, and the *next* transfer was then split by the wrong list
+ * and silently written nowhere.
+ */
+void test_an_accept_that_cannot_run_poisons_nothing() {
+    Pair pair(1024u * 1024u * 4u);
+    pair.answer_file_offers = false;
+    pair.settle(pair.b.capacity_changed(2), Side::B);
+
+    pair.copy_files_on_a({deskhop::FileEntry{"big.bin", 2581661}},
+                         std::vector<uint8_t>(2581661, 0));
+    pair.settle(pair.b.accept_files(1), Side::B);
+
+    pair.answer_file_offers = true;
+    pair.copy_files_on_a(three_files(), three_file_payload());
+    CHECK(pair.files_to_b.size() == 1, "a healthy transfer did not arrive after a dead accept");
+    CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].bytes == three_file_payload(),
+          "a healthy transfer was split by a dead transfer's list");
+}
+
 void test_an_accepted_transfer_reports_progress() {
     Pair pair(1024u * 1024u);
     pair.answer_file_offers = false;
@@ -1465,6 +1542,9 @@ int main() {
     test_a_failed_send_leaves_a_healthy_receive_alone();
     test_a_newer_copy_withdraws_a_held_question();
     test_an_unanswered_question_is_declined_in_the_end();
+    test_an_over_cap_set_is_never_put_to_the_user();
+    test_offer_retries_do_not_re_ask_after_the_answer();
+    test_an_accept_that_cannot_run_poisons_nothing();
     test_colliding_names_are_renamed();
 
     if (failures > 0) {

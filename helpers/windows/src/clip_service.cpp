@@ -186,6 +186,24 @@ std::vector<ClipOutput> ClipService::local_copy_files(
 
 std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
     if (!have_held_offer_ || held_offer_.id != id) return {};
+    /*
+     * The machine has to still be holding it. Without this the file list is
+     * remembered for a transfer that will never run — and the *next* transfer
+     * then arrives and is split by the wrong list, which reads at the desk as
+     * a paste that silently never happens (#56).
+     */
+    if (!dh_xfer_rx_is_held(xfer_.get())) {
+        have_held_offer_ = false;
+        held_timed_ = false;
+        ClipOutput withdrawn;
+        withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
+        withdrawn.transfer_id = id;
+        std::vector<ClipOutput> outputs;
+        outputs.push_back(std::move(withdrawn));
+        outputs.push_back(note("the files were accepted here, but that transfer is no longer "
+                               "waiting to be asked for; nothing was requested"));
+        return outputs;
+    }
     const deskhop::FileOffer offer = held_offer_;
     have_held_offer_ = false;
     held_timed_ = false;
@@ -865,9 +883,18 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
     dh_xfer_action actions[kActionCapacity];
     append(outputs, render(actions, dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions,
                                                               kActionCapacity)));
-    /* Refused by the machine — over the size cap, or an older id — so there is
-       nothing to ask about. */
-    if (!dh_xfer_rx_has_offer(xfer_.get()) || dh_xfer_rx_offer_id(xfer_.get()) != offer.id)
+    /*
+     * Held, and held for *this* offer — the only state in which there is a
+     * question to ask.
+     *
+     * Not `dh_xfer_rx_has_offer`, which was the bug: that reports `seen_offer`
+     * and survives an offer the machine has already refused for being over the
+     * size cap, so a 2.5 MB file against a 2 MB cap was put to the user and
+     * accepting it did nothing. It also survives the answer, so every
+     * two-second offer retry re-asked a question already answered — three
+     * toasts for one file, observed on hardware.
+     */
+    if (!dh_xfer_rx_is_held(xfer_.get()) || dh_xfer_rx_offer_id(xfer_.get()) != offer.id)
         return outputs;
 
     if (!had_offer || previous_id != offer.id) {

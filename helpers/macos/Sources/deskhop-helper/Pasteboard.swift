@@ -109,13 +109,25 @@ final class Pasteboard {
             onLocalReplacement?()
         }
 
-        /* Files first: copying one in Finder also puts its path on the
-           pasteboard as a string, so reading text first would send the path
-           instead of the file. */
-        let files = filesFromPasteboard()
-        let text = files == nil
+        /*
+         * Image first, then files, then text.
+         *
+         * **Files before text**, because copying one in Finder also puts its
+         * path on the pasteboard as a string, and reading text first would
+         * send the path instead of the file.
+         *
+         * **An image before files**, because a screenshot tool writes its
+         * capture to a temporary file and puts *both* on the pasteboard — the
+         * image and a URL to it. Reading files first sent the screenshot as a
+         * file, so it pasted into Explorer as a .png and would not paste into
+         * Paint at all, which is what a screenshot is for. Finder does not put
+         * image data on the pasteboard for a copied picture, so "image data
+         * and a file URL together" is the screenshot case and nothing else.
+         */
+        let image = pngFromPasteboard()
+        let files = image == nil ? filesFromPasteboard() : nil
+        let text = image == nil && files == nil
             ? pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 } : nil
-        let image = files == nil ? pngFromPasteboard() : nil
         guard case .take(let polls) = watch.looked(
             at: count, foundContent: files != nil || text != nil || image != nil)
         else { return }
@@ -123,8 +135,8 @@ final class Pasteboard {
         /* More than one means a copy was caught mid-write and waited for —
            the case that used to be dropped in silence. */
         if polls > 1 { log?("a copy took \(polls) polls to become readable") }
-        if let files { onLocalFiles?(files) }
-        else if let image { onLocalImage?(Array(image)) }
+        if let image { onLocalImage?(Array(image)) }
+        else if let files { onLocalFiles?(files) }
         else if let text { onLocalCopy?(text) }
     }
 

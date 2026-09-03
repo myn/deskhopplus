@@ -133,6 +133,32 @@ void Tray::show(dh_helper_state state) {
 
 void Tray::on_callback(LPARAM what) {
     const UINT event = LOWORD(what);
+
+    /*
+     * Clicking the balloon *is* the acceptance (#56).
+     *
+     * The shell sends NIN_BALLOONUSERCLICK when the user clicks the notification
+     * body rather than dismissing it. Without this the balloon was only an
+     * announcement: it had to be read, dismissed, and then the icon found and a
+     * menu opened, which is three gestures for one decision and is how a
+     * transfer gets forgotten between the reading and the clicking.
+     *
+     * A real toast with Accept and Decline buttons needs the WinRT notification
+     * API and a registered AppUserModelID, which means something installed —
+     * and ADR-0006 says this helper installs nothing. One click on the balloon
+     * is what a shell notification can carry, so it carries the answer the user
+     * is far more likely to want; Decline stays on the menu, where an answer
+     * that costs nothing to delay belongs.
+     */
+    if (event == NIN_BALLOONUSERCLICK) {
+        if (!have_question_) return;
+        const uint32_t id = question_.id;
+        have_question_ = false;
+        update_tooltip();
+        if (callbacks_.accept_files) callbacks_.accept_files(id);
+        return;
+    }
+
     if (event == WM_RBUTTONUP || event == WM_LBUTTONUP || event == WM_CONTEXTMENU) show_menu();
 }
 
@@ -220,7 +246,7 @@ void Tray::ask_about_files(const deskhop::FileOffer &offer) {
     add_icon();
     update_tooltip();
     balloon("Files from the other computer: " + summary(offer) +
-            " Use the deskhopplus icon to accept or decline.");
+            " Click this to accept, or use the deskhopplus icon to decline.");
 }
 
 void Tray::withdraw_file_question(uint32_t id) {

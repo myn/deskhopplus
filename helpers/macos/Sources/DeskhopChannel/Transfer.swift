@@ -324,6 +324,12 @@ public final class Transfer {
     /// ids collide across the two directions (#136).
     public var isIncomingBusy: Bool { dh_xfer_rx_busy(machine) }
 
+    /// Whether an offer is being held for a decision — accepted into the
+    /// machine, nothing requested, not one byte moving. The question to ask
+    /// before putting an offer to the user; `receivedOfferID` alone is not,
+    /// because it survives an offer the machine has already refused.
+    public var isIncomingHeld: Bool { dh_xfer_rx_is_held(machine) }
+
     /// How far each direction has got, for a stall that has to say more than
     /// "no progress" — which covers a transfer whose chunks never arrived and
     /// one whose chunks all arrived and were refused.

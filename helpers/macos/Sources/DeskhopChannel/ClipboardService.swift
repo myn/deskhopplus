@@ -314,6 +314,19 @@ public final class ClipboardService {
      */
     public func acceptFiles(id: UInt32) -> [ClipboardOutput] {
         guard let offer = heldFileOffer, offer.id == id else { return [] }
+        /*
+         * The machine has to still be holding it. Without this the file list
+         * is remembered for a transfer that will never run — and the *next*
+         * transfer then arrives and is split by the wrong list, which reads at
+         * the desk as a paste that silently never happens (#56).
+         */
+        guard transfer.isIncomingHeld else {
+            heldFileOffer = nil
+            heldSince = nil
+            return [.fileOfferWithdrawn(id: id),
+                    .note("the files were accepted here, but that transfer is no longer "
+                          + "waiting to be asked for; nothing was requested")]
+        }
         heldFileOffer = nil
         heldSince = nil
         incomingFiles = offer.files
@@ -814,9 +827,20 @@ public final class ClipboardService {
         heldFileOffer = nil
         heldSince = nil
         outputs += render(transfer.handleLazy(offer: offer))
-        /* Refused by the machine — over the size cap, or an older id — so
-           there is nothing to ask about. */
-        guard transfer.receivedOfferID == offer.id else { return outputs }
+        /*
+         * Held, and held for *this* offer — the only state in which there is a
+         * question to ask.
+         *
+         * Not `receivedOfferID == offer.id`, which was the bug: that survives
+         * an offer the machine has already refused for being over the size
+         * cap, so a 2.5 MB file against a 2 MB cap was put to the user and
+         * accepting it did nothing. It also survives the answer, so every
+         * two-second offer retry re-asked a question already answered — three
+         * toasts for one file, observed on hardware.
+         */
+        guard transfer.isIncomingHeld, transfer.receivedOfferID == offer.id else {
+            return outputs
+        }
 
         if transfer.receivedOfferID != previousID {
             receivingSince = nil

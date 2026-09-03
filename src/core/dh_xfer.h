@@ -206,6 +206,23 @@ bool dh_xfer_set_rx_buffer(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap);
  */
 static inline bool dh_xfer_rx_busy(const dh_xfer *x) { return x->rx.active; }
 
+/*
+ * Whether an offer is being *held* for a decision: accepted into the machine,
+ * nothing requested, not one byte moving.
+ *
+ * This is the question a caller must ask before putting an offer to its user,
+ * and `dh_xfer_rx_has_offer` is not it. That one reports `seen_offer`, which is
+ * set even for an offer this machine has just **refused** — one past the size
+ * cap sets the id, emits a cancel, and leaves `active` false. A caller that
+ * asked the wrong one showed the user a question about a transfer that had
+ * already been declined, and accepting it did nothing at all (#56).
+ *
+ * It is also what makes a duplicate offer silent after the answer: once the
+ * request has gone out the receive is no longer lazy, so the copy side's next
+ * retry cannot re-ask a question the user has already answered.
+ */
+static inline bool dh_xfer_rx_is_held(const dh_xfer *x) { return x->rx.active && x->rx.lazy; }
+
 /* Whether that swap would be accepted right now. Asked *before* a caller
    allocates the replacement: a helper that retries a refused swap on every
    tick would otherwise allocate and free up to 64 MB several times a second
