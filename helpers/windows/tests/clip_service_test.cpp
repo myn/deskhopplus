@@ -224,7 +224,14 @@ struct Pair {
     }
 
     /* Files copied on A, with a provider that hands over `bytes` — the read
-       that must not happen until the far side accepts. */
+       that must not happen until the far side accepts.
+
+       A bare `int *` into the caller's local is safe here and is not in the
+       Swift twin, which needs an object: a C++ local has a stable address for
+       its whole scope, and the provider is called before this returns. Swift's
+       `&x` produces a pointer valid only for the call it is passed to, so the
+       same shape there wrote to freed stack in a release build — and passed in
+       debug. */
     void copy_files_on_a(const std::vector<deskhop::FileEntry> &files,
                          const std::vector<uint8_t> &bytes, int *reads = nullptr) {
         settle(a.local_copy_files(files,

@@ -110,10 +110,10 @@ private func testFilesCrossTheLink() {
 private func testFilesAreNotReadUntilAccepted() {
     let pair = bigPair()
     pair.answerFileOffers = false
-    var reads = 0
+    let reads = Reads()
 
-    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: &reads)
-    Check.equal(reads, 0, "the copied files were read before anyone accepted them")
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: reads)
+    Check.equal(reads.count, 0, "the copied files were read before anyone accepted them")
     Check.equal(pair.fileQuestions.count, 1, "B was not asked about the files")
     Check.equal(pair.fileQuestions.first?.offer.files, bigFiles,
                 "the question did not name the files that were offered")
@@ -124,7 +124,7 @@ private func testFilesAreNotReadUntilAccepted() {
     /* And now the answer, which is what starts it. */
     guard let offer = pair.fileQuestions.first?.offer else { return }
     pair.settle(pair.b.acceptFiles(id: offer.id), from: .b)
-    Check.equal(reads, 1, "accepting the files did not read them exactly once")
+    Check.equal(reads.count, 1, "accepting the files did not read them exactly once")
     Check.equal(pair.filesToB.first?.bytes, bigPayload, "the accepted files did not arrive")
     Check.that(pair.b.awaitingDecision == nil, "the offer is still being held after an answer")
 }
@@ -132,10 +132,10 @@ private func testFilesAreNotReadUntilAccepted() {
 private func testDecliningFilesReadsNothing() {
     let pair = bigPair()
     pair.acceptFileOffers = false
-    var reads = 0
+    let reads = Reads()
 
-    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: &reads)
-    Check.equal(reads, 0, "declined files were read anyway")
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: reads)
+    Check.equal(reads.count, 0, "declined files were read anyway")
     Check.that(pair.filesToB.isEmpty, "declined files were delivered")
     Check.that(pair.withdrawnQuestions.contains(where: { _ in true }),
                "declining did not take the question back")
@@ -227,13 +227,13 @@ private func testAShortReadFailsRatherThanTruncates() {
 private func testFilesOverTheCapAreRefused() {
     let pair = Pair(capacity: 64 * 1024)
     pair.answerFileOffers = false
-    var reads = 0
+    let reads = Reads()
     let big = [FileListEntry(name: "big.bin", size: 128 * 1024)]
 
-    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 128 * 1024), reads: &reads)
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 128 * 1024), reads: reads)
     Check.that(pair.fileQuestions.isEmpty,
                "a set over the size cap was put to the user rather than refused")
-    Check.equal(reads, 0, "a set over the size cap was read anyway")
+    Check.equal(reads.count, 0, "a set over the size cap was read anyway")
     Check.that(pair.filesToB.isEmpty, "a set over the size cap was delivered")
 }
 
@@ -245,11 +245,11 @@ private func testTheBoardsSizeCapIsApplied() {
        the device is the single source of truth (#42). */
     pair.settle(pair.b.capacityChanged(megabytes: 1), from: .b)
 
-    var reads = 0
+    let reads = Reads()
     let big = [FileListEntry(name: "big.bin", size: 2 * 1024 * 1024)]
-    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 2 * 1024 * 1024), reads: &reads)
+    pair.copyFilesOnA(big, bytes: [UInt8](repeating: 0, count: 2 * 1024 * 1024), reads: reads)
     Check.that(pair.filesToB.isEmpty, "a set over the board's cap was delivered")
-    Check.equal(reads, 0, "a set over the board's cap was read")
+    Check.equal(reads.count, 0, "a set over the board's cap was read")
 
     /* And a set inside the new cap still crosses, so the cap narrowed rather
        than broke the direction. */
@@ -448,6 +448,21 @@ private func counterEntropy(_ seed: UInt8) -> (Int) -> [UInt8] {
  * relay that holds no key and reads no payload (ADR-0008), so a hop that hands
  * bytes over unchanged is exactly what one is.
  */
+/*
+ * How many times the provider was called, as an object.
+ *
+ * A local `var` handed over as `&count` will not do, and the way it fails is
+ * worth the type: the pointer `&` produces is valid only for the duration of
+ * the call it is passed to, and this provider is called minutes later, when the
+ * far side accepts. In a debug build the local happens to still be where the
+ * pointer says; in a release build the optimiser is free to move it, and the
+ * increment lands somewhere else — so the test passed under `swift run` and
+ * failed under `./tools/build.sh`, which builds for release.
+ */
+private final class Reads {
+    var count = 0
+}
+
 private final class Pair {
     /* `a` is replaceable because one of the failures these drive is the far
        helper's *process* going away and coming back (#151): its offer ids are
@@ -575,9 +590,9 @@ private final class Pair {
     /// that must not happen until the far side accepts.
     @discardableResult
     func copyFilesOnA(_ files: [FileListEntry], bytes: [UInt8],
-                      reads: UnsafeMutablePointer<Int>? = nil) -> [ClipboardOutput] {
+                      reads: Reads? = nil) -> [ClipboardOutput] {
         let outputs = a.localCopy(files: files, provider: {
-            reads?.pointee += 1
+            reads?.count += 1
             return bytes
         })
         settle(outputs, from: .a)
