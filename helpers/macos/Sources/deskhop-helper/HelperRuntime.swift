@@ -279,6 +279,8 @@ final class HelperRuntime: HelperEffects {
     /// Push the arriving transfer's progress to the menu bar, and only when it
     /// has moved.
     private func refreshProgress() {
+        /* The same slow timer drops a notice old enough to confuse. */
+        menuBar.expireNotice()
         let arriving = clipboard.arriving
         let now = arriving.map { (received: $0.received, total: $0.total) }
         let changed = now?.received != shownProgress?.received
@@ -409,6 +411,8 @@ final class HelperRuntime: HelperEffects {
        in this file uses. An unqualified `note(...)` inside the class reaches
        this one instead, and lands in the same place. */
     func note(_ message: String) { Self.note(message) }
+
+    func tellUser(_ message: String) { menuBar.show(notice: message) }
 
     /* The one effect with a condition of its own: the device may have come
        back by itself while the backoff was running, and re-acquiring channels

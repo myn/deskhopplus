@@ -106,6 +106,10 @@ class Recorder : public HelperEffects {
                           std::to_string(offer.files.size()) + "," +
                           std::to_string(offer.total) + ")");
     }
+
+    void tell_user(const std::string &message) override {
+        effects.push_back("tell_user: " + message);
+    }
     void withdraw_file_question(uint32_t id) override {
         effects.push_back("withdraw_file_question(" + std::to_string(id) + ")");
     }

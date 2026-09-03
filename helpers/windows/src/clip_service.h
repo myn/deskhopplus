@@ -79,6 +79,8 @@ struct ClipOutput {
         FileOfferWithdrawn, /* that question no longer stands */
         DeliverFiles,       /* a complete set, to be written and referenced */
         Note,    /* diagnostics, never shown to the user */
+        TellUser, /* a message the user needs to see: something they did
+                     produced nothing, and only they can act on why */
         ProtocolError, /* authenticated identity conflict: drop connection */
     };
 
@@ -358,6 +360,10 @@ class ClipService {
     /* The exchange, made idempotent under retransmission (#161): the offer this
        end is still waiting on, and the answer it already gave to an offer, both
        repeated verbatim rather than derived again. */
+    /* The board's clipboard size cap, as the copy side needs it. Zero until the
+       board has said, and nothing is refused on a cap nobody stated. */
+    size_t cap_bytes_{0};
+    uint8_t cap_megabytes_{0};
     std::vector<uint8_t> outstanding_offer_;
     std::vector<uint8_t> answered_offer_;
     std::vector<uint8_t> last_accept_;

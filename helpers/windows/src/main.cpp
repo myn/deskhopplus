@@ -164,6 +164,14 @@ class Helper : public HelperEffects {
             "anything crosses");
         tray_.ask_about_files(offer);
     }
+
+    /* A balloon, which is where the user already looks for anything the
+       clipboard has to say. It names a remedy, which is the bar tray.h sets
+       for interrupting anyone. */
+    void tell_user(const std::string &message) override {
+        log(message);
+        tray_.balloon(message);
+    }
     void withdraw_file_question(uint32_t id) override { tray_.withdraw_file_question(id); }
     /* Written first, then referenced. The order is the guarantee: a reference
        only ever points at a set that is complete on disk, so a failed write

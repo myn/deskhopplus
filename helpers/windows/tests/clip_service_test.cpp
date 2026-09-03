@@ -99,6 +99,8 @@ struct Pair {
     std::vector<std::string> notes;
     /* Frames carried across the link, so a test can say what a direction cost. */
     size_t carried = 0;
+    /* Messages put in front of the user, as distinct from diagnostics. */
+    std::vector<std::string> told_user;
     size_t lazy_images = 0;
     uint32_t last_lazy_image_id = 0;
     bool request_lazy_images = true;
@@ -203,6 +205,12 @@ struct Pair {
                 break;
             case ClipOutput::Kind::Note:
                 notes.push_back(output.note);
+                break;
+            case ClipOutput::Kind::TellUser:
+                /* Recorded beside the notes, so `saw_note` finds it: a test
+                   cares that it was said, not by which route. */
+                notes.push_back(output.note);
+                told_user.push_back(output.note);
                 break;
             case ClipOutput::Kind::ProtocolError:
                 notes.push_back("protocol error: " + output.note);
@@ -1161,6 +1169,26 @@ void test_files_cross_the_link() {
 
 /* The whole of #56, in one check: a copy costs nothing until someone on the
    other computer says yes. */
+/*
+ * A set larger than the board's cap is refused here, where the user is.
+ *
+ * The far end drops an over-cap offer correctly and records it in its own log,
+ * which is no use at all to the person who pressed Ctrl-C on this computer and
+ * saw nothing happen — reported twice as "it never toasted" (#56).
+ */
+void test_an_over_cap_copy_is_refused_where_the_user_is() {
+    Pair pair(big_capacity);
+    (void)pair.a.capacity_changed(1);
+
+    std::vector<deskhop::FileEntry> too_big{deskhop::FileEntry{"over.bin", 3u * 1024u * 1024u}};
+    pair.copy_files_on_a(too_big, std::vector<uint8_t>(8, 0));
+
+    CHECK(pair.saw_note("larger than the 1 MB clipboard limit"),
+          "the user was not told why the copy produced nothing");
+    CHECK(pair.file_questions.empty(), "an over-cap set was still offered across the link");
+    CHECK(pair.carried == 0, "an over-cap set cost frames on the link");
+}
+
 void test_files_are_not_read_until_accepted() {
     Pair pair(big_capacity);
     pair.answer_file_offers = false;
@@ -1616,6 +1644,7 @@ int main() {
     test_a_delayed_offer_cannot_revive();
 
     test_files_cross_the_link();
+    test_an_over_cap_copy_is_refused_where_the_user_is();
     test_files_are_not_read_until_accepted();
     test_declining_files_reads_nothing();
     test_small_file_sets_skip_the_question();

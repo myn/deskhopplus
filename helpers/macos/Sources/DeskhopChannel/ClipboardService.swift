@@ -66,6 +66,10 @@ public enum ClipboardOutput: Equatable {
     case deliverFiles(FileDelivery)
     /// Diagnostics, never shown to the user.
     case note(String)
+    /// A message the user needs to see, because it explains something they
+    /// did that produced nothing. Logged as well, but a log is not telling
+    /// anyone.
+    case tellUser(String)
     case protocolError(String)
 }
 
@@ -220,6 +224,10 @@ public final class ClipboardService {
      * far end that never saw its offer.
      */
     private var reofferWhenSealed = false
+    /// The board's clipboard size cap, as the copy side needs it. Zero until
+    /// the board has said, and nothing is refused on a cap nobody stated.
+    private var capBytes = 0
+    private var capMegabytes: UInt8 = 0
     /*
      * The handshake, made idempotent under retransmission (#161).
      *
@@ -322,6 +330,19 @@ public final class ClipboardService {
             total += file.size
         }
 
+        /*
+         * Refused here, where the user is, rather than across the link where
+         * they are not. The far end drops an over-cap offer correctly and
+         * says so in its own log — which is no use at all to the person who
+         * pressed Cmd-C on this computer and saw nothing happen (#56).
+         */
+        if capBytes > 0 && total > UInt64(capBytes) {
+            let name = files.count == 1 ? files[0].name : "\(files.count) files"
+            return [.tellUser("\(name) is \(total / (1024 * 1024)) MB, larger than the "
+                              + "\(capMegabytes) MB clipboard limit. Nothing was sent — raise "
+                              + "the limit on the board's config page.")]
+        }
+
         pending = .files(files: files, meta: meta, total: total, provider: provider)
         sealWaitingSince = nil
         sealRetrySince = nil
@@ -394,6 +415,11 @@ public final class ClipboardService {
      */
     public func capacityChanged(megabytes: UInt8) -> [ClipboardOutput] {
         let bytes = Int(dh_clip_cap_bytes(megabytes))
+        /* Kept for the *copy* side as well. Both boards carry the same setting,
+           so a set too large to arrive is one this end can refuse outright
+           rather than send across the link to be dropped in silence. */
+        capMegabytes = megabytes
+        capBytes = bytes
         guard bytes != transfer.receiveCapacity else {
             wantedCapacity = nil
             return []

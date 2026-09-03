@@ -75,6 +75,7 @@ private final class Recorder: HelperEffects {
         return policyReply
     }
     func note(_ message: String) { effects.append("note: " + message) }
+    func tellUser(_ message: String) { effects.append("tellUser: " + message) }
 
     /* Logs are matched by prefix rather than in full: what is being claimed is
        that the right thing was said, not the exact wording of a sentence that
@@ -117,6 +118,7 @@ private func effectNamed(by output: ClipboardOutput) -> String {
     case .cancelLazyImage: return "the lazy image is removed from the pasteboard"
     case .note: return "the note is logged"
     case .protocolError: return "the connection is dropped"
+    case .tellUser: return "the message is logged and put in front of the user"
     case .fileOffer: return "the user is asked about the files"
     case .fileOfferWithdrawn: return "the question about the files is taken back"
     case .deliverFiles: return "the files are written and put on the pasteboard"

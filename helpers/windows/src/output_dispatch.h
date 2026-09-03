@@ -75,6 +75,10 @@ class HelperEffects {
     /* Files (#56). `ask_about_files` puts the acceptance to the user: nothing
        has crossed the link yet, and nothing will until the user answers. */
     virtual void ask_about_files(const deskhop::FileOffer &offer) = 0;
+
+    /* Put a message in front of the user. Something they did produced nothing,
+       and only they can act on why. */
+    virtual void tell_user(const std::string &message) = 0;
     virtual void withdraw_file_question(uint32_t id) = 0;
     virtual void deliver_files(const FileDelivery &delivery) = 0;
 

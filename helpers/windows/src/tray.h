@@ -102,11 +102,15 @@ class Tray {
     /* A kCallbackMessage arrived. */
     void on_callback(LPARAM what);
 
+    /* Something the user did produced nothing, and only they can act on why —
+       which is the bar this file sets for interrupting anyone. Public because
+       the copy side, not just a state change, now has such a thing to say. */
+    void balloon(const std::string &message);
+
   private:
     void add_icon();
     void remove_icon();
     void update_tooltip();
-    void balloon(const std::string &message);
     void show_menu();
 
     HWND window_{nullptr};

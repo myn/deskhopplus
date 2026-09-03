@@ -142,6 +142,13 @@ void OutputDispatch::emit(const ClipOutput &output) {
         effects_.log(output.note);
         break;
 
+    case ClipOutput::Kind::TellUser:
+        /* Logged as well as shown: the log is the record, the balloon is the
+           part a person actually reads. */
+        effects_.log(output.note);
+        effects_.tell_user(output.note);
+        break;
+
     case ClipOutput::Kind::ProtocolError:
         effects_.log("clipboard protocol error: " + output.note + "; dropping the connection");
         effects_.release_channels();

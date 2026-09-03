@@ -80,6 +80,10 @@ public protocol HelperEffects: AnyObject {
     func clipPolicyChanged(flags: UInt8, capMegabytes: UInt8) -> [ClipboardOutput]
 
     func note(_ message: String)
+
+    /// Put a message in front of the user. Something they did produced
+    /// nothing, and only they can act on why.
+    func tellUser(_ message: String)
 }
 
 public final class OutputDispatch {
@@ -192,6 +196,12 @@ public final class OutputDispatch {
             effects.lazyImage(id: id, total: total)
         case .cancelLazyImage(let id):
             effects.cancelLazyImage(id: id)
+
+        case .tellUser(let message):
+            /* Logged as well as shown: the log is the record, the message is
+               the part a person actually reads. */
+            effects.note(message)
+            effects.tellUser(message)
 
         case .fileOffer(let offer):
             effects.askAboutFiles(offer)

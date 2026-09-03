@@ -62,6 +62,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
     private var state: HelperState = .quiet
     private var question: FileOffer?
     private var panel: NSPanel?
+    /// The last thing the user needs to know about, and when it was said.
+    private var notice: String?
+    private var noticeAt: Date?
+    static let noticeLifetime: TimeInterval = 300
     private var progress: (received: UInt64, total: UInt64)?
 
     /*
@@ -133,6 +137,30 @@ final class MenuBar: NSObject, NSMenuDelegate {
         updateTitle()
     }
 
+    /*
+     * Something the user did produced nothing, and only they can act on why.
+     *
+     * A menu entry rather than a panel: a panel takes the screen for a message
+     * that needs no answer, and the offer panel is the one thing here allowed
+     * to do that. It sits until it is replaced or `noticeLifetime` passes, so
+     * a stale complaint is not still there an hour later.
+     */
+    func show(notice: String) {
+        self.notice = notice
+        noticeAt = Date()
+        updateTitle()
+    }
+
+    /// Drop a notice old enough to be confusing. Called from the same timer
+    /// that refreshes progress.
+    func expireNotice() {
+        guard notice != nil, let at = noticeAt, Date().timeIntervalSince(at) >= Self.noticeLifetime
+        else { return }
+        notice = nil
+        noticeAt = nil
+        updateTitle()
+    }
+
     /// How far the arriving transfer has got, or nil when nothing is arriving.
     func show(progress: (received: UInt64, total: UInt64)?) {
         self.progress = progress
@@ -151,6 +179,20 @@ final class MenuBar: NSObject, NSMenuDelegate {
      */
     func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
 
+    /// A sentence across menu lines. A menu item does not wrap on its own, and
+    /// one very long line pushes the menu off the screen.
+    private static func wrap(_ text: String, at width: Int) -> [String] {
+        var lines: [String] = []
+        var line = ""
+        for word in text.split(separator: " ") {
+            if line.isEmpty { line = String(word) }
+            else if line.count + 1 + word.count <= width { line += " " + word }
+            else { lines.append(line); line = String(word) }
+        }
+        if !line.isEmpty { lines.append(line) }
+        return lines
+    }
+
     // MARK: - The menu
 
     private static let idleTitle = "⌥"
@@ -161,10 +203,14 @@ final class MenuBar: NSObject, NSMenuDelegate {
             button.title = "⬇ files?"
         } else if let progress, progress.total > 0 {
             button.title = "⬇ \(Self.percent(progress))%"
+        } else if notice != nil {
+            /* In the title, not only in the menu. A message buried behind a
+               click is not much better than the silence it replaced. */
+            button.title = "⚠ deskhop"
         } else {
             button.title = Self.idleTitle
         }
-        button.toolTip = state.message ?? "deskhopplus helper"
+        button.toolTip = notice ?? state.message ?? "deskhopplus helper"
     }
 
     private func fill(_ menu: NSMenu) {
@@ -175,6 +221,17 @@ final class MenuBar: NSObject, NSMenuDelegate {
                                 action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
+
+        /* Directly under the state, because it explains why the last thing the
+           user did produced nothing. Wrapped, since it is a sentence. */
+        if let notice {
+            menu.addItem(.separator())
+            for line in Self.wrap(notice, at: 60) {
+                let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+        }
 
         if let question {
             menu.addItem(.separator())

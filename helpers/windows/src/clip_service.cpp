@@ -30,6 +30,14 @@ ClipOutput note(std::string text) {
     return out;
 }
 
+/* The same shape as `note`, for the messages a person is meant to read. */
+ClipOutput tell_user(std::string text) {
+    ClipOutput out;
+    out.kind = ClipOutput::Kind::TellUser;
+    out.note = std::move(text);
+    return out;
+}
+
 ClipOutput send(uint8_t type, const uint8_t *body, size_t len) {
     ClipOutput out;
     out.kind = ClipOutput::Kind::Send;
@@ -174,6 +182,21 @@ std::vector<ClipOutput> ClipService::local_copy_files(
         total += file.size;
     }
 
+    /*
+     * Refused here, where the user is, rather than across the link where they
+     * are not. The far end drops an over-cap offer correctly and says so in its
+     * own log — which is no use at all to the person who pressed Ctrl-C on this
+     * computer and saw nothing happen (#56).
+     */
+    if (cap_bytes_ > 0 && total > cap_bytes_) {
+        const std::string what =
+            files.size() == 1 ? files[0].name : std::to_string(files.size()) + " files";
+        return {tell_user(what + " is " + std::to_string(total / (1024u * 1024u)) +
+                          " MB, larger than the " + std::to_string(cap_megabytes_) +
+                          " MB clipboard limit. Nothing was sent — raise the limit on the "
+                          "board's config page.")};
+    }
+
     have_pending_ = true;
     pending_is_files_ = true;
     pending_kind_ = static_cast<uint8_t>(ClipKind::Files);
@@ -265,6 +288,11 @@ std::vector<ClipOutput> ClipService::abort_send() {
 
 std::vector<ClipOutput> ClipService::capacity_changed(uint8_t megabytes) {
     const size_t bytes = static_cast<size_t>(dh_clip_cap_bytes(megabytes));
+    /* Kept for the *copy* side as well. Both boards carry the same setting, so
+       a set too large to arrive is one this end can refuse outright rather than
+       send across the link to be dropped in silence. */
+    cap_bytes_ = bytes;
+    cap_megabytes_ = megabytes;
     if (bytes == rx_buffer_.size()) {
         wanted_capacity_ = 0;
         return {};

@@ -52,6 +52,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a receive under a replaced seal is abandoned", testAReplacedSealAbandonsTheReceive),
     ("an offer under the replaced seal cannot revive it", testADelayedOfferCannotRevive),
     ("files copied on one computer arrive on the other", testFilesCrossTheLink),
+    ("an over-cap copy is refused where the user is",
+     testAnOverCapCopyIsRefusedWhereTheUserIs),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
     ("a copy waiting for a seal survives a session end",
      testACopyWaitingForASealSurvivesASessionEnd),
@@ -119,6 +121,26 @@ private func testFilesCrossTheLink() {
  * The whole of #56, in one check: a copy costs nothing until someone on the
  * other computer says yes. Everything else here is machinery for this.
  */
+/*
+ * A set larger than the board's cap is refused here, where the user is.
+ *
+ * The far end drops an over-cap offer correctly and records it in its own log,
+ * which is no use at all to the person who pressed Cmd-C on this computer and
+ * saw nothing happen — reported twice as "it never toasted" (#56).
+ */
+private func testAnOverCapCopyIsRefusedWhereTheUserIs() {
+    let pair = bigPair()
+    _ = pair.a.capacityChanged(megabytes: 1)
+
+    let tooBig = [FileListEntry(name: "over.bin", size: 3 * 1024 * 1024)]
+    pair.copyFilesOnA(tooBig, bytes: [UInt8](repeating: 0, count: 8))
+
+    Check.that(pair.toldUser.contains { $0.contains("larger than the 1 MB clipboard limit") },
+               "the user was not told why the copy produced nothing")
+    Check.that(pair.fileQuestions.isEmpty, "an over-cap set was still offered across the link")
+    Check.that(pair.carried == 0, "an over-cap set cost frames on the link")
+}
+
 private func testFilesAreNotReadUntilAccepted() {
     let pair = bigPair()
     pair.answerFileOffers = false
@@ -573,6 +595,8 @@ private final class Pair {
     var deliveredToA: [(kind: UInt8, bytes: [UInt8])] = []
     var deliveredToB: [(kind: UInt8, bytes: [UInt8])] = []
     var notes: [String] = []
+    /// Messages put in front of the user, as distinct from diagnostics.
+    var toldUser: [String] = []
     /// Frames carried across the link, so a test can count what a direction cost.
     var carried = 0
     var lazyImages = 0
@@ -670,6 +694,11 @@ private final class Pair {
                 if side == .a { filesToA.append(delivery) } else { filesToB.append(delivery) }
             case .note(let note):
                 notes.append("\(side): \(note)")
+            case .tellUser(let message):
+                /* Recorded beside the notes, so `sawNote` finds it: a test
+                   cares that it was said, not by which route. */
+                notes.append("\(side): \(message)")
+                toldUser.append(message)
             case .protocolError(let note):
                 notes.append("\(side): protocol error: \(note)")
             }
