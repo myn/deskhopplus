@@ -163,6 +163,8 @@ interpret() {
         *"could not be read"*)               out="the copied files could not be read"; level="bad" ;;
         *"abandoned rather than sent short"*) out="length changed since the copy — refused, not truncated"; level="good" ;;
         *"so it was refused"*)               out="offer refused (size cap, or a list that does not add up)"; level="good" ;;
+        *"so nothing was asked and nothing"*) out="${line#*: }"; level="good" ;;
+        *"bytes copied here were offered"*)  out="text or an image was offered from here" ;;
         *"would not fit one offer"*)         out="too many names for one offer — refused on the copy side"; level="good" ;;
         *"did not match the"*)               out="A PAYLOAD DID NOT MATCH ITS LIST — nothing written"; level="bad" ;;
         *"no longer waiting to be asked for"*) out="accepted too late; the transfer had already gone"; level="bad" ;;
@@ -195,14 +197,19 @@ watch_logs() {
     printf '%s\n' "${dim}win: $WIN_LOG${off}"
     echo
 
-    { [ -f "$MAC_LOG" ] && tail -n 0 -F "$MAC_LOG" 2>/dev/null | sed 's/^/mac\t/' & }
-    { [ -f "$WIN_LOG" ] && tail -n 0 -F "$WIN_LOG" 2>/dev/null | sed 's/^/win\t/' & }
+    # awk, not sed: BSD sed puts a literal "t" where a GNU one puts a tab, so
+    # every line arrived unsplittable and the whole window printed nothing.
+    { [ -f "$MAC_LOG" ] && tail -n 0 -F "$MAC_LOG" 2>/dev/null | awk '{print "mac\t" $0}' & }
+    { [ -f "$WIN_LOG" ] && tail -n 0 -F "$WIN_LOG" 2>/dev/null | awk '{print "win\t" $0}' & }
     wait
 }
 
 # `watch` pipes through this so both tails interleave in arrival order.
 decode_stream() {
     while IFS=$'\t' read -r side line; do
+        # The banner has no tab, so it lands whole in `side`. Passed through
+        # rather than dropped, which is how it used to vanish.
+        if [ -z "$line" ]; then printf '%s\n' "$side"; continue; fi
         interpret "$side" "$line"
     done
 }

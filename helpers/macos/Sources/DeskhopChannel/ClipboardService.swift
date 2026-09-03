@@ -899,6 +899,18 @@ public final class ClipboardService {
          * toasts for one file, observed on hardware.
          */
         guard transfer.isIncomingHeld, transfer.receivedOfferID == offer.id else {
+            /*
+             * Refused inside the machine, and until now without a word. A set
+             * over the size cap produced no question, no transfer and no line
+             * anywhere — which at the desk is indistinguishable from the
+             * clipboard having stopped working, and was reported as exactly
+             * that.
+             */
+            if offer.total > UInt64(transfer.receiveCapacity) {
+                outputs.append(.note("\(files.count) file(s), \(offer.total) bytes, are over "
+                                     + "the \(transfer.receiveCapacity / (1024 * 1024)) MB size "
+                                     + "cap, so nothing was asked and nothing crossed"))
+            }
             return outputs
         }
 
@@ -994,7 +1006,11 @@ public final class ClipboardService {
         switch waiting {
         case .eager(let kind, let bytes):
             outgoingProvider = nil
+            /* Said out loud, as a file copy is. Text and images crossing in
+               silence meant a log could not show that an image copy had
+               superseded a file transfer, which is what it was doing. */
             return render(transfer.offer(kind: kind, data: bytes))
+                + [.note("\(bytes.count) bytes copied here were offered")]
         case .files(let files, let meta, let total, let provider):
             outgoingProvider = provider
             return render(transfer.offerLazy(kind: ClipKind.files.rawValue, meta: meta,

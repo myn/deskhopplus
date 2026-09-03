@@ -944,8 +944,22 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
      * two-second offer retry re-asked a question already answered — three
      * toasts for one file, observed on hardware.
      */
-    if (!dh_xfer_rx_is_held(xfer_.get()) || dh_xfer_rx_offer_id(xfer_.get()) != offer.id)
+    if (!dh_xfer_rx_is_held(xfer_.get()) || dh_xfer_rx_offer_id(xfer_.get()) != offer.id) {
+        /*
+         * Refused inside the machine, and until now without a word. A set over
+         * the size cap produced no question, no transfer and no line anywhere —
+         * which at the desk is indistinguishable from the clipboard having
+         * stopped working, and was reported as exactly that.
+         */
+        const size_t cap = rx_buffer_.size();
+        if (offer.total > cap) {
+            outputs.push_back(note(std::to_string(files.size()) + " file(s), " +
+                                   std::to_string(offer.total) + " bytes, are over the " +
+                                   std::to_string(cap / (1024u * 1024u)) +
+                                   " MB size cap, so nothing was asked and nothing crossed"));
+        }
         return outputs;
+    }
 
     if (!had_offer || previous_id != offer.id) {
         receiving_timed_ = false;
