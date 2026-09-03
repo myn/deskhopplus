@@ -227,6 +227,9 @@ public final class ClipboardService {
     /// Whether the held offer's question has actually been put to the user.
     /// False while it waits for them to arrive at this computer.
     private var heldAnnounced = false
+    /// What the far computer could not send for being over the cap, waiting
+    /// for the user to come here and wonder why nothing pasted.
+    private var tooBigWaiting: String?
     /// The board's clipboard size cap, as the copy side needs it. Zero until
     /// the board has said, and nothing is refused on a cap nobody stated.
     private var capBytes = 0
@@ -339,12 +342,14 @@ public final class ClipboardService {
          * says so in its own log — which is no use at all to the person who
          * pressed Cmd-C on this computer and saw nothing happen (#56).
          */
-        if capBytes > 0 && total > UInt64(capBytes) {
-            let name = files.count == 1 ? files[0].name : "\(files.count) files"
-            return [.tellUser("\(name) is \(total / (1024 * 1024)) MB, larger than the "
-                              + "\(capMegabytes) MB clipboard limit. Nothing was sent — raise "
-                              + "the limit on the board's config page.")]
-        }
+        /*
+         * Deliberately *not* refused here. The person who needs to hear about a
+         * set too large to cross is whoever goes to paste it, not whoever
+         * copied it — most copies never travel, and interrupting this computer
+         * about one that was not meant to is the noise the arrival rule exists
+         * to stop. The offer is small, the far end already refuses it, and it
+         * is the far end that says so when the user gets there (#56).
+         */
 
         pending = .files(files: files, meta: meta, total: total, provider: provider)
         sealWaitingSince = nil
@@ -360,10 +365,16 @@ public final class ClipboardService {
      * Idempotent: crossings are frequent and a question is asked once.
      */
     public func userIsHere() -> [ClipboardOutput] {
-        guard let held = heldFileOffer, !heldAnnounced else { return [] }
+        var outputs: [ClipboardOutput] = []
+        /* Whatever the far computer could not send, said once, here. */
+        if let waiting = tooBigWaiting {
+            tooBigWaiting = nil
+            outputs.append(.tellUser(waiting))
+        }
+        guard let held = heldFileOffer, !heldAnnounced else { return outputs }
         heldAnnounced = true
         heldSince = nil
-        return [.fileOffer(held)]
+        return outputs + [.fileOffer(held)]
     }
 
     /*
@@ -960,9 +971,17 @@ public final class ClipboardService {
              * that.
              */
             if offer.total > UInt64(transfer.receiveCapacity) {
+                let cap = transfer.receiveCapacity / (1024 * 1024)
+                let name = files.count == 1 ? files[0].name : "\(files.count) files"
                 outputs.append(.note("\(files.count) file(s), \(offer.total) bytes, are over "
-                                     + "the \(transfer.receiveCapacity / (1024 * 1024)) MB size "
-                                     + "cap, so nothing was asked and nothing crossed"))
+                                     + "the \(cap) MB size cap; the user is told when they "
+                                     + "arrive"))
+                /* Held for the same moment the question is: saying it now would
+                   interrupt whoever is at this computer about a copy made on
+                   the other one. */
+                tooBigWaiting = "\(name) is \(offer.total / (1024 * 1024)) MB, larger than the "
+                    + "\(cap) MB clipboard limit, so it was not brought over. Raise the limit "
+                    + "on the board's config page."
             }
             return outputs
         }

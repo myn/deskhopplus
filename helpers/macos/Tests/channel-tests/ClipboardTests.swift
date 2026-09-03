@@ -52,8 +52,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a receive under a replaced seal is abandoned", testAReplacedSealAbandonsTheReceive),
     ("an offer under the replaced seal cannot revive it", testADelayedOfferCannotRevive),
     ("files copied on one computer arrive on the other", testFilesCrossTheLink),
-    ("an over-cap copy is refused where the user is",
-     testAnOverCapCopyIsRefusedWhereTheUserIs),
+    ("an over-cap copy is explained where the paste would be",
+     testAnOverCapCopyIsExplainedWhereThePasteWouldBe),
     ("the question waits for the user to arrive", testTheQuestionWaitsForTheUserToArrive),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
     ("a copy waiting for a seal survives a session end",
@@ -129,17 +129,27 @@ private func testFilesCrossTheLink() {
  * which is no use at all to the person who pressed Cmd-C on this computer and
  * saw nothing happen — reported twice as "it never toasted" (#56).
  */
-private func testAnOverCapCopyIsRefusedWhereTheUserIs() {
+private func testAnOverCapCopyIsExplainedWhereThePasteWouldBe() {
     let pair = bigPair()
-    _ = pair.a.capacityChanged(megabytes: 1)
+    pair.userArrives = false
+    _ = pair.b.capacityChanged(megabytes: 1)
 
     let tooBig = [FileListEntry(name: "over.bin", size: 3 * 1024 * 1024)]
     pair.copyFilesOnA(tooBig, bytes: [UInt8](repeating: 0, count: 8))
 
+    /* Nothing is said while nobody has gone to paste it. */
+    Check.that(pair.toldUser.isEmpty,
+               "a copy nobody had gone to paste interrupted someone anyway")
+    Check.that(pair.fileQuestions.isEmpty, "an over-cap set was put to the user as a question")
+
+    /* And now they cross, find nothing pastes, and are told why. */
+    pair.settle(pair.b.userIsHere(), from: .b)
     Check.that(pair.toldUser.contains { $0.contains("larger than the 1 MB clipboard limit") },
-               "the user was not told why the copy produced nothing")
-    Check.that(pair.fileQuestions.isEmpty, "an over-cap set was still offered across the link")
-    Check.that(pair.carried == 0, "an over-cap set cost frames on the link")
+               "arriving did not explain why nothing pasted")
+
+    /* Once, not on every crossing. */
+    pair.settle(pair.b.userIsHere(), from: .b)
+    Check.equal(pair.toldUser.count, 1, "the same explanation was given twice")
 }
 
 /*

@@ -401,6 +401,9 @@ class ClipService {
     /* Whether the held offer's question has actually been put to the user.
        False while it waits for them to arrive at this computer. */
     bool held_announced_{false};
+    /* What the far computer could not send for being over the cap, waiting for
+       the user to come here and wonder why nothing pasted. */
+    std::string too_big_waiting_;
     uint32_t held_since_{0};
     bool have_incoming_files_{false};
     std::vector<FileEntry> incoming_files_;

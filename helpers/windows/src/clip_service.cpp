@@ -183,19 +183,13 @@ std::vector<ClipOutput> ClipService::local_copy_files(
     }
 
     /*
-     * Refused here, where the user is, rather than across the link where they
-     * are not. The far end drops an over-cap offer correctly and says so in its
-     * own log — which is no use at all to the person who pressed Ctrl-C on this
-     * computer and saw nothing happen (#56).
+     * Deliberately *not* refused here. The person who needs to hear about a set
+     * too large to cross is whoever goes to paste it, not whoever copied it —
+     * most copies never travel, and interrupting this computer about one that
+     * was not meant to is the noise the arrival rule exists to stop. The offer
+     * is small, the far end already refuses it, and it is the far end that says
+     * so when the user gets there (#56).
      */
-    if (cap_bytes_ > 0 && total > cap_bytes_) {
-        const std::string what =
-            files.size() == 1 ? files[0].name : std::to_string(files.size()) + " files";
-        return {tell_user(what + " is " + std::to_string(total / (1024u * 1024u)) +
-                          " MB, larger than the " + std::to_string(cap_megabytes_) +
-                          " MB clipboard limit. Nothing was sent — raise the limit on the "
-                          "board's config page.")};
-    }
 
     have_pending_ = true;
     pending_is_files_ = true;
@@ -215,7 +209,13 @@ std::vector<ClipOutput> ClipService::local_copy_files(
  * before. Idempotent: crossings are frequent and a question is asked once.
  */
 std::vector<ClipOutput> ClipService::user_is_here() {
-    if (!have_held_offer_ || held_announced_) return {};
+    std::vector<ClipOutput> outputs;
+    /* Whatever the far computer could not send, said once, here. */
+    if (!too_big_waiting_.empty()) {
+        outputs.push_back(tell_user(too_big_waiting_));
+        too_big_waiting_.clear();
+    }
+    if (!have_held_offer_ || held_announced_) return outputs;
     held_announced_ = true;
     held_timed_ = false;
     ClipOutput ask;
@@ -223,7 +223,8 @@ std::vector<ClipOutput> ClipService::user_is_here() {
     ask.transfer_id = held_offer_.id;
     ask.total = held_offer_.total;
     ask.files = held_offer_.files;
-    return {std::move(ask)};
+    outputs.push_back(std::move(ask));
+    return outputs;
 }
 
 std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
@@ -1005,10 +1006,20 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
          */
         const size_t cap = rx_buffer_.size();
         if (offer.total > cap) {
+            const size_t cap_mb = cap / (1024u * 1024u);
+            const std::string what =
+                files.size() == 1 ? files[0].name : std::to_string(files.size()) + " files";
             outputs.push_back(note(std::to_string(files.size()) + " file(s), " +
                                    std::to_string(offer.total) + " bytes, are over the " +
-                                   std::to_string(cap / (1024u * 1024u)) +
-                                   " MB size cap, so nothing was asked and nothing crossed"));
+                                   std::to_string(cap_mb) +
+                                   " MB size cap; the user is told when they arrive"));
+            /* Held for the same moment the question is: saying it now would
+               interrupt whoever is at this computer about a copy made on the
+               other one. */
+            too_big_waiting_ = what + " is " + std::to_string(offer.total / (1024u * 1024u)) +
+                               " MB, larger than the " + std::to_string(cap_mb) +
+                               " MB clipboard limit, so it was not brought over. Raise the "
+                               "limit on the board's config page.";
         }
         return outputs;
     }
