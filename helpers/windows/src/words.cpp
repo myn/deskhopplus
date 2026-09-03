@@ -80,6 +80,9 @@ std::string session_end(int32_t reason) {
         return "protocol error";
     case DH_SESSION_END_UNPAIRED:
         return "this helper is not paired";
+    case DH_SESSION_END_STREAM_GAP:
+        /* Named for what the board lost, not for a fault at this end (#161). */
+        return "the board lost a report, so the stream had a gap in it";
     default:
         return "reason " + std::to_string(reason);
     }

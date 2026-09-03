@@ -26,14 +26,27 @@
  * Reports waiting for channel_task, because none of the work below may run
  * inside the USB callback any more.
  *
- * Four is not a throughput figure. USB full speed delivers at most one 64-byte
- * OUT report per millisecond and channel_task drains the whole ring at 1000 Hz,
- * so the steady state never exceeds one. It is depth for the one place where
- * this loop stalls on purpose: the 133 ms ECDH at pairing (#110), during which
- * nothing here runs at all. A report that does not fit is counted, and its
- * frame is lost the same way any refused frame is — the helper retries.
+ * This was four, on the argument that "USB full speed delivers at most one
+ * 64-byte OUT report per millisecond and channel_task drains the whole ring at
+ * 1000 Hz, so the steady state never exceeds one". That is the same premise
+ * #139 measured false one queue over (dh_inq.h): channel_task is an entry in a
+ * cooperative loop, not a 1000 Hz timer, and TinyUSB hands over whatever it
+ * has buffered when the device task runs — so reports arrive in bursts inside
+ * one pass, not one per millisecond.
+ *
+ * Thirty-two covers a loop pass of about 32 ms. It is not a measurement,
+ * because nobody has measured the worst pass; it is generous depth behind a
+ * drop that is no longer silent, which is the change that matters. See
+ * `channel.stream_broken` — a dropped report now ends the session, so if this
+ * number is still too small it says so instead of costing three seconds of
+ * confusion.
+ *
+ * The old comment also said a lost report "loses a frame ... the helper
+ * retries". It does not. The reader is a byte stream, and a gap in the middle
+ * of a frame is filled from the frames after it; `frame_test.c`'s
+ * `test_a_gap_mid_frame_is_not_recoverable` is what that costs.
  */
-#define CHANNEL_REPORT_BACKLOG 4u
+#define CHANNEL_REPORT_BACKLOG 32u
 
 static struct {
     dh_session session;
@@ -54,6 +67,14 @@ static struct {
     uint8_t report_head; /* next to drain */
     uint8_t report_used;
     uint32_t reports_dropped;
+    /*
+     * A report was dropped, so the byte stream has a hole in it (#161).
+     *
+     * Raised in the USB callback and acted on in channel_task, the same shape
+     * as `config_wiped` and for the same reason: ending a session sends a
+     * frame, and no decision may run at the bottom of a TinyUSB callback.
+     */
+    bool stream_broken;
     /* Every report the USB callback delivered, dropped ones included. The head
        of the inbound chain, so a helper writing frames the board never accepts
        can be told apart from one whose frames never arrived (#107). */
@@ -229,6 +250,7 @@ static void channel_reset_link(void) {
 
     channel.report_head = 0;
     channel.report_used = 0;
+    channel.stream_broken = false;
     dh_inq_reset(&channel.inbound);
 
     /* Reset, never init: what is queued belonged to the link that just went,
@@ -562,9 +584,25 @@ void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
         channel.reports_in++;
 
     if (channel.report_used >= CHANNEL_REPORT_BACKLOG) {
-        /* Counted, never silent (#43). A lost report loses a frame, which the
-           helper's own machinery re-requests or times out on. */
+        /*
+         * Counted, never silent (#43) — and no longer only counted.
+         *
+         * A lost report does not lose one frame. The reader is a byte stream:
+         * the hole is filled from the frames behind it, and the reader goes on
+         * waiting for a body length it read before the loss. Nothing completes,
+         * so nothing authenticates, so `last_seen_ms` stops moving — and three
+         * seconds later this board evicts a helper that has been writing the
+         * whole time, with no refusals to show for it. That is #161's exact
+         * signature, and `test_a_gap_mid_frame_is_not_recoverable` is the proof
+         * that no amount of waiting recovers.
+         *
+         * So the session ends instead. The helper reopens its handles and gets
+         * a clean stream in about a second, which is the cheapest honest answer
+         * to a stream that can no longer be trusted — and the same one this
+         * board already gives a frame that will not decode.
+         */
         channel.reports_dropped++;
+        channel.stream_broken = true;
         return;
     }
 
@@ -940,6 +978,23 @@ void channel_task(device_t *state) {
         channel_end_session(DH_SESSION_END_UNPAIRED);
         dh_pair_clear_registration(&channel.pair);
         channel.registration_unsaved = false;
+    }
+
+    /*
+     * A report was dropped while this pass was elsewhere, so the byte stream
+     * has a hole and the reader cannot find its way back (#161). Ended here
+     * rather than in the callback that noticed, because ending a session sends
+     * a frame.
+     *
+     * Ahead of the drain, so the reports still in the ring are not fed into a
+     * reader that is about to be reset — they belong to the broken stream too.
+     */
+    if (channel.stream_broken) {
+        channel.stream_broken = false;
+        channel.report_head = 0;
+        channel.report_used = 0;
+        channel_end_session(DH_SESSION_END_STREAM_GAP);
+        dh_frame_reader_init(&channel.reader);
     }
 
     /*

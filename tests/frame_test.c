@@ -85,7 +85,99 @@ static size_t load_vectors(const char *path, struct vector *out, size_t cap) {
     return n;
 }
 
+/*
+ * What losing bytes mid-frame costs the reader (#161).
+ *
+ * The board's inbound ring is finite, and a report that does not fit is
+ * counted and dropped. The comment on that drop says a lost report "loses a
+ * frame, which the helper's own machinery re-requests or times out on". This
+ * is here because that is not what happens.
+ *
+ * The reader is a byte stream. Losing bytes out of the middle of one frame
+ * does not lose that frame and resume at the next: the reader goes on filling
+ * the frame it is in from bytes belonging to the frames after it, and it
+ * cannot tell. What it waits for is decided by a length it read before the
+ * loss — so it waits for a body that will never be delivered as such, and
+ * while it waits **nothing authenticates, so nothing on the board updates the
+ * liveness clock.** Three seconds of that is an eviction with no explanation,
+ * and no refusals to show for it.
+ *
+ * The point is not that the reader is wrong. It is that a gap is
+ * unrecoverable, so the only honest answer to a dropped report is to end the
+ * session and let the helper open a clean stream.
+ */
+static void test_a_gap_mid_frame_is_not_recoverable(void) {
+    uint8_t first[DH_FRAME_MAX_SIZE];
+    uint8_t second[DH_FRAME_MAX_SIZE];
+    size_t first_len = 0, second_len = 0;
+    uint8_t payload[600];
+    for (size_t i = 0; i < sizeof payload; i++) payload[i] = (uint8_t)i;
+
+    CHECK(dh_frame_encode(DH_MSG_CLIP_CHUNK, 0, payload, sizeof payload, first, sizeof first,
+                          &first_len) == DH_FRAME_OK,
+          "gap", "the first frame would not encode");
+    CHECK(dh_frame_encode(DH_MSG_HEARTBEAT, 0, payload, 8, second, sizeof second,
+                          &second_len) == DH_FRAME_OK,
+          "gap", "the second frame would not encode");
+
+    dh_frame_reader r;
+    dh_frame_reader_init(&r);
+
+    /* The first frame arrives with one 64-byte report missing from its middle
+       — exactly what the board's ring drops under pressure. */
+    const size_t report = 64;
+    const size_t gap_at = report * 3;
+    size_t frames = 0;
+    for (size_t off = 0; off < first_len; off += report) {
+        if (off == gap_at) continue; /* the dropped report */
+        const size_t take = (first_len - off) < report ? (first_len - off) : report;
+        size_t at = 0;
+        while (at < take) {
+            dh_frame_view fv;
+            size_t consumed = 0;
+            const dh_frame_result rc =
+                dh_frame_reader_push(&r, first + off + at, take - at, &consumed, &fv);
+            at += consumed;
+            if (rc == DH_FRAME_OK) frames++;
+            if (consumed == 0) break;
+        }
+    }
+
+    /* And now the frame after it, delivered whole and correctly. */
+    size_t at = 0;
+    while (at < second_len) {
+        dh_frame_view fv;
+        size_t consumed = 0;
+        const dh_frame_result rc =
+            dh_frame_reader_push(&r, second + at, second_len - at, &consumed, &fv);
+        at += consumed;
+        if (rc == DH_FRAME_OK) frames++;
+        if (consumed == 0) break;
+    }
+
+    CHECK(frames == 0, "gap",
+          "a gap mid-frame recovered on its own, which would make ending the session "
+          "unnecessary");
+
+    /* A reset is the only way back, and it is what the board must do. */
+    dh_frame_reader_init(&r);
+    at = 0;
+    frames = 0;
+    while (at < second_len) {
+        dh_frame_view fv;
+        size_t consumed = 0;
+        const dh_frame_result rc =
+            dh_frame_reader_push(&r, second + at, second_len - at, &consumed, &fv);
+        at += consumed;
+        if (rc == DH_FRAME_OK) frames++;
+        if (consumed == 0) break;
+    }
+    CHECK(frames == 1, "gap", "a reset reader did not read the very next frame");
+}
+
 int main(int argc, char **argv) {
+    test_a_gap_mid_frame_is_not_recoverable();
+
     const char *path = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     static struct vector vectors[MAX_VECTORS];
     const size_t nvec = load_vectors(path, vectors, MAX_VECTORS);
