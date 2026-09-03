@@ -1330,6 +1330,68 @@ static void test_a_session_end_is_acted_on(void) {
 }
 
 /*
+ * What the board's USB heard while the board was hearing nothing (#161).
+ *
+ * A liveness end says no frame of this helper's completed over there. It does
+ * not say whether the bytes arrived, and that is the whole of what is left to
+ * decide: reports arriving with no frame out of them is a reader sitting on a
+ * partial frame, and no reports at all is a transport that reported a write it
+ * never made. Both look identical in every log this project had.
+ *
+ * No new field carries it — reports_in already rides the drop report — so the
+ * only thing under test is that a reading is kept and the *change* is quoted.
+ */
+static void test_a_session_end_says_what_the_boards_usb_heard(void) {
+    const char *name = "a session end says what the board's USB heard";
+    dh_helper h;
+    a_live_session(&h);
+
+    /* reports_in is the ninth field; see the totals test above for the order. */
+    uint8_t drops_body[DH_DEVICE_DROPS_LEN] = {0};
+    uint8_t drops_frame[DH_FRAME_MAX_SIZE];
+    size_t drops_len = 0;
+    uint64_t counter = 1;
+
+    /* A reading, then a tick to keep it. */
+    for (unsigned i = 0; i < 4; i++) drops_body[40 + i] = (uint8_t)(1000u >> (8 * i));
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_DROPS, 0, k_b2h, counter++, drops_body, sizeof drops_body,
+                        drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
+          name, "the first drop totals would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, drops_frame, drops_len, 50, &out);
+    dh_helper_outputs_reset(&out);
+    dh_helper_tick(&h, 100, &out);
+
+    /* 500 more reports arrive over the next 1100ms, and no frame completes. */
+    for (unsigned i = 0; i < 4; i++) drops_body[40 + i] = (uint8_t)(1500u >> (8 * i));
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_DROPS, 0, k_b2h, counter++, drops_body, sizeof drops_body,
+                        drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
+          name, "the second drop totals would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, drops_frame, drops_len, 1200, &out);
+
+    uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_auth_frame(DH_MSG_SESSION_END, 0, k_b2h, counter++, body, sizeof body, frame,
+                        sizeof frame, &len) == DH_FRAME_OK,
+          name, "the session end would not encode");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received(&h, frame, len, 1200, &out);
+
+    const dh_helper_output *note = NULL;
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE &&
+            out.items[i].note == DH_NOTE_BOARD_HEARD_BYTES)
+            note = &out.items[i];
+    CHECK(note != NULL, name, "the end did not say what the board's USB heard");
+    CHECK(note != NULL && note->a == 500, name,
+          "the change was not quoted; a total since boot answers nothing");
+    CHECK(note != NULL && note->b == 1100, name, "the window the count covers was wrong");
+    no_overflow(name);
+}
+
+/*
  * The board's own totals, captured at the eviction rather than read after it.
  *
  * Three attempts to log these from the platform side all printed nothing, for
@@ -2594,6 +2656,7 @@ int main(int argc, char **argv) {
     test_a_session_end_is_acted_on();
     test_a_session_end_says_how_much_this_end_got_out();
     test_a_session_end_carries_the_boards_own_totals();
+    test_a_session_end_says_what_the_boards_usb_heard();
     test_a_teardown_says_what_the_board_sent_and_never_arrived();
     test_a_lost_report_is_named_before_the_tag_fails();
     test_a_padded_tail_is_silent();

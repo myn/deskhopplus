@@ -215,6 +215,12 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
            dropped report and the cause is elsewhere (#161). */
         return "the board's inbound lost " + std::to_string(a) +
                " report(s) and " + std::to_string(b) + " peer frame(s)";
+    case DH_NOTE_BOARD_HEARD_BYTES:
+        /* The one reading that splits what is left: bytes arriving with no
+           frame out of them is a stalled reader, and no bytes at all is a
+           transport that reported a write it did not make (#161). */
+        return "in the " + std::to_string(b) + "ms before that the board's USB took " +
+               std::to_string(a) + " report(s)";
     case DH_NOTE_BOARD_AT_END:
         return "at the end the board had accepted " + std::to_string(a) + " frame(s) from " +
                std::to_string(b) + " report(s)";

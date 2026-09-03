@@ -106,6 +106,11 @@ enum HelperNotes {
                board's inbound chain lost nothing, so an eviction it reported is
                not a dropped report and the cause is elsewhere (#161). */
             return "the board's inbound lost \(a) report(s) and \(b) peer frame(s)"
+        case DH_NOTE_BOARD_HEARD_BYTES:
+            /* The one reading that splits what is left: bytes arriving with no
+               frame out of them is a stalled reader, and no bytes at all is a
+               transport that reported a write it did not make (#161). */
+            return "in the \(b)ms before that the board's USB took \(a) report(s)"
         case DH_NOTE_BOARD_AT_END:
             return "at the end the board had accepted \(a) frame(s) from \(b) report(s)"
         case DH_NOTE_BOARD_SENDS:

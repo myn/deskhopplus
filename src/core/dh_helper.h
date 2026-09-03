@@ -74,6 +74,10 @@ extern "C" {
  * disappears for a moment is ordinary USB noise; one that is still gone five
  * seconds later is worth reporting.
  */
+/* How often the board's inbound chain is sampled, and the shortest window a
+   sample may be quoted over — see DH_NOTE_BOARD_HEARD_BYTES (#161). */
+#define DH_HELPER_CHAIN_SAMPLE_MS 1000u
+#define DH_HELPER_CHAIN_MIN_MS 500u
 #define DH_HELPER_SILENCE_MS 5000u
 
 /* A hello with no answer is a dead session, not a slow one. */
@@ -345,6 +349,26 @@ typedef enum {
      */
     DH_NOTE_BOARD_LOST_AT_END = 37,
     /*
+     * How much arrived over USB while the board was hearing nothing (#161).
+     *
+     * A liveness end asserts "no frame of yours completed here". This says
+     * whether the *bytes* were arriving anyway, which is the whole of what is
+     * left to decide, and it needs nothing new on the wire: reports_in already
+     * rides the drop report, so this is a reading the helper has held all
+     * along and never printed.
+     *
+     *   a = 0  -> nothing reached the board's USB callback at all, so the
+     *             frames never left this machine however the transport
+     *             reported them
+     *   a > 0  -> bytes arrived and no frame came out of them, so the board's
+     *             frame reader is sitting on a partial frame
+     *
+     * frames_in is deliberately *not* reported beside it. A liveness end is
+     * only reachable while that counter is still, so quoting it would dress an
+     * invariant up as a measurement. b = the window the count covers, in ms.
+     */
+    DH_NOTE_BOARD_HEARD_BYTES = 38,
+    /*
      * What the board got out to this helper, said on every teardown (#143).
      *
      * The mirror of DH_NOTE_BOARD_AT_END, which reads the *inbound* chain from
@@ -530,6 +554,11 @@ typedef struct {
      */
     dh_device_drops device_drops;
     bool have_device_drops;
+    /* The inbound chain as it read a moment ago, so a teardown can quote what
+       changed rather than a total since the board booted (#161). */
+    uint32_t chain_reports_in;
+    uint32_t chain_at_ms;
+    bool have_chain;
 
     dh_helper_payload_fn payload_fn;
     void *payload_ctx;

@@ -132,6 +132,7 @@ static void forget_session(dh_helper *h) {
        told a fresh baseline, so keeping the old ones would only mean a stall
        in the first moments of a new session quoting the last board's (#133). */
     h->have_device_drops = false;
+    h->have_chain = false;
     dh_frame_reader_init(&h->reader);
     h->stream_breaks = 0;
     forget_beat_trace(h);
@@ -895,6 +896,16 @@ static void on_session_end(dh_helper *h, const dh_frame_view *f, const uint8_t *
            platform reading them afterwards reads zeros. */
         put_note(o, DH_NOTE_BOARD_LOST_AT_END, (int32_t)h->device_drops.reports,
                  (int32_t)h->device_drops.inbound);
+        /*
+         * And what arrived while it was hearing nothing (#161). Skipped when
+         * the last reading is too fresh to divide by: over a tenth of a second
+         * a flat counter and a busy one look alike, and a reading that can be
+         * misread is worse than none.
+         */
+        if (h->have_chain && now_ms - h->chain_at_ms >= DH_HELPER_CHAIN_MIN_MS)
+            put_note(o, DH_NOTE_BOARD_HEARD_BYTES,
+                     (int32_t)(h->device_drops.reports_in - h->chain_reports_in),
+                     (int32_t)(now_ms - h->chain_at_ms));
     }
     put_note(o, DH_NOTE_LOCAL_SENDS, (int32_t)h->sends_total, (int32_t)h->sends_refused);
     drop_connection(h, now_ms, o, DH_NOTE_SESSION_ENDED, reason,
@@ -1198,6 +1209,15 @@ void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
         return;
     }
     if (h->phase != DH_HELPER_PHASE_LIVE) return;
+
+    /* One reading a second of the board's inbound chain, kept so a teardown
+       can say what moved rather than what the totals are (#161). */
+    if (h->have_device_drops &&
+        (!h->have_chain || elapsed(now_ms, h->chain_at_ms, DH_HELPER_CHAIN_SAMPLE_MS))) {
+        h->chain_reports_in = h->device_drops.reports_in;
+        h->chain_at_ms = now_ms;
+        h->have_chain = true;
+    }
 
     /*
      * Liveness, scoped to a session. An unpaired helper — live phase, nothing
