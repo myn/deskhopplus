@@ -156,21 +156,29 @@ final class HelperRuntime: HelperEffects {
         }
 
         pasteboard.log = { message in Self.note(message) }
+        /*
+         * Handed to the service whether or not a session exists to carry it.
+         * The service parks a copy until there is one, and gives up out loud
+         * after 30s.
+         *
+         * This used to be `guard session.canSendBulk`, on the reasoning that a
+         * helper cannot both say "connected" and refuse a copy. True, and
+         * beside the point: on a link that is reconnecting the helper says
+         * "Reconnecting", and the user copies anyway because nobody reads the
+         * menu bar before pressing Cmd-C. The copy was then dropped here with
+         * nothing written down, and the pasteboard is read again only when
+         * something else is copied — so it was lost for good, silently.
+         */
         pasteboard.onLocalCopy = { [weak self] text in
             guard let self else { return }
-            /* Nothing is offered without a session to carry it. The state the
-               user is shown and this answer come from the same core, so a
-               helper that says "connected" and refuses a copy is not a state
-               this can reach. */
-            guard self.session.canSendBulk else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .text, bytes: Array(text.utf8)))
         }
         pasteboard.onLocalImage = { [weak self] bytes in
-            guard let self, self.session.canSendBulk else { return }
+            guard let self else { return }
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
         pasteboard.onLocalFiles = { [weak self] copied in
-            guard let self, self.session.canSendBulk else { return }
+            guard let self else { return }
             /* The list goes out now; `read` is not called until the other
                computer's user accepts the transfer. That is the whole of #56's
                "transfer begins on paste, not on copy". */

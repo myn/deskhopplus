@@ -24,7 +24,10 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 MAC_LOG="${MAC_LOG:-/tmp/deskhop-helper.log}"
-WIN_LOG="${WIN_LOG:-/Volumes/Share/deleteme/deskhop-helper-windows/helper.log}"
+# The Windows helper's log, live over the share. /Volumes/deskhopplus is the
+# helper's own directory on the Windows machine, so this reads what the helper
+# is writing right now — no copying, and no stale snapshot to be fooled by.
+WIN_LOG="${WIN_LOG:-/Volumes/deskhopplus/helper.log}"
 FIXTURES="${FIXTURES:-$HOME/deskhop-clipboard-fixtures}"
 MARKS="${MARKS:-$HOME/.deskhop-run-sheet-marks}"
 

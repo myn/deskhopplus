@@ -436,13 +436,23 @@ public final class ClipboardService {
     /// measured 586 teardowns in sixteen hours, and re-offering is cheap where
     /// a key whose peer may no longer exist is not.
     public func sessionEnded() -> [ClipboardOutput] {
-        pending = nil
-        sealWaitingSince = nil
-        sealRetrySince = nil
         reofferWhenSealed = false
         outgoingProvider = nil
         incomingFiles = nil
+        /*
+         * A copy still waiting for a seal is *kept*. What is on the clipboard
+         * does not change because the link wobbled, and the pasteboard is only
+         * read again when the user copies something else — so dropping it here
+         * lost the copy for good, in silence. `sealWaitingSince` is deliberately
+         * left running: the 30s budget is counted from the copy, across as many
+         * session ends as the link manages, and `tick` still gives up out loud
+         * at the end of it.
+         */
         var withdrawn: [ClipboardOutput] = []
+        if let waiting = pending {
+            withdrawn.append(.note("the session went away; \(describe(waiting)) copied here "
+                                   + "are still waiting for one that can carry them"))
+        }
         if let held = heldFileOffer {
             heldFileOffer = nil
             heldSince = nil
@@ -911,7 +921,16 @@ public final class ClipboardService {
 
     private func startPendingIfSealed() -> [ClipboardOutput] {
         guard let waiting = pending else { return [] }
-        guard seal.canSeal else { return offerSeal() }
+        /*
+         * No key yet, so the copy waits for one. Said out loud because a copy
+         * that parks in silence reads at the desk as a copy that did nothing —
+         * and on a link that is reconnecting, parking is the ordinary case,
+         * not the rare one.
+         */
+        guard seal.canSeal else {
+            return offerSeal() + [.note("\(describe(waiting)) copied here are waiting for a "
+                                        + "seal before anything is offered")]
+        }
 
         pending = nil
         sealWaitingSince = nil
@@ -926,6 +945,14 @@ public final class ClipboardService {
                                              total: total))
                 + [.note("\(files.count) file(s), \(total) bytes, were offered without being "
                          + "read")]
+        }
+    }
+
+    /// What a parked copy is, for the notes that report one waiting.
+    private func describe(_ waiting: PendingCopy) -> String {
+        switch waiting {
+        case .eager(_, let bytes): return "\(bytes.count) bytes"
+        case .files(let files, _, let total, _): return "\(files.count) file(s), \(total) bytes"
         }
     }
 

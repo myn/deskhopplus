@@ -391,15 +391,22 @@ bool Helper::start(HINSTANCE instance) {
 
     Clipboard::Callbacks clipboard_callbacks;
     clipboard_callbacks.log = [this](const std::string &m) { log(m); };
+    /*
+     * Handed to the service whether or not a session exists to carry it. The
+     * service parks a copy until there is one, and gives up out loud after 30s.
+     *
+     * This used to be `if (!session_->can_send_bulk()) return;`, on the
+     * reasoning that a helper cannot both say "connected" and refuse a copy.
+     * True, and beside the point: on a link that is reconnecting the helper
+     * says "Reconnecting", and the user copies anyway because nobody reads the
+     * tray before pressing Ctrl-C. The copy was then dropped here with nothing
+     * written down, and the clipboard is read again only when something else is
+     * copied — so it was lost for good, silently.
+     */
     clipboard_callbacks.local_copy = [this](std::vector<uint8_t> utf8) {
-        /* Nothing is offered without a session to carry it. The state the user
-           is shown and this answer come from the same core, so a helper that
-           says "connected" and refuses a copy is not a state this can reach. */
-        if (!session_->can_send_bulk()) return;
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Text, utf8));
     };
     clipboard_callbacks.local_image = [this](std::vector<uint8_t> png) {
-        if (!session_->can_send_bulk()) return;
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Png, png));
     };
     clipboard_callbacks.local_replaced = [this] { abandon_prefetched_image(); };
@@ -411,7 +418,6 @@ bool Helper::start(HINSTANCE instance) {
     };
     clipboard_callbacks.local_files = [this](std::vector<FileEntry> files,
                                              std::function<bool(std::vector<uint8_t> &)> read) {
-        if (!session_->can_send_bulk()) return;
         /* The list goes out now; `read` is not called until the other
            computer's user accepts the transfer. That is the whole of #56's
            "transfer begins on paste, not on copy". */

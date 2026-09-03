@@ -349,10 +349,13 @@ void test_nothing_leaves_unsealed() {
     ClipService a(seal_aead(), counter_entropy(1));
     const std::vector<ClipOutput> first = a.local_copy(ClipKind::Text, bytes_of("waiting"));
 
-    CHECK(first.size() == 1, "a copy with no seal produced more than the seal offer");
-    if (first.empty()) return;
-    CHECK(first[0].kind == ClipOutput::Kind::Send, "a copy with no seal sent nothing");
-    CHECK(first[0].type == DH_MSG_SEAL_OFFER, "the first thing sent was not a seal offer");
+    /* Counted as frames, not as outputs: the copy also says out loud that it is
+       waiting, and a note is not on the wire. */
+    std::vector<uint8_t> frames;
+    for (const ClipOutput &item : first)
+        if (item.kind == ClipOutput::Kind::Send) frames.push_back(item.type);
+    CHECK(frames.size() == 1 && frames[0] == DH_MSG_SEAL_OFFER,
+          "a copy with no seal put something other than one seal offer on the wire");
 }
 
 void test_a_lost_seal_offer_is_retried() {
@@ -1064,6 +1067,40 @@ std::vector<deskhop::FileEntry> big_files() {
 }
 std::vector<uint8_t> big_payload() { return std::vector<uint8_t>(300u * 1024u, 0x5a); }
 
+/*
+ * A copy made while the link is reconnecting is held, not thrown away.
+ *
+ * On a thrashing link a copy lands with no seal to send it under, so it parks.
+ * The fault this pins was that the *next* session end dropped the parked copy
+ * without a word — at the desk the file was copied, no question was ever put to
+ * the far side, and neither helper's log said anything at all. Silence is the
+ * part that made it unfindable, so both halves are checked: the copy still goes
+ * out, and the wait is on the record.
+ */
+void test_a_copy_waiting_for_a_seal_survives_a_session_end() {
+    Pair pair(1024u * 1024u);
+
+    /* The seal offer is lost, so the copy has no key and has to wait. */
+    pair.drop_next[DH_MSG_SEAL_OFFER] = 1;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(pair.file_questions.empty(),
+          "the files were offered with no seal to send them under");
+    CHECK(pair.saw_note("waiting for a seal"), "a copy parked with nothing said about it");
+
+    /* The link wobbles again before the seal lands. */
+    pair.settle(pair.a.session_ended(), Side::A);
+
+    /* And now it comes back. The copy that was waiting goes out on its own,
+       without the user having to copy it a second time. */
+    (void)pair.a.tick(0);
+    pair.settle(pair.a.tick(ClipService::kSweepDelayMs), Side::A);
+    CHECK(pair.file_questions.size() == 1,
+          "a copy made while the link was down never went out after it came back");
+    CHECK(pair.files_to_b.size() == 1 && pair.files_to_b[0].bytes == big_payload(),
+          "the copy that survived the wobble did not arrive whole");
+}
+
+
 void test_files_cross_the_link() {
     Pair pair;
     pair.copy_files_on_a(three_files(), three_file_payload());
@@ -1508,6 +1545,7 @@ int main() {
     test_sending_off_stops_one_direction();
     test_receiving_off_refuses_the_offer();
     test_a_turned_off_toggle_abandons_in_flight();
+    test_a_copy_waiting_for_a_seal_survives_a_session_end();
     test_a_lost_session_abandons_everything();
     test_a_stale_seal_is_reoffered();
     test_malformed_control_messages();

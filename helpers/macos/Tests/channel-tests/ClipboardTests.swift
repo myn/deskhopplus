@@ -52,6 +52,9 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("an offer under the replaced seal cannot revive it", testADelayedOfferCannotRevive),
     ("files copied on one computer arrive on the other", testFilesCrossTheLink),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
+    ("a copy waiting for a seal survives a session end",
+     testACopyWaitingForASealSurvivesASessionEnd),
+    ("a parked copy is abandoned out loud", testAParkedCopyIsAbandonedOutLoud),
     ("declining files reads nothing and delivers nothing", testDecliningFilesReadsNothing),
     ("a small set of files skips the question", testSmallFileSetsSkipTheQuestion),
     ("several files arrive in order and split correctly", testSeveralFilesSplitCorrectly),
@@ -785,12 +788,13 @@ private func testNothingLeavesUnsealed() {
     let a = ClipboardService(entropy: counterEntropy(1))
     let first = a.localCopy(kind: .text, bytes: Array("waiting".utf8))
 
-    Check.equal(first.count, 1, "a copy with no seal produced more than the seal offer")
-    guard case .send(let type, _) = first.first else {
-        Check.that(false, "a copy with no seal sent nothing")
-        return
+    /* Counted as frames, not as outputs: the copy also says out loud that it
+       is waiting, and a note is not on the wire. */
+    let frames = first.compactMap { output -> UInt8? in
+        if case .send(let type, _) = output { return type } else { return nil }
     }
-    Check.equal(type, MessageType.sealOffer, "the first thing sent was not a seal offer")
+    Check.equal(frames, [MessageType.sealOffer],
+                "a copy with no seal put something other than one seal offer on the wire")
 }
 
 private func testALostSealOfferIsRetried() {
@@ -935,6 +939,57 @@ private func testATurnedOffToggleAbandonsInFlight() {
 }
 
 // MARK: - Losing the session
+
+/*
+ * A copy made while the link is reconnecting is held, not thrown away.
+ *
+ * On a thrashing link a copy lands with no seal to send it under, so it parks.
+ * The fault this pins was that the *next* session end dropped the parked copy
+ * without a word — at the desk the file was copied, no question was ever put
+ * to the far side, and neither helper's log said anything at all. Silence is
+ * the part that made it unfindable, so both halves are checked: the copy still
+ * goes out, and the wait is on the record.
+ */
+private func testACopyWaitingForASealSurvivesASessionEnd() {
+    let pair = bigPair()
+
+    /* The seal offer is lost, so the copy has no key and has to wait. */
+    pair.dropNext[MessageType.sealOffer] = 1
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    Check.that(pair.fileQuestions.isEmpty,
+               "the files were offered with no seal to send them under")
+    Check.that(pair.sawNote(containing: "waiting for a seal"),
+               "a copy parked with nothing said about it")
+
+    /* The link wobbles again before the seal lands. */
+    pair.settle(pair.a.sessionEnded(), from: .a)
+
+    /* And now it comes back. The copy that was waiting goes out on its own,
+       without the user having to copy it a second time. */
+    _ = pair.a.tick(at: 0)
+    pair.settle(pair.a.tick(at: ClipboardService.sweepDelay), from: .a)
+    Check.equal(pair.fileQuestions.count, 1,
+                "a copy made while the link was down never went out after it came back")
+    Check.equal(pair.filesToB.first?.bytes, bigPayload,
+                "the copy that survived the wobble did not arrive whole")
+}
+
+/*
+ * The other end of the same fault: when a parked copy really is given up on,
+ * it is given up on out loud. Thirty seconds of a link that never comes back
+ * is the one case where a copy is allowed to vanish.
+ */
+private func testAParkedCopyIsAbandonedOutLoud() {
+    let pair = bigPair()
+    pair.dropNext[MessageType.sealOffer] = 99
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+
+    _ = pair.a.tick(at: 0)
+    pair.settle(pair.a.tick(at: ClipboardService.stallTimeout), from: .a)
+    Check.that(pair.sawNote(containing: "was abandoned"),
+               "a parked copy was given up on in silence")
+    Check.that(pair.filesToB.isEmpty, "files crossed a link that never sealed")
+}
 
 private func testALostSessionAbandonsEverything() {
     let pair = Pair()

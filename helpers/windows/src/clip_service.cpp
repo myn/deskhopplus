@@ -341,17 +341,25 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
 }
 
 std::vector<ClipOutput> ClipService::session_ended() {
-    have_pending_ = false;
-    pending_.clear();
-    pending_provider_ = nullptr;
     outgoing_provider_ = nullptr;
     have_incoming_files_ = false;
     incoming_files_.clear();
-    seal_waiting_timed_ = false;
     reoffer_when_sealed_ = false;
 
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> rendered;
+    /*
+     * A copy still waiting for a seal is *kept*. What is on the clipboard does
+     * not change because the link wobbled, and the clipboard is only read again
+     * when the user copies something else — so dropping it here lost the copy
+     * for good, in silence. `seal_waiting_since_` is deliberately left running:
+     * the 30s budget is counted from the copy, across as many session ends as
+     * the link manages, and `tick` still gives up out loud at the end of it.
+     */
+    if (have_pending_) {
+        rendered.push_back(note("the session went away; " + describe_pending() +
+                                " copied here are still waiting for one that can carry them"));
+    }
     if (have_held_offer_) {
         have_held_offer_ = false;
         held_timed_ = false;
@@ -1015,9 +1023,28 @@ std::vector<ClipOutput> ClipService::stale_reply(uint8_t type, const uint8_t *bo
 
 // ---------------------------------------------------------------- sending a payload
 
+/// What a parked copy is, for the notes that report one waiting.
+std::string ClipService::describe_pending() const {
+    if (pending_is_files_) {
+        return std::to_string(pending_files_.size()) + " file(s), " +
+               std::to_string(pending_total_) + " bytes";
+    }
+    return std::to_string(pending_.size()) + " bytes";
+}
+
 std::vector<ClipOutput> ClipService::start_pending_if_sealed() {
     if (!have_pending_) return {};
-    if (!seal_tx_.live) return offer_seal();
+    /*
+     * No key yet, so the copy waits for one. Said out loud because a copy that
+     * parks in silence reads at the desk as a copy that did nothing — and on a
+     * link that is reconnecting, parking is the ordinary case, not the rare one.
+     */
+    if (!seal_tx_.live) {
+        std::vector<ClipOutput> outputs = offer_seal();
+        outputs.push_back(note(describe_pending() +
+                               " copied here are waiting for a seal before anything is offered"));
+        return outputs;
+    }
 
     have_pending_ = false;
     seal_waiting_timed_ = false;

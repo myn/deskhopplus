@@ -298,6 +298,7 @@ class ClipService {
     std::vector<ClipOutput> on_chunk(const uint8_t *body, size_t len);
 
     std::vector<ClipOutput> start_pending_if_sealed();
+    std::string describe_pending() const;
     std::vector<ClipOutput> offer_seal();
     std::vector<ClipOutput> stale_reply(uint8_t type, const uint8_t *body, size_t len);
     std::vector<ClipOutput> render(const dh_xfer_action *actions, size_t count);
