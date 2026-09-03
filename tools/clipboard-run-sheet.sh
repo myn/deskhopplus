@@ -152,6 +152,8 @@ interpret() {
         *"arrived whole"*)                   out="files arrived whole"; level="good" ;;
         *"written and put on the"*)          out="files written and put on the clipboard"; level="good" ;;
         *"were offered without being read"*) out="offered — nothing read yet, which is the point" ;;
+        *"waiting for a seal before"*)       out="copied here, held until the link is ready" ;;
+        *"still waiting for one that can"*)  out="the link dropped; the copy is still held" ;;
         *"the copied files were read"*)      out="files read on the copy side" ;;
         *"could not be read"*)               out="the copied files could not be read"; level="bad" ;;
         *"abandoned rather than sent short"*) out="length changed since the copy — refused, not truncated"; level="good" ;;
@@ -243,6 +245,7 @@ report() {
         count "$path" "expired unanswered"            "went unanswered for"
         count "$path" "sets that arrived whole"       "arrived whole"
         count "$path" "offers refused"                "so it was refused"
+        count "$path" "copies held for the link"      "waiting for a seal before"
         count "$path" "payload/list mismatches"       "did not match the"       bad
         count "$path" "accepted too late"             "no longer waiting to be asked for" bad
         count "$path" "evicted, no sign of life (#161)" "liveness timeout"      bad
