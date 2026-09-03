@@ -118,7 +118,7 @@ class ClipService {
      * at: the prompt exists so the user can decide whether to wait, and an
      * estimate a quarter short of the truth is worse than none.
      */
-    static constexpr uint64_t kMeasuredBytesPerSecond = 49u * 1024u;
+    static constexpr uint64_t kMeasuredBytesPerSecond = 33u * 1024u;
 
     /*
      * How long a file offer waits for an answer before it is declined for the

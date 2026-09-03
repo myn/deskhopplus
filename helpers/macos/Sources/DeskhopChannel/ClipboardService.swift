@@ -81,13 +81,16 @@ public final class ClipboardService {
     public static let filePromptThreshold = 1024 * 1024
 
     /*
-     * The end-to-end rate #39 measured, in bytes per second. It is what turns
-     * a size into a duration in the prompt, and it is deliberately the
-     * *measured* figure rather than the arithmetic ~64 KB/s the transport was
-     * specified at: the prompt exists so the user can decide whether to wait,
-     * and an estimate a quarter short of the truth is worse than none.
+     * The end-to-end rate measured on hardware, in bytes per second.
+     *
+     * 33 KB/s, from 21 MB of real file transfers on 2026-09-03 (#39). It
+     * replaces the 49 KB/s figure, which was itself a correction of the
+     * arithmetic ~64 KB/s the transport was specified at. Sustained sets run
+     * 28-33 KB/s and short ones touch 45, so the sustained figure is the one
+     * taken: the prompt exists so the user can decide whether to wait, and an
+     * estimate short of the truth is worse than none.
      */
-    public static let measuredBytesPerSecond = 49 * 1024
+    public static let measuredBytesPerSecond = 33 * 1024
 
     /*
      * How long a file offer waits for an answer before it is declined for the

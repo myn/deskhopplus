@@ -1,5 +1,7 @@
 #include "clipboard.h"
 
+#include <cctype>
+
 #include <cstring>
 #include <cwchar>
 #include <propidl.h>
@@ -130,6 +132,34 @@ void Clipboard::attach(HWND window, Callbacks callbacks) {
         callbacks_.log("the clipboard listener could not be registered; copies made on this "
                        "computer will not be sent");
 }
+
+
+/*
+ * Whether every copied file is itself a picture — the one case where image data
+ * on the clipboard beside a file path is the thing the user meant, rather than
+ * a preview something drew for a file that is not an image.
+ *
+ * Extension-based on purpose: the question is what the user copied, and asking
+ * the shell for a type means loading the file, which a clipboard poll must not
+ * do.
+ */
+static bool all_files_are_images(const std::vector<FileEntry> &files) {
+    static const char *const kImageExtensions[] = {".png",  ".jpg",  ".jpeg", ".gif", ".bmp",
+                                                   ".tif",  ".tiff", ".webp", ".heic"};
+    if (files.empty()) return false;
+    for (const FileEntry &file : files) {
+        const size_t dot = file.name.rfind('.');
+        if (dot == std::string::npos) return false;
+        std::string ext = file.name.substr(dot);
+        for (char &c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        bool matched = false;
+        for (const char *candidate : kImageExtensions)
+            if (ext == candidate) { matched = true; break; }
+        if (!matched) return false;
+    }
+    return true;
+}
+
 
 void Clipboard::detach() {
     if (listening_ && window_ != nullptr) RemoveClipboardFormatListener(window_);
@@ -463,27 +493,32 @@ void Clipboard::read_clipboard() {
     const bool has_image = image_format != ClipboardImageFormat::None;
 
     /*
-     * Image first, then files, then text — the same order as the macOS twin,
-     * and a divergence here is a clipboard that behaves differently on each
-     * computer.
+     * Files, then image, then text — the same order as the macOS twin, and a
+     * divergence here is a clipboard that behaves differently on each computer.
      *
      * **Files before text**, because copying one in Explorer also puts its
      * path on the clipboard as text, and reading text first would send the
      * path instead of the file.
      *
-     * **An image before files**, because a screenshot tool writes its capture
-     * to a temporary file and puts *both* on the clipboard — the image and a
-     * path to it. Reading files first sent the screenshot as a file, so it
-     * pasted into Explorer as a .png and would not paste into an image editor
-     * at all, which is what a screenshot is for.
+     * **An image before files only when the files *are* images.** A screenshot
+     * tool writes its capture to a temporary file and puts both on the
+     * clipboard, and sending that as a file made it paste into Explorer as a
+     * .png instead of into an image editor — so an image still wins there.
+     *
+     * The old rule read the image first unconditionally, on the claim that
+     * image data beside a path is the screenshot case and nothing else. That
+     * claim is wrong wherever anything puts a preview or an icon on the
+     * clipboard beside a copied file: the preview is then sent in place of the
+     * file. It cost the macOS twin every single-file copy (#56), and the rule
+     * being shared is the reason to correct both.
      */
-    if (!has_image && callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
+    if (callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
         if (!open_with_retry()) return;
         std::vector<FileEntry> files;
         std::function<bool(std::vector<uint8_t> &)> read;
         const bool found = read_files(files, read);
         CloseClipboard();
-        if (found) {
+        if (found && !(has_image && all_files_are_images(files))) {
             callbacks_.local_files(std::move(files), std::move(read));
             return;
         }

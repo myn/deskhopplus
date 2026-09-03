@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import DeskhopChannel
 import Foundation
 
@@ -113,34 +114,54 @@ final class Pasteboard {
         }
 
         /*
-         * Image first, then files, then text.
+         * Files, then image, then text.
          *
          * **Files before text**, because copying one in Finder also puts its
          * path on the pasteboard as a string, and reading text first would
          * send the path instead of the file.
          *
-         * **An image before files**, because a screenshot tool writes its
-         * capture to a temporary file and puts *both* on the pasteboard — the
-         * image and a URL to it. Reading files first sent the screenshot as a
-         * file, so it pasted into Explorer as a .png and would not paste into
-         * Paint at all, which is what a screenshot is for. Finder does not put
-         * image data on the pasteboard for a copied picture, so "image data
-         * and a file URL together" is the screenshot case and nothing else.
+         * **An image before files only when the files *are* images.** A
+         * screenshot tool writes its capture to a temporary file and puts both
+         * on the pasteboard, and sending that as a file made it paste into
+         * Explorer as a .png instead of into Paint as a picture — so an image
+         * still wins there.
+         *
+         * But the old rule read the image first unconditionally, on the claim
+         * that "image data and a file URL together" is the screenshot case and
+         * nothing else. That claim is wrong: macOS synthesises an icon or
+         * QuickLook preview for *any* file put on the pasteboard, so a copied
+         * .bin sent its generic document icon — the same 201084 bytes every
+         * time — in place of the file. It bit only single selections, because
+         * a multiple selection has no one icon to synthesise, and only
+         * sometimes, because the preview is generated asynchronously. That is
+         * the whole of "sometimes it copies and sometimes it does not" (#56).
          */
-        let image = pngFromPasteboard()
-        let files = image == nil ? filesFromPasteboard() : nil
-        let text = image == nil && files == nil
+        let files = filesFromPasteboard()
+        let image = files == nil || allImages(files!) ? pngFromPasteboard() : nil
+        let filesToSend = image == nil ? files : nil
+        let text = image == nil && filesToSend == nil
             ? pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 } : nil
         guard case .take(let polls) = watch.looked(
-            at: count, foundContent: files != nil || text != nil || image != nil)
+            at: count, foundContent: filesToSend != nil || text != nil || image != nil)
         else { return }
 
         /* More than one means a copy was caught mid-write and waited for —
            the case that used to be dropped in silence. */
         if polls > 1 { log?("a copy took \(polls) polls to become readable") }
         if let image { onLocalImage?(Array(image)) }
-        else if let files { onLocalFiles?(files) }
+        else if let filesToSend { onLocalFiles?(filesToSend) }
         else if let text { onLocalCopy?(text) }
+    }
+
+    /// Whether every copied file is itself a picture — the one case where an
+    /// image representation on the pasteboard is the thing the user meant,
+    /// rather than an icon macOS drew for something else.
+    private func allImages(_ files: LocalFiles) -> Bool {
+        files.entries.allSatisfy { entry in
+            guard let type = UTType(filenameExtension: (entry.name as NSString).pathExtension)
+            else { return false }
+            return type.conforms(to: .image)
+        }
     }
 
     /*
