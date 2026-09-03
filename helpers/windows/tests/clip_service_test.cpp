@@ -114,6 +114,9 @@ struct Pair {
     std::vector<deskhop::FileOffer> file_questions;
     std::vector<uint32_t> withdrawn_questions;
     bool answer_file_offers = true;
+    /* Whether the user crosses to the far computer, which is what puts a held
+       question on screen. False models a copy nobody ever went to paste. */
+    bool user_arrives = true;
     bool accept_file_offers = true;
     std::vector<deskhop::FileDelivery> files_to_a;
     std::vector<deskhop::FileDelivery> files_to_b;
@@ -169,6 +172,13 @@ struct Pair {
                 for (ClipOutput &item :
                      far.received(output.type, output.bytes.data(), output.bytes.size()))
                     queue.emplace_back(far_side, std::move(item));
+                /* The user crosses to wherever they mean to paste, which is
+                   what puts a held question on screen (#56). Idempotent, so
+                   modelling it on every frame costs nothing; a test that wants
+                   "they never went over there" clears the flag. */
+                if (user_arrives)
+                    for (ClipOutput &item : far.user_is_here())
+                        queue.emplace_back(far_side, std::move(item));
                 break;
             }
             case ClipOutput::Kind::Deliver:
@@ -1189,6 +1199,34 @@ void test_an_over_cap_copy_is_refused_where_the_user_is() {
     CHECK(pair.carried == 0, "an over-cap set cost frames on the link");
 }
 
+/*
+ * A copy is not a request to interrupt anybody.
+ *
+ * Most copies are made to be pasted where they were made, so asking on the copy
+ * meant a file copied on the far computer and never meant to travel still
+ * interrupted whoever was at this one. A paste here can only follow the cursor
+ * arriving here, so arrival is the moment the question is worth asking — and if
+ * it never comes, it never is (#56).
+ */
+void test_the_question_waits_for_the_user_to_arrive() {
+    Pair pair(big_capacity);
+    pair.user_arrives = false;
+    pair.answer_file_offers = false;
+    int reads = 0;
+
+    pair.copy_files_on_a(big_files(), big_payload(), &reads);
+    CHECK(pair.file_questions.empty(),
+          "the far computer was interrupted by a copy nobody had gone to paste");
+    CHECK(reads == 0, "the copied files were read for a question never asked");
+    CHECK(pair.b.awaiting_decision() != nullptr, "the offer was not held while it waited");
+
+    pair.settle(pair.b.user_is_here(), Side::B);
+    CHECK(pair.file_questions.size() == 1, "arriving did not put the question");
+
+    pair.settle(pair.b.user_is_here(), Side::B);
+    CHECK(pair.file_questions.size() == 1, "a second crossing asked the same question again");
+}
+
 void test_files_are_not_read_until_accepted() {
     Pair pair(big_capacity);
     pair.answer_file_offers = false;
@@ -1645,6 +1683,7 @@ int main() {
 
     test_files_cross_the_link();
     test_an_over_cap_copy_is_refused_where_the_user_is();
+    test_the_question_waits_for_the_user_to_arrive();
     test_files_are_not_read_until_accepted();
     test_declining_files_reads_nothing();
     test_small_file_sets_skip_the_question();

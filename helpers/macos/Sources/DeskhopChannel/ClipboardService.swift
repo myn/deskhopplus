@@ -224,6 +224,9 @@ public final class ClipboardService {
      * far end that never saw its offer.
      */
     private var reofferWhenSealed = false
+    /// Whether the held offer's question has actually been put to the user.
+    /// False while it waits for them to arrive at this computer.
+    private var heldAnnounced = false
     /// The board's clipboard size cap, as the copy side needs it. Zero until
     /// the board has said, and nothing is refused on a cap nobody stated.
     private var capBytes = 0
@@ -350,6 +353,20 @@ public final class ClipboardService {
     }
 
     /*
+     * The cursor has arrived at this computer, so the user is here and a paste
+     * is now possible. Anything held quietly is put to them at this moment and
+     * not before.
+     *
+     * Idempotent: crossings are frequent and a question is asked once.
+     */
+    public func userIsHere() -> [ClipboardOutput] {
+        guard let held = heldFileOffer, !heldAnnounced else { return [] }
+        heldAnnounced = true
+        heldSince = nil
+        return [.fileOffer(held)]
+    }
+
+    /*
      * The user accepted the files the other computer offered. This is where a
      * file transfer actually begins — on a decision made here, never on the
      * copy made over there (#56, ADR-0011).
@@ -364,12 +381,14 @@ public final class ClipboardService {
          */
         guard transfer.isIncomingHeld else {
             heldFileOffer = nil
+            heldAnnounced = false
             heldSince = nil
             return [.fileOfferWithdrawn(id: id),
                     .note("the files were accepted here, but that transfer is no longer "
                           + "waiting to be asked for; nothing was requested")]
         }
         heldFileOffer = nil
+        heldAnnounced = false
         heldSince = nil
         incomingFiles = offer.files
         return render(transfer.requestLazy(id: id))
@@ -382,6 +401,7 @@ public final class ClipboardService {
     public func declineFiles(id: UInt32) -> [ClipboardOutput] {
         guard let offer = heldFileOffer, offer.id == id else { return [] }
         heldFileOffer = nil
+        heldAnnounced = false
         heldSince = nil
         return render(transfer.cancelIncoming())
             + [.fileOfferWithdrawn(id: id),
@@ -468,6 +488,7 @@ public final class ClipboardService {
         if couldReceive && !mayReceive {
             if let held = heldFileOffer {
                 heldFileOffer = nil
+                heldAnnounced = false
                 heldSince = nil
                 outputs.append(.fileOfferWithdrawn(id: held.id))
             }
@@ -505,6 +526,7 @@ public final class ClipboardService {
         }
         if let held = heldFileOffer {
             heldFileOffer = nil
+            heldAnnounced = false
             heldSince = nil
             withdrawn.append(.fileOfferWithdrawn(id: held.id))
         }
@@ -564,7 +586,7 @@ public final class ClipboardService {
         /* A question nobody answered. See `holdTimeout` for why it cannot be
            left standing: the copy side re-offers every two seconds until it is
            requested, and the buffer the size cap sizes stays pinned. */
-        if let held = heldFileOffer {
+        if let held = heldFileOffer, heldAnnounced {
             if heldSince == nil {
                 heldSince = now
             } else if now - heldSince! >= Self.holdTimeout {
@@ -814,6 +836,7 @@ public final class ClipboardService {
     private func withdrawHeldOffer(supersededBy id: UInt32) -> [ClipboardOutput] {
         guard let held = heldFileOffer, held.id != id else { return [] }
         heldFileOffer = nil
+        heldAnnounced = false
         heldSince = nil
         incomingFiles = nil
         return [.fileOfferWithdrawn(id: held.id)]
@@ -914,6 +937,7 @@ public final class ClipboardService {
 
         var outputs = withdrawHeldOffer(supersededBy: offer.id)
         heldFileOffer = nil
+        heldAnnounced = false
         heldSince = nil
         outputs += render(transfer.handleLazy(offer: offer))
         /*
@@ -959,11 +983,24 @@ public final class ClipboardService {
                          + "taken without asking")]
         }
         heldFileOffer = waiting
-        /* Armed by the tick that follows, not here: no clock is read on a path
-           that produces actions, which is the same rule the deadlines above
-           follow. */
+        /*
+         * Held quietly. The question is put when the user arrives at this
+         * computer (`userIsHere`), not when the copy happened on the other one.
+         *
+         * A copy is not a request to interrupt anybody: most copies are made to
+         * be pasted where they were made. Asking on the copy meant a 5 MB file
+         * copied on the Mac and never meant to travel still interrupted whoever
+         * was at the Windows machine. A paste over here can only follow the
+         * cursor arriving over here, so arrival is the moment the question
+         * becomes worth asking — and if it never comes, it never is (#56).
+         *
+         * `heldSince` stays nil until then: the hold deadline is time the user
+         * had to answer, and they have had none.
+         */
         heldSince = nil
-        return outputs + [.fileOffer(waiting)]
+        heldAnnounced = false
+        return outputs + [.note("\(files.count) file(s), \(offer.total) bytes, are held; the "
+                                + "question waits until the cursor comes to this computer")]
     }
 
     private func onChunk(_ body: [UInt8]) -> [ClipboardOutput] {
@@ -1145,6 +1182,7 @@ public final class ClipboardService {
                 if !transfer.isIncomingBusy {
                     if let held = heldFileOffer {
                         heldFileOffer = nil
+                        heldAnnounced = false
                         heldSince = nil
                         outputs.append(.fileOfferWithdrawn(id: held.id))
                     }

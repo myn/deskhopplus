@@ -398,7 +398,13 @@ bool Helper::start(HINSTANCE instance) {
     /* Verified bulk frames, straight from the core. Nothing here re-reads the
        stream: decode, tag and replay counter are all upstream of this. */
     session_->set_payload_sink([this](uint8_t type, const uint8_t *body, size_t len) {
-        if (cursor_placement_->received(type, body, len, now_ms())) return;
+        if (cursor_placement_->received(type, body, len, now_ms())) {
+            /* The cursor has come here, so the user is here and a paste is
+               possible. Anything the clipboard was holding quietly is put to
+               them now (#56). */
+            dispatch_.emit(clipboard_service_->user_is_here());
+            return;
+        }
         dispatch_.emit(clipboard_service_->received(type, body, len));
     });
 

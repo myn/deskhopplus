@@ -54,6 +54,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("files copied on one computer arrive on the other", testFilesCrossTheLink),
     ("an over-cap copy is refused where the user is",
      testAnOverCapCopyIsRefusedWhereTheUserIs),
+    ("the question waits for the user to arrive", testTheQuestionWaitsForTheUserToArrive),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
     ("a copy waiting for a seal survives a session end",
      testACopyWaitingForASealSurvivesASessionEnd),
@@ -139,6 +140,36 @@ private func testAnOverCapCopyIsRefusedWhereTheUserIs() {
                "the user was not told why the copy produced nothing")
     Check.that(pair.fileQuestions.isEmpty, "an over-cap set was still offered across the link")
     Check.that(pair.carried == 0, "an over-cap set cost frames on the link")
+}
+
+/*
+ * A copy is not a request to interrupt anybody.
+ *
+ * Most copies are made to be pasted where they were made, so asking on the copy
+ * meant a file copied on the Mac and never meant to travel still interrupted
+ * whoever was at the Windows machine. A paste over there can only follow the
+ * cursor arriving over there, so arrival is the moment the question is worth
+ * asking — and if it never comes, it never is (#56).
+ */
+private func testTheQuestionWaitsForTheUserToArrive() {
+    let pair = bigPair()
+    pair.userArrives = false
+    pair.answerFileOffers = false
+    let reads = Reads()
+
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: reads)
+    Check.that(pair.fileQuestions.isEmpty,
+               "the far computer was interrupted by a copy nobody had gone to paste")
+    Check.equal(reads.count, 0, "the copied files were read for a question never asked")
+    Check.that(pair.b.awaitingDecision != nil, "the offer was not held while it waited")
+
+    /* And now the user crosses. */
+    pair.settle(pair.b.userIsHere(), from: .b)
+    Check.equal(pair.fileQuestions.count, 1, "arriving did not put the question")
+
+    /* Arriving again asks nothing further: crossings are frequent. */
+    pair.settle(pair.b.userIsHere(), from: .b)
+    Check.equal(pair.fileQuestions.count, 1, "a second crossing asked the same question again")
 }
 
 private func testFilesAreNotReadUntilAccepted() {
@@ -612,6 +643,9 @@ private final class Pair {
     var fileQuestions: [(side: Side, offer: FileOffer)] = []
     var withdrawnQuestions: [UInt32] = []
     var answerFileOffers = true
+    /// Whether the user crosses to the far computer, which is what puts a held
+    /// question on screen. False models a copy nobody ever went to paste.
+    var userArrives = true
     var acceptFileOffers = true
     var filesToA: [FileDelivery] = []
     var filesToB: [FileDelivery] = []
@@ -671,6 +705,11 @@ private final class Pair {
                 let far = side == .a ? b : a
                 let farSide: Side = side == .a ? .b : .a
                 queue += far.received(type: type, body: body).map { (farSide, $0) }
+                /* The user crosses to wherever they mean to paste, which is
+                   what puts a held question on screen (#56). Idempotent, so
+                   modelling it on every frame costs nothing; a test that wants
+                   "they never went over there" clears the flag. */
+                if userArrives { queue += far.userIsHere().map { (farSide, $0) } }
             case .deliver(let kind, let bytes):
                 if side == .a { deliveredToA.append((kind, bytes)) }
                 else { deliveredToB.append((kind, bytes)) }

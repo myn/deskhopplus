@@ -142,7 +142,13 @@ final class HelperRuntime: HelperEffects {
            the stream: decode, tag and replay counter are all upstream of this. */
         session.onPayload = { [weak self] type, body in
             guard let self else { return }
-            if self.cursorPlacement.received(type: type, body: body) { return }
+            if self.cursorPlacement.received(type: type, body: body) {
+                /* The cursor has come here, so the user is here and a paste is
+                   possible. Anything the clipboard was holding quietly is put
+                   to them now (#56). */
+                self.dispatch.emit(self.clipboard.userIsHere())
+                return
+            }
             if type == UInt8(DH_MSG_POS_QUERY.rawValue),
                body.count == Int(DH_POS_QUERY_BODY_SIZE),
                let response = self.cursorPlacement.positionBody(queryID: body[0]) {

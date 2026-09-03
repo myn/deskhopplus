@@ -209,6 +209,23 @@ std::vector<ClipOutput> ClipService::local_copy_files(
     return start_pending_if_sealed();
 }
 
+/*
+ * The cursor has arrived at this computer, so the user is here and a paste is
+ * now possible. Anything held quietly is put to them at this moment and not
+ * before. Idempotent: crossings are frequent and a question is asked once.
+ */
+std::vector<ClipOutput> ClipService::user_is_here() {
+    if (!have_held_offer_ || held_announced_) return {};
+    held_announced_ = true;
+    held_timed_ = false;
+    ClipOutput ask;
+    ask.kind = ClipOutput::Kind::FileOffer;
+    ask.transfer_id = held_offer_.id;
+    ask.total = held_offer_.total;
+    ask.files = held_offer_.files;
+    return {std::move(ask)};
+}
+
 std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
     if (!have_held_offer_ || held_offer_.id != id) return {};
     /*
@@ -219,6 +236,7 @@ std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
      */
     if (!dh_xfer_rx_is_held(xfer_.get())) {
         have_held_offer_ = false;
+        held_announced_ = false;
         held_timed_ = false;
         ClipOutput withdrawn;
         withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
@@ -231,6 +249,7 @@ std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
     }
     const deskhop::FileOffer offer = held_offer_;
     have_held_offer_ = false;
+    held_announced_ = false;
     held_timed_ = false;
     incoming_files_ = offer.files;
     have_incoming_files_ = true;
@@ -248,6 +267,7 @@ std::vector<ClipOutput> ClipService::decline_files(uint32_t id) {
     if (!have_held_offer_ || held_offer_.id != id) return {};
     const size_t count = held_offer_.files.size();
     have_held_offer_ = false;
+    held_announced_ = false;
     held_timed_ = false;
 
     dh_xfer_action actions[kActionCapacity];
@@ -354,6 +374,7 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
     if (could_receive && !may_receive_) {
         if (have_held_offer_) {
             have_held_offer_ = false;
+        held_announced_ = false;
             held_timed_ = false;
             ClipOutput withdrawn;
             withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
@@ -396,6 +417,7 @@ std::vector<ClipOutput> ClipService::session_ended() {
     }
     if (have_held_offer_) {
         have_held_offer_ = false;
+        held_announced_ = false;
         held_timed_ = false;
         ClipOutput withdrawn;
         withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
@@ -543,7 +565,7 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
     /* A question nobody answered. See kHoldTimeoutMs for why it cannot be left
        standing: the copy side re-offers every two seconds until it is
        requested, and the buffer the size cap sizes stays pinned. */
-    if (have_held_offer_) {
+    if (have_held_offer_ && held_announced_) {
         if (!held_timed_) {
             held_timed_ = true;
             held_since_ = now_ms;
@@ -913,6 +935,7 @@ std::vector<ClipOutput> ClipService::withdraw_held_offer(uint32_t superseded_by)
     withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
     withdrawn.transfer_id = held_offer_.id;
     have_held_offer_ = false;
+    held_announced_ = false;
     held_timed_ = false;
     have_incoming_files_ = false;
     incoming_files_.clear();
@@ -956,6 +979,7 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
 
     std::vector<ClipOutput> outputs = withdraw_held_offer(offer.id);
     have_held_offer_ = false;
+    held_announced_ = false;
     held_timed_ = false;
 
     dh_xfer_action actions[kActionCapacity];
@@ -1011,16 +1035,26 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
 
     held_offer_ = deskhop::FileOffer{offer.id, offer.total, files};
     have_held_offer_ = true;
-    /* Armed by the tick that follows, not here: no clock is read on a path
-       that produces actions, which is the same rule the deadlines above
-       follow. */
+    /*
+     * Held quietly. The question is put when the user arrives at this computer
+     * (`user_is_here`), not when the copy happened on the other one.
+     *
+     * A copy is not a request to interrupt anybody: most copies are made to be
+     * pasted where they were made. Asking on the copy meant a file copied on
+     * the Mac and never meant to travel still interrupted whoever was at this
+     * machine. A paste here can only follow the cursor arriving here, so
+     * arrival is the moment the question becomes worth asking — and if it never
+     * comes, it never is (#56).
+     *
+     * `held_timed_` stays false until then: the hold deadline is time the user
+     * had to answer, and they have had none.
+     */
     held_timed_ = false;
-    ClipOutput ask;
-    ask.kind = ClipOutput::Kind::FileOffer;
-    ask.transfer_id = offer.id;
-    ask.total = offer.total;
-    ask.files = files;
-    outputs.push_back(std::move(ask));
+    held_announced_ = false;
+    outputs.push_back(note(std::to_string(files.size()) + " file(s), " +
+                           std::to_string(offer.total) +
+                           " bytes, are held; the question waits until the cursor comes to "
+                           "this computer"));
     return outputs;
 }
 
@@ -1338,6 +1372,7 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             if (!dh_xfer_rx_busy(xfer_.get())) {
                 if (have_held_offer_) {
                     have_held_offer_ = false;
+        held_announced_ = false;
                     held_timed_ = false;
                     ClipOutput withdrawn;
                     withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;

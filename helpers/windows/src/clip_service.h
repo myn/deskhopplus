@@ -203,6 +203,9 @@ class ClipService {
     /* The user accepted the files the other computer offered. This is where a
        file transfer actually begins — on a decision made here, never on the
        copy made over there (ADR-0011). */
+    /* The cursor arrived here, so a paste is now possible: put any held
+       question to the user. Idempotent. */
+    std::vector<ClipOutput> user_is_here();
     std::vector<ClipOutput> accept_files(uint32_t id);
     /* The user declined. The far end is told, so its offer stops repeating. */
     std::vector<ClipOutput> decline_files(uint32_t id);
@@ -395,6 +398,9 @@ class ClipService {
     deskhop::FileOffer held_offer_;
     /* When the offer now being held was first put to the user. */
     bool held_timed_{false};
+    /* Whether the held offer's question has actually been put to the user.
+       False while it waits for them to arrive at this computer. */
+    bool held_announced_{false};
     uint32_t held_since_{0};
     bool have_incoming_files_{false};
     std::vector<FileEntry> incoming_files_;
