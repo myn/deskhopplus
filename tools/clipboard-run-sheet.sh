@@ -8,6 +8,13 @@
 #   ./tools/clipboard-run-sheet.sh sheet     print the steps to work through
 #   ./tools/clipboard-run-sheet.sh watch     follow both logs and say what happens
 #   ./tools/clipboard-run-sheet.sh report    what the logs say about the last run
+#   ./tools/clipboard-run-sheet.sh throughput how fast each set actually moved
+#   ./tools/clipboard-run-sheet.sh selftest   check the timing reader itself
+#
+# `throughput` is the answer to #39. It times each set from the moment the
+# receiving helper asked for it to the moment it arrived whole, so the number
+# comes out of the same log the sitting already produces — no stopwatch, and
+# no arithmetic done by hand afterwards.
 #
 # `watch` is the one that matters. It reads both helpers' logs at once and
 # turns them into one ordered line per event, so a sitting produces its own
@@ -50,6 +57,10 @@ make_files() {
     mk 5M progress-5M.bin
     # Over the 10 MB default: refused outright while the cap is 10.
     mk 11M over-10mb-cap.bin
+    # #39's timed run. Exactly 10485760 bytes, which sits *on* the default cap
+    # rather than over it — the board refuses `total > cap`, so this is the
+    # largest set that still crosses, and the largest one #39 asks to time.
+    mk 10M throughput-10M.bin
 
     # Several files at once, including an empty one — the offsets are what an
     # empty file breaks, and nothing else in the sheet reaches that.
@@ -127,6 +138,21 @@ ${bold}Lifecycle${off}
      expect: it is declined for you, and the link goes quiet
  15. With files on the clipboard, restart a helper, then paste.
      expect: the files are still there
+
+${bold}Throughput — #39${off}
+ 16. Run '$0 mark' now, so the timings cover this sitting only.
+ 17. throughput-10M.bin, Mac to Windows. ${bold}Move the mouse the whole time${off}
+     and type into something.
+     expect: it arrives; the cursor does not stutter
+ 18. throughput-10M.bin, Windows to Mac. Same again, mouse moving.
+     expect: it arrives; the cursor does not stutter
+ 19. '$0 throughput'
+     This prints the per-set rate for each direction, the sustained rate over
+     sets above 1 MB, and what that extrapolates to at 64 MB.
+     Two columns answer whether bulk hurt anything else while it ran:
+     'worst beat gap' is the heartbeat starving (#144), and 'priority refused'
+     is how many priority frames the board turned away across the set. A zero
+     or a dash in both is the good answer.
 SHEET
 }
 
@@ -281,11 +307,243 @@ count() {
     printf '  %s %-32s %s\n' "$mark" "$label" "$n"
 }
 
+# -------------------------------------------------------------- throughput
+
+# The timing reader, as an awk program both log formats go through. The Mac
+# helper stamps a wall clock and the Windows one stamps milliseconds of
+# uptime, so `fmt` says which to read; everything after that is common.
+#
+# A set is timed from the line where the receiving helper asked for it
+# ("were accepted here and asked for", or "taken without asking" when it was
+# under the no-question line) to the line where it "arrived whole". Byte count
+# is the join key, because it is the only thing both lines carry.
+#
+# Newest accept first, deliberately. A set that was accepted and never arrived
+# — an eviction (#161) — otherwise stays at the front of the queue and gets
+# paired with the *next* run of the same size, which reads as a transfer that
+# took three quarters of an hour. Pairing the newest is right because only one
+# set is ever in flight; the accepts left over at the end are counted and
+# reported as exactly what they are.
+timings_program() {
+    cat <<'AWK'
+function clock(line,   t, h, m, s) {
+    if (fmt == "win") {
+        if (match(line, /^\[[0-9]+ms\]/))
+            return substr(line, 2, RLENGTH - 4) / 1000
+        return -1
+    }
+    if (match(line, /[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]/)) {
+        t = substr(line, RSTART, RLENGTH)
+        h = substr(t, 1, 2); m = substr(t, 4, 2); s = substr(t, 7)
+        return h * 3600 + m * 60 + s
+    }
+    return -1
+}
+{
+    t = clock($0)
+    if (t < 0) next
+
+    # Kept so a set's row can say whether the beat went quiet while it ran.
+    # Both notes are read: "quiet for" fires while the silence is still going
+    # and "resumed after" when it ends, so a gap that outlives the transfer is
+    # only ever named by the second one. Each note is turned back into the
+    # window it describes — the span ending at the note — and the row takes the
+    # longest window that overlaps it, so seeing the same silence twice is
+    # harmless.
+    if (match($0, /quiet for [0-9.]+s/))      g = substr($0, RSTART + 10, RLENGTH - 11) + 0
+    else if (match($0, /resumed after [0-9.]+s/)) g = substr($0, RSTART + 14, RLENGTH - 15) + 0
+    else g = 0
+    if (g > 0) {
+        nq++
+        qs[nq] = g
+        qend[nq] = t
+        qstart[nq] = t - g
+    }
+
+    # The board's own count of priority frames it refused because that band was
+    # already full — #39's item 3 asked for exactly this read. It is a total
+    # since the board booted, so a set's cost is the rise across it. The board
+    # states its totals only when something makes it worth saying, so a set
+    # with no sample either side reads "-" rather than a made-up zero, and one
+    # with samples reads a floor.
+    #
+    # No `next` here, nor after the beat gap above. The board's totals are not
+    # a line of their own — they are appended in brackets to whatever note made
+    # them worth stating. Skipping the rest of the line would throw away the
+    # note they are riding on, which is how a timed set would go missing.
+    if (match($0, /priority [0-9]+,/)) {
+        np++
+        pt[np] = t
+        pv[np] = substr($0, RSTART + 9, RLENGTH - 10) + 0
+    }
+
+    # Bytes before files: match() overwrites RSTART and RLENGTH.
+    if (!match($0, /[0-9]+ bytes/)) next
+    b = substr($0, RSTART, RLENGTH - 6) + 0
+    f = 0
+    if (match($0, /[0-9]+ file\(s\)/)) f = substr($0, RSTART, RLENGTH - 8) + 0
+
+    if (index($0, "were accepted here and asked for") ||
+        index($0, "taken without asking")) {
+        i = tail[b]++
+        st[b, i] = t
+        sf[b, i] = f
+        next
+    }
+
+    if (index($0, "arrived whole")) {
+        i = tail[b] - 1
+        if (i < 0) { orphan++; next }
+        tail[b] = i
+        d = t - st[b, i]
+        # The Mac stamp is a time of day, so a run over midnight reads
+        # negative. Uptime never wraps, so a negative one there is a restart.
+        if (d < 0 && fmt != "win") d += 86400
+        if (d <= 0 || d > 21600) { skipped++; next }
+        rows++
+        rb[rows] = b; rf[rows] = sf[b, i]; rd[rows] = d
+        r0[rows] = st[b, i]; r1[rows] = t
+        if (b >= 1048576) { sumb += b; sumd += d }
+    }
+}
+END {
+    if (rows == 0)
+        print "  no completed transfers to time"
+    else {
+        printf "  %10s %6s %8s %7s  %-14s %s\n", "bytes", "files", "seconds", "KB/s",
+               "worst beat gap", "priority refused"
+        for (r = 1; r <= rows; r++) {
+            worst = 0
+            for (k = 1; k <= nq; k++)
+                if (qend[k] >= r0[r] && qstart[k] <= r1[r] && qs[k] > worst) worst = qs[k]
+            gap = "-"
+            if (worst > 0) gap = sprintf("%.1fs", worst)
+            base = -1; final = -1
+            for (k = 1; k <= np; k++) {
+                if (pt[k] <= r0[r]) base = pv[k]
+                if (pt[k] <= r1[r]) final = pv[k]
+            }
+            pri = "-"
+            if (base >= 0 && final >= base) pri = final - base
+            else if (base >= 0)             pri = "reset"
+            printf "  %10d %6d %8.1f %7.1f  %-14s %s\n", rb[r], rf[r], rd[r],
+                   rb[r] / rd[r] / 1024, gap, pri
+        }
+    }
+    # Sets under 1 MB are dominated by the round trip that starts them, so a
+    # sustained figure taken over those flatters the link. Over 1 MB only.
+    if (sumd > 0) {
+        printf "\n  sustained (sets over 1 MB): %d bytes in %.1f s = %.1f KB/s\n",
+               sumb, sumd, sumb / sumd / 1024
+        printf "  at that rate: 10 MB in %.0f s, 64 MB in %.0f min\n",
+               10485760 / (sumb / sumd), 67108864 / (sumb / sumd) / 60
+    }
+    unfinished = 0
+    for (key in tail) unfinished += tail[key]
+    # Cancelling one is a step on the sheet, so this is not a failure count.
+    if (unfinished)
+        printf "  %d accepted set(s) with no arrival — cancelled, abandoned, or lost\n", unfinished
+    if (orphan)  printf "  %d arrival(s) had no accept in range — run 'mark' before the sitting\n", orphan
+    if (skipped) printf "  %d pair(s) skipped: the helper restarted mid-transfer\n", skipped
+}
+AWK
+}
+
+throughput() {
+    printf '%s\n' "${bold}How fast each set actually moved${off}"
+    [ -f "$MARKS" ] || printf '%s\n' \
+        "${yellow}no mark set — these are whole-log timings, including old runs.${off}"
+    local prog
+    prog="$(timings_program)"
+    timings_for mac "$MAC_LOG" mac "$prog"
+    timings_for windows "$WIN_LOG" win "$prog"
+    echo
+    printf '%s\n' "${dim}Each side times what arrived *at* it, so the two tables are the two directions.${off}"
+}
+
+# One side's table. `fmt` is which stamp its log carries, and the mark is
+# honoured here for the same reason `report` honours it: a sitting wants its
+# own numbers, not every run the machine has ever done.
+timings_for() {
+    local name="$1" path="$2" fmt="$3" prog="$4"
+    echo
+    printf '%s\n' "${bold}arriving at $name${off}  $path"
+    [ -f "$path" ] || { printf '  %s\n' "${yellow}not readable${off}"; return; }
+    tail -c "+$(( $(mark_offset "$path") + 1 ))" "$path" | awk -v fmt="$fmt" "$prog"
+}
+
+# ---------------------------------------------------------------- selftest
+
+# One check, on the only part of this script with logic in it. The fixture
+# covers both stamp formats, an accept that never arrived sitting in front of
+# a later run of the same size, an arrival with no accept, and a beat gap
+# landing inside a set's window.
+selftest() {
+    local prog out want fails=0
+    prog="$(timings_program)"
+
+    out="$(printf '%s\n' \
+        '2026-09-03 21:00:00.000  +1.0s  deskhop-helper: 1 file(s), 204800 bytes, were accepted here and asked for' \
+        '2026-09-03 21:00:04.000  +5.0s  deskhop-helper: 1 file(s), 204800 bytes, arrived whole' \
+        '2026-09-03 21:00:09.000  +10.0s deskhop-helper: board drops: outbound refused 4 (priority 4, bulk 0, bad header 0); board inbound: 9 report(s) in' \
+        '2026-09-03 21:00:10.000  +11.0s deskhop-helper: 1 file(s), 2097152 bytes, were accepted here and asked for' \
+        '2026-09-03 21:00:30.000  +31.0s deskhop-helper: device heartbeat quiet for 5.0s' \
+        '2026-09-03 21:01:00.000  +61.0s deskhop-helper: device heartbeat resumed after 17.3s' \
+        '2026-09-03 21:01:14.000  +75.0s deskhop-helper: 1 file(s), 2097152 bytes, arrived whole (board drops: outbound refused 9 (priority 9, bulk 0, bad header 0))' \
+        '2026-09-03 21:02:00.000  +121.0s deskhop-helper: 1 file(s), 4096 bytes, arrived whole' \
+        | awk -v fmt=mac "$prog")"
+    want='      204800      1      4.0    50.0  -              -
+     2097152      1     64.0    32.0  17.3s          5'
+    check_has "mac rows" "$out" "$want" || fails=1
+    check_has "mac sustained" "$out" 'sustained (sets over 1 MB): 2097152 bytes in 64.0 s = 32.0 KB/s' || fails=1
+    check_has "mac orphan" "$out" '1 arrival(s) had no accept in range' || fails=1
+
+    # The eviction case: 500000 accepted and lost, then accepted again and
+    # arrived. Pairing the oldest would call that second run 100 seconds.
+    out="$(printf '%s\n' \
+        '[10000ms] 1 file(s), 500000 bytes, were accepted here and asked for' \
+        '[90000ms] board drops: outbound refused 7 (priority 7, bulk 0, bad header 0); board inbound: 9 report(s) in' \
+        '[100000ms] 1 file(s), 500000 bytes, are under the 1 MB line, so they were taken without asking' \
+        '[105000ms] board drops: outbound refused 2 (priority 2, bulk 0, bad header 0); board inbound: 9 report(s) in' \
+        '[110000ms] 1 file(s), 500000 bytes, arrived whole' \
+        | awk -v fmt=win "$prog")"
+    check_has "win newest-first pairing" "$out" '      500000      1     10.0    48.8  -              reset' || fails=1
+    check_has "win unfinished" "$out" '1 accepted set(s) with no arrival' || fails=1
+
+    # Midnight: the Mac stamp wraps, and the set still took ten seconds.
+    out="$(printf '%s\n' \
+        '2026-09-03 23:59:55.000  +1.0s  deskhop-helper: 1 file(s), 204800 bytes, were accepted here and asked for' \
+        '2026-09-04 00:00:05.000  +11.0s deskhop-helper: 1 file(s), 204800 bytes, arrived whole' \
+        | awk -v fmt=mac "$prog")"
+    check_has "mac midnight" "$out" '      204800      1     10.0    20.0  -' || fails=1
+
+    if [ "$fails" = 0 ]; then
+        printf '%s\n' "${green}selftest passed${off}"
+    else
+        printf '%s\n' "${red}selftest FAILED${off}"
+    fi
+    return "$fails"
+}
+
+check_has() {
+    local label="$1" got="$2" want="$3"
+    case "$got" in
+        *"$want"*) printf '  %s %s\n' "${green}ok${off}" "$label"; return 0 ;;
+    esac
+    printf '  %s %s\n' "${red}!!${off}" "$label"
+    printf '     wanted: %s\n' "$want"
+    printf '     got:\n'
+    printf '%s\n' "$got" | sed 's/^/       /'
+    return 1
+}
+
 case "${1:-sheet}" in
     files)  make_files ;;
     mark)   mark ;;
     sheet)  sheet ;;
     watch)  watch_logs | decode_stream ;;
     report) report ;;
-    *)      printf 'usage: %s {files|mark|sheet|watch|report}\n' "$0"; exit 2 ;;
+    throughput) throughput ;;
+    selftest)   selftest ;;
+    *)      printf 'usage: %s {files|mark|sheet|watch|report|throughput|selftest}\n' "$0"; exit 2 ;;
 esac

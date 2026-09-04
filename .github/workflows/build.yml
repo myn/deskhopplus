@@ -106,6 +106,15 @@ jobs:
         python3 tools/gen-frame-vectors.py --primitives > /tmp/primitives.txt
         diff -u test-vectors/primitives.txt /tmp/primitives.txt
 
+    # The run sheet's timing reader (#39). It is awk, and the awk at the desk is
+    # BSD while the one here is not — a dialect difference is otherwise found
+    # halfway through a hardware sitting, which is the expensive place to find
+    # it. Same shape as "Golden vectors match their generator" above: the
+    # command a developer runs is the one that gates the build.
+    - name: The run sheet reads its own timings
+      shell: bash
+      run: ./tools/clipboard-run-sheet.sh selftest
+
     - name: Build firmware
       shell: bash
       run: |
