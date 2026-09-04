@@ -209,6 +209,9 @@ std::vector<ClipOutput> ClipService::local_copy_files(
  * before. Idempotent: crossings are frequent and a question is asked once.
  */
 std::vector<ClipOutput> ClipService::user_is_here() {
+    /* Stamped by the tick, which is where a clock is read. An offer that lands
+       *after* the crossing is announced from there. */
+    saw_arrival_ = true;
     std::vector<ClipOutput> outputs;
     /* Whatever the far computer could not send, said once, here. */
     if (!too_big_waiting_.empty()) {
@@ -566,6 +569,31 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
     /* A question nobody answered. See kHoldTimeoutMs for why it cannot be left
        standing: the copy side re-offers every two seconds until it is
        requested, and the buffer the size cap sizes stays pinned. */
+    if (saw_arrival_) {
+        saw_arrival_ = false;
+        arrived_at_ = now_ms;
+        have_arrived_ = true;
+    }
+    /* An offer that landed just after the crossing: the user is plainly here
+       and came for it, so it is not made to wait for a second one. */
+    const bool recently_arrived =
+        have_arrived_ && now_ms - arrived_at_ <= kRecentArrivalMs;
+    if (have_held_offer_ && !held_announced_ && recently_arrived) {
+        held_announced_ = true;
+        held_timed_ = false;
+        ClipOutput ask;
+        ask.kind = ClipOutput::Kind::FileOffer;
+        ask.transfer_id = held_offer_.id;
+        ask.total = held_offer_.total;
+        ask.files = held_offer_.files;
+        outputs.push_back(std::move(ask));
+    }
+    /* And the same for a refusal with no question behind it. */
+    if (!too_big_waiting_.empty() && recently_arrived) {
+        outputs.push_back(tell_user(too_big_waiting_));
+        too_big_waiting_.clear();
+    }
+
     if (have_held_offer_ && held_announced_) {
         if (!held_timed_) {
             held_timed_ = true;

@@ -138,6 +138,11 @@ class ClipService {
      * than a link that never goes quiet.
      */
     static constexpr uint32_t kHoldTimeoutMs = 120000;
+    /* How long after arriving a landing offer still counts as one the user came
+       for. Only has to cover an offer in flight, which is milliseconds; five
+       seconds is slack, and a user who arrived longer ago than this cannot have
+       made the copy without crossing again first. */
+    static constexpr uint32_t kRecentArrivalMs = 5000;
 
     /*
      * How long an arriving transfer may make no progress before it is given up on.
@@ -414,6 +419,19 @@ class ClipService {
     /* What the far computer could not send for being over the cap, waiting for
        the user to come here and wonder why nothing pasted. */
     std::string too_big_waiting_;
+    /*
+     * When the user last arrived here, and whether an arrival is waiting to be
+     * stamped by the tick.
+     *
+     * Announcing only on the crossing loses the race the other way round: copy
+     * on the far computer and cross before the offer has finished travelling,
+     * and it lands with the crossing already behind it — so it sat unannounced
+     * until the *next* crossing, which is why a dash across sometimes said
+     * nothing and then reported the previous file (#56).
+     */
+    uint32_t arrived_at_{0};
+    bool have_arrived_{false};
+    bool saw_arrival_{false};
     uint32_t held_since_{0};
     bool have_incoming_files_{false};
     std::vector<FileEntry> incoming_files_;

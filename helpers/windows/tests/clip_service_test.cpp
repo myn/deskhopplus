@@ -1261,6 +1261,38 @@ void test_a_finished_send_stops_offering_to_be_cancelled() {
           "a transfer the far end has written is still offering to be cancelled");
 }
 
+/*
+ * Copy, then dash across before the offer has finished travelling. See the
+ * Swift twin: announcing only on the crossing left the offer waiting for the
+ * *next* one, which is why a quick dash sometimes said nothing and then
+ * reported the previous file (#56).
+ */
+void test_an_offer_landing_just_after_the_crossing_is_still_announced() {
+    Pair pair(big_capacity);
+    pair.user_arrives = false;
+    pair.answer_file_offers = false;
+
+    /* The user crosses first, and the offer arrives behind them. */
+    pair.settle(pair.b.user_is_here(), Side::B);
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(pair.file_questions.empty(), "the offer was announced before any tick read a clock");
+
+    pair.settle(pair.b.tick(1), Side::B);
+    CHECK(pair.file_questions.size() == 1,
+          "an offer that landed just after the crossing was never announced");
+
+    /* And a crossing long past does not count as coming for it. */
+    Pair stale(big_capacity);
+    stale.user_arrives = false;
+    stale.answer_file_offers = false;
+    stale.settle(stale.b.user_is_here(), Side::B);
+    stale.settle(stale.b.tick(1), Side::B);
+    stale.copy_files_on_a(big_files(), big_payload());
+    stale.settle(stale.b.tick(1 + ClipService::kRecentArrivalMs + 1000), Side::B);
+    CHECK(stale.file_questions.empty(),
+          "an arrival long past was treated as the user coming for this copy");
+}
+
 void test_files_are_not_read_until_accepted() {
     Pair pair(big_capacity);
     pair.answer_file_offers = false;
@@ -1719,6 +1751,7 @@ int main() {
     test_an_over_cap_copy_is_explained_where_the_paste_would_be();
     test_the_question_waits_for_the_user_to_arrive();
     test_a_finished_send_stops_offering_to_be_cancelled();
+    test_an_offer_landing_just_after_the_crossing_is_still_announced();
     test_files_are_not_read_until_accepted();
     test_declining_files_reads_nothing();
     test_small_file_sets_skip_the_question();

@@ -57,6 +57,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("the question waits for the user to arrive", testTheQuestionWaitsForTheUserToArrive),
     ("a finished send stops offering to be cancelled",
      testAFinishedSendStopsOfferingToBeCancelled),
+    ("an offer landing just after the crossing is still announced",
+     testAnOfferLandingJustAfterTheCrossingIsStillAnnounced),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
     ("a copy waiting for a seal survives a session end",
      testACopyWaitingForASealSurvivesASessionEnd),
@@ -211,6 +213,40 @@ private func testAFinishedSendStopsOfferingToBeCancelled() {
     Check.equal(pair.filesToB.count, 1, "the files did not arrive, so this proves nothing")
     Check.that(!pair.a.awaitingSend,
                "a transfer the far end has written is still offering to be cancelled")
+}
+
+/*
+ * Copy, then dash across before the offer has finished travelling.
+ *
+ * Announcing only on the crossing loses this race: the offer lands with the
+ * crossing already behind it, so it waited for the *next* one — which is why a
+ * quick dash sometimes said nothing, and then reported the previous file when
+ * the user went back for another (#56).
+ */
+private func testAnOfferLandingJustAfterTheCrossingIsStillAnnounced() {
+    let pair = bigPair()
+    pair.userArrives = false
+    pair.answerFileOffers = false
+
+    /* The user crosses first, and the offer arrives behind them. */
+    pair.settle(pair.b.userIsHere(), from: .b)
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    Check.that(pair.fileQuestions.isEmpty, "the offer was announced before any tick read a clock")
+
+    pair.settle(pair.b.tick(at: 1), from: .b)
+    Check.equal(pair.fileQuestions.count, 1,
+                "an offer that landed just after the crossing was never announced")
+
+    /* And a crossing long past does not count as coming for it. */
+    let stale = bigPair()
+    stale.userArrives = false
+    stale.answerFileOffers = false
+    stale.settle(stale.b.userIsHere(), from: .b)
+    stale.settle(stale.b.tick(at: 1), from: .b)
+    stale.copyFilesOnA(bigFiles, bytes: bigPayload)
+    stale.settle(stale.b.tick(at: 1 + ClipboardService.recentArrival + 1), from: .b)
+    Check.that(stale.fileQuestions.isEmpty,
+               "an arrival long past was treated as the user coming for this copy")
 }
 
 private func testFilesAreNotReadUntilAccepted() {

@@ -112,6 +112,12 @@ public final class ClipboardService {
      * than a link that never goes quiet.
      */
     public static let holdTimeout: TimeInterval = 120
+
+    /// How long after arriving a landing offer still counts as one the user
+    /// came for. Only has to cover an offer in flight, which is milliseconds;
+    /// five seconds is slack, and a user who arrived longer ago than this
+    /// cannot have made the copy without crossing again first.
+    public static let recentArrival: TimeInterval = 5
     /*
      * The largest payload this helper will assemble. The spec's default cap is
      * 10 MB; an offer above it is refused by the transfer core with a cancel
@@ -230,6 +236,18 @@ public final class ClipboardService {
     /// What the far computer could not send for being over the cap, waiting
     /// for the user to come here and wonder why nothing pasted.
     private var tooBigWaiting: String?
+    /*
+     * When the user last arrived here, and whether an arrival is waiting to be
+     * stamped by the tick.
+     *
+     * Announcing only on the crossing loses the race the other way round:
+     * copy on the far computer and cross before the offer has finished
+     * travelling, and it lands with the crossing already behind it — so it sat
+     * unannounced until the *next* crossing, which is why a dash across
+     * sometimes said nothing and then reported the previous file (#56).
+     */
+    private var arrivedAt: TimeInterval?
+    private var sawArrival = false
     /// The board's clipboard size cap, as the copy side needs it. Zero until
     /// the board has said, and nothing is refused on a cap nobody stated.
     private var capBytes = 0
@@ -365,6 +383,9 @@ public final class ClipboardService {
      * Idempotent: crossings are frequent and a question is asked once.
      */
     public func userIsHere() -> [ClipboardOutput] {
+        /* Stamped by the tick, which is where a clock is read. An offer that
+           lands *after* the crossing is announced from there. */
+        sawArrival = true
         var outputs: [ClipboardOutput] = []
         /* Whatever the far computer could not send, said once, here. */
         if let waiting = tooBigWaiting {
@@ -605,6 +626,29 @@ public final class ClipboardService {
         /* A question nobody answered. See `holdTimeout` for why it cannot be
            left standing: the copy side re-offers every two seconds until it is
            requested, and the buffer the size cap sizes stays pinned. */
+        if sawArrival {
+            sawArrival = false
+            arrivedAt = now
+        }
+        /* An offer that landed just after the crossing: the user is plainly
+           here and came for it, so it is not made to wait for a second one. */
+        if let held = heldFileOffer, !heldAnnounced, let at = arrivedAt,
+           now - at <= Self.recentArrival {
+            heldAnnounced = true
+            heldSince = nil
+            outputs.append(.fileOffer(held))
+            if let waiting = tooBigWaiting {
+                tooBigWaiting = nil
+                outputs.append(.tellUser(waiting))
+            }
+        }
+        /* And the same for a refusal with no question behind it. */
+        if heldFileOffer == nil, let waiting = tooBigWaiting, let at = arrivedAt,
+           now - at <= Self.recentArrival {
+            tooBigWaiting = nil
+            outputs.append(.tellUser(waiting))
+        }
+
         if let held = heldFileOffer, heldAnnounced {
             if heldSince == nil {
                 heldSince = now
