@@ -227,7 +227,17 @@ class ClipService {
     /* The file offer waiting on this computer's user, or null. */
     const deskhop::FileOffer *awaiting_decision() const;
     /* Whether anything is still on its way out of this computer. */
-    bool awaiting_send() const { return dh_xfer_is_sending(xfer_.get()); }
+    /*
+     * Whether there is a send worth offering to cancel.
+     *
+     * Not `dh_xfer_is_sending` alone, which stays true after the last chunk so
+     * a lost one can still be answered — there is no completion
+     * acknowledgement on the wire. Read as "sending", it left "Cancel what is
+     * being sent" standing over a transfer that had finished (#56).
+     */
+    bool awaiting_send() const {
+        return dh_xfer_is_sending(xfer_.get()) && !dh_xfer_tx_all_sent(xfer_.get());
+    }
 
     /* The board stated its clipboard policy (DH_CLIP_MAY_*). A direction turned
        off takes any transfer already crossing it with it. */

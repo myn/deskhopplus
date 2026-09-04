@@ -314,6 +314,9 @@ public final class Transfer {
     /// Whether a payload is on its way out — the question a stale seal has to
     /// ask before it knows whether there is anything to start again.
     public var isSending: Bool { dh_xfer_is_sending(machine) }
+    /// Everything is out and DONE has gone. `isSending` stays true past this
+    /// so a lost chunk can still be answered; this is what a menu should read.
+    public var allSent: Bool { dh_xfer_tx_all_sent(machine) }
 
     /// Whether a payload is arriving.
     public var isReceiving: Bool { dh_xfer_is_receiving(machine) }

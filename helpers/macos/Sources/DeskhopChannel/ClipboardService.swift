@@ -473,7 +473,15 @@ public final class ClipboardService {
     /// Whether anything is still on its way out of this computer. False after a
     /// transfer the far end declined or that could not be read — the two ways a
     /// lazy send ends without delivering.
-    public var awaitingSend: Bool { transfer.isSending }
+    /*
+     * Whether there is a send worth offering to cancel.
+     *
+     * Not `isSending`, which stays true after the last chunk so a lost one can
+     * still be answered — there is no completion acknowledgement on the wire.
+     * Read as "sending", it left "Cancel what is being sent" standing over a
+     * transfer that had finished (#56).
+     */
+    public var awaitingSend: Bool { transfer.isSending && !transfer.allSent }
 
 
     /// The board stated its clipboard policy. A direction turned off takes any

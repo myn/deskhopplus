@@ -55,6 +55,8 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("an over-cap copy is explained where the paste would be",
      testAnOverCapCopyIsExplainedWhereThePasteWouldBe),
     ("the question waits for the user to arrive", testTheQuestionWaitsForTheUserToArrive),
+    ("a finished send stops offering to be cancelled",
+     testAFinishedSendStopsOfferingToBeCancelled),
     ("copying files reads nothing until they are accepted", testFilesAreNotReadUntilAccepted),
     ("a copy waiting for a seal survives a session end",
      testACopyWaitingForASealSurvivesASessionEnd),
@@ -190,6 +192,25 @@ private func testTheQuestionWaitsForTheUserToArrive() {
     /* Arriving again asks nothing further: crossings are frequent. */
     pair.settle(pair.b.userIsHere(), from: .b)
     Check.equal(pair.fileQuestions.count, 1, "a second crossing asked the same question again")
+}
+
+/*
+ * A finished send stops offering to be cancelled.
+ *
+ * There is no completion acknowledgement on the wire, so `isSending` stays true
+ * after the last chunk — the receiver may still ask for one it lost, and
+ * answering needs the payload. Read as "sending", that left "Cancel what is
+ * being sent" standing on the tray over a transfer the far end had already
+ * written to disk (#56).
+ */
+private func testAFinishedSendStopsOfferingToBeCancelled() {
+    let pair = bigPair()
+    Check.that(!pair.a.awaitingSend, "a send was offered before anything was copied")
+
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    Check.equal(pair.filesToB.count, 1, "the files did not arrive, so this proves nothing")
+    Check.that(!pair.a.awaitingSend,
+               "a transfer the far end has written is still offering to be cancelled")
 }
 
 private func testFilesAreNotReadUntilAccepted() {

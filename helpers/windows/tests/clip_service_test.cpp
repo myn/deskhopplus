@@ -1245,6 +1245,22 @@ void test_the_question_waits_for_the_user_to_arrive() {
     CHECK(pair.file_questions.size() == 1, "a second crossing asked the same question again");
 }
 
+/*
+ * A finished send stops offering to be cancelled. See the Swift twin: there is
+ * no completion acknowledgement on the wire, so `dh_xfer_is_sending` stays true
+ * after the last chunk and a tray reading it left "Cancel what is being sent"
+ * standing over a transfer the far end had already written (#56).
+ */
+void test_a_finished_send_stops_offering_to_be_cancelled() {
+    Pair pair(big_capacity);
+    CHECK(!pair.a.awaiting_send(), "a send was offered before anything was copied");
+
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(pair.files_to_b.size() == 1, "the files did not arrive, so this proves nothing");
+    CHECK(!pair.a.awaiting_send(),
+          "a transfer the far end has written is still offering to be cancelled");
+}
+
 void test_files_are_not_read_until_accepted() {
     Pair pair(big_capacity);
     pair.answer_file_offers = false;
@@ -1702,6 +1718,7 @@ int main() {
     test_files_cross_the_link();
     test_an_over_cap_copy_is_explained_where_the_paste_would_be();
     test_the_question_waits_for_the_user_to_arrive();
+    test_a_finished_send_stops_offering_to_be_cancelled();
     test_files_are_not_read_until_accepted();
     test_declining_files_reads_nothing();
     test_small_file_sets_skip_the_question();

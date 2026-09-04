@@ -356,6 +356,21 @@ size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
  * helper's clipboard service.
  */
 static inline bool dh_xfer_is_sending(const dh_xfer *x) { return x->tx.active; }
+
+/*
+ * Everything is out and DONE has gone: nothing is being sent any more.
+ *
+ * `dh_xfer_is_sending` stays true past this point on purpose — the receiver may
+ * still ask for a chunk it lost, and answering that needs the payload — but a
+ * user interface reading it as "sending" leaves "Cancel what is being sent"
+ * standing over a transfer that finished, which is how it was reported (#56).
+ * There is no completion acknowledgement on the wire, so this is as much as the
+ * sending end can know.
+ */
+static inline bool dh_xfer_tx_all_sent(const dh_xfer *x) {
+    return x->tx.active && !x->tx.need_done && x->tx.retx_count == 0 &&
+           x->tx.next_seq >= x->tx.nchunks;
+}
 static inline bool dh_xfer_is_receiving(const dh_xfer *x) {
     return x->rx.active && !x->rx.lazy;
 }
