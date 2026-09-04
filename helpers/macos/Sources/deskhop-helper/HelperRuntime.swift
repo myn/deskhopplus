@@ -394,6 +394,11 @@ final class HelperRuntime: HelperEffects {
     func cancelLazyImage(id: UInt32) { imagePrefetch.cancel(id: id) }
 
     func askAboutFiles(_ offer: FileOffer) {
+        /* A question about newer files: whatever the last complaint was, it is
+           about something the user has moved on from. The local-copy callbacks
+           clear it for a copy made *here*; this is the same rule for one made
+           over there, which is the case that left it stuck on screen. */
+        menuBar.clearNotice()
         Self.note("\(offer.files.count) file(s), \(offer.total) bytes, offered from the other "
                   + "computer; waiting for an answer here before anything crosses")
         menuBar.ask(about: offer)
@@ -405,6 +410,7 @@ final class HelperRuntime: HelperEffects {
        only ever points at a set that is complete on disk, so a failed write
        leaves the pasteboard alone rather than pointing at half a file. */
     func deliver(files delivery: FileDelivery) {
+        menuBar.clearNotice()
         guard let written = self.files.write(delivery) else {
             Self.note("\(delivery.files.count) file(s) arrived and could not be written; "
                       + "nothing was put on the pasteboard")

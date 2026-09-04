@@ -943,6 +943,9 @@ public final class ClipboardService {
 
         /* An identical retry of the offer already being held is the far end
            repeating itself, not a second question to ask (#78, ADR-0009). */
+        /* A newer offer makes any earlier "too large" stale: the user is being
+           told about a copy they have already replaced. */
+        tooBigWaiting = nil
         let waiting = FileOffer(id: offer.id, total: offer.total, files: files)
         if heldFileOffer == waiting { return [] }
 

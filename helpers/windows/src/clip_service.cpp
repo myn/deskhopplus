@@ -972,6 +972,10 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
         return refused;
     }
 
+    /* A newer offer makes any earlier "too large" stale: the user is being
+       told about a copy they have already replaced. */
+    too_big_waiting_.clear();
+
     /* An identical retry of the offer already being held is the far end
        repeating itself, not a second question to ask (#78, ADR-0009). */
     if (have_held_offer_ && held_offer_.id == offer.id && held_offer_.total == offer.total &&

@@ -1206,6 +1206,15 @@ void test_an_over_cap_copy_is_explained_where_the_paste_would_be() {
     /* Once, not on every crossing. */
     pair.settle(pair.b.user_is_here(), Side::B);
     CHECK(pair.told_user.size() == 1, "the same explanation was given twice");
+
+    /* And a newer copy that *does* fit retires the complaint rather than
+       leaving it standing over something the user has moved on from — the
+       warning stuck on screen through a transfer that worked (#56). */
+    pair.user_arrives = true;
+    pair.copy_files_on_a({deskhop::FileEntry{"small.bin", 8}}, std::vector<uint8_t>(8, 0));
+    pair.settle(pair.b.user_is_here(), Side::B);
+    CHECK(pair.told_user.size() == 1, "a stale over-cap warning was repeated after a good copy");
+    CHECK(pair.files_to_b.size() == 1, "the newer copy did not arrive");
 }
 
 /*

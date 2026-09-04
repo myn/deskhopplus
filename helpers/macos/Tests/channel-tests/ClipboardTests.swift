@@ -150,6 +150,16 @@ private func testAnOverCapCopyIsExplainedWhereThePasteWouldBe() {
     /* Once, not on every crossing. */
     pair.settle(pair.b.userIsHere(), from: .b)
     Check.equal(pair.toldUser.count, 1, "the same explanation was given twice")
+
+    /* And a newer copy that *does* fit retires the complaint rather than
+       leaving it standing over something the user has moved on from — the
+       warning stuck on screen through a transfer that worked (#56). */
+    pair.userArrives = true
+    pair.copyFilesOnA([FileListEntry(name: "small.bin", size: 8)],
+                      bytes: [UInt8](repeating: 0, count: 8))
+    pair.settle(pair.b.userIsHere(), from: .b)
+    Check.equal(pair.toldUser.count, 1, "a stale over-cap warning was repeated after a good copy")
+    Check.equal(pair.filesToB.count, 1, "the newer copy did not arrive")
 }
 
 /*
