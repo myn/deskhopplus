@@ -34,7 +34,6 @@ typedef enum {
     CURSOR_CROSSING_REANCHORED,
     CURSOR_CROSSING_FALLBACK,
     CURSOR_CROSSING_CANCELLED,
-    CURSOR_CROSSING_RESUMING,
 } cursor_crossing_phase_t;
 
 typedef enum {
@@ -96,18 +95,26 @@ static inline void critical_section_exit(critical_section_t *lock) { (void)lock;
 
 extern device_t global_state;
 
-void switch_to_another_pc(device_t *, output_t *, int, int);
-void switch_virtual_desktop(device_t *, output_t *, int, int);
 void channel_place_cursor(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t);
 cursor_query_result_t channel_query_cursor(uint8_t, uint8_t);
 bool channel_place_cursor_correlated(uint8_t, uint8_t, uint8_t, uint8_t, uint16_t, uint8_t);
 void mouse_crossing_task(device_t *, uint32_t);
 void mouse_crossing_query_unavailable(device_t *, uint8_t, uint8_t);
 bool apply_helper_cursor_position(device_t *, uint8_t, uint8_t, int16_t, int16_t, uint8_t);
-bool select_cursor_screen(device_t *, uint8_t, uint8_t);
 void cursor_crossing_init(void);
 void cursor_crossing_enter(void);
 void cursor_crossing_exit(void);
 void handle_cursor_position_msg(uart_packet_t *, device_t *);
 void cursor_trace_event(const device_t *, dh_cursor_trace_event_t, uint8_t,
                         int16_t, int16_t, uint8_t, uint8_t);
+
+#define ABSOLUTE 0
+#define RELATIVE 1
+typedef struct {
+    uint8_t buttons;
+    int16_t x, y;
+    int8_t wheel, pan;
+    uint8_t mode;
+} mouse_report_t;
+void output_mouse_report(mouse_report_t *, device_t *);
+void set_active_output(device_t *, uint8_t);

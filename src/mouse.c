@@ -10,8 +10,6 @@
  */
 
 #include "main.h"
-#define MACOS_SWITCH_MOVE_X 10
-#define MACOS_SWITCH_MOVE_COUNT 5
 
 /* If we are active output, queue packet to mouse queue, else send them through UART */
 void output_mouse_report(mouse_report_t *report, device_t *state) {
@@ -21,113 +19,6 @@ void output_mouse_report(mouse_report_t *report, device_t *state) {
     } else {
         (void)queue_packet((uint8_t *)report, MOUSE_REPORT_MSG, MOUSE_REPORT_LENGTH);
     }
-}
-
-/* Map the coordinate along the seam between the two legacy output ranges. */
-int16_t map_output_seam_coordinate(int pointer, int screen_from, int screen_to, device_t *state) {
-    output_t *from = &state->config.output[screen_from];
-    output_t *to   = &state->config.output[screen_to];
-    return (int16_t)dh_seam_map_coordinate(pointer, from->border.start, from->border.end,
-                                           to->border.start, to->border.end);
-}
-
-void switch_to_another_pc(
-    device_t *state, output_t *output, int output_to, int direction) {
-    uint8_t *mouse_park_pos = &state->config.output[state->active_output].mouse_park_pos;
-    const bool vertical = dh_direction_is_vertical((dh_direction_t)direction);
-    const dh_mouse_coordinates_t pointer = {.x = state->pointer_x, .y = state->pointer_y};
-    const dh_mouse_coordinates_t hidden = dh_mouse_hidden_coordinates(
-        (dh_direction_t)direction,
-        *mouse_park_pos,
-        pointer,
-        MIN_SCREEN_COORD,
-        MAX_SCREEN_COORD);
-    mouse_report_t hidden_pointer = {
-        .x = (int16_t)hidden.x,
-        .y = (int16_t)hidden.y,
-    };
-
-    output_mouse_report(&hidden_pointer, state);
-    set_active_output(state, output_to);
-    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
-        (dh_direction_t)direction,
-        pointer,
-        MIN_SCREEN_COORD,
-        MAX_SCREEN_COORD);
-    state->pointer_x = (int16_t)entry.x;
-    state->pointer_y = (int16_t)entry.y;
-    if (vertical)
-        state->pointer_x = map_output_seam_coordinate(
-            state->pointer_x, output->number, 1 - output->number, state);
-    else
-        state->pointer_y = map_output_seam_coordinate(
-            state->pointer_y, output->number, 1 - output->number, state);
-}
-
-void switch_virtual_desktop_macos(device_t *state, int direction) {
-    /*
-     * Fix for MACOS: Before sending new absolute report setting X to 0:
-     * 1. Move the cursor to the edge of the screen directly in the middle to handle screens
-     *    of different heights
-     * 2. Send relative mouse movement one or two pixels in the direction of movement to get
-     *    the cursor onto the next screen
-     */
-    const dh_mouse_coordinates_t edge = dh_mouse_edge_coordinates(
-        (dh_direction_t)direction,
-        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
-        MIN_SCREEN_COORD,
-        MAX_SCREEN_COORD);
-    mouse_report_t edge_position = {
-        .x = (int16_t)edge.x,
-        .y = (int16_t)edge.y,
-        .mode = ABSOLUTE,
-        .buttons = state->mouse_buttons,
-    };
-
-    const dh_mouse_coordinates_t nudge =
-        dh_mouse_nudge((dh_direction_t)direction, MACOS_SWITCH_MOVE_X);
-    mouse_report_t move_relative_one = {
-        .x = (int16_t)nudge.x,
-        .y = (int16_t)nudge.y,
-        .mode = RELATIVE,
-        /* Force buttons to 0 for relative movement to avoid duplicating the button 
-           press state, which would leave the relative HID mouse permanently stuck 
-           down if the user is dragging an item while switching desktops. */
-        .buttons = 0,
-    };
-
-    output_mouse_report(&edge_position, state);
-
-    /* Once doesn't seem reliable enough, do it a few times */
-    for (int i = 0; i < MACOS_SWITCH_MOVE_COUNT; i++)
-        output_mouse_report(&move_relative_one, state);
-}
-
-void switch_virtual_desktop(device_t *state, output_t *output, int new_index, int direction) {
-    switch (output->os) {
-        case MACOS:
-            switch_virtual_desktop_macos(state, direction);
-            break;
-
-        case WINDOWS:
-            break;
-
-        case LINUX:
-        case ANDROID:
-        case OTHER:
-            /* Linux should treat all desktops as a single virtual screen, so you should leave
-            screen_count at 1 and it should just work */
-            break;
-    }
-
-    const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
-        (dh_direction_t)direction,
-        (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
-        MIN_SCREEN_COORD,
-        MAX_SCREEN_COORD);
-    state->pointer_x = (int16_t)entry.x;
-    state->pointer_y = (int16_t)entry.y;
-    (void)select_cursor_screen(state, (uint8_t)output->number, (uint8_t)new_index);
 }
 
 static inline bool extract_value(bool uses_id, int32_t *dst, report_val_t *src, uint8_t *raw_report, int len) {

@@ -70,7 +70,11 @@ add_test(NAME place_test COMMAND place_test)
 add_executable(cursor_position_test cursor_position_test.c
                cursor_trace_adapter_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/cursor_position.c
-               ${CORE}/dh_mouse_layout.c)
+               ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c
+               ${CORE}/dh_mouse_layout.c ${CORE}/dh_seam_map.c)
+if(NOT MSVC)
+  target_link_libraries(cursor_position_test PRIVATE m)
+endif()
 target_include_directories(cursor_position_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stubs ${CORE}
                            ${CMAKE_CURRENT_SOURCE_DIR}/../src/include)
 add_test(NAME cursor_position_test COMMAND cursor_position_test)

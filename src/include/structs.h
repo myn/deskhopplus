@@ -78,7 +78,6 @@ typedef enum {
     CURSOR_CROSSING_REANCHORED,
     CURSOR_CROSSING_FALLBACK,
     CURSOR_CROSSING_CANCELLED,
-    CURSOR_CROSSING_RESUMING,
 } cursor_crossing_phase_t;
 
 typedef enum {

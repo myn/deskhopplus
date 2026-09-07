@@ -28,8 +28,6 @@ enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
 void mouse_crossing_task(device_t *, uint32_t now_us);
 void mouse_crossing_query_unavailable(device_t *, uint8_t output, uint8_t query_id);
-void switch_to_another_pc(device_t *, output_t *, int, int);
-void switch_virtual_desktop(device_t *, output_t *, int, int);
 void queue_mouse_report(mouse_report_t *, device_t *);
 bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_t wheel, int8_t pan);
 void output_mouse_report(mouse_report_t *, device_t *);

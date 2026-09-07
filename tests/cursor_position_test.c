@@ -5,10 +5,19 @@
 device_t global_state;
 static int failures;
 
-void mouse_crossing_query_unavailable(device_t *state, uint8_t output, uint8_t query_id) {
-    (void)state;
-    (void)output;
-    (void)query_id;
+void output_mouse_report(mouse_report_t *report, device_t *state) {
+    (void)report; (void)state;
+}
+void set_active_output(device_t *state, uint8_t output) { state->active_output = output; }
+void channel_place_cursor(uint8_t o, uint8_t s, uint8_t c, uint8_t b, uint16_t p) {
+    (void)o; (void)s; (void)c; (void)b; (void)p;
+}
+cursor_query_result_t channel_query_cursor(uint8_t o, uint8_t q) {
+    (void)o; (void)q; return CURSOR_QUERY_UNAVAILABLE;
+}
+bool channel_place_cursor_correlated(uint8_t o, uint8_t s, uint8_t c,
+                                     uint8_t b, uint16_t p, uint8_t q) {
+    (void)o; (void)s; (void)c; (void)b; (void)p; (void)q; return false;
 }
 
 #define CHECK(condition, message) do { if (!(condition)) { \
