@@ -53,19 +53,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 page="${page:-../webconfig/config.htm}"
 image="${image:-disk.img}"
 
-# Geometry, read back out of the image this replaces (`minfo -i disk.img ::`)
-# so the volume the host sees does not change shape.
+# FAT12 geometry; only the root directory is reduced from the original image.
 FULL_SECTORS=4096       # what the boot sector claims, and ramdisk.c reports
 SHIPPED_SECTORS=128     # what is actually kept, and what ramdisk.c serves
 SECTOR=512
 LABEL=DESKHOP
 HEADS=2
 SECTORS_PER_TRACK=16
-ROOT_SECTORS=32         # mtools -r is in SECTORS, not entries: 32 -> 512 slots,
-                        # which is what mkdosfs's default produced and what the
-                        # image being replaced had. A quarter of the shipped
-                        # disk goes to a directory holding one file; reclaiming
-                        # it would change the geometry, so it is left alone here.
+ROOT_SECTORS=2          # mtools -r is in sectors: 2 -> 32 slots for config.htm
 CYLINDERS=$(( FULL_SECTORS / (HEADS * SECTORS_PER_TRACK) ))
 
 # 2020-01-01T00:00:00Z. Any fixed value works; this one is only memorable.
