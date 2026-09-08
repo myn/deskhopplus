@@ -23,100 +23,8 @@
 #define CHANNEL_BUILD_TYPE DH_BUILD_RELEASE
 #endif
 
-/*
- * Reports waiting for channel_task, because none of the work below may run
- * inside the USB callback any more.
- *
- * This was four, on the argument that "USB full speed delivers at most one
- * 64-byte OUT report per millisecond and channel_task drains the whole ring at
- * 1000 Hz, so the steady state never exceeds one". That is the same premise
- * #139 measured false one queue over (dh_inq.h): channel_task is an entry in a
- * cooperative loop, not a 1000 Hz timer, and TinyUSB hands over whatever it
- * has buffered when the device task runs — so reports arrive in bursts inside
- * one pass, not one per millisecond.
- *
- * Thirty-two covers a loop pass of about 32 ms. It is not a measurement,
- * because nobody has measured the worst pass; it is generous depth behind a
- * drop that is no longer silent, which is the change that matters. See
- * `channel.stream_broken` — a dropped report now ends the session, so if this
- * number is still too small it says so instead of costing three seconds of
- * confusion.
- *
- * The old comment also said a lost report "loses a frame ... the helper
- * retries". It does not. The reader is a byte stream, and a gap in the middle
- * of a frame is filled from the frames after it; `frame_test.c`'s
- * `test_a_gap_mid_frame_is_not_recoverable` is what that costs.
- */
-#define CHANNEL_REPORT_BACKLOG 32u
-
 static struct {
     channel_lifecycle lifecycle;
-    dh_frame_reader reader;
-
-    /*
-     * Reports from tud_hid_set_report_cb, drained by channel_task.
-     *
-     * No lock, and that is a property of the scheduler rather than an
-     * omission: tud_hid_set_report_cb is reached from usb_device_task and
-     * channel_task is another entry in the *same* cooperative loop on core 0
-     * (src/main.c), so the two can never interleave. Core 1 does not touch it.
-     */
-    uint8_t reports[CHANNEL_REPORT_BACKLOG][CHANNEL_REPORT_SIZE];
-    uint16_t report_len[CHANNEL_REPORT_BACKLOG];
-    uint8_t report_head; /* next to drain */
-    uint8_t report_used;
-    uint32_t reports_dropped;
-    /*
-     * A report was dropped, so the byte stream has a hole in it (#161).
-     *
-     * Raised in the USB callback and acted on in channel_task, the same shape
-     * as `config_wiped` and for the same reason: ending a session sends a
-     * frame, and no decision may run at the bottom of a TinyUSB callback.
-     */
-    bool stream_broken;
-    /* Every report the USB callback delivered, dropped ones included. The head
-       of the inbound chain, so a helper writing frames the board never accepts
-       can be told apart from one whose frames never arrived (#107). */
-    uint32_t reports_in;
-
-    /* The relay to and from the peer board; the transmitter carries its own
-       storage, the reassembler takes ours. */
-    dh_relay_tx relay_tx;
-    dh_relay_rx relay_rx;
-    uint8_t relay_rx_buf[DH_FRAME_MAX_SIZE];
-
-    /*
-     * Frames reassembled from the peer board, waiting for core 0 to write this
-     * board's tag over them.
-     *
-     * The tag is per hop, so a frame arriving from the peer board has to be
-     * authenticated under *this* board's k_b2h with *this* board's counter —
-     * and both belong to the session, which is core 0's. Core 1 could not do
-     * it without sharing the counter across cores, and a counter allocated on
-     * one core and used on the other can emit out of order, which the far end
-     * refuses as a replay. So the frame is handed over and core 0 tags it.
-     *
-     * Same shape, and the same reason, as config_wiped below. This was one
-     * slot on the argument that "a frame takes about 4 ms to arrive over a
-     * 3.6 Mbaud link and core 0 drains at 1000 Hz", which is true of a
-     * full-size chunk and of nothing else — see dh_inq.h, and #139 for what it
-     * measured on both boards.
-     */
-    dh_inq inbound;
-
-    /*
-     * The same frame with this board's prefix written in front of it, on its
-     * way to the outbound queue.
-     *
-     * Static rather than a local, and that is not a style choice: core 0's
-     * stack is 2 KB (PICO_STACK_SIZE) inside a 4 KB SCRATCH_Y whose neighbour
-     * is core 1's, and a relayed frame can be 4100 bytes. A buffer this size
-     * on that stack overruns both — which is the same reasoning that keeps the
-     * reply buffer report-sized rather than frame-sized, applied to the one
-     * place where a whole frame genuinely has to be assembled.
-     */
-    uint8_t tagged[DH_FRAME_MAX_SIZE];
-
     /*
      * The outbound queue is written from both cores: core 0 in the pump, core
      * 1 in the inter-board packet handler. An interleaving there splices two
@@ -139,13 +47,6 @@ static struct {
      */
     volatile bool config_wiped;
 
-    /* A registration that channel_task still owes the configuration. */
-    bool registration_unsaved;
-
-    /* A source-position query handed from core 1 to core 0. Protected by the
-       outbound lock so a peer request cannot overwrite a local one. */
-    enum { CURSOR_QUERY_NONE, CURSOR_QUERY_LOCAL, CURSOR_QUERY_PEER } cursor_query_origin;
-    uint8_t cursor_query_id;
 } channel;
 
 void channel_lifecycle_lock(void) {
@@ -156,7 +57,6 @@ void channel_lifecycle_unlock(void) {
     critical_section_exit(&channel.out_lock);
 }
 
-static bool channel_queue_frame(const uint8_t *frame, size_t len);
 static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_t body_len);
 static bool channel_emit_placement_query(const uint8_t *place_body, uint8_t query_id);
 
@@ -235,33 +135,6 @@ static void channel_load_registration(const device_t *state) {
         dh_pair_clear_registration(&channel.lifecycle.pair);
 }
 
-/*
- * Everything that belongs to one connection: the session, the frame reader,
- * the relay and whatever was owed to a helper that is no longer there.
- * The identity and the registration are deliberately *not* here — see
- * channel_reset_link's caller.
- */
-static void channel_reset_link(void) {
-    dh_session_drop(&channel.lifecycle.session);
-    dh_frame_reader_init(&channel.reader);
-    dh_relay_tx_reset(&channel.relay_tx);
-    dh_relay_rx_reset(&channel.relay_rx);
-
-    channel.report_head = 0;
-    channel.report_used = 0;
-    channel.stream_broken = false;
-    dh_inq_reset(&channel.inbound);
-
-    /* Reset, never init: what is queued belonged to the link that just went,
-       and the drop totals did not (#142). */
-
-    critical_section_enter_blocking(&channel.out_lock);
-    channel.cursor_query_origin = CURSOR_QUERY_NONE;
-    channel.cursor_query_id = 0;
-    dh_outq_reset(&channel.lifecycle.out);
-    critical_section_exit(&channel.out_lock);
-}
-
 void channel_init(device_t *state) {
     if (!channel.locked) {
         critical_section_init(&channel.out_lock);
@@ -283,13 +156,13 @@ void channel_init(device_t *state) {
     critical_section_enter_blocking(&channel.out_lock);
     dh_outq_init(&channel.lifecycle.out);
     critical_section_exit(&channel.out_lock);
-    dh_relay_tx_init(&channel.relay_tx);
-    dh_relay_rx_init(&channel.relay_rx, channel.relay_rx_buf, sizeof channel.relay_rx_buf);
-    dh_inq_init(&channel.inbound);
+    dh_relay_tx_init(&channel.lifecycle.relay_tx);
+    dh_relay_rx_init(&channel.lifecycle.relay_rx, channel.lifecycle.relay_rx_buf, sizeof channel.lifecycle.relay_rx_buf);
+    dh_inq_init(&channel.lifecycle.inbound);
 
     channel_load_identity(state);
     channel_load_registration(state);
-    channel_reset_link();
+    channel_lifecycle_link_lost(&channel.lifecycle);
 }
 
 /*
@@ -319,7 +192,7 @@ void channel_config_wiped(void) {
  * window.
  */
 void channel_link_lost(void) {
-    channel_reset_link();
+    channel_lifecycle_link_lost(&channel.lifecycle);
 }
 
 void channel_open_pairing_window(void) {
@@ -371,10 +244,10 @@ cursor_query_result_t channel_query_cursor(uint8_t output, uint8_t query_id) {
     if (!channel_helper_present())
         return CURSOR_QUERY_UNAVAILABLE;
     critical_section_enter_blocking(&channel.out_lock);
-    const bool accepted = channel.cursor_query_origin == CURSOR_QUERY_NONE;
+    const bool accepted = channel.lifecycle.cursor_query_origin == CURSOR_QUERY_NONE;
     if (accepted) {
-        channel.cursor_query_origin = CURSOR_QUERY_LOCAL;
-        channel.cursor_query_id = query_id;
+        channel.lifecycle.cursor_query_origin = CURSOR_QUERY_LOCAL;
+        channel.lifecycle.cursor_query_id = query_id;
     }
     critical_section_exit(&channel.out_lock);
     return accepted ? CURSOR_QUERY_SENT : CURSOR_QUERY_RETRY;
@@ -390,10 +263,10 @@ void handle_cursor_query_msg(uart_packet_t *packet, device_t *state) {
         return;
     }
     critical_section_enter_blocking(&channel.out_lock);
-    const bool accepted = channel.cursor_query_origin == CURSOR_QUERY_NONE;
+    const bool accepted = channel.lifecycle.cursor_query_origin == CURSOR_QUERY_NONE;
     if (accepted) {
-        channel.cursor_query_origin = CURSOR_QUERY_PEER;
-        channel.cursor_query_id = packet->data[1];
+        channel.lifecycle.cursor_query_origin = CURSOR_QUERY_PEER;
+        channel.lifecycle.cursor_query_id = packet->data[1];
     }
     critical_section_exit(&channel.out_lock);
     if (!accepted) {
@@ -460,23 +333,9 @@ bool channel_place_cursor_correlated(uint8_t output, uint8_t screen, uint8_t cha
            channel_emit_placement_query(body, query_id);
 }
 
-/* Hand a whole frame to this board's helper. */
-static bool channel_queue_frame(const uint8_t *frame, size_t len) {
-    return channel_lifecycle_queue(&channel.lifecycle, frame, len, channel_now_ms());
-}
-
 static bool channel_emit_placement_body(uint8_t type, const uint8_t *body, size_t body_len) {
-    if (body_len > DH_PLACE_BODY_SIZE)
-        return false;
-    uint8_t frame_bytes[DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_PLACE_BODY_SIZE];
-    size_t frame_len = 0;
-    const dh_frame_view frame = {
-        .hdr = {.type = type, .flags = 0, .len = (uint16_t)body_len},
-        .payload = body,
-    };
-    return dh_session_emit_relayed(&channel.lifecycle.session, &frame, frame_bytes, sizeof frame_bytes,
-                                   &frame_len) == DH_FRAME_OK &&
-           channel_queue_frame(frame_bytes, frame_len);
+    return channel_lifecycle_emit_placement(&channel.lifecycle, type, body, body_len,
+                                             channel_now_ms());
 }
 
 /* PLACE and its correlated POS_QUERY are one transaction on the channel. Do
@@ -514,21 +373,6 @@ static bool channel_emit_placement_query(const uint8_t *place_body, uint8_t quer
 }
 
 /*
- * End the session and tell the helper why — best effort. A refused queue
- * leaves it to notice for itself, which is precisely what its own timeout is
- * for: this is an optimisation over that timeout, never a substitute for it.
- */
-static void channel_end_session(uint8_t reason) {
-    uint8_t frame[DH_SESSION_REPLY_MAX];
-    size_t len = 0;
-    /* Zero for every reason but a liveness timeout, which is the one that is
-       asserting something about a clock and the one #107 needs to read. */
-    if (dh_session_end(&channel.lifecycle.session, reason, 0, frame, sizeof frame, &len) == DH_FRAME_OK &&
-        len > 0)
-        (void)channel_queue_frame(frame, len);
-}
-
-/*
  * One HID OUT report, copied and nothing more.
  *
  * Every decision this channel makes used to happen here, inside a TinyUSB
@@ -541,204 +385,40 @@ static void channel_end_session(uint8_t reason) {
  * scheduler's own loop.
  */
 void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
-    if (bufsize == 0)
-        return;
-
-    /* Before the backlog check, so this is what arrived rather than what fitted. */
-    if (channel.reports_in != UINT32_MAX)
-        channel.reports_in++;
-
-    if (channel.report_used >= CHANNEL_REPORT_BACKLOG) {
-        /*
-         * Counted, never silent (#43) — and no longer only counted.
-         *
-         * A lost report does not lose one frame. The reader is a byte stream:
-         * the hole is filled from the frames behind it, and the reader goes on
-         * waiting for a body length it read before the loss. Nothing completes,
-         * so nothing authenticates, so `last_seen_ms` stops moving — and three
-         * seconds later this board evicts a helper that has been writing the
-         * whole time, with no refusals to show for it. That is #161's exact
-         * signature, and `test_a_gap_mid_frame_is_not_recoverable` is the proof
-         * that no amount of waiting recovers.
-         *
-         * So the session ends instead. The helper reopens its handles and gets
-         * a clean stream in about a second, which is the cheapest honest answer
-         * to a stream that can no longer be trusted — and the same one this
-         * board already gives a frame that will not decode.
-         */
-        channel.reports_dropped++;
-        channel.stream_broken = true;
-        return;
-    }
-
-    const uint8_t slot = (uint8_t)((channel.report_head + channel.report_used) %
-                                   CHANNEL_REPORT_BACKLOG);
-    const uint16_t take = bufsize < CHANNEL_REPORT_SIZE ? bufsize : CHANNEL_REPORT_SIZE;
-    memcpy(channel.reports[slot], buffer, take);
-    channel.report_len[slot] = take;
-    channel.report_used++;
+    channel_lifecycle_receive_report(&channel.lifecycle, buffer, bufsize);
 }
 
-/*
- * A bulk frame the helper authenticated, on its way to the peer board.
- *
- * What crosses the inter-board link is the frame **without** its
- * authentication prefix: the tag is per hop, board A's means nothing to
- * board B, and board B writes its own before emitting it. Sending the dead
- * prefix would cost 24 bytes a frame on the link ADR-0002 measured as the wall
- * for no reader anywhere.
- *
- * The shortened frame is built in place, over the last four bytes of the tag
- * that has just been verified and will never be read again — so a 1 KB chunk
- * is relayed without a second buffer to hold it in. The reader's own header at
- * the front of its buffer is untouched, which is what dh_frame_reader_push
- * uses on the next call to release the frame it returned.
- */
-static void channel_relay_to_peer(const dh_frame_view *frame, const uint8_t *body,
-                                  size_t body_len) {
-    uint8_t *header = (uint8_t *)body - DH_FRAME_HEADER_SIZE;
-    header[0] = frame->hdr.type;
-    header[1] = frame->hdr.flags;
-    header[2] = (uint8_t)(body_len & 0xFFu);
-    header[3] = (uint8_t)(body_len >> 8);
-
-    /*
-     * A refusal means the relay's queue is full, not merely that the previous
-     * frame is still fragmenting — that burst is what the queue absorbs now
-     * (#69, ADR-0005). Nothing here can hold the frame if it is refused, since
-     * the reader releases it on the next push, so it is counted rather than
-     * silently dropped (#43). Making the helper wait instead is the credit
-     * window's job, and that window is end to end between the helpers: the
-     * board may not enforce it without reading a payload (ADR-0003).
-     */
-    const dh_relay_result offered =
-        dh_relay_tx_offer(&channel.relay_tx, header, DH_FRAME_HEADER_SIZE + body_len);
-    (void)dh_txq_track(&channel.lifecycle.tx, offered == DH_RELAY_OK);
-}
-
-/* One decoded frame from this board's helper. */
-static void channel_on_frame(device_t *state, const dh_frame_view *frame, uint32_t now) {
-    /*
-     * The whole routing decision, on the type byte alone: bulk is relayed to
-     * the peer helper opaquely, everything below is addressed to this firmware
-     * and is never forwarded. The payload is not read on either path.
-     */
-    if (frame->hdr.type >= DH_MSG_PLACE && frame->hdr.type <= DH_MSG_POS_RESPONSE) {
-        const uint8_t *body = NULL;
-        size_t body_len = 0;
-        if (dh_session_authenticate(&channel.lifecycle.session, frame, now, &body, &body_len) != DH_AUTH_OK)
-            return;
-        if (frame->hdr.type == DH_MSG_POS_RESPONSE) {
-            dh_position position;
-            /* A response can arrive after the user has already crossed back.
-               It describes this board's output, so applying it while the peer
-               is active would rewind the global pointer to stale coordinates. */
-            if (state->active_output != BOARD_ROLE ||
-                !dh_position_decode(body, body_len, &position) || position.chain_index == 0 ||
-                position.chain_index > state->config.output[BOARD_ROLE].screen_count)
-                return;
-            const int16_t pointer_x = (int16_t)(
-                ((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
-            const int16_t pointer_y = (int16_t)(
-                ((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
-            const bool applied = apply_helper_cursor_position(
-                state, BOARD_ROLE, position.chain_index, pointer_x, pointer_y,
-                position.query_id);
-            /* A nonzero query may have originated on the peer board. This
-               board has no matching crossing state in that case, but it must
-               still relay the correlated answer to the requester. */
-            if (!applied && position.query_id == 0)
-                return;
-            uart_packet_t packet = {
-                .type = CURSOR_POSITION_MSG,
-                .data = {(uint8_t)BOARD_ROLE, position.chain_index},
-            };
-            packet.data16[1] = (uint16_t)pointer_x;
-            packet.data16[2] = (uint16_t)pointer_y;
-            packet.data[6] = position.query_id;
-            (void)queue_uart_packet(&packet, state);
-        }
+/* An authenticated position response, applied to this board's cursor state. */
+void channel_lifecycle_position(void *context, const uint8_t *body, size_t body_len) {
+    device_t *state = context;
+    dh_position position;
+    /* A response can arrive after the user has already crossed back.
+       It describes this board's output, so applying it while the peer
+       is active would rewind the global pointer to stale coordinates. */
+    if (state->active_output != BOARD_ROLE ||
+        !dh_position_decode(body, body_len, &position) || position.chain_index == 0 ||
+        position.chain_index > state->config.output[BOARD_ROLE].screen_count)
         return;
-    }
-
-    if (dh_msg_is_bulk(frame->hdr.type)) {
-        /*
-         * Authorisation is per frame. v1 gated this on dh_session_may_relay —
-         * one flag for the whole board — so any process could push bulk into a
-         * session it never authenticated, which is the isolation breach #34
-         * exists to prevent. A frame that does not carry a good tag under the
-         * session key is neither acted on nor relayed, whatever else is going
-         * on, and is counted towards the listener alert.
-         */
-        const uint8_t *body = NULL;
-        size_t body_len = 0;
-        if (dh_session_authenticate(&channel.lifecycle.session, frame, now, &body, &body_len) != DH_AUTH_OK)
-            return;
-
-        channel_relay_to_peer(frame, body, body_len);
+    const int16_t pointer_x = (int16_t)(
+        ((uint32_t)position.x * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
+    const int16_t pointer_y = (int16_t)(
+        ((uint32_t)position.y * MAX_SCREEN_COORD + 32767u) / DH_SEAM_POSITION_MAX);
+    const bool applied = apply_helper_cursor_position(
+        state, BOARD_ROLE, position.chain_index, pointer_x, pointer_y,
+        position.query_id);
+    /* A nonzero query may have originated on the peer board. This
+       board has no matching crossing state in that case, but it must
+       still relay the correlated answer to the requester. */
+    if (!applied && position.query_id == 0)
         return;
-    }
-
-    const uint32_t registrations = channel.lifecycle.pair.registrations;
-    channel_lifecycle_on_frame(&channel.lifecycle, frame, now);
-
-    /* A registration is the one thing here that has to outlive a power cut. */
-    if (channel.lifecycle.pair.registrations != registrations) {
-        memcpy(state->config.channel_helper_key_id, channel.lifecycle.pair.helper_key_id,
-               sizeof state->config.channel_helper_key_id);
-        memcpy(state->config.channel_shared_secret, channel.lifecycle.pair.shared_secret,
-               sizeof state->config.channel_shared_secret);
-        state->config.channel_paired = 1;
-        channel.registration_unsaved = true;
-    }
-}
-
-/*
- * Drain the reports the USB callback left, decoding frames out of the stream.
- *
- * `now` is the caller's, never a fresh read. This read the clock for itself
- * once, and stamped the session's liveness deadline with a value *later* than
- * the one channel_task then judged that deadline against — so a millisecond
- * turning over between the two reads, while a frame happened to arrive, left
- * the stamp one ahead of the clock and the difference wrapped. The board then
- * evicted a helper it had heard from that instant (#107).
- */
-static void channel_drain_reports(device_t *state, uint32_t now) {
-
-    while (channel.report_used > 0) {
-        const uint8_t slot = channel.report_head;
-        const uint8_t *buffer = channel.reports[slot];
-        const uint16_t bufsize = channel.report_len[slot];
-        channel.report_head = (uint8_t)((channel.report_head + 1u) % CHANNEL_REPORT_BACKLOG);
-        channel.report_used--;
-
-        size_t offset = 0;
-        while (offset < bufsize) {
-            dh_frame_view frame;
-            size_t consumed = 0;
-            const dh_frame_result rc = dh_frame_reader_push(
-                &channel.reader, buffer + offset, bufsize - offset, &consumed, &frame);
-
-            if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) {
-                /* A protocol error drops the session: the stream is no longer
-                   trustworthy and the helper reconnects (docs/protocol.md). It
-                   is told so rather than left to time out, because until it
-                   finds out it goes on writing into a reader it has
-                   desynchronised — and this is the one path where the helper is
-                   the thing in the wrong and could stop. */
-                channel_end_session(DH_SESSION_END_PROTOCOL_ERROR);
-                dh_frame_reader_init(&channel.reader);
-                return;
-            }
-
-            offset += consumed;
-
-            if (rc == DH_FRAME_OK)
-                channel_on_frame(state, &frame, now);
-            else if (consumed == 0)
-                break; /* nothing more to take from this report */
-        }
-    }
+    uart_packet_t packet = {
+        .type = CURSOR_POSITION_MSG,
+        .data = {(uint8_t)BOARD_ROLE, position.chain_index},
+    };
+    packet.data16[1] = (uint16_t)pointer_x;
+    packet.data16[2] = (uint16_t)pointer_y;
+    packet.data[6] = position.query_id;
+    (void)queue_uart_packet(&packet, state);
 }
 
 /* One inter-board packet of relayed frame, arriving from the peer board.
@@ -753,7 +433,7 @@ void handle_channel_relay_msg(uart_packet_t *packet, device_t *state) {
     memcpy(relayed.data, packet->data, DH_RELAY_PAYLOAD);
 
     dh_frame_view frame;
-    if (dh_relay_rx_push(&channel.relay_rx, &relayed, &frame) != DH_RELAY_OK)
+    if (dh_relay_rx_push(&channel.lifecycle.relay_rx, &relayed, &frame) != DH_RELAY_OK)
         return; /* incomplete, or a loss the reassembler has already counted */
 
     /* Refused when core 0 is more than a pump batch behind, or when the frame
@@ -761,90 +441,24 @@ void handle_channel_relay_msg(uart_packet_t *packet, device_t *state) {
        the receiving helper re-requests a chunk — but not an offer, a done or a
        credit, which is why the ring is sized to make this rare (dh_inq.h). */
     const size_t total = DH_FRAME_HEADER_SIZE + frame.hdr.len;
-    if (!dh_inq_stage(&channel.inbound, frame.payload - DH_FRAME_HEADER_SIZE, (uint16_t)total))
+    if (!dh_inq_stage(&channel.lifecycle.inbound, frame.payload - DH_FRAME_HEADER_SIZE, (uint16_t)total))
         return;
 
     /* The published slot is what core 0 reads, so the bytes must be visible
        before it moves. Cortex-M0+ retires in order, but the compiler is under
        no such obligation. */
     __dmb();
-    dh_inq_publish(&channel.inbound);
+    dh_inq_publish(&channel.lifecycle.inbound);
 }
 
-/*
- * Whatever the peer board handed over, tagged for this board's helper.
- *
- * Drained to exhaustion rather than one frame per pass. One per pass caps this
- * seam at 1000 frames a second, which sounds ample and is not: the burst that
- * overruns it is short frames — a relayed CLIP_CREDIT is ten bytes — and a
- * batch of those crosses the link inside a fraction of one pass. The ring
- * parks them; taking only one of them per pass would simply move where they
- * are lost (#139).
- *
- * The loop stops on a refused enqueue instead of running the ring dry into a
- * full queue. The frames behind it stay parked and go out on a later pass,
- * which is the back-pressure this seam otherwise has none of.
- *
- * What this costs per pass is a tag per frame, and that cost is not yet
- * measured (#115). It is bounded by DH_INQ_DEPTH and, in the traffic that
- * fills the ring, small: the ring fills with short frames, because a full
- * chunk takes about 4 ms to cross the link and is drained long before a second
- * one lands. A ring full of full-size chunks is not reachable at the rate the
- * link delivers them — if #115 finds otherwise, this is the loop to bound.
- */
-static void channel_pump_inbound(void) {
-    const uint8_t *at = NULL;
-    uint16_t len = 0;
-
-    while (dh_inq_peek(&channel.inbound, &at, &len)) {
-        dh_frame_view frame;
-        size_t consumed = 0;
-        size_t tagged_len = 0;
-
-        const bool tagged =
-            dh_frame_decode(at, len, &frame, &consumed) == DH_FRAME_OK &&
-            /*
-             * The same gate as the outbound direction, and for the sharper
-             * reason: without it, a local process that holds this board's
-             * channel and never authenticates is still handed everything the
-             * *other* computer's paired helper sends. That is precisely the
-             * cross-machine path #34 exists to close, and it is not closed by
-             * refusing to relay outward alone. dh_session_emit_relayed refuses
-             * outright when there is no session, because without one there is
-             * no key to tag under either.
-             */
-            dh_session_emit_relayed(&channel.lifecycle.session, &frame, channel.tagged,
-                                    sizeof channel.tagged, &tagged_len) == DH_FRAME_OK;
-
-        /* Read before the slot goes back to core 1. */
-        __dmb();
-        dh_inq_release(&channel.inbound);
-
-        /* A frame the queue refused is lost and counted there, as it always
-           was. What is new is that the rest of the ring is not lost with it. */
-        if (tagged && !channel_queue_frame(channel.tagged, tagged_len))
-            break;
-    }
+void channel_lifecycle_barrier(void) {
+    __dmb();
 }
 
-/* Drain what the relay owes into the shared inter-board queue. The burst cap
-   inside the relay is what keeps a chunk's packets from filling the queue
-   ahead of keyboard and mouse traffic. */
-static void channel_pump_relay(void) {
-    dh_relay_tx_yield(&channel.relay_tx);
-
-    dh_relay_packet packet;
-    while (dh_relay_tx_peek(&channel.relay_tx, &packet)) {
-        const enum packet_type_e type =
-            (packet.kind == DH_RELAY_PKT_START) ? CHANNEL_START_MSG : CHANNEL_DATA_MSG;
-
-        /* A refused enqueue leaves the packet owed rather than lost: a frame
-           missing one data packet would corrupt everything after it. */
-        if (!queue_packet(packet.data, type, DH_RELAY_PAYLOAD))
-            break;
-
-        dh_relay_tx_commit(&channel.relay_tx);
-    }
+bool channel_lifecycle_send_relay(const dh_relay_packet *packet) {
+    const enum packet_type_e type =
+        packet->kind == DH_RELAY_PKT_START ? CHANNEL_START_MSG : CHANNEL_DATA_MSG;
+    return queue_packet(packet->data, type, DH_RELAY_PAYLOAD);
 }
 
 /* One report's worth of whatever is owed to this board's helper. */
@@ -887,95 +501,9 @@ static void channel_pump_out(void) {
     critical_section_exit(&channel.out_lock);
 }
 
-void channel_task(device_t *state) {
-    const uint32_t now = channel_now_ms();
-
-    /*
-     * A wipe, applied where the session is safe to rewrite. Ahead of everything
-     * else so a session about to end is not beaten at first, and the helper is
-     * told rather than left to its timeout: it is authenticated against a
-     * registration that has just stopped existing, and the sooner it reconnects
-     * the sooner it can say so and ask to be paired again.
-     *
-     * The identity survives, deliberately. #75's shape holds: this takes effect
-     * on the next tick, with no power cycle.
-     */
-    if (channel.config_wiped) {
-        channel.config_wiped = false;
-        channel_end_session(DH_SESSION_END_UNPAIRED);
-        dh_pair_clear_registration(&channel.lifecycle.pair);
-        channel.registration_unsaved = false;
-    }
-
-    /*
-     * A report was dropped while this pass was elsewhere, so the byte stream
-     * has a hole and the reader cannot find its way back (#161). Ended here
-     * rather than in the callback that noticed, because ending a session sends
-     * a frame.
-     *
-     * Ahead of the drain, so the reports still in the ring are not fed into a
-     * reader that is about to be reset — they belong to the broken stream too.
-     */
-    if (channel.stream_broken) {
-        channel.stream_broken = false;
-        channel.report_head = 0;
-        channel.report_used = 0;
-        channel_end_session(DH_SESSION_END_STREAM_GAP);
-        dh_frame_reader_init(&channel.reader);
-    }
-
-    /*
-     * The board nonce the next hello ack will carry. Drawn only when the last
-     * one has been spent, rather than on every tick: get_rand_64 is not free,
-     * and a nonce is needed about as often as a session begins.
-     */
-    if (dh_session_needs_nonce(&channel.lifecycle.session)) {
-        uint8_t nonce[DH_NONCE_SIZE];
-        channel_random_bytes(nonce, sizeof nonce);
-        dh_session_stage_nonce(&channel.lifecycle.session, nonce);
-    }
-
-    channel_drain_reports(state, now);
-
-    critical_section_enter_blocking(&channel.out_lock);
-    const int query_origin = channel.cursor_query_origin;
-    const uint8_t query_id = channel.cursor_query_id;
-    critical_section_exit(&channel.out_lock);
-    bool query_finished = false;
-    if (query_origin != CURSOR_QUERY_NONE) {
-        if (!channel_helper_present()) {
-            if (query_origin == CURSOR_QUERY_PEER) {
-                uart_packet_t unavailable = {
-                    .type = CURSOR_QUERY_UNAVAILABLE_MSG,
-                    .data = {(uint8_t)BOARD_ROLE, query_id},
-                };
-                query_finished = queue_uart_packet(&unavailable, state);
-            } else {
-                query_finished = true;
-            }
-        } else {
-            const uint8_t body[] = {query_id};
-            query_finished = channel_emit_placement_body(DH_MSG_POS_QUERY, body, sizeof body);
-        }
-        if (query_finished) {
-            critical_section_enter_blocking(&channel.out_lock);
-            if (channel.cursor_query_origin == query_origin &&
-                channel.cursor_query_id == query_id)
-                channel.cursor_query_origin = CURSOR_QUERY_NONE;
-            critical_section_exit(&channel.out_lock);
-        }
-    }
-
-    /* Written after the grant is already in the outbound queue, because a
-       grant the helper never receives is a pairing neither end holds — and
-       flash is slow enough to be worth keeping off the path that queues it. */
-    if (channel.registration_unsaved) {
-        channel.registration_unsaved = false;
-        save_config(state);
-    }
-
-    channel_pump_inbound();
-
+void channel_lifecycle_update_config(void *context, uint32_t now) {
+    device_t *state = context;
+    (void)now;
     /*
      * What this board has dropped, published twice over.
      *
@@ -996,23 +524,23 @@ void channel_task(device_t *state) {
      * reader of one is asking what the total is now. The session decides for
      * itself whether a fresh reading is worth a frame.
      */
-    state->_channel_reports_dropped = channel.reports_dropped;
-    state->_channel_inbound_dropped = channel.inbound.dropped;
+    state->_channel_reports_dropped = channel.lifecycle.reports_dropped;
+    state->_channel_inbound_dropped = channel.lifecycle.inbound.dropped;
     state->_channel_outq_refused = channel.lifecycle.out.refused;
     state->_channel_relay_dropped = channel.lifecycle.tx.dropped;
-    state->_channel_relay_orphans = channel.relay_rx.orphans;
-    state->_channel_relay_truncated = channel.relay_rx.truncated;
-    state->_channel_relay_refused = channel.relay_tx.q.refused;
+    state->_channel_relay_orphans = channel.lifecycle.relay_rx.orphans;
+    state->_channel_relay_truncated = channel.lifecycle.relay_rx.truncated;
+    state->_channel_relay_refused = channel.lifecycle.relay_tx.q.refused;
 
     const dh_device_drops drops = {
-        .reports = channel.reports_dropped,
-        .inbound = channel.inbound.dropped,
+        .reports = channel.lifecycle.reports_dropped,
+        .inbound = channel.lifecycle.inbound.dropped,
         .outq = channel.lifecycle.out.refused,
         .unsent = channel.lifecycle.tx.dropped,
-        .orphans = channel.relay_rx.orphans,
-        .truncated = channel.relay_rx.truncated,
-        .relay_q = channel.relay_tx.q.refused,
-        .reports_in = channel.reports_in,
+        .orphans = channel.lifecycle.relay_rx.orphans,
+        .truncated = channel.lifecycle.relay_rx.truncated,
+        .relay_q = channel.lifecycle.relay_tx.q.refused,
+        .reports_in = channel.lifecycle.reports_in,
         .frames_in = channel.lifecycle.session.frames_in,
         .frames_refused = channel.lifecycle.session.frames_refused,
         .outq_priority = channel.lifecycle.out.refused_priority,
@@ -1033,29 +561,38 @@ void channel_task(device_t *state) {
                                                   state->config.clip_block_b_to_a != 0),
                                state->config.clip_cap_mb);
 
-    /*
-     * Whichever the session owes its helper: the clipboard policy a fresh or
-     * changed setting owes it, a listener alert that has been waiting for a
-     * session to tell, a fresh reading of the drop totals above, the beat that
-     * fills an idle direction, or the announcement that a silent helper has
-     * just been evicted. Never more than one, and nothing at all on the
-     * ordinary tick.
-     */
-    uint8_t owed[DH_SESSION_REPLY_MAX];
-    size_t owed_len = 0;
-    if (dh_session_tick(&channel.lifecycle.session, now, owed, sizeof owed, &owed_len) == DH_FRAME_OK &&
-        owed_len > 0 && channel_queue_frame(owed, owed_len)) {
-        /* The listener alert and the clipboard policy both care, and both for
-           the same reason: the queue's priority band holds one frame, and the
-           tick that first has a session to tell is the one right after the
-           HELLO_ACK went into it. A refused alert marked sent would be a
-           measurement destroyed; a refused policy marked sent would leave a
-           helper acting on a toggle the user has changed, with nothing
-           following to correct it. owed[0] is the frame's type byte. */
-        dh_session_note_owed_sent(&channel.lifecycle.session, owed[0]);
-    }
+}
 
-    dh_pair_tick(&channel.lifecycle.pair, now);
-    channel_pump_relay();
+void channel_task(device_t *state) {
+    const uint32_t now = channel_now_ms();
+    if (channel.config_wiped) {
+        channel.config_wiped = false;
+        channel_lifecycle_config_wiped(&channel.lifecycle, now);
+    }
+    if (dh_session_needs_nonce(&channel.lifecycle.session)) {
+        uint8_t nonce[DH_NONCE_SIZE];
+        channel_random_bytes(nonce, sizeof nonce);
+        dh_session_stage_nonce(&channel.lifecycle.session, nonce);
+    }
+    channel_lifecycle_step(&channel.lifecycle, now, state);
     channel_pump_out();
+}
+
+void channel_lifecycle_save_registration(void *context) {
+    device_t *state = context;
+    memcpy(state->config.channel_helper_key_id, channel.lifecycle.pair.helper_key_id,
+           sizeof state->config.channel_helper_key_id);
+    memcpy(state->config.channel_shared_secret, channel.lifecycle.pair.shared_secret,
+           sizeof state->config.channel_shared_secret);
+    state->config.channel_paired = 1;
+    save_config(state);
+}
+
+bool channel_lifecycle_query_unavailable(void *context, uint8_t query_id) {
+    device_t *state = context;
+    uart_packet_t unavailable = {
+        .type = CURSOR_QUERY_UNAVAILABLE_MSG,
+        .data = {(uint8_t)BOARD_ROLE, query_id},
+    };
+    return queue_uart_packet(&unavailable, state);
 }
