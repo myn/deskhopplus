@@ -79,11 +79,11 @@ extern "C" {
 #define DH_PROTO_VERSION 2u
 
 /*
- * Shipped as one channel (ADR-0002): the count is negotiated in the hello
+ * Two channels (#63, ADR-0002): the count is negotiated in the hello
  * rather than baked into the wire format, so raising it is a descriptor edit
  * and a different number here — never a protocol revision.
  */
-#define DH_SESSION_CHANNEL_COUNT 1u
+#define DH_SESSION_CHANNEL_COUNT 2u
 
 /*
  * Liveness, symmetric and independently timed per direction (ADR-0004).

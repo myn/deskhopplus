@@ -23,7 +23,7 @@
  * has buffered when the device task runs — so reports arrive in bursts inside
  * one pass, not one per millisecond.
  *
- * Thirty-two covers a loop pass of about 32 ms. It is not a measurement,
+ * Thirty-two shared slots cover about 16 ms with two saturated channels. It is not a measurement,
  * because nobody has measured the worst pass; it is generous depth behind a
  * drop that is no longer silent, which is the change that matters. See
  * `stream_broken` — a dropped report now ends the session, so if this
@@ -43,8 +43,11 @@ typedef struct {
     dh_session session;
     dh_pair pair;
     dh_outq out;
+    dh_outq extra_out[DH_SESSION_CHANNEL_COUNT - 1];
+    uint8_t next_bulk;
     dh_txq_stats tx;
     dh_frame_reader reader;
+    dh_frame_reader extra_reader[DH_SESSION_CHANNEL_COUNT - 1];
 
     /*
      * Reports from tud_hid_set_report_cb, drained by channel_task.
@@ -56,6 +59,7 @@ typedef struct {
      */
     uint8_t reports[CHANNEL_REPORT_BACKLOG][CHANNEL_REPORT_SIZE];
     uint16_t report_len[CHANNEL_REPORT_BACKLOG];
+    uint8_t report_channel[CHANNEL_REPORT_BACKLOG];
     uint8_t report_head; /* next to drain */
     uint8_t report_used;
     uint32_t reports_dropped;
@@ -124,6 +128,8 @@ typedef struct {
 void channel_lifecycle_lock(void);
 void channel_lifecycle_unlock(void);
 
+dh_outq *channel_lifecycle_output(channel_lifecycle *c, uint8_t index);
+
 bool channel_lifecycle_queue(channel_lifecycle *c, const uint8_t *frame, size_t len,
                              uint32_t now);
 /* Session-band frame only. Owns successful hello -> fresh stream -> reply.
@@ -133,6 +139,8 @@ void channel_lifecycle_on_frame(channel_lifecycle *c, const dh_frame_view *frame
 
 void channel_lifecycle_link_lost(channel_lifecycle *c);
 
+void channel_lifecycle_receive_channel_report(channel_lifecycle *c, uint8_t index,
+                                               const uint8_t *buffer, uint16_t len);
 void channel_lifecycle_receive_report(channel_lifecycle *c, const uint8_t *buffer, uint16_t len);
 void channel_lifecycle_config_wiped(channel_lifecycle *c, uint32_t now);
 /* One clock for decoding and liveness, with hardware work between them. */

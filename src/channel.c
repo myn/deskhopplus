@@ -154,7 +154,8 @@ void channel_init(device_t *state) {
      * buffer, which is why it belongs here and not in the reset beside it.
      */
     critical_section_enter_blocking(&channel.out_lock);
-    dh_outq_init(&channel.lifecycle.out);
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT; ++i)
+        dh_outq_init(channel_lifecycle_output(&channel.lifecycle, i));
     critical_section_exit(&channel.out_lock);
     dh_relay_tx_init(&channel.lifecycle.relay_tx);
     dh_relay_rx_init(&channel.lifecycle.relay_rx, channel.lifecycle.relay_rx_buf, sizeof channel.lifecycle.relay_rx_buf);
@@ -384,8 +385,8 @@ static bool channel_emit_placement_query(const uint8_t *place_body, uint8_t quer
  * queued and channel_task does the work, on the shallow stack of the
  * scheduler's own loop.
  */
-void channel_receive_report(const uint8_t *buffer, uint16_t bufsize) {
-    channel_lifecycle_receive_report(&channel.lifecycle, buffer, bufsize);
+void channel_receive_report(uint8_t index, const uint8_t *buffer, uint16_t bufsize) {
+    channel_lifecycle_receive_channel_report(&channel.lifecycle, index, buffer, bufsize);
 }
 
 /* An authenticated position response, applied to this board's cursor state. */
@@ -462,13 +463,13 @@ bool channel_lifecycle_send_relay(const dh_relay_packet *packet) {
 }
 
 /* One report's worth of whatever is owed to this board's helper. */
-static void channel_pump_out(void) {
+static void channel_pump_out(uint8_t index) {
     if (global_state.config_mode_active)
         return;
 
     /* The channel occupies the vendor interface slot in normal mode, with no
        report ID: a report is exactly one packet the framing layer owns. */
-    if (!tud_hid_n_ready(ITF_NUM_HID_VENDOR))
+    if (!tud_hid_n_ready(ITF_NUM_HID_VENDOR + index))
         return;
 
     uint8_t report[CHANNEL_REPORT_SIZE];
@@ -476,7 +477,7 @@ static void channel_pump_out(void) {
     uint16_t take = 0;
 
     critical_section_enter_blocking(&channel.out_lock);
-    if (dh_outq_peek(&channel.lifecycle.out, &owed)) {
+    if (dh_outq_peek(channel_lifecycle_output(&channel.lifecycle, index), &owed)) {
         take = owed.remaining < CHANNEL_REPORT_SIZE ? owed.remaining : CHANNEL_REPORT_SIZE;
 
         /* Pad the tail: a report is a fixed 64 bytes with no length of its own,
@@ -493,11 +494,11 @@ static void channel_pump_out(void) {
        the other core can still queue a frame here. Advancing the band the peek
        named — not whatever is owed by the time we return — is what makes that
        gap safe; a frame that arrived meanwhile simply waits its turn. */
-    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR, 0, report, CHANNEL_REPORT_SIZE))
+    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR + index, 0, report, CHANNEL_REPORT_SIZE))
         return; /* refused: the bytes stay owed rather than being lost */
 
     critical_section_enter_blocking(&channel.out_lock);
-    dh_outq_advance(&channel.lifecycle.out, &owed, take);
+    dh_outq_advance(channel_lifecycle_output(&channel.lifecycle, index), &owed, take);
     critical_section_exit(&channel.out_lock);
 }
 
@@ -524,9 +525,18 @@ void channel_lifecycle_update_config(void *context, uint32_t now) {
      * reader of one is asking what the total is now. The session decides for
      * itself whether a fresh reading is worth a frame.
      */
+    uint64_t outq_refused = 0, outq_priority = 0, outq_bad_header = 0;
+    critical_section_enter_blocking(&channel.out_lock);
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT; ++i) {
+        const dh_outq *q = channel_lifecycle_output(&channel.lifecycle, i);
+        outq_refused += q->refused;
+        outq_priority += q->refused_priority;
+        outq_bad_header += q->refused_bad_header;
+    }
+    critical_section_exit(&channel.out_lock);
     state->_channel_reports_dropped = channel.lifecycle.reports_dropped;
     state->_channel_inbound_dropped = channel.lifecycle.inbound.dropped;
-    state->_channel_outq_refused = channel.lifecycle.out.refused;
+    state->_channel_outq_refused = outq_refused > UINT32_MAX ? UINT32_MAX : (uint32_t)outq_refused;
     state->_channel_relay_dropped = channel.lifecycle.tx.dropped;
     state->_channel_relay_orphans = channel.lifecycle.relay_rx.orphans;
     state->_channel_relay_truncated = channel.lifecycle.relay_rx.truncated;
@@ -535,7 +545,7 @@ void channel_lifecycle_update_config(void *context, uint32_t now) {
     const dh_device_drops drops = {
         .reports = channel.lifecycle.reports_dropped,
         .inbound = channel.lifecycle.inbound.dropped,
-        .outq = channel.lifecycle.out.refused,
+        .outq = state->_channel_outq_refused,
         .unsent = channel.lifecycle.tx.dropped,
         .orphans = channel.lifecycle.relay_rx.orphans,
         .truncated = channel.lifecycle.relay_rx.truncated,
@@ -543,8 +553,8 @@ void channel_lifecycle_update_config(void *context, uint32_t now) {
         .reports_in = channel.lifecycle.reports_in,
         .frames_in = channel.lifecycle.session.frames_in,
         .frames_refused = channel.lifecycle.session.frames_refused,
-        .outq_priority = channel.lifecycle.out.refused_priority,
-        .outq_bad_header = channel.lifecycle.out.refused_bad_header,
+        .outq_priority = outq_priority > UINT32_MAX ? UINT32_MAX : (uint32_t)outq_priority,
+        .outq_bad_header = outq_bad_header > UINT32_MAX ? UINT32_MAX : (uint32_t)outq_bad_header,
     };
     dh_session_set_drops(&channel.lifecycle.session, &drops);
 
@@ -575,7 +585,8 @@ void channel_task(device_t *state) {
         dh_session_stage_nonce(&channel.lifecycle.session, nonce);
     }
     channel_lifecycle_step(&channel.lifecycle, now, state);
-    channel_pump_out();
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT; ++i)
+        channel_pump_out(i);
 }
 
 void channel_lifecycle_save_registration(void *context) {

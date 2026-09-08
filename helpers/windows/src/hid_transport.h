@@ -41,7 +41,7 @@ class HidTransport {
            this event — it is `acquisition_refused`. */
         std::function<void(uint8_t count)> channels_acquired;
         std::function<void(uint8_t acquired, uint8_t of)> acquisition_refused;
-        std::function<void(const uint8_t *data, size_t len)> received;
+        std::function<void(uint8_t channel, const uint8_t *data, size_t len)> received;
         std::function<void(const std::string &reason)> transport_failed;
         std::function<void(const std::string &message)> log;
     };
@@ -86,7 +86,7 @@ class HidTransport {
     /* Whether the frame actually went out. The answer matters to ADR-0004's
        idle timer: a caller that charged it for a frame this refused would
        suppress a heartbeat that was owed (HelperSession::emit). */
-    bool send(const uint8_t *frame, size_t len);
+    bool send(const uint8_t *frame, size_t len, uint8_t count = 1);
 
     /* The read completions the run loop waits on, alongside the message
        queue. Recomputed on demand: the set changes as channels come and go. */
@@ -100,6 +100,7 @@ class HidTransport {
 
   private:
     struct Channel {
+        uint8_t index{0};
         std::wstring path;
         HANDLE handle{INVALID_HANDLE_VALUE};
         HANDLE read_event{nullptr};
@@ -120,6 +121,7 @@ class HidTransport {
         std::wstring serial;
         USHORT input_report_len{0};
         USHORT output_report_len{0};
+        uint8_t index{0};
     };
 
     /* A fresh sweep, diffed against what is held. Arrival and removal both
@@ -139,6 +141,7 @@ class HidTransport {
     HWND window_{nullptr};
     HDEVNOTIFY notification_{nullptr};
     std::vector<Channel> channels_;
+    uint8_t next_bulk_{0};
     size_t config_mode_nodes_{0};
 
     /* The serial of the device this helper is talking to. Every channel must

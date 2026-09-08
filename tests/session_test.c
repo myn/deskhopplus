@@ -546,7 +546,7 @@ static void test_the_board_answers_the_golden_hello(void) {
           "the answer to hello_mac is not hello_ack_ok");
     CHECK(s.present, "hello", "no session after a good hello");
     CHECK(s.peer_os == DH_OS_MAC, "hello", "platform not recorded");
-    CHECK(s.channel_count == DH_SESSION_CHANNEL_COUNT, "hello", "channel count not negotiated");
+    CHECK(s.channel_count == 1, "hello", "channel count not negotiated");
     CHECK(s.max_chunk == 1024, "hello", "chunk size not negotiated");
 
     /* The session keys are the published ones, which is what makes every
@@ -799,7 +799,7 @@ static void test_negotiation_clamps_to_what_the_board_has(void) {
         uint8_t want_channels;
         uint16_t want_chunk;
     } cases[] = {
-        {"over-asking is clamped, not refused", 3, 4096, DH_SESSION_CHANNEL_COUNT,
+        {"over-asking is clamped, not refused", 3, 4096, 2,
          DH_SESSION_MAX_CHUNK},
         {"asking for less is honoured, not raised", 1, 512, 1, 512},
         {"asking for nothing is floored to a usable session", 0, 0, 1, DH_SESSION_MIN_CHUNK},

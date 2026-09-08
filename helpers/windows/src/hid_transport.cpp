@@ -112,7 +112,8 @@ enum class Match { None, Normal, ConfigMode };
  */
 Match classify(const HIDD_ATTRIBUTES &attrs, const HIDP_CAPS &caps) {
     if (caps.UsagePage != kUsagePage) return Match::None;
-    if (attrs.VendorID == kVendorId && attrs.ProductID == kProductId && caps.Usage == kUsage)
+    if (attrs.VendorID == kVendorId && attrs.ProductID == kProductId && caps.Usage >= kUsage &&
+        caps.Usage < kUsage + DH_SESSION_CHANNEL_COUNT)
         return Match::Normal;
     if (attrs.VendorID == kConfigVendorId && attrs.ProductID == kConfigProductId)
         return Match::ConfigMode;
@@ -238,7 +239,7 @@ std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) 
             break;
         case Match::Normal:
             found.push_back(Found{detail->DevicePath, serial, caps.InputReportByteLength,
-                                  caps.OutputReportByteLength});
+                                  caps.OutputReportByteLength, static_cast<uint8_t>(caps.Usage - kUsage)});
             break;
         case Match::None:
             break;
@@ -269,6 +270,15 @@ bool HidTransport::refresh() {
                  " channel(s) on another serial; holding " + narrow(serial_));
     }
 
+    const bool changed = found.size() != channels_.size() ||
+        std::any_of(found.begin(), found.end(), [&](const Found &f) {
+            return std::none_of(channels_.begin(), channels_.end(),
+                                [&](const Channel &c) { return c.path == f.path; });
+        });
+    const bool was_holding = holding_channels();
+    /* OVERLAPPED addresses must remain stable until cancellation completes. */
+    if (changed) release();
+
     const bool had_device = !channels_.empty();
     const size_t config_before = config_mode_nodes_;
     config_mode_nodes_ = config_nodes;
@@ -295,12 +305,19 @@ bool HidTransport::refresh() {
         if (known) continue;
         Channel channel;
         channel.path = f.path;
+        channel.index = f.index;
         channel.input_report_len = f.input_report_len;
         channel.output_report_len = f.output_report_len;
         channels_.push_back(std::move(channel));
         ++added;
     }
 
+    if (changed) {
+        std::sort(channels_.begin(), channels_.end(),
+                  [](const Channel &a, const Channel &b) { return a.index < b.index; });
+        if (was_holding && events_.transport_failed)
+            events_.transport_failed("channel set changed");
+    }
     bool announced = false;
     if (added > 0) {
         note("channel(s) found on serial " +
@@ -355,6 +372,13 @@ bool HidTransport::holding_channels() const {
 
 void HidTransport::acquire() {
     if (channels_.empty()) return;
+    for (size_t i = 0; i < channels_.size(); ++i) {
+        if (channels_[i].index == i) continue;
+        release();
+        if (events_.acquisition_refused)
+            events_.acquisition_refused(0, static_cast<uint8_t>(channels_.size()));
+        return;
+    }
     /* Nothing to do when every channel is already held. With more than one
        channel (#63) the nodes arrive one at a time, so this runs again as each
        turns up and the session is re-established on the full set. */
@@ -437,6 +461,7 @@ void HidTransport::acquire() {
 }
 
 void HidTransport::release() {
+    next_bulk_ = 0;
     for (Channel &channel : channels_) close(channel);
 }
 
@@ -538,7 +563,7 @@ void HidTransport::pump_reads() {
              * in front of every report, which the reader skips, and a stray
              * anything else would desynchronise it.
              */
-            if (read > 1 && events_.received) events_.received(channel.buffer.data() + 1, read - 1);
+            if (read > 1 && events_.received) events_.received(channel.index, channel.buffer.data() + 1, read - 1);
 
             /* Re-armed inside the loop, so the next queued report is picked up
                on this pass. A refused re-arm has already reported itself. */
@@ -547,22 +572,13 @@ void HidTransport::pump_reads() {
     }
 }
 
-bool HidTransport::send(const uint8_t *frame, size_t len) {
-    /*
-     * Session and control traffic goes on channel 0; bulk striping across the
-     * rest is #47's and arrives with the relay.
-     */
-    Channel *channel = nullptr;
-    for (Channel &candidate : channels_) {
-        if (candidate.opened) {
-            channel = &candidate;
-            break;
-        }
-    }
-    if (!channel) {
-        note("dropped " + std::to_string(len) + " bytes: no channel held");
+bool HidTransport::send(const uint8_t *frame, size_t len, uint8_t count) {
+    const bool bulk = len > 0 && dh_msg_is_bulk(frame[0]);
+    const uint8_t index = bulk && count > 0 ? next_bulk_ % count : 0;
+    if (count == 0 || count > channels_.size() ||
+        !std::all_of(channels_.begin(), channels_.end(), [](const Channel &c) { return c.opened; }))
         return false;
-    }
+    Channel *channel = &channels_[index];
 
     /*
      * The report the collection actually declares has to hold our 64 bytes
@@ -633,6 +649,7 @@ bool HidTransport::send(const uint8_t *frame, size_t len) {
             return false;
         }
     }
+    if (bulk) next_bulk_ = static_cast<uint8_t>((index + 1u) % count);
     return true;
 }
 

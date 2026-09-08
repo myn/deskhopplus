@@ -134,6 +134,8 @@ static void forget_session(dh_helper *h) {
     h->have_device_drops = false;
     h->have_chain = false;
     dh_frame_reader_init(&h->reader);
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT - 1; ++i)
+        dh_frame_reader_init(&h->extra_reader[i]);
     h->stream_breaks = 0;
     forget_beat_trace(h);
     forget_crypto_state(h);
@@ -382,6 +384,8 @@ void dh_helper_init(dh_helper *h, const dh_helper_identity *identity,
     h->state = DH_HELPER_QUIET;
     h->phase = DH_HELPER_PHASE_IDLE;
     dh_frame_reader_init(&h->reader);
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT - 1; ++i)
+        dh_frame_reader_init(&h->extra_reader[i]);
     dh_auth_counter_init(&h->rx);
     backoff_reset(h);
     /* Both directions until the board says otherwise, matching the stored
@@ -472,7 +476,8 @@ void dh_helper_device_disappeared(dh_helper *h, uint32_t now_ms, dh_helper_outpu
 
 void dh_helper_channels_acquired(dh_helper *h, uint8_t count, uint32_t now_ms,
                                  dh_helper_outputs *o) {
-    (void)count; /* the effective count is negotiated, not counted here */
+    forget_session(h);
+    h->acquired_channels = count;
     note_started(h, now_ms);
 
     h->holding_channels = true;
@@ -656,6 +661,13 @@ static void on_hello_ack(dh_helper *h, const dh_frame_view *f, uint32_t now_ms,
        is the half of #108 that a tag alone does not close. */
     if (ack.correlation != h->hello_correlation) {
         put_note(o, DH_NOTE_IGNORED_WRONG_CORRELATION, f->hdr.type, 0);
+        return;
+    }
+
+    if (ack.channel_count == 0 || ack.channel_count > DH_SESSION_CHANNEL_COUNT ||
+        ack.channel_count > h->acquired_channels) {
+        drop_connection(h, now_ms, o, DH_NOTE_PARTIAL_ACQUISITION,
+                        h->acquired_channels, ack.channel_count);
         return;
     }
 
@@ -1108,14 +1120,23 @@ static bool only_padding(const uint8_t *at, size_t len) {
  */
 void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t now_ms,
                         dh_helper_outputs *o) {
+    dh_helper_received_channel(h, 0, data, len, now_ms, o);
+}
+
+void dh_helper_received_channel(dh_helper *h, uint8_t channel, const uint8_t *data, size_t len,
+                                 uint32_t now_ms, dh_helper_outputs *o) {
+    if (channel >= DH_SESSION_CHANNEL_COUNT ||
+        (channel > 0 && (!h->have_negotiated || channel >= h->negotiated.channel_count)))
+        return;
     note_started(h, now_ms);
+    dh_frame_reader *reader = channel == 0 ? &h->reader : &h->extra_reader[channel - 1];
 
     size_t offset = 0;
     while (offset < len) {
         size_t consumed = 0;
         dh_frame_view f;
         const dh_frame_result rc =
-            dh_frame_reader_push(&h->reader, data + offset, len - offset, &consumed, &f);
+            dh_frame_reader_push(reader, data + offset, len - offset, &consumed, &f);
         offset += consumed;
 
         if (rc == DH_FRAME_AGAIN) break;

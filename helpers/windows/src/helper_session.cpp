@@ -108,9 +108,9 @@ std::vector<Output> HelperSession::acquisition_refused(uint8_t acquired, uint8_t
     return collect({});
 }
 
-std::vector<Output> HelperSession::received(const uint8_t *data, size_t len, uint32_t now_ms) {
+std::vector<Output> HelperSession::received(const uint8_t *data, size_t len, uint32_t now_ms, uint8_t channel) {
     dh_helper_outputs_reset(outputs_.get());
-    dh_helper_received(machine_.get(), data, len, now_ms, outputs_.get());
+    dh_helper_received_channel(machine_.get(), channel, data, len, now_ms, outputs_.get());
     return collect({});
 }
 

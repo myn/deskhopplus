@@ -39,6 +39,7 @@ public enum SessionInput: Equatable {
     case channelsAcquired(count: Int)
     case acquisitionRefused(acquired: Int, of: Int)
     case received([UInt8])
+    case receivedOnChannel(UInt8, [UInt8])
     /* The transport could not carry something it was given. A frame written
        in part leaves the device's reader mid-frame, where the padding skip
        does not apply and the next frame is eaten as its tail — so this is a
@@ -339,6 +340,10 @@ public final class HelperSession {
         case .received(let bytes):
             bytes.withUnsafeBufferPointer {
                 dh_helper_received(machine, $0.baseAddress, $0.count, ms, outputs)
+            }
+        case .receivedOnChannel(let channel, let bytes):
+            bytes.withUnsafeBufferPointer {
+                dh_helper_received_channel(machine, channel, $0.baseAddress, $0.count, ms, outputs)
             }
         case .transportFailed:
             dh_helper_transport_failed(machine, ms, outputs)

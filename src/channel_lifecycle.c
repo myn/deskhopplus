@@ -4,10 +4,31 @@
 
 #include "dh_place.h"
 
+dh_outq *channel_lifecycle_output(channel_lifecycle *c, uint8_t index) {
+    return index == 0 ? &c->out : &c->extra_out[index - 1];
+}
+
+static void reset_readers(channel_lifecycle *c) {
+    dh_frame_reader_init(&c->reader);
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT - 1; ++i)
+        dh_frame_reader_init(&c->extra_reader[i]);
+}
+
+static void reset_output(channel_lifecycle *c) {
+    for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT; ++i)
+        dh_outq_reset(channel_lifecycle_output(c, i));
+    c->next_bulk = 0;
+}
+
 bool channel_lifecycle_queue(channel_lifecycle *c, const uint8_t *frame, size_t len,
                              uint32_t now) {
     channel_lifecycle_lock();
-    const bool queued = dh_outq_offer(&c->out, frame, len) == DH_OUTQ_OK;
+    const bool bulk = len > 0 && dh_msg_is_bulk(frame[0]);
+    const uint8_t count = c->session.channel_count ? c->session.channel_count : 1;
+    const uint8_t index = bulk ? c->next_bulk % count : 0;
+    const bool queued = dh_outq_offer(channel_lifecycle_output(c, index), frame, len) == DH_OUTQ_OK;
+    if (queued && bulk)
+        c->next_bulk = (uint8_t)((index + 1u) % count);
     if (queued)
         dh_session_note_sent(&c->session, now);
     channel_lifecycle_unlock();
@@ -29,8 +50,10 @@ void channel_lifecycle_on_frame(channel_lifecycle *c, const dh_frame_view *frame
        and queued old tags before offering its ack. Reset preserves refusals. */
     if (rc == DH_FRAME_OK && reply_len > 0 && reply[0] == DH_MSG_HELLO_ACK) {
         channel_lifecycle_lock();
-        dh_outq_reset(&c->out);
+        reset_output(c);
         channel_lifecycle_unlock();
+        reset_readers(c);
+        c->report_used = 0;
     }
     if (rc == DH_FRAME_OK && reply_len > 0)
         (void)channel_lifecycle_queue(c, reply, reply_len, now);
@@ -43,7 +66,7 @@ void channel_lifecycle_on_frame(channel_lifecycle *c, const dh_frame_view *frame
  */
 void channel_lifecycle_link_lost(channel_lifecycle *c) {
     dh_session_drop(&c->session);
-    dh_frame_reader_init(&c->reader);
+    reset_readers(c);
     dh_relay_tx_reset(&c->relay_tx);
     dh_relay_rx_reset(&c->relay_rx);
 
@@ -58,7 +81,7 @@ void channel_lifecycle_link_lost(channel_lifecycle *c) {
     channel_lifecycle_lock();
     c->cursor_query_origin = CURSOR_QUERY_NONE;
     c->cursor_query_id = 0;
-    dh_outq_reset(&c->out);
+    reset_output(c);
     channel_lifecycle_unlock();
 }
 
@@ -79,7 +102,12 @@ static void end_session(channel_lifecycle *c, uint8_t reason, uint32_t now) {
 
 void channel_lifecycle_receive_report(channel_lifecycle *c, const uint8_t *buffer,
                                        uint16_t bufsize) {
-    if (bufsize == 0)
+    channel_lifecycle_receive_channel_report(c, 0, buffer, bufsize);
+}
+
+void channel_lifecycle_receive_channel_report(channel_lifecycle *c, uint8_t index,
+                                               const uint8_t *buffer, uint16_t bufsize) {
+    if (bufsize == 0 || index >= DH_SESSION_CHANNEL_COUNT)
         return;
 
     /* Before the backlog check, so this is what arrived rather than what fitted. */
@@ -114,6 +142,7 @@ void channel_lifecycle_receive_report(channel_lifecycle *c, const uint8_t *buffe
     const uint16_t take = bufsize < CHANNEL_REPORT_SIZE ? bufsize : CHANNEL_REPORT_SIZE;
     memcpy(c->reports[slot], buffer, take);
     c->report_len[slot] = take;
+    c->report_channel[slot] = index;
     c->report_used++;
 }
 
@@ -187,6 +216,8 @@ static void drain_reports(channel_lifecycle *c, uint32_t now, void *context) {
         const uint8_t slot = c->report_head;
         const uint8_t *buffer = c->reports[slot];
         const uint16_t bufsize = c->report_len[slot];
+        const uint8_t index = c->report_channel[slot];
+        dh_frame_reader *reader = index == 0 ? &c->reader : &c->extra_reader[index - 1];
         c->report_head = (uint8_t)((c->report_head + 1u) % CHANNEL_REPORT_BACKLOG);
         c->report_used--;
 
@@ -195,7 +226,7 @@ static void drain_reports(channel_lifecycle *c, uint32_t now, void *context) {
             dh_frame_view frame;
             size_t consumed = 0;
             const dh_frame_result rc = dh_frame_reader_push(
-                &c->reader, buffer + offset, bufsize - offset, &consumed, &frame);
+                reader, buffer + offset, bufsize - offset, &consumed, &frame);
 
             if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) {
                 /* A protocol error drops the session: the stream is no longer
@@ -205,15 +236,17 @@ static void drain_reports(channel_lifecycle *c, uint32_t now, void *context) {
                    desynchronised — and this is the one path where the helper is
                    the thing in the wrong and could stop. */
                 end_session(c, DH_SESSION_END_PROTOCOL_ERROR, now);
-                dh_frame_reader_init(&c->reader);
+                reset_readers(c);
                 return;
             }
 
             offset += consumed;
 
-            if (rc == DH_FRAME_OK)
-                on_frame(c, &frame, now, context);
-            else if (consumed == 0)
+            if (rc == DH_FRAME_OK) {
+                if (index == 0 || (index < c->session.channel_count &&
+                                   dh_msg_is_bulk(frame.hdr.type)))
+                    on_frame(c, &frame, now, context);
+            } else if (consumed == 0)
                 break; /* nothing more to take from this report */
         }
     }
@@ -349,7 +382,7 @@ void channel_lifecycle_step(channel_lifecycle *c, uint32_t now, void *context) {
         c->report_head = 0;
         c->report_used = 0;
         end_session(c, DH_SESSION_END_STREAM_GAP, now);
-        dh_frame_reader_init(&c->reader);
+        reset_readers(c);
     }
     drain_reports(c, now, context);
     pump_query(c, now, context);

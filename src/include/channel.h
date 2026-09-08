@@ -38,7 +38,7 @@ void channel_config_wiped(void);
 /* One HID OUT report from the channel interface, verbatim. Copied and nothing
    more: every decision behind it, and all of v2's cryptography, runs in
    channel_task instead — off the USB callback's already-deep stack. */
-void channel_receive_report(const uint8_t *buffer, uint16_t bufsize);
+void channel_receive_report(uint8_t index, const uint8_t *buffer, uint16_t bufsize);
 
 /* channel_task — runs the liveness timeout and drains anything owed to the
    helper — is declared with the rest of the scheduler's tasks, in tasks.h. */

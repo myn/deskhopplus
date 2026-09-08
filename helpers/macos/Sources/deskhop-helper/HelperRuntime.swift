@@ -352,7 +352,7 @@ final class HelperRuntime: HelperEffects {
             Self.note("a cursor-position response could not be built; there is no session")
             return false
         }
-        if transport.send(frame) {
+        if transport.send(frame, channelCount: session.negotiated?.channelCount ?? 1) {
             session.noteSent(at: now)
             return true
         } else {
@@ -369,7 +369,7 @@ final class HelperRuntime: HelperEffects {
     func storeBoardKey(_ key: [UInt8]) -> Bool { secrets.saveBoardKey(key) }
     func acquireChannels() { transport.acquire() }
     func releaseChannels() { transport.release() }
-    func send(_ frame: [UInt8]) -> Bool { transport.send(frame) }
+    func send(_ frame: [UInt8]) -> Bool { transport.send(frame, channelCount: session.negotiated?.channelCount ?? 1) }
     func buildFrame(type: UInt8, body: [UInt8]) -> [UInt8]? {
         session.emit(type: type, body: body)
     }

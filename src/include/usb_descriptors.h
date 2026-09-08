@@ -167,9 +167,9 @@
 // for the whole node (ADR-0001; docs/research/hid-transport-macos-tcc.md §4).
 // The usage differs from the config interface's 0x10 so a helper can match on
 // usage page and usage rather than on a device path.
-#define TUD_HID_REPORT_DESC_CHANNEL(...) \
+#define TUD_HID_REPORT_DESC_CHANNEL(usage, ...) \
   HID_USAGE_PAGE_N ( HID_USAGE_PAGE_VENDOR, 2 )             ,\
-  HID_USAGE      ( 0x20 )                                   ,\
+  HID_USAGE      ( usage )                                   ,\
   HID_COLLECTION ( HID_COLLECTION_APPLICATION )             ,\
     /* Report ID if any */\
     __VA_ARGS__ \

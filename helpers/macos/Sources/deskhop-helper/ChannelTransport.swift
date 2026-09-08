@@ -1,4 +1,5 @@
 import DeskhopChannel
+import DHCore
 import Foundation
 import IOKit
 import IOKit.hid
@@ -20,12 +21,16 @@ final class ChannelTransport {
 
     private final class Channel {
         let device: IOHIDDevice
+        let index: UInt8
+        weak var transport: ChannelTransport?
         /* IOKit writes input reports into this buffer for the lifetime of the
            callback registration, so it outlives every call. */
         let buffer: UnsafeMutablePointer<UInt8>
         var opened = false
 
-        init(device: IOHIDDevice) {
+        init(device: IOHIDDevice, index: UInt8, transport: ChannelTransport) {
+            self.index = index
+            self.transport = transport
             self.device = device
             self.buffer = .allocate(capacity: ChannelIdentity.reportSize)
             buffer.initialize(repeating: 0, count: ChannelIdentity.reportSize)
@@ -37,6 +42,7 @@ final class ChannelTransport {
     private let manager: IOHIDManager
     private var channels: [Channel] = []
     private var configModeNodes = 0
+    private var nextBulk = 0
 
     /*
      * The serial of the device this helper is talking to. Every channel must
@@ -73,7 +79,9 @@ final class ChannelTransport {
             kIOHIDProductIDKey: ChannelIdentity.configProductID,
             kIOHIDDeviceUsagePageKey: ChannelIdentity.usagePage,
         ]
-        IOHIDManagerSetDeviceMatchingMultiple(manager, [normal, configMode] as CFArray)
+        var secondary = normal
+        secondary[kIOHIDDeviceUsageKey] = ChannelIdentity.usage + 1
+        IOHIDManagerSetDeviceMatchingMultiple(manager, [normal, secondary, configMode] as CFArray)
 
         let context = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, device in
@@ -119,7 +127,16 @@ final class ChannelTransport {
         }
         serial = deviceSerial ?? serial
 
-        channels.append(Channel(device: device))
+        guard !channels.contains(where: { $0.device == device }),
+              let usage = property(device, kIOHIDDeviceUsageKey) as? Int,
+              (ChannelIdentity.usage...ChannelIdentity.usage + 1).contains(usage) else { return }
+        if isHoldingChannels {
+            release()
+            onEvent?(.transportFailed("channel set changed"))
+        }
+        channels.append(Channel(device: device, index: UInt8(usage - ChannelIdentity.usage),
+                                transport: self))
+        channels.sort { $0.index < $1.index }
         log?("channel found on serial \(serial ?? "(none exposed)"): \(channels.count) so far")
         onEvent?(.deviceAppeared(.normal))
     }
@@ -136,6 +153,9 @@ final class ChannelTransport {
             return
         }
 
+        guard channels.contains(where: { $0.device == device }) else { return }
+        release()
+        onEvent?(.transportFailed("channel removed"))
         /* Unregister before the channel is dropped: the callback holds the
            buffer the channel owns, and the channel deallocates it. */
         for channel in channels where channel.device == device {
@@ -171,6 +191,11 @@ final class ChannelTransport {
      */
     func acquire() {
         guard !channels.isEmpty else { return }
+        guard channels.enumerated().allSatisfy({ Int($0.element.index) == $0.offset }) else {
+            release()
+            onEvent?(.acquisitionRefused(acquired: 0, of: channels.count))
+            return
+        }
         /* Nothing to do when every channel is already held. With more than one
            channel (#63) the nodes arrive one at a time, so this runs again as
            each turns up and the session is re-established on the full set. */
@@ -204,6 +229,7 @@ final class ChannelTransport {
     }
 
     func release() {
+        nextBulk = 0
         for channel in channels where channel.opened {
             unlisten(channel)
             IOHIDDeviceClose(channel.device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
@@ -218,23 +244,22 @@ final class ChannelTransport {
     }
 
     private func listen(to channel: Channel) {
-        let context = Unmanaged.passUnretained(self).toOpaque()
+        let context = Unmanaged.passUnretained(channel).toOpaque()
         IOHIDDeviceRegisterInputReportCallback(
             channel.device, channel.buffer, ChannelIdentity.reportSize,
             { context, _, _, _, _, report, length in
                 guard let context, length > 0 else { return }
-                let transport = Unmanaged<ChannelTransport>.fromOpaque(context)
-                    .takeUnretainedValue()
-                transport.onEvent?(.received(Array(UnsafeBufferPointer(start: report,
-                                                                      count: Int(length)))))
+                let channel = Unmanaged<Channel>.fromOpaque(context).takeUnretainedValue()
+                channel.transport?.onEvent?(.receivedOnChannel(channel.index,
+                    Array(UnsafeBufferPointer(start: report, count: Int(length)))))
             }, context)
     }
 
     // MARK: - Writing
 
     /*
-     * Session and control traffic goes on channel 0; bulk striping across the
-     * rest is #47's and arrives with the relay. A report is a fixed 64 bytes
+     * Session and control use channel 0; each bulk frame stays on its chosen
+     * channel while successive frames rotate through the negotiated set. A report is a fixed 64 bytes
      * with a padded tail, since it carries no length of its own.
      */
     /// Whether the frame actually went out. The answer matters to ADR-0004's
@@ -243,8 +268,13 @@ final class ChannelTransport {
     /* Deliberately not @discardableResult: every caller has to decide what a
        refusal means, because a caller that ignores it charges ADR-0004's idle
        timer for a frame that never went out. That is exactly what #107 was. */
-    func send(_ frameBytes: [UInt8]) -> Bool {
-        guard let channel = channels.first, channel.opened else {
+    func send(_ frameBytes: [UInt8], channelCount: UInt8 = 1) -> Bool {
+        let count = Int(channelCount)
+        let bulk = frameBytes.first.map { dh_msg_is_bulk($0) } ?? false
+        let index = bulk && count > 0 ? nextBulk % count : 0
+        guard count > 0, count <= channels.count,
+              channels.allSatisfy({ $0.opened }),
+              let channel = channels.first(where: { Int($0.index) == index }) else {
             log?("dropped \(frameBytes.count) bytes: no channel held")
             return false
         }
@@ -281,6 +311,7 @@ final class ChannelTransport {
                 return false
             }
         }
+        if bulk { nextBulk = (index + 1) % count }
         return true
     }
 

@@ -565,6 +565,8 @@ typedef struct {
 
     uint8_t phase; /* dh_helper_phase */
     dh_frame_reader reader;
+    dh_frame_reader extra_reader[DH_SESSION_CHANNEL_COUNT - 1];
+    uint8_t acquired_channels;
     /*
      * Times this session's byte stream did not resume on a report boundary —
      * see DH_NOTE_STREAM_MISALIGNED. Per session, not since boot: it is the
@@ -722,6 +724,8 @@ void dh_helper_acquisition_refused(dh_helper *h, uint8_t acquired, uint8_t of, u
 
 /* Bytes off the channel, in order. Frame boundaries never align with report
    boundaries, so this is fed whatever arrived. */
+void dh_helper_received_channel(dh_helper *h, uint8_t channel, const uint8_t *data, size_t len,
+                                 uint32_t now_ms, dh_helper_outputs *o);
 void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t now_ms,
                         dh_helper_outputs *out);
 

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "channel_lifecycle.h"
+#include "dh_xfer.h"
 
 /* Keep checks active in the MSVC Release host suite too. */
 #define CHECK(condition) do { if (!(condition)) { \
@@ -392,7 +393,76 @@ static void test_inbound_pressure_retains_frames_behind_the_counted_loss(void) {
     CHECK(found);
 }
 
+static void test_two_channels_keep_frames_whole_and_priority_on_zero(void) {
+    init();
+    c.session.channel_count = 2;
+    uint8_t first[256], second[256];
+    const size_t n = queue_bulk(first);
+    CHECK(queue_bulk(second) == n);
+    dh_outq_view a, b;
+    CHECK(dh_outq_peek(&c.out, &a));
+    CHECK(dh_outq_peek(&c.extra_out[0], &b));
+    CHECK(a.total == n && b.total == n);
+    CHECK(memcmp(a.at, first, n) == 0 && memcmp(b.at, second, n) == 0);
+    dh_outq_advance(&c.extra_out[0], &b, 64);
+    dh_outq_advance(&c.out, &a, (uint16_t)n);
+    const uint8_t beat[] = {DH_MSG_DEVICE_HEARTBEAT, 0, 0, 0};
+    CHECK(channel_lifecycle_queue(&c, beat, sizeof beat, 101));
+    CHECK(dh_outq_peek(&c.out, &a) && a.at[0] == DH_MSG_DEVICE_HEARTBEAT);
+    CHECK(dh_outq_peek(&c.extra_out[0], &b));
+    CHECK(b.remaining == n - 64 && memcmp(b.at, second + 64, n - 64) == 0);
+    hello(true); /* A one-channel helper reconnects over a partial second stream. */
+    CHECK(!dh_outq_busy(&c.extra_out[0]));
+    CHECK(c.session.channel_count == 1);
+}
+
+static void test_interleaved_channel_reports_reassemble_independently(void) {
+    init();
+    c.session.channel_count = 2;
+    uint8_t frames[2][256], body[100] = {0x5a};
+    size_t len[2];
+    for (unsigned i = 0; i < 2; ++i)
+        CHECK(dh_auth_frame(DH_MSG_CLIP_CHUNK, 0, c.session.k_h2b, i, body,
+                            sizeof body, frames[i], sizeof frames[i], &len[i]) == DH_FRAME_OK);
+    channel_lifecycle_receive_channel_report(&c, 0, frames[0], 64);
+    channel_lifecycle_receive_channel_report(&c, 1, frames[1], 64);
+    channel_lifecycle_receive_channel_report(&c, 1, frames[1] + 64, (uint16_t)(len[1] - 64));
+    channel_lifecycle_receive_channel_report(&c, 0, frames[0] + 64, (uint16_t)(len[0] - 64));
+    channel_lifecycle_step(&c, 101, NULL);
+    CHECK(c.session.rx.accepted == 2);
+    CHECK(c.session.present);
+}
+
+static void test_two_channels_share_one_transfer_credit_window(void) {
+    init();
+    c.session.channel_count = 2;
+    static dh_xfer transfer;
+    static uint8_t payload[10 * DH_XFER_CHUNK_SIZE];
+    dh_xfer_action actions[8];
+    dh_xfer_init(&transfer, NULL, 0);
+    CHECK(dh_xfer_offer(&transfer, 0, NULL, 0, payload, sizeof payload, actions, 8) == 1);
+    (void)dh_xfer_handle_request(&transfer, transfer.tx.id, actions, 8);
+    (void)dh_xfer_handle_credit(&transfer, transfer.tx.id, DH_XFER_CREDIT_WINDOW, actions, 8);
+    const size_t n = dh_xfer_pump(&transfer, actions, 8);
+    CHECK(n == 3);
+    for (size_t i = 0; i < n; ++i) {
+        CHECK(actions[i].type == DH_XFER_ACT_SEND_CHUNK);
+        uint8_t frame[256];
+        queue_bulk(frame); /* The opaque relay does not inspect chunk bodies. */
+    }
+    CHECK(dh_outq_busy(&c.out) && dh_outq_busy(&c.extra_out[0]));
+    CHECK(dh_xfer_pump(&transfer, actions, 8) == 0);
+    /* Draining either USB queue cannot mint end-to-end credits. */
+    while (drain(sizeof wire) > 0) {}
+    CHECK(dh_xfer_pump(&transfer, actions, 8) == 0);
+    (void)dh_xfer_handle_credit(&transfer, transfer.tx.id, 1, actions, 8);
+    CHECK(dh_xfer_pump(&transfer, actions, 8) == 1);
+}
+
 int main(void) {
+    test_two_channels_share_one_transfer_credit_window();
+    test_interleaved_channel_reports_reassemble_independently();
+    test_two_channels_keep_frames_whole_and_priority_on_zero();
     test_fresh_hello_discards_partial_and_queued_frames();
     test_refused_hello_preserves_live_stream();
     test_queue_refusal_survives_reconnect();

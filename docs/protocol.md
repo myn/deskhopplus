@@ -76,6 +76,28 @@ Windows is unaffected — `hidclass.sys` refuses the second open, measured — b
 wire on both platforms. A second, weaker format would mean two state machines, two sets of
 golden vectors, and #84 implementing the weaker one on the managed laptop.
 
+## Parallel HID channels
+
+Normal mode exposes two vendor collections on usage page `0xFF00`: usage `0x20`
+(channel 0, interface 2, endpoints `0x03`/`0x83`) and usage `0x21`
+(channel 1, interface 3, endpoints `0x04`/`0x84`). Config mode retains its existing
+configuration HID and mass-storage interfaces. Debug CDC follows at interface 4.
+
+Hello negotiates the count, with a maximum of two. A one-channel hello still receives
+one; helpers acquire all discovered channel collections and reject an authenticated
+ack requiring more channels than they hold. Collections are ordered by usage, never
+by discovery order. Removing or adding a collection ends the connection before it
+is rebuilt.
+
+Session/control and placement use channel 0. Each bulk frame stays on one channel;
+successive bulk frames rotate across the negotiated set. Each channel has its own
+report reader and firmware output queue. The session keys, replay window, inter-board
+relay, and transfer credit window remain shared. A successful hello clears all firmware
+output queues and report readers before its ack. No channel number is added to a frame.
+
+See [two-channel hardware validation](verification/parallel-hid-channels.md) for the
+remaining enumeration, acquisition, and load checks.
+
 ## Framing
 
 All integers little-endian.

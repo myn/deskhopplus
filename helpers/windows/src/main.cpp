@@ -113,7 +113,8 @@ class Helper : public HelperEffects {
     void acquire_channels() override { transport_.acquire(); }
     void release_channels() override { transport_.release(); }
     bool send(const std::vector<uint8_t> &frame) override {
-        return transport_.send(frame.data(), frame.size());
+        return transport_.send(frame.data(), frame.size(),
+                               session_->have_negotiated() ? session_->negotiated().channel_count : 1);
     }
     bool build_frame(uint8_t type, const std::vector<uint8_t> &body,
                      std::vector<uint8_t> &out) override {
@@ -385,7 +386,8 @@ bool Helper::start(HINSTANCE instance) {
                 log("a cursor-position response could not be built; there is no session");
                 return;
             }
-            if (transport_.send(frame.data(), frame.size())) {
+            if (transport_.send(frame.data(), frame.size(),
+                               session_->have_negotiated() ? session_->negotiated().channel_count : 1)) {
                 session_->note_sent(now_ms());
                 if (type == DH_MSG_POS_RESPONSE && !body.empty())
                     log("cursor response id=" + std::to_string(body[0]) + " sent");
@@ -468,8 +470,8 @@ bool Helper::start(HINSTANCE instance) {
     events.acquisition_refused = [this](uint8_t acquired, uint8_t of) {
         feed(session_->acquisition_refused(acquired, of, now_ms()));
     };
-    events.received = [this](const uint8_t *data, size_t len) {
-        feed(session_->received(data, len, now_ms()));
+    events.received = [this](uint8_t channel, const uint8_t *data, size_t len) {
+        feed(session_->received(data, len, now_ms(), channel));
     };
     events.transport_failed = [this](const std::string &reason) {
         feed(session_->transport_failed(reason, now_ms()));

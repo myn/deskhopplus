@@ -381,7 +381,7 @@ static void a_helper_with_the_hello_sent(dh_helper *h) {
 
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(h, 1, 0, &out);
+    dh_helper_channels_acquired(h, 2, 0, &out);
 }
 
 /* The same, carried through the board's answer into a live session. */
@@ -395,14 +395,10 @@ static void a_live_session(dh_helper *h) {
 
 /* ------------------------------------------------------------------- tests */
 
-/*
- * The hello, byte for byte against the golden frame. The published nonce and
- * the golden frame's own correlation value are scripted in, so everything else
- * — the version, the negotiated asks, the key id, and the tag over all of it —
- * has to come out of this file's own encoding.
- */
-static void test_the_hello_matches_the_golden_frame(void) {
-    const char *name = "the hello matches the golden frame";
+/* Keep the published identity and correlation while requesting the raised count.
+   The one-channel golden wire encoding remains covered by session_test. */
+static void test_the_hello_requests_two_channels(void) {
+    const char *name = "the hello requests two channels";
     const struct vector *golden = find("hello_mac");
     if (golden == NULL) return;
 
@@ -420,14 +416,18 @@ static void test_the_hello_matches_the_golden_frame(void) {
     dh_helper_init(&h, &identity, board_public);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     const dh_helper_output *sent = first_of(&out, DH_HELPER_OUT_SEND);
     CHECK(sent != NULL, name, "no hello was sent");
     if (sent == NULL) return;
     CHECK(sent->len == golden->len[0], name, "the hello is the wrong length");
-    CHECK(sent->len == golden->len[0] && memcmp(sent->bytes, golden->f[0], sent->len) == 0, name,
-          "the hello does not match the golden frame");
+    dh_hello hello;
+    CHECK(dh_hello_decode(sent->bytes + DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE,
+                          sent->len - DH_FRAME_HEADER_SIZE - DH_FRAME_AUTH_PREFIX_SIZE,
+                          &hello), name, "hello did not decode");
+    CHECK(hello.channel_count == 2 && hello.max_chunk == 1024, name,
+          "hello must request two channels with the existing chunk size");
     no_overflow(name);
 }
 
@@ -449,14 +449,14 @@ static void test_negotiation_comes_from_the_reply(void) {
           "the board's channel count was not taken");
     no_overflow(name);
 
-    /* Again, with an ack this file writes: three channels and a 256-byte
+    /* Again, with an ack this file writes: one channel and a 256-byte
        chunk, neither of which is a constant in the core. */
     a_helper_with_the_hello_sent(&h);
     dh_hello_ack ack = {
         .correlation = h.hello_correlation,
         .proto_version = DH_PROTO_VERSION,
         .build_type = DH_BUILD_DEVELOPMENT,
-        .channel_count = 3,
+        .channel_count = 1,
         .max_chunk = 256,
     };
     memcpy(ack.board_nonce, published_board_nonce, DH_NONCE_SIZE);
@@ -469,7 +469,7 @@ static void test_negotiation_comes_from_the_reply(void) {
     dh_helper_outputs_reset(&out);
     dh_helper_received(&h, frame, len, 0, &out);
 
-    CHECK(h.negotiated.channel_count == 3, name, "the channel count was not read off the reply");
+    CHECK(h.negotiated.channel_count == 1, name, "the channel count was not read off the reply");
     CHECK(h.negotiated.max_chunk == 256, name, "the chunk size was not read off the reply");
     CHECK(saw_note(&out, DH_NOTE_DEVELOPMENT_BUILD), name,
           "a development board was not called out");
@@ -619,7 +619,7 @@ static void test_an_unpaired_helper_is_told_so_and_waits(void) {
     dh_helper_init(&h, &identity, NULL);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -796,7 +796,7 @@ static void test_the_backoff_caps_and_resets(void) {
     const uint32_t expected[] = {250, 500, 1000, 2000, 4000, 4000};
     for (size_t i = 0; i < sizeof expected / sizeof expected[0]; i++) {
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, (uint32_t)(i * 10000), &out);
+        dh_helper_channels_acquired(&h, 2, (uint32_t)(i * 10000), &out);
         dh_helper_transport_failed(&h, (uint32_t)(i * 10000) + 1, &out);
         const dh_helper_output *retry = first_of(&out, DH_HELPER_OUT_RETRY);
         CHECK(retry != NULL && (uint32_t)retry->a == expected[i], name,
@@ -805,7 +805,7 @@ static void test_the_backoff_caps_and_resets(void) {
 
     /* A session that comes up puts it back to the start. */
     dh_helper_outputs_reset(&out);
-    dh_helper_channels_acquired(&h, 1, 100000, &out);
+    dh_helper_channels_acquired(&h, 2, 100000, &out);
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
     answer_all(&h, &acquired, 100000, &out);
@@ -834,7 +834,7 @@ static void test_a_flapping_link_is_reported_as_a_rate(void) {
         if (saw_note(&out, DH_NOTE_RECONNECTION_RATE)) rate_reported = true;
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_channels_acquired(&h, 2, t + 100, &out);
         dh_helper_outputs acquired = out;
         dh_helper_outputs_reset(&out);
         answer_all(&h, &acquired, t + 100, &out);
@@ -885,7 +885,7 @@ static void test_one_re_enumeration_is_one_drop(void) {
         no_overflow(name);
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, at[i] + 20, &out);
+        dh_helper_channels_acquired(&h, 2, at[i] + 20, &out);
         no_overflow(name);
     }
 
@@ -916,7 +916,7 @@ static void test_one_re_enumeration_is_one_drop(void) {
         no_overflow(name);
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_channels_acquired(&h, 2, t + 100, &out);
         dh_helper_outputs acquired = out;
         dh_helper_outputs_reset(&out);
         answer_all(&h, &acquired, t + 100, &out);
@@ -955,7 +955,7 @@ static void test_a_slow_teardown_loop_reaches_the_state_line(void) {
                   "a couple of teardowns is an ordinary recovery, not a fault");
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_channels_acquired(&h, 2, t + 100, &out);
         dh_helper_outputs acquired = out;
         dh_helper_outputs_reset(&out);
         answer_all(&h, &acquired, t + 100, &out);
@@ -992,7 +992,7 @@ static void test_a_burst_does_not_hold_the_slow_reading(void) {
         no_overflow(name);
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_channels_acquired(&h, 2, t + 100, &out);
         dh_helper_outputs acquired = out;
         dh_helper_outputs_reset(&out);
         answer_all(&h, &acquired, t + 100, &out);
@@ -1041,7 +1041,7 @@ static void test_a_disappearance_clears_the_slow_reading(void) {
 
         dh_helper_outputs_reset(&out);
         dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, t + 5000, &out);
-        dh_helper_channels_acquired(&h, 1, t + 5000, &out);
+        dh_helper_channels_acquired(&h, 2, t + 5000, &out);
         dh_helper_outputs acquired = out;
         dh_helper_outputs_reset(&out);
         answer_all(&h, &acquired, t + 5000, &out);
@@ -1078,7 +1078,7 @@ static void test_a_completed_handshake_does_not_ask_to_pair(void) {
         no_overflow(name);
 
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t + 100, &out);
+        dh_helper_channels_acquired(&h, 2, t + 100, &out);
         CHECK(!saw_note(&out, DH_NOTE_ASKING_TO_BE_PAIRED), name,
               "a helper whose hello is answered every time asked to be paired");
         dh_helper_outputs acquired = out;
@@ -1105,7 +1105,7 @@ static void test_pairing_round_trip(void) {
     dh_helper_init(&h, &identity, NULL);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -1156,7 +1156,7 @@ static void test_a_board_whose_key_changed_is_not_accepted(void) {
     dh_helper_init(&h, &identity, helper_public);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -1779,7 +1779,7 @@ static void test_the_deadlines_survive_the_clock_wrapping(void) {
     dh_helper_init(&h, &identity, board_public);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, before_wrap, &out);
-    dh_helper_channels_acquired(&h, 1, before_wrap, &out);
+    dh_helper_channels_acquired(&h, 2, before_wrap, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -1845,7 +1845,7 @@ static void test_a_hello_that_cannot_be_built_is_still_reported(void) {
     dh_helper_init(&h, &identity, board_public);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     CHECK(saw_note(&out, DH_NOTE_KEY_DERIVATION_FAILED), name,
           "a key that cannot be used was not named as the reason");
@@ -1855,7 +1855,7 @@ static void test_a_hello_that_cannot_be_built_is_still_reported(void) {
     bool said_absent = false;
     for (uint32_t t = 1000; t <= 2 * DH_HELPER_SILENCE_MS; t += 1000) {
         dh_helper_outputs_reset(&out);
-        dh_helper_channels_acquired(&h, 1, t, &out);
+        dh_helper_channels_acquired(&h, 2, t, &out);
         dh_helper_tick(&h, t, &out);
         if (saw_state(&out, DH_HELPER_DEVICE_ABSENT)) said_absent = true;
         no_overflow(name);
@@ -1881,7 +1881,7 @@ static void test_a_grant_nobody_asked_for_is_ignored(void) {
     dh_helper_init(&h, &identity, NULL);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -2089,7 +2089,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
     republish_the_helper_nonce();
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 300000, &out);
-    dh_helper_channels_acquired(&h, 1, 300000, &out);
+    dh_helper_channels_acquired(&h, 2, 300000, &out);
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
     answer_all(&h, &acquired, 300000, &out);
@@ -2130,7 +2130,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
 
     republish_the_helper_nonce();
     dh_helper_outputs_reset(&out);
-    dh_helper_channels_acquired(&h, 1, 300, &out);
+    dh_helper_channels_acquired(&h, 2, 300, &out);
     acquired = out;
     dh_helper_outputs_reset(&out);
     answer_all(&h, &acquired, 300, &out);
@@ -2176,7 +2176,7 @@ static void test_the_beat_trace_starts_afresh_after_a_hello_is_refused(void) {
     dh_session_stage_nonce(&board, published_board_nonce);
 
     dh_helper_outputs_reset(&out);
-    dh_helper_channels_acquired(&h, 1, 200, &out);
+    dh_helper_channels_acquired(&h, 2, 200, &out);
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
     answer_all(&h, &acquired, 200, &out);
@@ -2290,7 +2290,7 @@ static void test_a_grant_answering_someone_elses_request_is_dropped(void) {
     dh_helper_init(&h, &identity, NULL);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 0, &out);
-    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_channels_acquired(&h, 2, 0, &out);
 
     dh_helper_outputs acquired = out;
     dh_helper_outputs_reset(&out);
@@ -2620,6 +2620,38 @@ static void test_a_reordered_bulk_frame_survives_the_counter(void) {
     no_overflow(name);
 }
 
+static void test_partial_acquisition_cannot_become_live(void) {
+    const char *name = "partial acquisition cannot become live";
+    dh_helper h;
+    a_helper_with_the_hello_sent(&h);
+    dh_helper_outputs_reset(&out);
+    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 0, &out);
+    CHECK(!dh_helper_can_send_bulk(&h), name, "partial acquisition became live");
+    CHECK(first_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) != NULL, name, "partial handles not released");
+}
+
+static void test_helper_reassembles_each_channel_before_authenticating(void) {
+    const char *name = "independent channel readers";
+    dh_helper h;
+    a_live_session(&h);
+    const uint64_t before = h.rx.accepted;
+    uint8_t frames[2][128], body[100] = {0x5a};
+    size_t len[2];
+    for (unsigned i = 0; i < 2; ++i)
+        CHECK(board_frame(DH_MSG_CLIP_CHUNK, body, sizeof body, frames[i],
+                           sizeof frames[i], &len[i]), name, "encode failed");
+    dh_helper_outputs_reset(&out);
+    dh_helper_received_channel(&h, 0, frames[0], 64, 1, &out);
+    dh_helper_received_channel(&h, 1, frames[1], 64, 1, &out);
+    dh_helper_received_channel(&h, 1, frames[1] + 64, 64, 1, &out);
+    dh_helper_received_channel(&h, 0, frames[0] + 64, 64, 1, &out);
+    CHECK(h.rx.accepted == before + 2, name, "interleaved frames were lost");
+    CHECK(dh_helper_can_send_bulk(&h), name, "interleaving broke the session");
+}
+
 int main(int argc, char **argv) {
     const char *frames = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     const char *primitives = argc > 2 ? argv[2] : DH_PRIMITIVE_VECTORS;
@@ -2630,8 +2662,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    test_the_hello_matches_the_golden_frame();
+    test_the_hello_requests_two_channels();
     test_negotiation_comes_from_the_reply();
+    test_partial_acquisition_cannot_become_live();
+    test_helper_reassembles_each_channel_before_authenticating();
     test_the_beat_only_fills_an_idle_direction();
     test_a_beat_the_transport_refused_is_owed_again_at_once();
     test_the_board_is_absent_only_after_the_window();
