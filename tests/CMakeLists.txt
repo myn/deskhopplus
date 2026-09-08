@@ -241,3 +241,9 @@ add_test(NAME identity_test COMMAND identity_test)
 add_executable(flash_layout_test flash_layout_test.c)
 target_include_directories(flash_layout_test PRIVATE ${CORE} ${FW}/include)
 add_test(NAME flash_layout_test COMMAND flash_layout_test)
+
+add_executable(channel_lifecycle_test channel_lifecycle_test.c ${FW}/channel_lifecycle.c
+               ${CORE}/dh_session.c ${CORE}/dh_pair.c ${CORE}/dh_frame.c
+               ${CORE}/dh_auth.c ${CORE}/dh_sha256.c ${CORE}/dh_p256.c ${CORE}/dh_outq.c)
+target_include_directories(channel_lifecycle_test PRIVATE ${CORE} ${FW}/include)
+add_test(NAME channel_lifecycle_test COMMAND channel_lifecycle_test)
