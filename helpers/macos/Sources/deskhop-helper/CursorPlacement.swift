@@ -3,6 +3,7 @@ import DHCore
 
 final class CursorPlacement {
     var log: (String) -> Void = { _ in }
+    var showProblem: (String?) -> Void = { _ in }
     private var lastChainDirection: UInt8?
 
     private struct DisplaySnapshot {
@@ -45,6 +46,7 @@ final class CursorPlacement {
 
         guard let displays = displays() else {
             log("could not enumerate displays for cursor placement")
+            showProblem("Cursor placement unavailable — reconnect your displays and try again.")
             return true
         }
         var target = dh_place_point()
@@ -53,13 +55,16 @@ final class CursorPlacement {
         }
         guard found else {
             log("cursor placement named a monitor outside the configured display chain")
+            showProblem("Cursor placement unavailable — check the device screen layout against your connected displays.")
             return true
         }
 
         let result = CGWarpMouseCursorPosition(CGPoint(x: Int(target.x), y: Int(target.y)))
         if result != .success {
             log("cursor placement was refused (CoreGraphics error \(result.rawValue))")
+            showProblem("Cursor placement refused (error \(result.rawValue)) — check macOS permissions for the helper and try again.")
         } else {
+            showProblem(nil)
             log("cursor placement applied x=\(target.x) y=\(target.y)")
         }
         return true

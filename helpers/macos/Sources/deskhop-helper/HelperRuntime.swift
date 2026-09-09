@@ -137,6 +137,9 @@ final class HelperRuntime: HelperEffects {
         transport.onEvent = { [weak self] event in self?.feed(event) }
 
         cursorPlacement.log = { message in Self.note(message) }
+        cursorPlacement.showProblem = { [weak self] message in
+            self?.menuBar.show(placementProblem: message)
+        }
 
         /* Verified payloads, straight from the core. Nothing here re-reads
            the stream: decode, tag and replay counter are all upstream of this. */

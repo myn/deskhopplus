@@ -74,7 +74,7 @@ public enum HelperState: UInt32, CaseIterable, Equatable {
         case .deviceInConfigMode: return "Device in config mode"
         case .deviceAbsent: return "Device not connected"
         case .versionIncompatible:
-            return "Helper version does not match the device — file transfers are refused"
+            return "Helper version does not match the device — update the helper; file transfers are refused"
         case .listenerDetected:
             return "Another program is writing to the device channel — find and stop it, "
                  + "and do not press the config chord while it is running"

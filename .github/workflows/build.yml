@@ -245,3 +245,7 @@ jobs:
     - name: Run helper tests
       shell: bash
       run: swift run channel-tests
+
+    - name: Run menu and login registration tests
+      shell: bash
+      run: bash tools/macos-checks/menu-tests.sh

@@ -57,9 +57,17 @@ final class MenuBar: NSObject, NSMenuDelegate {
     /// Diagnostics, never shown to the user.
     var log: ((String) -> Void)?
 
+    private let login: LaunchAtLogin
+
+    init(login: LaunchAtLogin = LaunchAtLogin()) {
+        self.login = login
+        super.init()
+    }
+
     private var item: NSStatusItem?
     private var callbacks: Callbacks?
     private var state: HelperState = .quiet
+    private var placementProblem: String?
     private var question: FileOffer?
     private var panel: NSPanel?
     /// The last thing the user needs to know about, and when it was said.
@@ -102,7 +110,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         }
         self.callbacks = callbacks
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = Self.idleTitle
+        item.button?.title = Self.title(for: state)
         /* One menu for the life of the item; its contents are filled in when it
            is about to open (`menuNeedsUpdate`), so nothing else here has to
            remember to rebuild it. */
@@ -118,6 +126,11 @@ final class MenuBar: NSObject, NSMenuDelegate {
     func show(state: HelperState) {
         guard self.state != state else { return }
         self.state = state
+        updateTitle()
+    }
+
+    func show(placementProblem: String?) {
+        self.placementProblem = placementProblem
         updateTitle()
     }
 
@@ -205,42 +218,48 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     // MARK: - The menu
 
-    private static let idleTitle = "⌥"
+    static func title(for state: HelperState) -> String {
+        switch state {
+        case .quiet: return "deskhop"
+        case .connected: return "deskhop: paired"
+        case .reconnectingRepeatedly: return "deskhop: reconnecting"
+        case .notPaired: return "deskhop: not paired"
+        case .deviceInConfigMode: return "deskhop: config mode"
+        case .deviceAbsent: return "deskhop: disconnected"
+        case .versionIncompatible: return "deskhop: update helper"
+        case .listenerDetected: return "deskhop: listener detected"
+        case .boardIdentityChanged: return "deskhop: identity changed"
+        }
+    }
 
     private func updateTitle() {
         guard let button = item?.button else { return }
         if question != nil {
-            button.title = "⬇ files?"
+            button.title = Self.title(for: state) + " — ⬇ files?"
         } else if let progress, progress.total > 0 {
-            button.title = "⬇ \(Self.percent(progress))%"
-        } else if notice != nil {
+            button.title = Self.title(for: state) + " — ⬇ \(Self.percent(progress))%"
+        } else if notice != nil || placementProblem != nil {
             /* In the title, not only in the menu. A message buried behind a
                click is not much better than the silence it replaced. */
-            button.title = "⚠ deskhop"
+            button.title = Self.title(for: state) + " ⚠"
         } else {
-            button.title = Self.idleTitle
+            button.title = Self.title(for: state)
         }
-        button.toolTip = notice ?? state.message ?? "deskhopplus helper"
+        button.toolTip = [state.message, placementProblem, notice].compactMap { $0 }.joined(separator: "\n")
     }
 
     private func fill(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.autoenablesItems = false
 
-        let status = NSMenuItem(title: state.message ?? "Waiting for the device",
-                                action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-
-        /* Directly under the state, because it explains why the last thing the
-           user did produced nothing. Wrapped, since it is a sentence. */
+        addWords(state.message ?? "Waiting for the device", to: menu)
+        if let placementProblem {
+            menu.addItem(.separator())
+            addWords(placementProblem, to: menu)
+        }
         if let notice {
             menu.addItem(.separator())
-            for line in Self.wrap(notice, at: 60) {
-                let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-                item.isEnabled = false
-                menu.addItem(item)
-            }
+            addWords(notice, to: menu)
         }
 
         if let question {
@@ -270,7 +289,18 @@ final class MenuBar: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let startup = action("Start at login", #selector(toggleLogin))
+        startup.state = login.isEnabled ? .on : .off
+        menu.addItem(startup)
         menu.addItem(action("Quit deskhopplus helper", #selector(quit)))
+    }
+
+    private func addWords(_ text: String, to menu: NSMenu) {
+        for line in Self.wrap(text, at: 60) {
+            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
     }
 
     private func action(_ title: String, _ selector: Selector) -> NSMenuItem {
@@ -298,6 +328,18 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     @objc private func abort() { callbacks?.abortTransfer() }
     @objc private func abortSend() { callbacks?.abortSend() }
+    @objc private func toggleLogin() {
+        do {
+            try login.setEnabled(!login.isEnabled)
+            show(notice: login.isEnabled
+                ? "Login item installed — takes effect at your next login."
+                : "Login item removed — takes effect at your next login.")
+        } catch {
+            show(notice: "Could not change login startup: \(error.localizedDescription) "
+                + "Check the helper files in ~/Library/LaunchAgents and try again.")
+        }
+    }
+
     @objc private func quit() { callbacks?.quit() }
 
     // MARK: - The panel that asks

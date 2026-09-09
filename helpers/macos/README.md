@@ -18,6 +18,7 @@ session.
 | `Sources/DeskhopChannel` | The binding to the shared C core, and what each of its outputs *does* (`OutputDispatch`). No IOKit — all of it runs in the tests. |
 | `Sources/deskhop-helper` | The agent: IOKit transport, run loop, menu bar, received-file store, and the state the user is shown. |
 | `Tests/channel-tests` | The host tests. |
+| `Tests/menu-tests` | Menu words/actions and login registration; run `bash tools/macos-checks/menu-tests.sh`. |
 | `LaunchAgent/` | The launchd job that starts it at login and restarts it after a crash. |
 
 Files arriving from the other computer are **offered, not pushed**
@@ -126,7 +127,7 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 | not paired | Not paired — press the config chord on the device | **yes** |
 | config mode | Device in config mode | no |
 | absent | Device not connected | no |
-| version mismatch | Helper version does not match the device — file transfers are refused | no |
+| version mismatch | Helper version does not match the device — update the helper; file transfers are refused | no |
 | listener detected | Another program is writing to the device channel — find and stop it, and do not press the config chord while it is running | **no** |
 | board identity changed | Device identity changed — if you re-flashed it, remove the pinned board key | **no** |
 
@@ -272,6 +273,21 @@ Two limits, stated plainly, because a security note that only lists wins is not 
    ADR-0001 retracted and ADR-0008 was written to answer. The answer is not detection but the
    seal above: after it, a reader learns that a transfer happened and roughly how big it was, and
    nothing about what was in it.
+
+## Menu bar
+
+The item shows the helper name and connection state in words, including **paired**, **not paired**,
+**listener detected**, and **identity changed**. Open it for the full cause and remedy. Security
+states retain their own wording even during a transfer or a placement failure. A brief config-mode
+round trip stays quiet. Placement failures remain in the menu until a placement succeeds.
+
+**Start at login** installs a per-user LaunchAgent for the current executable. Turning it off moves
+the plist to `com.deskhopplus.helper.plist.disabled`; turning it back on restores it unchanged,
+including a custom executable path. The checkbox reports whether the plist is installed, not proof
+that macOS has launched it. Changes apply at the **next login** and do not stop the running helper
+or its transfers. macOS background-item restrictions or a `launchctl disable` override can still
+prevent startup; allow the helper in System Settings if startup is blocked. Keep the executable at
+its registered path. Existing launchd jobs retain their current restart policy until reloaded.
 
 ## Installing the agent
 

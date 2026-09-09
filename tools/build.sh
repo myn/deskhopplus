@@ -136,6 +136,7 @@ test_helper() {
     command -v swift >/dev/null 2>&1 || die "no swift. Install the Command Line Tools."
     say "helper tests"
     swift run -c release channel-tests
+    bash tools/macos-checks/menu-tests.sh
 }
 
 test_core() {
