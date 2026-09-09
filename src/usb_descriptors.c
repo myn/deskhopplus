@@ -18,10 +18,10 @@
 //--------------------------------------------------------------------+
 
                                         // https://github.com/raspberrypi/usb-pid
-tusb_desc_device_t const desc_device_config = DEVICE_DESCRIPTOR(0x2e8a, 0x107c);
+tusb_desc_device_t const desc_device_config = DEVICE_DESCRIPTOR(DH_CHANNEL_CONFIG_VENDOR_ID, DH_CHANNEL_CONFIG_PRODUCT_ID);
 
                                         // https://pid.codes/1209/C000/
-tusb_desc_device_t const desc_device = DEVICE_DESCRIPTOR(0x1209, 0xc000);
+tusb_desc_device_t const desc_device = DEVICE_DESCRIPTOR(DH_CHANNEL_VENDOR_ID, DH_CHANNEL_PRODUCT_ID);
 
 // Invoked when received GET DEVICE DESCRIPTOR
 // Application return pointer to descriptor
@@ -50,8 +50,8 @@ uint8_t const desc_hid_report_vendor[] = {TUD_HID_REPORT_DESC_VENDOR_CTRL(HID_RE
 
 /* The always-on channel. No report ID, so a report is exactly one
    CHANNEL_REPORT_SIZE packet carried opaquely. */
-uint8_t const desc_hid_report_channel[] = {TUD_HID_REPORT_DESC_CHANNEL(0x20)};
-uint8_t const desc_hid_report_channel_1[] = {TUD_HID_REPORT_DESC_CHANNEL(0x21)};
+uint8_t const desc_hid_report_channel[] = {TUD_HID_REPORT_DESC_CHANNEL(DH_CHANNEL_USAGE)};
+uint8_t const desc_hid_report_channel_1[] = {TUD_HID_REPORT_DESC_CHANNEL(DH_CHANNEL_USAGE + 1)};
 
 
 // Invoked when received GET HID REPORT DESCRIPTOR
@@ -310,7 +310,7 @@ TU_VERIFY_STATIC(sizeof(desc_configuration) == CONFIG_TOTAL_LEN,
                  "normal-mode descriptor length disagrees with CONFIG_TOTAL_LEN");
 TU_VERIFY_STATIC(sizeof(desc_configuration_config) == CONFIG_TOTAL_LEN_CFG,
                  "config-mode descriptor length disagrees with CONFIG_TOTAL_LEN_CFG");
-TU_VERIFY_STATIC(CHANNEL_REPORT_SIZE <= CFG_TUD_HID_EP_BUFSIZE,
+TU_VERIFY_STATIC(DH_CHANNEL_REPORT_SIZE <= CFG_TUD_HID_EP_BUFSIZE,
                  "helper channel report exceeds the HID endpoint buffer");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {

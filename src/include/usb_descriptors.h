@@ -12,6 +12,8 @@
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
+#include "dh_channel_identity.h"
+
 // Interface 0
 #define REPORT_ID_KEYBOARD 1
 #define REPORT_ID_MOUSE    2
@@ -29,7 +31,7 @@
    packet, so this is also the endpoint's wMaxPacketSize and must not exceed
    CFG_TUD_HID_EP_BUFSIZE (a static assert in usb_descriptors.c holds the two
    together). */
-#define CHANNEL_REPORT_SIZE 64
+#define CHANNEL_REPORT_SIZE DH_CHANNEL_REPORT_SIZE
 
 /* wMaxPacketSize of the keyboard, mouse and config interfaces. Pinned to the
    value they have always enumerated with, so that sizing the driver buffer
@@ -168,7 +170,7 @@
 // The usage differs from the config interface's 0x10 so a helper can match on
 // usage page and usage rather than on a device path.
 #define TUD_HID_REPORT_DESC_CHANNEL(usage, ...) \
-  HID_USAGE_PAGE_N ( HID_USAGE_PAGE_VENDOR, 2 )             ,\
+  HID_USAGE_PAGE_N ( DH_CHANNEL_USAGE_PAGE, 2 )             ,\
   HID_USAGE      ( usage )                                   ,\
   HID_COLLECTION ( HID_COLLECTION_APPLICATION )             ,\
     /* Report ID if any */\

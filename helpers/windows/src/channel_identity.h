@@ -6,10 +6,12 @@
  * operation here: entering config mode reboots the device under a *different*
  * USB identity for up to five minutes, then reboots back (ADR-0001).
  *
- * The macOS twin is ChannelIdentity.swift. These are the same numbers said in
- * another language, and they are the only numbers this helper owns — every
- * negotiated value comes off the device's reply (dh_helper.negotiated).
+ * The USB identity comes from the shared core, as it does for the firmware
+ * and ChannelIdentity.swift. Every negotiated value comes off the device's
+ * reply (dh_helper.negotiated).
  */
+
+#include "dh_channel_identity.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -18,21 +20,21 @@
 namespace deskhop {
 
 /* Normal mode: pid.codes/1209/C000. The channel exists only here. */
-inline constexpr uint16_t kVendorId = 0x1209;
-inline constexpr uint16_t kProductId = 0xC000;
+inline constexpr uint16_t kVendorId = DH_CHANNEL_VENDOR_ID;
+inline constexpr uint16_t kProductId = DH_CHANNEL_PRODUCT_ID;
 
 /* Config mode. Seeing this is not the device being absent — it is the user
    opening the configuration page, and the helper says so. */
-inline constexpr uint16_t kConfigVendorId = 0x2E8A;
-inline constexpr uint16_t kConfigProductId = 0x107C;
+inline constexpr uint16_t kConfigVendorId = DH_CHANNEL_CONFIG_VENDOR_ID;
+inline constexpr uint16_t kConfigProductId = DH_CHANNEL_CONFIG_PRODUCT_ID;
 
 /*
  * Match on the vendor page and the channel's own usage, nothing wider. Broad
  * matching would open a keyboard, which on Windows is a device the user's
  * security software watches and on macOS raises an Input Monitoring prompt.
  */
-inline constexpr uint16_t kUsagePage = 0xFF00;
-inline constexpr uint16_t kUsage = 0x20;
+inline constexpr uint16_t kUsagePage = DH_CHANNEL_USAGE_PAGE;
+inline constexpr uint16_t kUsage = DH_CHANNEL_USAGE;
 
 /* One report is one full-speed packet, and the framing layer owns every byte
    of it: no report ID, so no byte is spent on one.
@@ -41,7 +43,7 @@ inline constexpr uint16_t kUsage = 0x20;
    takes from a HID collection, even one that declares no report IDs — so the
    transport's buffers are one byte longer than this and hid_transport.cpp
    reads their real length off HIDP_CAPS rather than adding one here. */
-inline constexpr size_t kReportSize = 64;
+inline constexpr size_t kReportSize = DH_CHANNEL_REPORT_SIZE;
 
 /*
  * What the hello asks for is *not* here. The core builds the hello itself, off
