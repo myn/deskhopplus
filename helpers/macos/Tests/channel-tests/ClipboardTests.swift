@@ -18,6 +18,8 @@ import Foundation
 
 let clipboardTests: [(String, () throws -> Void)] = [
     ("text copied on one computer arrives on the other", testTextCrossesTheLink),
+    ("a lost receipt recovers without delivering twice", testALostReceiptRecovers),
+    ("unanswered receipt probes cannot retain a payload forever", testReceiptRetentionIsBounded),
     ("an image copied on one computer arrives byte-identically", testImageCrossesTheLink),
     ("a lazy offer retry does not reclaim the pasteboard", testALazyOfferRetryDoesNotReclaimThePasteboard),
     ("replacing a lazy image cancels its receive", testReplacingALazyImageCancelsItsReceive),
@@ -209,10 +211,49 @@ private func testAFinishedSendStopsOfferingToBeCancelled() {
     let pair = bigPair()
     Check.that(!pair.a.awaitingSend, "a send was offered before anything was copied")
 
-    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    var reads: Reads? = Reads()
+    weak var retainedProvider = reads
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload, reads: reads)
+    reads = nil
+    Check.that(retainedProvider == nil, "finished send retained its payload provider")
     Check.equal(pair.filesToB.count, 1, "the files did not arrive, so this proves nothing")
     Check.that(!pair.a.awaitingSend,
                "a transfer the far end has written is still offering to be cancelled")
+    Check.that(pair.a.abortSend().isEmpty,
+               "a finished send still owns a cancellable transfer")
+}
+
+private func testALostReceiptRecovers() {
+    let pair = Pair()
+    pair.dropNext[MessageType.clipReceived] = 100
+    pair.copyOnA("received once")
+    Check.that(pair.a.awaitingSend, "a lost receipt ended the send")
+    pair.settle(pair.a.tick(at: 0), from: .a)
+    pair.dropNext[MessageType.clipReceived] = 0
+    pair.settle(pair.a.tick(at: 2), from: .a)
+    Check.that(!pair.a.awaitingSend, "DONE probe did not recover the receipt")
+    Check.equal(text(pair.deliveredToB), ["received once"], "receipt recovery redelivered")
+}
+
+private func testReceiptRetentionIsBounded() {
+    let pair = Pair()
+    pair.dropNext[MessageType.clipReceived] = 1000
+    pair.copyOnA("receipt never arrives")
+    // Delayed retransmit requests exhaust credit; their covering grants were lost.
+    for _ in 0..<3 {
+        pair.settle(pair.a.received(type: MessageType.clipRetransmit,
+                                    body: ClipCodec.retransmit(id: 1, seq: 0)), from: .a)
+    }
+    pair.settle(pair.a.tick(at: 0), from: .a)
+    for second in stride(from: 2, through: 58, by: 2) {
+        pair.settle(pair.a.tick(at: Double(second)), from: .a)
+        Check.that(pair.a.awaitingSend, "payload released before its recovery window ended")
+    }
+    pair.settle(pair.a.tick(at: 60), from: .a)
+    Check.that(!pair.a.awaitingSend, "receipt probes kept the payload forever")
+    Check.that(pair.a.abortSend().isEmpty, "expired send was still cancellable")
+    Check.that(pair.sawNote(containing: "receipt was not confirmed"), "expiry claimed success")
+    Check.equal(text(pair.deliveredToB), ["receipt never arrives"], "expiry redelivered")
 }
 
 /*
@@ -1235,6 +1276,7 @@ private func testMalformedControlMessages() {
     let cases: [(UInt8, String)] = [
         (MessageType.clipRequest, "request"),
         (MessageType.clipDone, "done"),
+        (MessageType.clipReceived, "received"),
         (MessageType.clipCancel, "cancel"),
         (MessageType.clipRetransmit, "retransmit"),
         (MessageType.clipCredit, "credit"),

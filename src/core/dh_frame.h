@@ -54,7 +54,8 @@ extern "C" {
     X(DH_MSG_CLIP_CREDIT, 0x36)      \
     X(DH_MSG_SEAL_OFFER, 0x37)       \
     X(DH_MSG_SEAL_ACCEPT, 0x38)      \
-    X(DH_MSG_SEAL_STALE, 0x39)
+    X(DH_MSG_SEAL_STALE, 0x39)       \
+    X(DH_MSG_CLIP_RECEIVED, 0x3A)
 
 enum dh_msg_type {
 #define DH_MSG_ENUM_ENTRY(name, value) name = value,

@@ -242,6 +242,18 @@ size_t dh_xfer_pump(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     return n;
 }
 
+size_t dh_xfer_retry_done(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
+    size_t n = 0;
+    if (!dh_xfer_tx_awaiting_receipt(x))
+        return 0;
+    dh_xfer_action *a = emit(acts, &n, acts_cap);
+    if (a) {
+        a->type = DH_XFER_ACT_SEND_DONE_RETRY;
+        a->id = x->tx.id;
+    }
+    return n;
+}
+
 size_t dh_xfer_cancel_tx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     if (!x->tx.active)
@@ -253,6 +265,11 @@ size_t dh_xfer_cancel_tx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     }
     tx_reset(x);
     return n;
+}
+
+void dh_xfer_expire_tx(dh_xfer *x) {
+    if (dh_xfer_tx_awaiting_receipt(x))
+        tx_reset(x);
 }
 
 size_t dh_xfer_handle_request(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap) {
@@ -489,6 +506,12 @@ static bool rx_complete(dh_xfer *x, dh_xfer_action *acts, size_t *n, size_t acts
     a->type = DH_XFER_ACT_DELIVERED;
     a->id = x->rx.id;
     x->rx.active = false;
+    x->rx.completed = true;
+    a = emit(acts, n, acts_cap);
+    if (a) {
+        a->type = DH_XFER_ACT_SEND_RECEIVED;
+        a->id = x->rx.id;
+    }
     return true;
 }
 
@@ -659,6 +682,14 @@ size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;
     uint16_t credits = 0;
+    if (x->rx.completed && x->rx.id == id) {
+        dh_xfer_action *a = emit(acts, &n, acts_cap);
+        if (a) {
+            a->type = DH_XFER_ACT_SEND_RECEIVED;
+            a->id = id;
+        }
+        return n;
+    }
     if (!x->rx.active || x->rx.lazy || x->rx.id != id)
         return 0;
     if (x->rx.nreceived < x->rx.nchunks) {
@@ -682,6 +713,18 @@ size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t
 }
 
 /* ---- both directions -------------------------------------------------- */
+
+size_t dh_xfer_handle_received(dh_xfer *x, uint32_t id, dh_xfer_action *acts,
+                               size_t acts_cap) {
+    (void)acts;
+    (void)acts_cap;
+    /* The last chunk can complete the receive before DONE is emitted, and
+       queued retransmits can still be outstanding when its receipt arrives. */
+    if (x->tx.active && x->tx.id == id && x->tx.streaming &&
+        x->tx.next_seq >= x->tx.nchunks)
+        tx_reset(x);
+    return 0;
+}
 
 size_t dh_xfer_cancel_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap) {
     size_t n = 0;

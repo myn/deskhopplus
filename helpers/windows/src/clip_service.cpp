@@ -659,11 +659,22 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
         offer_retry_timed_ = true;
         offer_retry_since_ = now_ms;
         offer_retry_mark_ = tx_progress_;
+        receipt_probe_since_ = now_ms;
     } else if (dh_xfer_tx_awaiting_request(xfer_.get()) &&
                now_ms - offer_retry_since_ >= kSweepDelayMs) {
         offer_retry_since_ = now_ms;
         append(outputs, render(actions, dh_xfer_retry_offer(xfer_.get(), actions,
                                                             kActionCapacity)));
+    } else if (dh_xfer_tx_awaiting_receipt(xfer_.get()) &&
+               now_ms - offer_retry_since_ >= kReceiptTimeoutMs) {
+        dh_xfer_expire_tx(xfer_.get());
+        append(outputs, render(actions, 0));
+        outputs.push_back(note("send receipt was not confirmed; retained payload released"));
+    } else if (dh_xfer_tx_awaiting_receipt(xfer_.get()) &&
+               now_ms - receipt_probe_since_ >= kSweepDelayMs) {
+        receipt_probe_since_ = now_ms;
+        append(outputs, render(actions, dh_xfer_retry_done(xfer_.get(), actions,
+                                                           kActionCapacity)));
     }
 
     if (!dh_xfer_is_receiving(xfer_.get())) {
@@ -725,6 +736,10 @@ std::vector<ClipOutput> ClipService::received(uint8_t type, const uint8_t *body,
     case DH_MSG_CLIP_DONE:
         if (!dh_clip_decode_id(body, len, &id)) break;
         return render(actions, dh_xfer_handle_done(xfer_.get(), id, actions, kActionCapacity));
+
+    case DH_MSG_CLIP_RECEIVED:
+        if (!dh_clip_decode_id(body, len, &id)) break;
+        return render(actions, dh_xfer_handle_received(xfer_.get(), id, actions, kActionCapacity));
 
     case DH_MSG_CLIP_CANCEL:
         if (!dh_clip_decode_id(body, len, &id)) break;
@@ -1357,6 +1372,12 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             tx_progress_++;
             outputs.push_back(send(DH_MSG_CLIP_DONE, encode_id(action.id)));
             break;
+        case DH_XFER_ACT_SEND_DONE_RETRY:
+            outputs.push_back(send(DH_MSG_CLIP_DONE, encode_id(action.id)));
+            break;
+        case DH_XFER_ACT_SEND_RECEIVED:
+            outputs.push_back(send(DH_MSG_CLIP_RECEIVED, encode_id(action.id)));
+            break;
         case DH_XFER_ACT_SEND_REQUEST:
             outputs.push_back(send(DH_MSG_CLIP_REQUEST, encode_id(action.id)));
             break;
@@ -1505,6 +1526,12 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
                                    ", which this helper does not carry"));
             break;
         }
+    }
+    if (!dh_xfer_is_sending(xfer_.get())) {
+        // clear() keeps vector capacity, including the entire file payload.
+        std::vector<uint8_t>().swap(tx_payload_);
+        std::vector<uint8_t>().swap(tx_meta_);
+        outgoing_provider_ = nullptr;
     }
     return outputs;
 }

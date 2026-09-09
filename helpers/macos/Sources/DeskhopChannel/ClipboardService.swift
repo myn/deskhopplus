@@ -135,6 +135,8 @@ public final class ClipboardService {
      * one, which is the worse of the two.
      */
     public static let stallTimeout: TimeInterval = 30
+    /// Receipt recovery outlives the receive stall window; probes are not progress.
+    public static let receiptTimeout: TimeInterval = 60
 
     /*
      * How long an arriving transfer may make no progress before this end asks
@@ -293,6 +295,7 @@ public final class ClipboardService {
     private var txProgress = 0
     private var offerRetryMark = 0
     private var offerRetrySince: TimeInterval?
+    private var receiptProbeSince: TimeInterval?
     private var sealWaitingSince: TimeInterval?
     private var sealRetrySince: TimeInterval?
     private var receivingSince: TimeInterval?
@@ -494,15 +497,7 @@ public final class ClipboardService {
     /// Whether anything is still on its way out of this computer. False after a
     /// transfer the far end declined or that could not be read — the two ways a
     /// lazy send ends without delivering.
-    /*
-     * Whether there is a send worth offering to cancel.
-     *
-     * Not `isSending`, which stays true after the last chunk so a lost one can
-     * still be answered — there is no completion acknowledgement on the wire.
-     * Read as "sending", it left "Cancel what is being sent" standing over a
-     * transfer that had finished (#56).
-     */
-    public var awaitingSend: Bool { transfer.isSending && !transfer.allSent }
+    public var awaitingSend: Bool { transfer.isSending }
 
 
     /// The board stated its clipboard policy. A direction turned off takes any
@@ -699,12 +694,21 @@ public final class ClipboardService {
 
         if !transfer.isSending {
             offerRetrySince = nil
+            receiptProbeSince = nil
         } else if offerRetrySince == nil || offerRetryMark != txProgress {
             offerRetrySince = now
             offerRetryMark = txProgress
+            receiptProbeSince = now
         } else if transfer.isAwaitingRequest && now - (offerRetrySince ?? now) >= Self.sweepDelay {
             offerRetrySince = now
             outputs += render(transfer.retryOffer())
+        } else if transfer.isAwaitingReceipt && now - (offerRetrySince ?? now) >= Self.receiptTimeout {
+            transfer.expireOutgoing()
+            outgoingProvider = nil
+            outputs.append(.note("send receipt was not confirmed; retained payload released"))
+        } else if transfer.isAwaitingReceipt && now - (receiptProbeSince ?? now) >= Self.sweepDelay {
+            receiptProbeSince = now
+            outputs += render(transfer.retryDone())
         }
 
         if !transfer.isReceiving {
@@ -774,6 +778,9 @@ public final class ClipboardService {
         case MessageType.clipDone:
             guard let id = ClipCodec.decodeID(body) else { return [malformed(type)] }
             return render(transfer.handleDone(id: id))
+        case MessageType.clipReceived:
+            guard let id = ClipCodec.decodeID(body) else { return [malformed(type)] }
+            return render(transfer.handleReceived(id: id))
         case MessageType.clipCancel:
             guard let id = ClipCodec.decodeID(body) else { return [malformed(type)] }
             return render(transfer.handleCancel(id: id))
@@ -1217,6 +1224,10 @@ public final class ClipboardService {
             case DH_XFER_ACT_SEND_DONE:
                 txProgress += 1
                 outputs.append(.send(type: MessageType.clipDone, body: ClipCodec.id(action.id)))
+            case DH_XFER_ACT_SEND_DONE_RETRY:
+                outputs.append(.send(type: MessageType.clipDone, body: ClipCodec.id(action.id)))
+            case DH_XFER_ACT_SEND_RECEIVED:
+                outputs.append(.send(type: MessageType.clipReceived, body: ClipCodec.id(action.id)))
             case DH_XFER_ACT_SEND_REQUEST:
                 outputs.append(.send(type: MessageType.clipRequest, body: ClipCodec.id(action.id)))
             case DH_XFER_ACT_SEND_RETRANSMIT:
@@ -1322,6 +1333,7 @@ public final class ClipboardService {
                                      + "which this helper does not carry"))
             }
         }
+        if !transfer.isSending { outgoingProvider = nil }
         return outputs
     }
 

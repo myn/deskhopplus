@@ -86,6 +86,8 @@ typedef enum {
     DH_XFER_ACT_FAILED,          /* transfer abandoned; .reason says why */
     DH_XFER_ACT_SEND_OFFER_RETRY, /* sender: repeat immutable current offer */
     DH_XFER_ACT_PROTOCOL_ERROR,  /* authenticated offer identity conflict */
+    DH_XFER_ACT_SEND_DONE_RETRY, /* sender: receipt probe; not send progress */
+    DH_XFER_ACT_SEND_RECEIVED,   /* receiver: acknowledge verified payload .id */
 } dh_xfer_action_type;
 
 typedef enum {
@@ -135,6 +137,7 @@ typedef struct {
         bool active;
         bool lazy; /* accepted offer, waiting for a paste-side request */
         bool seen_offer; /* identity remains after completion/refusal */
+        bool completed; /* only a delivered receive may acknowledge a repeated DONE */
         uint32_t id;
         uint8_t kind;
         uint64_t total;
@@ -254,6 +257,11 @@ size_t dh_xfer_provide_fail(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_pump(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* Caller-timed recovery for an offer still awaiting its first request. */
 size_t dh_xfer_retry_offer(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
+/* Caller-timed receipt recovery after the last batch has been emitted. */
+size_t dh_xfer_retry_done(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
+/* Caller timed out receipt recovery: release locally, without claiming success
+   or sending a direction-ambiguous CANCEL that could kill the opposite send. */
+void dh_xfer_expire_tx(dh_xfer *x);
 /* Cancel the outgoing transfer locally (user abort on the copy side). */
 size_t dh_xfer_cancel_tx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
 /* Cancel the incoming transfer locally (user abort on the paste side). */
@@ -305,6 +313,8 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
    one — nothing else reaches here with the set full — plus the unreached case
    of a DELIVERED the chunk handler had no room to emit. */
 size_t dh_xfer_handle_done(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
+/* Acknowledges only the outgoing direction; stale or premature receipts do nothing. */
+size_t dh_xfer_handle_received(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 
 size_t dh_xfer_handle_cancel(dh_xfer *x, uint32_t id, dh_xfer_action *acts, size_t acts_cap);
 size_t dh_xfer_handle_retransmit(dh_xfer *x, uint32_t id, uint32_t seq, dh_xfer_action *acts,
@@ -357,19 +367,11 @@ size_t dh_xfer_sweep_rx(dh_xfer *x, dh_xfer_action *acts, size_t acts_cap);
  */
 static inline bool dh_xfer_is_sending(const dh_xfer *x) { return x->tx.active; }
 
-/*
- * Everything is out and DONE has gone: nothing is being sent any more.
- *
- * `dh_xfer_is_sending` stays true past this point on purpose — the receiver may
- * still ask for a chunk it lost, and answering that needs the payload — but a
- * user interface reading it as "sending" leaves "Cancel what is being sent"
- * standing over a transfer that finished, which is how it was reported (#56).
- * There is no completion acknowledgement on the wire, so this is as much as the
- * sending end can know.
- */
-static inline bool dh_xfer_tx_all_sent(const dh_xfer *x) {
-    return x->tx.active && !x->tx.need_done && x->tx.retx_count == 0 &&
-           x->tx.next_seq >= x->tx.nchunks;
+/* All initial chunks are emitted, but their receipt has not arrived. Include
+   credit-starved retransmits: otherwise losing their covering credit would
+   disable both DONE probes and bounded cleanup forever. */
+static inline bool dh_xfer_tx_awaiting_receipt(const dh_xfer *x) {
+    return x->tx.active && x->tx.streaming && x->tx.next_seq >= x->tx.nchunks;
 }
 static inline bool dh_xfer_is_receiving(const dh_xfer *x) {
     return x->rx.active && !x->rx.lazy;

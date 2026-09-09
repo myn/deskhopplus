@@ -97,8 +97,8 @@ int dh_clip_encode_offer_head(const dh_clip_offer_head *head, uint8_t *out, size
 int dh_clip_encode_chunk_head(const dh_clip_chunk_head *head, uint8_t *out, size_t cap);
 int dh_clip_encode_offer_plain(const dh_clip_offer *offer, uint8_t *out, size_t cap);
 int dh_clip_encode_chunk_plain(const dh_clip_chunk *chunk, uint8_t *out, size_t cap);
-/* CLIP_REQUEST / CLIP_DONE / CLIP_CANCEL share the id-only payload, and none
-   of the three is sealed: they carry a transfer id and nothing else. */
+/* CLIP_REQUEST / CLIP_DONE / CLIP_CANCEL / CLIP_RECEIVED share the id-only
+   payload; none is sealed because they carry a transfer id and nothing else. */
 int dh_clip_encode_id(uint32_t id, uint8_t *out, size_t cap);
 /* CLIP_RETRANSMIT: id:u32 seq:u32 */
 int dh_clip_encode_retransmit(uint32_t id, uint32_t seq, uint8_t *out, size_t cap);

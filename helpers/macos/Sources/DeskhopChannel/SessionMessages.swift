@@ -483,6 +483,7 @@ public enum MessageType {
     public static let clipRequest = UInt8(DH_MSG_CLIP_REQUEST.rawValue)
     public static let clipChunk = UInt8(DH_MSG_CLIP_CHUNK.rawValue)
     public static let clipDone = UInt8(DH_MSG_CLIP_DONE.rawValue)
+    public static let clipReceived = UInt8(DH_MSG_CLIP_RECEIVED.rawValue)
     public static let clipCancel = UInt8(DH_MSG_CLIP_CANCEL.rawValue)
     public static let clipRetransmit = UInt8(DH_MSG_CLIP_RETRANSMIT.rawValue)
     public static let clipCredit = UInt8(DH_MSG_CLIP_CREDIT.rawValue)

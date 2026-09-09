@@ -77,6 +77,7 @@ struct fault_plan {
     int corrupt_armed;
     int drop_chunks;      /* drop this many CLIP_CHUNK messages */
     int drop_done;        /* drop this many CLIP_DONE messages */
+    int drop_received;    /* lose receipts while retaining retransmission state */
     int credit_pass;      /* let this many CLIP_CREDIT messages through first */
     int drop_credits;     /* then drop this many, then pass the rest */
     int drop_requests;    /* drop this many CLIP_REQUEST messages, then pass the rest */
@@ -187,12 +188,21 @@ static int encode_action(struct side *from, const dh_xfer_action *a, struct wire
         }
         break;
     }
+    case DH_XFER_ACT_SEND_DONE_RETRY:
     case DH_XFER_ACT_SEND_DONE:
         if (plan.drop_done > 0) {
             plan.drop_done--;
             return 0; /* lost in transit, with no retransmit beneath it */
         }
         m->type = DH_MSG_CLIP_DONE;
+        n = dh_clip_encode_id(a->id, m->payload, sizeof m->payload);
+        break;
+    case DH_XFER_ACT_SEND_RECEIVED:
+        if (plan.drop_received > 0) {
+            plan.drop_received--;
+            return 0;
+        }
+        m->type = DH_MSG_CLIP_RECEIVED;
         n = dh_clip_encode_id(a->id, m->payload, sizeof m->payload);
         break;
     case DH_XFER_ACT_SEND_REQUEST:
@@ -297,6 +307,11 @@ static size_t dispatch(struct side *to, const struct wire_msg *m, dh_xfer_action
         uint32_t id;
         CHECK(dh_clip_decode_id(fv.payload, fv.hdr.len, &id), "wire", "done decode");
         return dh_xfer_handle_done(&to->x, id, acts, ACTS_CAP);
+    }
+    case DH_MSG_CLIP_RECEIVED: {
+        uint32_t id;
+        CHECK(dh_clip_decode_id(fv.payload, fv.hdr.len, &id), "wire", "receipt decode");
+        return dh_xfer_handle_received(&to->x, id, acts, ACTS_CAP);
     }
     case DH_MSG_CLIP_CANCEL: {
         uint32_t id;
@@ -434,6 +449,96 @@ int main(void) {
     fill_pattern(payload, sizeof payload);
     fill_pattern(big_payload, sizeof big_payload);
 
+    /* A verified receive ends the send and releases the core's borrowed bytes. */
+    {
+        reset_scenario();
+        offer_and_run(&A, payload, 2049);
+        CHECK(B.delivered == 1, "received-ack", "payload did not arrive");
+        CHECK(!dh_xfer_is_sending(&A.x), "received-ack", "finished send remains active");
+        dh_clip_chunk chunk;
+        CHECK(!dh_xfer_chunk_at(&A.x, 0, &chunk), "received-ack", "payload is still retained");
+    }
+
+    /* A lost receipt is recovered by repeating DONE, without redelivery. */
+    {
+        reset_scenario();
+        plan.drop_received = 100;
+        offer_and_run(&A, payload, 2049);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-retry", "lost receipt ended the send");
+        dh_xfer_action acts[ACTS_CAP];
+        plan.drop_received = 0;
+        size_t n = dh_xfer_retry_done(&A.x, acts, ACTS_CAP);
+        enqueue_actions(&A, &B, acts, n);
+        run_until_quiet();
+        CHECK(!dh_xfer_is_sending(&A.x), "receipt-retry", "repeated DONE did not recover");
+        CHECK(B.delivered == 1, "receipt-retry", "receipt retry delivered twice");
+    }
+
+    /* A late retransmit with lost covering credit cannot disable receipt recovery. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        (void)dh_xfer_handle_request(&A.x, 1, acts, ACTS_CAP);
+        (void)dh_xfer_handle_credit(&A.x, 1, 1, acts, ACTS_CAP);
+        (void)dh_xfer_pump(&A.x, acts, ACTS_CAP);
+        (void)dh_xfer_handle_retransmit(&A.x, 1, 0, acts, ACTS_CAP);
+        CHECK(dh_xfer_pump(&A.x, acts, ACTS_CAP) == 0,
+              "receipt-starved", "setup did not exhaust credit");
+        size_t n = dh_xfer_retry_done(&A.x, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_DONE_RETRY,
+              "receipt-starved", "pending retransmit disabled receipt probe");
+        dh_xfer_expire_tx(&A.x);
+        CHECK(!dh_xfer_is_sending(&A.x), "receipt-starved", "pending retransmit retained forever");
+    }
+
+    /* Receipts name only the send, including when both directions chose id 1. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        dh_clip_offer incoming = {1, 0, 10, NULL, 0};
+        (void)dh_xfer_handle_offer(&A.x, &incoming, acts, ACTS_CAP);
+        (void)dh_xfer_handle_received(&A.x, 1, acts, ACTS_CAP);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-state", "receipt accepted before request");
+        dh_xfer_expire_tx(&A.x);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-state", "unrequested offer expired");
+        (void)dh_xfer_handle_request(&A.x, 1, acts, ACTS_CAP);
+        (void)dh_xfer_handle_received(&A.x, 1, acts, ACTS_CAP);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-state", "receipt accepted before chunks");
+        (void)dh_xfer_handle_credit(&A.x, 1, 1, acts, ACTS_CAP);
+        (void)dh_xfer_pump(&A.x, acts, ACTS_CAP);
+        (void)dh_xfer_handle_received(&A.x, 2, acts, ACTS_CAP);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-state", "wrong id ended send");
+        (void)dh_xfer_handle_received(&A.x, 1, acts, ACTS_CAP);
+        CHECK(!dh_xfer_is_sending(&A.x) && dh_xfer_is_receiving(&A.x),
+              "receipt-state", "receipt changed the opposite direction");
+        (void)dh_xfer_offer(&A.x, 0, NULL, 0, payload, 10, acts, ACTS_CAP);
+        (void)dh_xfer_handle_received(&A.x, 1, acts, ACTS_CAP);
+        CHECK(dh_xfer_is_sending(&A.x), "receipt-state", "stale receipt ended newer send");
+    }
+
+    /* A full action buffer can delay a receipt, but cannot lose or repeat delivery. */
+    {
+        reset_scenario();
+        dh_xfer_action acts[ACTS_CAP];
+        dh_clip_offer offer = {1, 0, 0, NULL, 0};
+        (void)dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+        size_t n = dh_xfer_handle_done(&B.x, 1, acts, 1);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_DELIVERED,
+              "receipt-capacity", "zero-length delivery did not fit");
+        n = dh_xfer_handle_done(&B.x, 1, acts, ACTS_CAP);
+        CHECK(n == 1 && acts[0].type == DH_XFER_ACT_SEND_RECEIVED,
+              "receipt-capacity", "repeated DONE did not recover receipt alone");
+        (void)dh_xfer_rx_seal_replaced(&B.x, acts, ACTS_CAP);
+        CHECK(dh_xfer_handle_done(&B.x, 1, acts, ACTS_CAP) == 0,
+              "receipt-capacity", "replaced seal retained a receipt");
+        (void)dh_xfer_handle_offer(&B.x, &offer, acts, ACTS_CAP);
+        (void)dh_xfer_cancel_rx(&B.x, acts, ACTS_CAP);
+        CHECK(dh_xfer_handle_done(&B.x, 1, acts, ACTS_CAP) == 0,
+              "receipt-capacity", "cancelled receive acknowledged success");
+    }
+
     /* CRC32 known vectors (the check everything else leans on). */
     {
         CHECK(dh_crc32((const uint8_t *)"123456789", 9) == 0xCBF43926u, "crc", "check value");
@@ -504,9 +609,7 @@ int main(void) {
         CHECK(memcmp(B.rx_buf, payload, len) == 0, "roundtrip", "bytes differ");
         CHECK(A.chunks_sent == 4, "roundtrip", "chunk count not ceil(len/chunk)");
         CHECK(B.retransmits_sent == 0, "roundtrip", "spurious retransmits");
-        /* The sender retains the drained transfer for straggling retransmits. */
-        CHECK(A.x.tx.active && A.x.tx.next_seq == A.x.tx.nchunks && !A.x.tx.need_done,
-              "roundtrip", "sender not fully drained");
+        CHECK(!dh_xfer_is_sending(&A.x), "roundtrip", "receipt did not end the send");
     }
 
     /* Single-chunk and exact-multiple payloads. */
@@ -876,6 +979,7 @@ int main(void) {
        request is still honoured, then DONE repeats. */
     {
         reset_scenario();
+        plan.drop_received = 100;
         offer_and_run(&A, payload, 2 * DH_XFER_CHUNK_SIZE);
         CHECK(B.delivered == 1, "retain", "setup transfer failed");
         CHECK(A.x.tx.active, "retain", "sender released payload at DONE");
@@ -898,9 +1002,9 @@ int main(void) {
     {
         reset_scenario();
         offer_and_run(&A, payload, 100);
-        uint32_t first = A.x.tx.id;
+        uint32_t first = dh_xfer_rx_offer_id(&B.x);
         offer_and_run(&A, payload, 100);
-        CHECK(A.x.tx.id == first + 1, "ids", "ids do not increment");
+        CHECK(dh_xfer_rx_offer_id(&B.x) == first + 1, "ids", "ids do not increment");
         offer_and_run(&B, payload, 300);
         CHECK(A.delivered == 1 && A.delivered_len == 300, "ids",
               "reverse-direction transfer failed");
@@ -1019,6 +1123,7 @@ int main(void) {
         reset_scenario();
         plan.drop_seq = 2;
         plan.drop_armed = 1;
+        plan.drop_received = 100;
         offer_and_run(&A, payload, 8 * DH_XFER_CHUNK_SIZE);
         CHECK(B.delivered == 1, "sweep-reading", "the transfer did not recover");
         CHECK(dh_xfer_rx_retx_asked(&B.x) >= 1, "sweep-reading", "the receiver asked for nothing");
@@ -1119,9 +1224,7 @@ int main(void) {
 
         reset_scenario();
         offer_and_run(&A, payload, 10);
-        dh_clip_offer completed;
-        CHECK(dh_xfer_offer_info(&A.x, &completed), "offer-idempotent",
-              "completed sender identity was unavailable");
+        dh_clip_offer completed = {1, 0, 10, NULL, 0};
         n = dh_xfer_handle_offer(&B.x, &completed, acts, ACTS_CAP);
         CHECK(n == 0 && B.delivered == 1, "offer-idempotent",
               "a completed duplicate recreated or delivered a receive");

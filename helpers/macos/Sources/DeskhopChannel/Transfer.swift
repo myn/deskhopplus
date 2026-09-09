@@ -314,9 +314,6 @@ public final class Transfer {
     /// Whether a payload is on its way out — the question a stale seal has to
     /// ask before it knows whether there is anything to start again.
     public var isSending: Bool { dh_xfer_is_sending(machine) }
-    /// Everything is out and DONE has gone. `isSending` stays true past this
-    /// so a lost chunk can still be answered; this is what a menu should read.
-    public var allSent: Bool { dh_xfer_tx_all_sent(machine) }
 
     /// Whether a payload is arriving.
     public var isReceiving: Bool { dh_xfer_is_receiving(machine) }
@@ -382,6 +379,15 @@ public final class Transfer {
         collect { acts, cap in dh_xfer_retry_offer(machine, acts, cap) }
     }
 
+    public func retryDone() -> [TransferAction] {
+        collect { acts, cap in dh_xfer_retry_done(machine, acts, cap) }
+    }
+
+    public var isAwaitingReceipt: Bool { dh_xfer_tx_awaiting_receipt(machine) }
+    public func expireOutgoing() {
+        dh_xfer_expire_tx(machine)
+        if !isSending { releaseOutgoing() }
+    }
     public var isAwaitingRequest: Bool { dh_xfer_tx_awaiting_request(machine) }
     public var offerRetries: UInt32 { dh_xfer_tx_offer_retries(machine) }
     public var duplicateOffers: UInt32 { dh_xfer_rx_duplicate_offers(machine) }
@@ -466,6 +472,10 @@ public final class Transfer {
         collect { acts, cap in dh_xfer_handle_done(machine, id, acts, cap) }
     }
 
+    public func handleReceived(id: UInt32) -> [TransferAction] {
+        collect { acts, cap in dh_xfer_handle_received(machine, id, acts, cap) }
+    }
+
     public func handleCancel(id: UInt32) -> [TransferAction] {
         collect { acts, cap in dh_xfer_handle_cancel(machine, id, acts, cap) }
     }
@@ -522,6 +532,7 @@ public final class Transfer {
     ) -> [TransferAction] {
         var raw = [dh_xfer_action](repeating: dh_xfer_action(), count: Self.actionCapacity)
         let count = raw.withUnsafeMutableBufferPointer { body($0.baseAddress!, $0.count) }
+        if !isSending { releaseOutgoing() }
         return raw.prefix(min(count, Self.actionCapacity)).map(TransferAction.init)
     }
 }

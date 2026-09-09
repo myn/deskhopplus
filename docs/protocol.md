@@ -550,6 +550,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x37 | SEAL_OFFER | h↔h | per hop | `seal_id:u32` (fresh random) `nonce:16` `eph_pubkey:64` |
 | 0x38 | SEAL_ACCEPT | h↔h | per hop | `seal_id:u32` (echoed) `nonce:16` `eph_pubkey:64` |
 | 0x39 | SEAL_STALE | h↔h | per hop | `seal_id:u32` — "I hold no key for this id." |
+| 0x3A | CLIP_RECEIVED | h↔h | per hop | `id:u32` — paste side acknowledges a complete, verified receive |
 
 **Dropped from mkroamer:** PING/PONG, MOUSE_MOVE, MOUSE_BTN, WHEEL, KEY (input rides HID),
 HANDOFF/HANDOFF_ACK (inverted into PLACE), RELEASE_CONTROL, RESET_MODIFIERS,
@@ -641,7 +642,7 @@ in the clear in each sealed message and is covered by the AAD. Because each seal
 one-directional and each counter value is used once, no nonce is ever reused under a key.
 
 **What is sealed, and what is not.** Only the two messages that carry the user's bytes:
-`CLIP_OFFER`'s metadata and `CLIP_CHUNK`'s data. `CLIP_REQUEST`, `CLIP_DONE`, `CLIP_CANCEL`,
+`CLIP_OFFER`'s metadata and `CLIP_CHUNK`'s data. `CLIP_REQUEST`, `CLIP_DONE`, `CLIP_RECEIVED`, `CLIP_CANCEL`,
 `CLIP_RETRANSMIT` and `CLIP_CREDIT` carry transfer ids and sequence numbers only, and sealing
 them would add 16 bytes each to hide nothing.
 
@@ -953,15 +954,33 @@ between the helpers**; the firmware relays its messages opaquely.
   it — after the two-second sweeps above have had fifteen chances to recover it. It
   cannot live in `dh_xfer`, which has no clock and must not gain one — and a deadline on the
   whole transfer would abandon healthy ones, because a large payload legitimately takes minutes
-  on this link. The copy side has no equivalent deadline: without a delivery acknowledgement,
-  silence cannot distinguish a completed send from a missing far helper. Its payload therefore
-  remains available for late retransmits until one of the retention boundaries below.
+  on this link. The copy side times receipt recovery only after all chunks and DONE have
+  been emitted, as described below; it does not time out a held offer or unfinished stream.
 - **A retransmitted chunk is resealed**, under a fresh `seal_counter`. A seal counter is never
   reused, so a retransmission is not a byte-identical copy of the frame that was lost.
-- **The sender retains its payload after CLIP_DONE** — retransmit requests may still
-  arrive. It is released when the transfer is superseded by a newer offer, cancelled, or
-  the link drops. There is no completion acknowledgement in v2: CLIP_DONE always travels
-  sender→receiver, which keeps it unambiguous when both sides transfer at once.
+- **A verified receive sends CLIP_RECEIVED back to the copy side** (#165), alongside
+  `DELIVERED` on the final chunk (or DONE for an empty payload). It acknowledges complete,
+  CRC32-verified assembly, not an OS pasteboard write or durable file write. The matching
+  sender clears its transfer and releases its payload, metadata, and lazy provider; the
+  opposite direction is untouched even when its transfer id is identical. A receipt for an
+  unrequested transfer, one whose initial chunks have not all been emitted, or a stale id is ignored.
+- **The sender retains bytes until receipt or bounded cleanup.** While waiting for a receipt,
+  it repeats DONE every two seconds. The paste side remembers that its latest receive completed
+  and answers repeated DONE with another receipt, never another delivery. A new offer or a fresh
+  incoming seal replaces that memory. A lost initial receipt, including one that did not fit an
+  action buffer, is therefore recoverable without retaining the receive payload for retries.
+  If no send activity occurs for 60 seconds after the last batch, the copy side releases its
+  retained bytes locally and reports that receipt was not confirmed. DONE probes do not extend
+  this window; actual chunk retransmissions do. Credit-starved retransmissions do not disable
+  probes or cleanup, or a lost covering grant could retain the payload indefinitely. This
+  exceeds the paste side's 30-second no-progress deadline without imposing a total transfer limit.
+  Cleanup sends no CANCEL, whose direction-ambiguous id could cancel an unrelated opposite send
+  (#136). Supersede, explicit cancellation, and link loss remain immediate release boundaries.
+  Both helper menus now read the ordinary sending state, which ends on receipt or cleanup.
+- **Deploy the new message registry to both boards and both helpers together.** CLIP_RECEIVED
+  remains opaque bulk traffic, authenticated per hop and unsealed like the other id-only controls.
+  Firmware only learns its type, never its payload. Older firmware rejects unknown frame types;
+  mixed-version operation is not a supported rollout for this change.
 - **Flow control.** The sender spends one credit per chunk sent (retransmits included) and
   stops at zero; CLIP_DONE is not gated. The paste side grants `DH_XFER_CREDIT_WINDOW`
   (3 chunks) with its CLIP_REQUEST, replenishes as chunks arrive — the rule is half-window

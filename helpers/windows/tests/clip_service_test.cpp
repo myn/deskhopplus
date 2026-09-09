@@ -599,7 +599,7 @@ void test_a_stale_seal_is_reoffered() {
 void test_malformed_control_messages() {
     ClipService a(seal_aead(), counter_entropy(1));
     const uint8_t junk[2] = {0x01, 0x02};
-    const uint8_t types[] = {DH_MSG_CLIP_REQUEST, DH_MSG_CLIP_DONE, DH_MSG_CLIP_CANCEL,
+    const uint8_t types[] = {DH_MSG_CLIP_REQUEST, DH_MSG_CLIP_DONE, DH_MSG_CLIP_RECEIVED, DH_MSG_CLIP_CANCEL,
                              DH_MSG_CLIP_RETRANSMIT, DH_MSG_CLIP_CREDIT};
 
     for (uint8_t type : types)
@@ -1255,10 +1255,53 @@ void test_a_finished_send_stops_offering_to_be_cancelled() {
     Pair pair(big_capacity);
     CHECK(!pair.a.awaiting_send(), "a send was offered before anything was copied");
 
-    pair.copy_files_on_a(big_files(), big_payload());
+    auto bytes = std::make_shared<std::vector<uint8_t>>(big_payload());
+    const std::weak_ptr<std::vector<uint8_t>> retained_provider = bytes;
+    pair.settle(pair.a.local_copy_files(big_files(), [bytes](std::vector<uint8_t> &out) {
+        out = *bytes;
+        return true;
+    }), Side::A);
+    bytes.reset();
+    CHECK(retained_provider.expired(), "finished send retained its payload provider");
     CHECK(pair.files_to_b.size() == 1, "the files did not arrive, so this proves nothing");
     CHECK(!pair.a.awaiting_send(),
           "a transfer the far end has written is still offering to be cancelled");
+    CHECK(pair.a.abort_send().empty(), "a finished send still owns a cancellable transfer");
+}
+
+void test_a_lost_receipt_recovers() {
+    Pair pair;
+    pair.drop_next[DH_MSG_CLIP_RECEIVED] = 100;
+    pair.copy_on_a("received once");
+    CHECK(pair.a.awaiting_send(), "a lost receipt ended the send");
+    pair.settle(pair.a.tick(0), Side::A);
+    pair.drop_next[DH_MSG_CLIP_RECEIVED] = 0;
+    pair.settle(pair.a.tick(2000), Side::A);
+    CHECK(!pair.a.awaiting_send(), "DONE probe did not recover the receipt");
+    CHECK(pair.delivered_to_b.size() == 1, "receipt recovery redelivered");
+}
+
+void test_receipt_retention_is_bounded() {
+    Pair pair;
+    pair.drop_next[DH_MSG_CLIP_RECEIVED] = 1000;
+    pair.copy_on_a("receipt never arrives");
+    const uint8_t late_request[] = {1, 0, 0, 0, 0, 0, 0, 0};
+    for (int request = 0; request < 3; request++) {
+        pair.settle(pair.a.received(DH_MSG_CLIP_RETRANSMIT, late_request,
+                                    sizeof late_request), Side::A);
+    }
+    // Exercise the same deadline across the millisecond clock's wrap.
+    const uint32_t start = UINT32_MAX - 10000;
+    pair.settle(pair.a.tick(start), Side::A);
+    for (uint32_t elapsed = 2000; elapsed < 60000; elapsed += 2000) {
+        pair.settle(pair.a.tick(start + elapsed), Side::A);
+        CHECK(pair.a.awaiting_send(), "payload released before its recovery window ended");
+    }
+    pair.settle(pair.a.tick(start + 60000), Side::A);
+    CHECK(!pair.a.awaiting_send(), "receipt probes kept the payload forever");
+    CHECK(pair.a.abort_send().empty(), "expired send was still cancellable");
+    CHECK(pair.saw_note("receipt was not confirmed"), "expiry claimed success");
+    CHECK(pair.delivered_to_b.size() == 1, "expiry redelivered");
 }
 
 /*
@@ -1751,6 +1794,8 @@ int main() {
     test_an_over_cap_copy_is_explained_where_the_paste_would_be();
     test_the_question_waits_for_the_user_to_arrive();
     test_a_finished_send_stops_offering_to_be_cancelled();
+    test_a_lost_receipt_recovers();
+    test_receipt_retention_is_bounded();
     test_an_offer_landing_just_after_the_crossing_is_still_announced();
     test_files_are_not_read_until_accepted();
     test_declining_files_reads_nothing();
