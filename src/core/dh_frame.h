@@ -13,6 +13,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Shared by C11 core sources and C++ header consumers. */
+#ifdef __cplusplus
+#define DH_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
+#else
+#define DH_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+#endif
+
 /* C++ links these symbols too — the Windows helper is C++ (#49). */
 #ifdef __cplusplus
 extern "C" {

@@ -16,10 +16,10 @@
    the wrong one would truncate rather than fail — the shape of the defect #109
    found on the board's reply buffer, where a v1-sized buffer meant a v2 board
    never answered a pairing request at all. */
-_Static_assert(DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_HELLO_LEN <=
+DH_STATIC_ASSERT(DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_HELLO_LEN <=
                    DH_HELPER_FRAME_MAX,
                "the hello must fit an output slot");
-_Static_assert(DH_P256_PUBLIC_SIZE <= DH_HELPER_FRAME_MAX,
+DH_STATIC_ASSERT(DH_P256_PUBLIC_SIZE <= DH_HELPER_FRAME_MAX,
                "the board key handed over for storage must fit an output slot");
 
 /* Unsigned differences throughout: a wrapping millisecond counter is then just

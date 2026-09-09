@@ -9,10 +9,12 @@
 #   cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir tests/build
 
 cmake_minimum_required(VERSION 3.20)
-project(deskhopplus_core_tests C)
+project(deskhopplus_core_tests C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
   # The same static CRT the Windows helper links (ADR-0006), carried here in
@@ -31,6 +33,12 @@ set(VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/frames.txt)
 set(PRIMITIVE_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/primitives.txt)
 
 enable_testing()
+
+# Public headers must compile in both languages without consumer definitions (#121).
+add_library(core_headers_c OBJECT core_headers_test.c)
+target_include_directories(core_headers_c PRIVATE ${CORE})
+add_library(core_headers_cpp OBJECT core_headers_test.cpp)
+target_include_directories(core_headers_cpp PRIVATE ${CORE})
 
 add_executable(keyboard_transport_test keyboard_transport_test.c ${CORE}/dh_keyboard_transport.c)
 target_include_directories(keyboard_transport_test PRIVATE ${CORE})

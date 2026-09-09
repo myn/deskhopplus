@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "dh_config_text.h"
+#include "dh_frame.h"
 
 typedef struct {
     dh_key_override_t overrides[DH_CONFIG_TEXT_OVERRIDE_CAPACITY];
@@ -23,9 +24,9 @@ typedef struct {
 #define DH_KEYMAP_CONFIG_FIELD_A_BASE      24u
 #define DH_KEYMAP_CONFIG_FIELD_B_BASE      54u
 
-_Static_assert(sizeof(dh_keymap_profile_t) == DH_KEYMAP_PROFILE_SIZE,
+DH_STATIC_ASSERT(sizeof(dh_keymap_profile_t) == DH_KEYMAP_PROFILE_SIZE,
                "dh_keymap_profile_t wire layout changed");
-_Static_assert((DH_KEYMAP_CONFIG_CHUNK_COUNT - 1u) * DH_KEYMAP_CONFIG_CHUNK_SIZE <
+DH_STATIC_ASSERT((DH_KEYMAP_CONFIG_CHUNK_COUNT - 1u) * DH_KEYMAP_CONFIG_CHUNK_SIZE <
                    DH_KEYMAP_PROFILE_SIZE &&
                    DH_KEYMAP_CONFIG_CHUNK_COUNT * DH_KEYMAP_CONFIG_CHUNK_SIZE >=
                        DH_KEYMAP_PROFILE_SIZE,

@@ -119,10 +119,6 @@ target_link_libraries(output_dispatch_test PRIVATE dhcore)
 target_include_directories(output_dispatch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 if(MSVC)
   target_compile_options(output_dispatch_test PRIVATE /WX)
-  # The core's headers are C11, and MSVC's C++ compiler does not take the
-  # keyword — the same spelling the helper itself uses, and for the same
-  # reason: the assertion is the firmware's.
-  target_compile_definitions(output_dispatch_test PRIVATE _Static_assert=static_assert)
 else()
   # An output kind added to a service and left out of a switch must fail here
   # rather than fall through in silence. The reading CI does is MSVC's — /W4
@@ -154,16 +150,12 @@ if(WIN32)
     DH_TEST_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../../test-vectors/frames.txt")
   if(MSVC)
     target_compile_options(seal_test PRIVATE /WX)
-    # `_Static_assert` for the reason the helper defines it below: the core's
-    # headers are C11 and MSVC's C++ compiler does not take the keyword.
-    #
     # `_CRT_SECURE_NO_WARNINGS` for `fopen`, which this test uses to read
     # test-vectors/frames.txt. MSVC deprecates it in favour of `fopen_s`, and
     # /WX makes that deprecation an error. Nothing else in this helper reads a
     # file through the C library — the exe uses Win32 — so the exemption is
     # this one test's rather than the build's.
-    target_compile_definitions(seal_test PRIVATE _Static_assert=static_assert
-                               _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(seal_test PRIVATE _CRT_SECURE_NO_WARNINGS)
   endif()
   add_test(NAME seal COMMAND seal_test)
 
@@ -176,7 +168,6 @@ if(WIN32)
   target_include_directories(clip_service_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   if(MSVC)
     target_compile_options(clip_service_test PRIVATE /WX)
-    target_compile_definitions(clip_service_test PRIVATE _Static_assert=static_assert)
   endif()
   add_test(NAME clip_service COMMAND clip_service_test)
 
@@ -209,12 +200,5 @@ if(WIN32)
 
   if(MSVC)
     target_compile_options(deskhop-helper PRIVATE /WX)
-
-    # The core's headers are C11 and use `_Static_assert`, which MSVC's C++
-    # compiler does not accept as a keyword. Spelled as its C++ equivalent
-    # rather than by editing the core: the assertion is the firmware's, and a
-    # header that reads differently per consumer is the drift #64 removed.
-    # Harmless where the compiler does accept the keyword.
-    target_compile_definitions(deskhop-helper PRIVATE _Static_assert=static_assert)
   endif()
 endif()

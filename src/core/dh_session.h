@@ -135,7 +135,7 @@ enum { DH_SESSION_ABSENT_MS = DH_SESSION_HEARTBEAT_MS * (DH_SESSION_MISSED_INTER
  * that raising DH_XFER_CHUNK_SIZE cannot quietly walk past the limit.
  */
 #define DH_SESSION_CHUNK_CEILING 4032u
-_Static_assert(DH_SESSION_MAX_CHUNK <= DH_SESSION_CHUNK_CEILING,
+DH_STATIC_ASSERT(DH_SESSION_MAX_CHUNK <= DH_SESSION_CHUNK_CEILING,
                "the offered chunk must leave room for a sealed frame's overhead");
 
 /* Body sizes, per docs/protocol.md. Bodies, not payloads: everything outside
@@ -518,7 +518,7 @@ bool dh_device_drops_decode(const uint8_t *body, size_t len, dh_device_drops *ou
    tick uses. A body that outgrew it would take DH_FRAME_ERR_BUFFER and the
    totals would simply never be sent — no error at the desk, and the diagnostic
    silently back to being unreadable, which is #133 all over again. */
-_Static_assert(DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_DEVICE_DROPS_LEN <=
+DH_STATIC_ASSERT(DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE + DH_DEVICE_DROPS_LEN <=
                    DH_SESSION_REPLY_MAX,
                "a DEVICE_DROPS frame must fit the board's reply buffer");
 

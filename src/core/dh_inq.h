@@ -80,7 +80,7 @@ extern "C" {
 
 /* head and tail are free-running and wrap at their own width, so the depth
    has to divide that width evenly for `tail - head` to stay meaningful. */
-_Static_assert(256u % DH_INQ_DEPTH == 0u, "DH_INQ_DEPTH must divide 256");
+DH_STATIC_ASSERT(256u % DH_INQ_DEPTH == 0u, "DH_INQ_DEPTH must divide 256");
 
 typedef struct {
     uint8_t slot[DH_INQ_DEPTH][DH_INQ_SLOT_MAX];

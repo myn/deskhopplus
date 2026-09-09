@@ -1,8 +1,9 @@
 #include "dh_cursor_trace.h"
+#include "dh_frame.h"
 
 #include <string.h>
 
-_Static_assert(sizeof(dh_cursor_trace_record_t) == 12,
+DH_STATIC_ASSERT(sizeof(dh_cursor_trace_record_t) == 12,
                "cursor trace record must split into two six-byte config responses");
 
 static bool trace_is_valid(const dh_cursor_trace_t *trace) {
