@@ -156,7 +156,8 @@ final class HelperRuntime: HelperEffects {
                body.count == Int(DH_POS_QUERY_BODY_SIZE),
                let response = self.cursorPlacement.positionBody(queryID: body[0]) {
                 Self.note("cursor query id=\(body[0]) received")
-                if self.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue), body: response) {
+                if self.dispatch.sendPayload(type: UInt8(DH_MSG_POS_RESPONSE.rawValue),
+                                             body: response, name: "a cursor-position response") {
                     Self.note("cursor response id=\(body[0]) sent")
                 }
                 return
@@ -343,25 +344,6 @@ final class HelperRuntime: HelperEffects {
                board restates them whenever they move, and nothing tells the
                clipboard when that was. */
             dispatch.emit(clipboard.tick(at: now, boardDrops: session.boardDrops))
-        }
-    }
-
-    /* A cursor-position response, which is not an output of either service —
-       the placement machine answers a query directly — so it does not go
-       through the dispatch. The rule it follows is the same one: the idle
-       timer is charged only for a frame the transport actually took. */
-    private func sendPayload(type: UInt8, body: [UInt8]) -> Bool {
-        guard let frame = session.emit(type: type, body: body) else {
-            Self.note("a cursor-position response could not be built; there is no session")
-            return false
-        }
-        if transport.send(frame, channelCount: session.negotiated?.channelCount ?? 1) {
-            session.noteSent(at: now)
-            return true
-        } else {
-            session.noteSendRefused()
-            Self.note("a cursor-position response was not taken by the transport and is lost")
-            return false
         }
     }
 

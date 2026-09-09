@@ -107,7 +107,13 @@ class OutputDispatch {
     void emit(const ClipOutput &output);
     void emit(const std::vector<ClipOutput> &outputs);
 
+    /* Cursor and clipboard payloads share the session's builder and send
+       accounting. Only clipboard refusals add a message type to the name. */
+    bool send_payload(uint8_t type, const std::vector<uint8_t> &body,
+                      const std::string &name, const std::string &refusal_suffix = "");
+
   private:
+    bool send_frame(const std::vector<uint8_t> &frame, const std::string &name);
     HelperEffects &effects_;
 };
 

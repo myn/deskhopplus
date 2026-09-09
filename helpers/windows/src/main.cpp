@@ -381,20 +381,9 @@ bool Helper::start(HINSTANCE instance) {
     cursor_placement_ = std::make_unique<CursorPlacement>(
         [this](const std::string &message) { log(message); },
         [this](uint8_t type, const std::vector<uint8_t> &body) {
-            std::vector<uint8_t> frame;
-            if (!session_->emit(type, body, frame)) {
-                log("a cursor-position response could not be built; there is no session");
-                return;
-            }
-            if (transport_.send(frame.data(), frame.size(),
-                               session_->have_negotiated() ? session_->negotiated().channel_count : 1)) {
-                session_->note_sent(now_ms());
-                if (type == DH_MSG_POS_RESPONSE && !body.empty())
-                    log("cursor response id=" + std::to_string(body[0]) + " sent");
-            } else {
-                session_->note_send_refused();
-                log("a cursor-position response was not taken by the transport and is lost");
-            }
+            if (dispatch_.send_payload(type, body, "a cursor-position response") &&
+                type == DH_MSG_POS_RESPONSE && !body.empty())
+                log("cursor response id=" + std::to_string(body[0]) + " sent");
         });
 
     /* Verified bulk frames, straight from the core. Nothing here re-reads the

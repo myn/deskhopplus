@@ -185,7 +185,7 @@ private func aRefusedFrameIsCountedAndSaidOutLoud() {
 
     Check.that(!recorder.did("noteSent"), "a refused frame does not charge the idle timer")
     Check.that(recorder.did("noteSendRefused"), "a refused frame is counted")
-    Check.that(recorder.noted("a session frame was not taken by the transport"),
+    Check.that(recorder.did("note: a session frame was not taken by the transport and is lost"),
                "a refused frame is distinguishable from a quiet link")
 }
 
@@ -278,7 +278,7 @@ private func aClipboardFrameWithNoSessionIsDroppedLoudly() {
     recorder.frameBuilds = false
     dispatch.emit(.send(type: 0x40, body: [UInt8](repeating: 0x33, count: 16)))
 
-    Check.that(recorder.noted("a clipboard frame could not be built"),
+    Check.that(recorder.did("note: a clipboard frame could not be built; there is no session"),
                "a frame with no session to carry it is reported")
     Check.that(!recorder.did("send(20)"), "nothing is handed to the transport")
     Check.that(!recorder.did("noteSent"), "the idle timer is not charged")
@@ -294,8 +294,35 @@ private func aRefusedClipboardFrameIsCountedAndSaidOutLoud() {
     Check.that(!recorder.did("noteSent"),
                "a refused clipboard frame does not charge the idle timer")
     Check.that(recorder.did("noteSendRefused"), "a refused clipboard frame is counted")
-    Check.that(recorder.noted("a clipboard frame of type 64 was not taken by the transport"),
+    Check.that(recorder.did("note: a clipboard frame of type 64 was not taken by the transport and is lost"),
                "the refusal names the message type")
+}
+
+private func aCursorResponseChargesOnlyAnAcceptedSend() {
+    let (recorder, dispatch) = fixture()
+    Check.that(dispatch.sendPayload(type: 0x22, body: [7, 0, 0],
+                                    name: "a cursor-position response"),
+               "an accepted cursor response reports success")
+    Check.equal(recorder.effects, ["build(34,3)", "send(7)", "noteSent"],
+                "the cursor response is built and accepted before charging the idle timer")
+
+    recorder.effects = []
+    recorder.transportTakes = false
+    Check.that(!dispatch.sendPayload(type: 0x22, body: [7, 0, 0],
+                                     name: "a cursor-position response"),
+               "a refused cursor response reports failure")
+    Check.equal(recorder.effects, ["build(34,3)", "send(7)", "noteSendRefused",
+                "note: a cursor-position response was not taken by the transport and is lost"],
+                "a refused cursor response is counted and logged without charging the idle timer")
+
+    recorder.effects = []
+    recorder.frameBuilds = false
+    Check.that(!dispatch.sendPayload(type: 0x22, body: [7, 0, 0],
+                                     name: "a cursor-position response"),
+               "an unbuilt cursor response reports failure")
+    Check.equal(recorder.effects, ["build(34,3)",
+                "note: a cursor-position response could not be built; there is no session"],
+                "a missing session neither sends nor changes send accounting")
 }
 
 private func aTextPayloadReachesThePasteboard() {
@@ -358,6 +385,7 @@ private func aBatchOfClipboardOutputsIsCarriedOutInOrder() {
 }
 
 let outputDispatchTests: [(String, () throws -> Void)] = [
+    ("a cursor response charges only an accepted send", aCursorResponseChargesOnlyAnAcceptedSend),
     ("storeBoardKey reaches the Keychain", storeBoardKeyReachesTheKeychain),
     ("a refused board key is said out loud", aRefusedBoardKeyIsSaidOutLoud),
     ("the channel outputs reach the transport", theChannelOutputsReachTheTransport),

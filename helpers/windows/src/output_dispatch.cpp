@@ -4,6 +4,28 @@
 
 namespace deskhop {
 
+/* Charge ADR-0004's idle timer only for a frame the transport took (#107).
+   Session frames are already built; all payloads use the same builder below. */
+bool OutputDispatch::send_frame(const std::vector<uint8_t> &frame, const std::string &name) {
+    if (effects_.send(frame)) {
+        effects_.note_sent();
+        return true;
+    }
+    effects_.note_send_refused();
+    effects_.log(name + " was not taken by the transport and is lost");
+    return false;
+}
+
+bool OutputDispatch::send_payload(uint8_t type, const std::vector<uint8_t> &body,
+                                  const std::string &name, const std::string &refusal_suffix) {
+    std::vector<uint8_t> frame;
+    if (!effects_.build_frame(type, body, frame)) {
+        effects_.log(name + " could not be built; there is no session");
+        return false;
+    }
+    return send_frame(frame, name + refusal_suffix);
+}
+
 void OutputDispatch::apply(const Output &output) {
     /* No `default:`, deliberately, in this switch and the one below. An output
        kind added to a service and forgotten here is then a compile error
@@ -25,17 +47,7 @@ void OutputDispatch::apply(const Output &output) {
         break;
 
     case Output::Kind::Send:
-        /* The same rule as a clipboard frame in emit(), and #107 is what it
-           cost to have it in only one of the two places: the idle timer is
-           charged for what the transport actually took. A beat charged for one
-           it refused bought a full interval of silence, and three of those has
-           the board evict this helper. Said out loud too — a refusal here used
-           to be indistinguishable from a healthy quiet link. */
-        if (effects_.send(output.bytes)) effects_.note_sent();
-        else {
-            effects_.note_send_refused();
-            effects_.log("a session frame was not taken by the transport and is lost");
-        }
+        send_frame(output.bytes, "a session frame");
         break;
 
     case Output::Kind::State:
@@ -81,30 +93,10 @@ void OutputDispatch::apply(const std::vector<Output> &outputs) {
  */
 void OutputDispatch::emit(const ClipOutput &output) {
     switch (output.kind) {
-    case ClipOutput::Kind::Send: {
-        std::vector<uint8_t> frame;
-        if (!effects_.build_frame(output.type, output.bytes, frame)) {
-            effects_.log("a clipboard frame could not be built; there is no session");
-            break;
-        }
-        /* The idle timer is charged only for a frame the transport actually
-           took. Charging for one it refused would suppress a beat that
-           ADR-0004 owed the board — which is exactly what HelperSession::emit
-           says not to do. */
-        if (effects_.send(frame)) {
-            effects_.note_sent();
-        } else {
-            /* Counted and said out loud, as the session path above does and as
-               macOS already did here. Dropped in silence, a frame the
-               transport would not take is indistinguishable from one lost on
-               the wire, and the two have nothing in common to fix (#132,
-               #107). */
-            effects_.note_send_refused();
-            effects_.log("a clipboard frame of type " + std::to_string(output.type) +
-                         " was not taken by the transport and is lost");
-        }
+    case ClipOutput::Kind::Send:
+        send_payload(output.type, output.bytes, "a clipboard frame",
+                     " of type " + std::to_string(output.type));
         break;
-    }
 
     case ClipOutput::Kind::Deliver:
         if (output.payload_kind == static_cast<uint8_t>(ClipKind::Text)) {

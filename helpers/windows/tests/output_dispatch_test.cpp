@@ -188,6 +188,7 @@ static const char *effect_named_by(ClipOutput::Kind kind) {
     case ClipOutput::Kind::LazyImage: return "the lazy image reaches this computer's clipboard";
     case ClipOutput::Kind::CancelLazyImage: return "the lazy image is removed from the clipboard";
     case ClipOutput::Kind::Note: return "the note is logged";
+    case ClipOutput::Kind::TellUser: return "the message is logged and put in front of the user";
     case ClipOutput::Kind::ProtocolError: return "the connection is dropped";
     case ClipOutput::Kind::FileOffer: return "the user is asked about the files";
     case ClipOutput::Kind::FileOfferWithdrawn:
@@ -275,7 +276,7 @@ static void a_refused_frame_is_counted_and_said_out_loud() {
 
     CHECK(!recorder.did("note_sent"), "a refused frame does not charge the idle timer");
     CHECK(recorder.did("note_send_refused"), "a refused frame is counted");
-    CHECK(recorder.logged("a session frame was not taken by the transport"),
+    CHECK(recorder.did("log: a session frame was not taken by the transport and is lost"),
           "a refused frame is distinguishable from a quiet link");
 }
 
@@ -395,7 +396,7 @@ static void a_clipboard_frame_with_no_session_is_dropped_loudly() {
     output.bytes = std::vector<uint8_t>(16, 0x33);
     dispatch.emit(output);
 
-    CHECK(recorder.logged("a clipboard frame could not be built"),
+    CHECK(recorder.did("log: a clipboard frame could not be built; there is no session"),
           "a frame with no session to carry it is reported");
     CHECK(!recorder.did("send(20)"), "nothing is handed to the transport");
     CHECK(!recorder.did("note_sent"), "the idle timer is not charged");
@@ -416,7 +417,7 @@ static void a_refused_clipboard_frame_is_counted_and_said_out_loud() {
 
     CHECK(!recorder.did("note_sent"), "a refused clipboard frame does not charge the idle timer");
     CHECK(recorder.did("note_send_refused"), "a refused clipboard frame is counted");
-    CHECK(recorder.logged("a clipboard frame of type 64 was not taken by the transport"),
+    CHECK(recorder.did("log: a clipboard frame of type 64 was not taken by the transport and is lost"),
           "the refusal names the message type");
 }
 
@@ -563,7 +564,37 @@ static void arriving_files_reach_the_disk_and_the_clipboard() {
           effect_named_by(ClipOutput::Kind::DeliverFiles));
 }
 
+static void a_cursor_response_charges_only_an_accepted_send() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+    CHECK(dispatch.send_payload(0x22, {7, 0, 0}, "a cursor-position response"),
+          "an accepted cursor response reports success");
+    const std::vector<std::string> expected{"build(34,3)", "send(7)", "note_sent"};
+    CHECK(recorder.effects == expected,
+          "the cursor response is built and accepted before charging the idle timer");
+
+    recorder.effects.clear();
+    recorder.transport_takes = false;
+    CHECK(!dispatch.send_payload(0x22, {7, 0, 0}, "a cursor-position response"),
+          "a refused cursor response reports failure");
+    const std::vector<std::string> refused{
+        "build(34,3)", "send(7)", "note_send_refused",
+        "log: a cursor-position response was not taken by the transport and is lost"};
+    CHECK(recorder.effects == refused,
+          "a refused cursor response is counted and logged without charging the idle timer");
+
+    recorder.effects.clear();
+    recorder.frame_builds = false;
+    CHECK(!dispatch.send_payload(0x22, {7, 0, 0}, "a cursor-position response"),
+          "an unbuilt cursor response reports failure");
+    const std::vector<std::string> unbuilt{
+        "build(34,3)", "log: a cursor-position response could not be built; there is no session"};
+    CHECK(recorder.effects == unbuilt,
+          "a missing session neither sends nor changes send accounting");
+}
+
 int main() {
+    a_cursor_response_charges_only_an_accepted_send();
     store_board_key_reaches_the_secret_store();
     a_refused_board_key_is_said_out_loud();
     the_channel_outputs_reach_the_transport();

@@ -93,6 +93,30 @@ public final class OutputDispatch {
 
     public init(effects: HelperEffects) { self.effects = effects }
 
+    // Charge ADR-0004's idle timer only for a frame the transport took (#107).
+    @discardableResult
+    private func sendFrame(_ frame: [UInt8], name: String) -> Bool {
+        if effects.send(frame) {
+            effects.noteSent()
+            return true
+        }
+        effects.noteSendRefused()
+        effects.note(name + " was not taken by the transport and is lost")
+        return false
+    }
+
+    /// Cursor and clipboard payloads share the session's builder and send
+    /// accounting. Only clipboard refusals add a message type to the name.
+    @discardableResult
+    public func sendPayload(type: UInt8, body: [UInt8], name: String,
+                            refusalSuffix: String = "") -> Bool {
+        guard let frame = effects.buildFrame(type: type, body: body) else {
+            effects.note(name + " could not be built; there is no session")
+            return false
+        }
+        return sendFrame(frame, name: name + refusalSuffix)
+    }
+
     /* Neither switch below has a `default:`, deliberately. An output case added
        to a service and forgotten here is then a compile error rather than a
        silent fall-through, so `swift run channel-tests` fails rather than
@@ -116,19 +140,7 @@ public final class OutputDispatch {
             effects.releaseChannels()
 
         case .send(let bytes):
-            /* The same rule as a clipboard frame below, and #107 is what it
-               cost to have it in only one of the two places: the idle timer is
-               charged for what the transport actually took. A beat charged for
-               one it refused bought a full interval of silence, and three of
-               those has the board evict this helper. Said out loud too — a
-               refusal here used to be indistinguishable from a healthy quiet
-               link. */
-            if effects.send(bytes) {
-                effects.noteSent()
-            } else {
-                effects.noteSendRefused()
-                effects.note("a session frame was not taken by the transport and is lost")
-            }
+            sendFrame(bytes, name: "a session frame")
 
         case .state(let state):
             effects.note("state: \(state.message ?? "(nothing to report)")")
@@ -161,26 +173,8 @@ public final class OutputDispatch {
     public func emit(_ output: ClipboardOutput) {
         switch output {
         case .send(let type, let body):
-            guard let frame = effects.buildFrame(type: type, body: body) else {
-                effects.note("a clipboard frame could not be built; there is no session")
-                return
-            }
-            /* The idle timer is charged only for a frame the transport
-               actually took. Charging for one it refused would suppress a
-               beat that ADR-0004 owed the board — which is exactly what
-               `HelperSession.emit` says not to do.
-
-               A refusal is said out loud (#132): dropped here in silence, a
-               frame the transport would not take is indistinguishable from
-               one lost on the wire, and the two have nothing in common to
-               fix. */
-            if effects.send(frame) {
-                effects.noteSent()
-            } else {
-                effects.noteSendRefused()
-                effects.note("a clipboard frame of type \(type) was not taken by the "
-                             + "transport and is lost")
-            }
+            sendPayload(type: type, body: body, name: "a clipboard frame",
+                        refusalSuffix: " of type \(type)")
 
         case .deliver(let kind, let bytes):
             if kind == ClipKind.text.rawValue {
