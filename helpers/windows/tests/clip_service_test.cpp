@@ -438,6 +438,32 @@ void test_a_slow_seal_accept_survives_a_retry() {
           "the copy never crossed, so nothing was ever sealed");
 }
 
+void test_a_repeated_seal_preserves_an_incoming_transfer() {
+    Pair pair;
+    pair.drop_next[DH_MSG_CLIP_CHUNK] = 1000;
+    pair.copy_on_a("waiting for chunks");
+    std::vector<uint8_t> offer, accept;
+    for (const auto &frame : pair.carried_frames) {
+        if (frame.first == DH_MSG_SEAL_OFFER) offer = frame.second;
+        if (frame.first == DH_MSG_SEAL_ACCEPT) accept = frame.second;
+    }
+    CHECK(!offer.empty() && !accept.empty(), "the exchange was not carried");
+    auto answer = pair.b.received(DH_MSG_SEAL_OFFER, offer.data(), offer.size());
+    CHECK(answer.size() == 1 && answer[0].kind == ClipOutput::Kind::Send &&
+          answer[0].type == DH_MSG_SEAL_ACCEPT && answer[0].bytes == accept,
+          "a repeated seal reset the incoming transfer or changed its answer");
+    pair.drop_next[DH_MSG_CLIP_CHUNK] = 0;
+    pair.b.tick(0);
+    pair.settle(pair.b.tick(ClipService::kSweepDelayMs), Side::B);
+    CHECK(pair.delivered_to_b.size() == 1 &&
+          text_of(pair.delivered_to_b[0]) == "waiting for chunks",
+          "the receive did not resume after a repeated seal");
+    pair.copy_on_a("next copy under the live seal");
+    pair.copy_on_b("the other direction still works");
+    CHECK(pair.delivered_to_b.size() == 2 && pair.delivered_to_a.size() == 1,
+          "a live seal failed to resume copying in both directions");
+}
+
 void test_seal_retries_do_not_extend_the_copy_deadline() {
     Pair pair;
     pair.drop_next[DH_MSG_SEAL_OFFER] = 100;
@@ -1765,6 +1791,7 @@ int main() {
     test_a_lost_seal_offer_is_retried();
     test_a_lost_seal_accept_is_retried();
     test_a_slow_seal_accept_survives_a_retry();
+    test_a_repeated_seal_preserves_an_incoming_transfer();
     test_seal_retries_do_not_extend_the_copy_deadline();
     test_a_multi_chunk_payload_arrives();
     test_a_second_copy_supersedes();

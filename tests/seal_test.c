@@ -913,6 +913,95 @@ static void test_short_bodies(void) {
           "a message that carries no seal named one");
 }
 
+/* Public exchange interface: retries must not consult entropy or replace keys. */
+static bool exchange_entropy(void *ctx, uint8_t *out, size_t len) {
+    unsigned *draws = ctx;
+    ++*draws;
+    memset(out, 1, len);
+    return true;
+}
+
+static void test_exchange_retry_identity(void) {
+    dh_seal_tx tx;
+    dh_seal_rx rx;
+    dh_seal_tx_init(&tx);
+    dh_seal_rx_init(&rx);
+    unsigned draws = 0;
+    dh_seal_entropy entropy = {&draws, exchange_entropy};
+    uint8_t offer[DH_SEAL_EXCHANGE_LEN], retry[DH_SEAL_EXCHANGE_LEN];
+    uint8_t accept[DH_SEAL_EXCHANGE_LEN];
+    size_t n = 0, m = 0;
+    bool fresh = false;
+    CHECK(dh_seal_offer(&tx, &entropy, offer, sizeof offer, &n) == DH_SEAL_OK,
+          "retry", "offer failed");
+    unsigned before = draws;
+    CHECK(dh_seal_offer(&tx, &entropy, retry, sizeof retry, &m) == DH_SEAL_OK &&
+          n == m && memcmp(offer, retry, n) == 0 && draws == before,
+          "retry", "retry changed the offer or drew entropy");
+    CHECK(dh_seal_accept(&rx, &entropy, offer, n, accept, sizeof accept, &m, &fresh) ==
+          DH_SEAL_OK && fresh, "retry", "first acceptance was not fresh");
+    CHECK(dh_seal_tx_accepted(&tx, accept, m) == DH_SEAL_OK,
+          "retry", "delayed answer was refused");
+    before = draws;
+    CHECK(dh_seal_accept(&rx, &entropy, offer, n, retry, sizeof retry, &m, &fresh) ==
+          DH_SEAL_OK && !fresh && memcmp(accept, retry, m) == 0 && draws == before,
+          "retry", "repeated offer replaced the answer or drew entropy");
+    uint8_t body[DH_FRAME_MAX_PAYLOAD], plain[DH_FRAME_MAX_PAYLOAD];
+    dh_clip_offer sent = {.id = 7, .kind = 0, .total = 3}, opened;
+    CHECK(dh_seal_encode_offer(&tx, aes_gcm_ref_aead(), &sent, body, sizeof body, &n) ==
+          DH_SEAL_OK && dh_seal_open_offer(&rx, aes_gcm_ref_aead(), body, n, plain,
+          sizeof plain, &opened) == DH_SEAL_OK && opened.id == 7,
+          "retry", "repeated exchange left incompatible keys");
+}
+
+static bool unavailable_entropy(void *ctx, uint8_t *out, size_t len) {
+    (void)ctx; (void)out; (void)len;
+    return false;
+}
+
+static void test_exchange_replacement_and_failure(void) {
+    dh_seal_tx tx;
+    dh_seal_rx rx;
+    dh_seal_tx_init(&tx);
+    dh_seal_rx_init(&rx);
+    unsigned draws = 0;
+    dh_seal_entropy entropy = {&draws, exchange_entropy};
+    dh_seal_entropy unavailable = {NULL, unavailable_entropy};
+    uint8_t offer[DH_SEAL_EXCHANGE_LEN], accept[DH_SEAL_EXCHANGE_LEN];
+    uint8_t reply[DH_SEAL_EXCHANGE_LEN];
+    size_t n = 0, m = 0;
+    bool fresh = false;
+    CHECK(dh_seal_offer(&tx, &entropy, offer, sizeof offer, &n) == DH_SEAL_OK,
+          "replacement", "offer failed");
+    CHECK(!dh_seal_tx_stale(&tx, 2), "replacement", "unrelated stale discarded pending offer");
+    CHECK(dh_seal_offer(&tx, &unavailable, reply, sizeof reply, &m) == DH_SEAL_OK &&
+          m == n && memcmp(offer, reply, n) == 0,
+          "replacement", "unrelated stale lost retry identity");
+    CHECK(dh_seal_accept(&rx, &entropy, offer, n, accept, sizeof accept, &m, &fresh) ==
+          DH_SEAL_OK && fresh, "replacement", "accept failed");
+    uint8_t changed[DH_SEAL_EXCHANGE_LEN];
+    memcpy(changed, offer, n);
+    changed[DH_SEAL_ID_SIZE] ^= 1; /* Same seal id, different nonce is fresh. */
+    CHECK(dh_seal_accept(&rx, &unavailable, changed, n, reply, sizeof reply, &m, &fresh) ==
+          DH_SEAL_ERR_KEY && !fresh && m == 0,
+          "replacement", "failed entropy reported a fresh seal");
+    CHECK(dh_seal_accept(&rx, &entropy, changed, n, reply, 1, &m, &fresh) ==
+          DH_SEAL_ERR_BUFFER && !fresh, "replacement", "short output replaced the key");
+    CHECK(dh_seal_accept(&rx, &entropy, changed, n - 1, reply, sizeof reply, &m, &fresh) ==
+          DH_SEAL_ERR_MALFORMED && !fresh, "replacement", "short input replaced the key");
+    CHECK(dh_seal_accept(&rx, &unavailable, offer, n, reply, sizeof reply, &m, &fresh) ==
+          DH_SEAL_OK && !fresh && memcmp(accept, reply, m) == 0,
+          "replacement", "failed replacement forgot the previous answer");
+    CHECK(dh_seal_accept(&rx, &entropy, changed, n, reply, sizeof reply, &m, &fresh) ==
+          DH_SEAL_OK && fresh, "replacement", "same id with a new nonce was treated as a retry");
+    dh_seal_rx_init(&rx);
+    CHECK(dh_seal_accept(&rx, &unavailable, changed, n, reply, sizeof reply, &m, &fresh) ==
+          DH_SEAL_ERR_KEY && !fresh, "replacement", "session reset retained the answer");
+    dh_seal_tx_init(&tx);
+    CHECK(dh_seal_offer(&tx, &unavailable, reply, sizeof reply, &m) == DH_SEAL_ERR_KEY,
+          "replacement", "session reset retained the offer");
+}
+
 int main(int argc, char **argv) {
     const char *primitives_path = argc > 1 ? argv[1] : DH_PRIMITIVE_VECTORS;
     const char *frames_path = argc > 2 ? argv[2] : DH_TEST_VECTORS;
@@ -923,6 +1012,8 @@ int main(int argc, char **argv) {
     test_reference_cipher(); /* first: everything below trusts it */
 
     if (load_material()) {
+        test_exchange_retry_identity();
+        test_exchange_replacement_and_failure();
         test_the_exchange_matches_the_wire();
         test_an_accept_this_end_did_not_ask_for();
         test_sealed_messages_match_the_wire();

@@ -177,13 +177,12 @@ public final class ClipboardSeal {
 
     // MARK: - The exchange
 
-    /// The SEAL_OFFER body for a fresh outgoing seal. Whatever this end held
-    /// is discarded: the offerer owns the seal.
+    public var hasOutstandingOffer: Bool { tx.pointee.offered }
+
+    /// Repeat the outstanding exchange, or offer a fresh outgoing seal.
     public func offer() throws -> [UInt8] {
-        let sealID = try drawSealID()
-        let nonce = try draw(Int(DH_NONCE_SIZE))
-        return try withFreshKey { privateKey, out, capacity, written in
-            dh_seal_tx_offer(tx, sealID, privateKey, nonce, out, capacity, &written)
+        try exchange { entropy, out, capacity, written in
+            dh_seal_offer(tx, entropy, out, capacity, &written)
         }
     }
 
@@ -196,13 +195,19 @@ public final class ClipboardSeal {
     /// The peer offered a seal: derive this end's key and answer with the
     /// SEAL_ACCEPT body that closes the exchange.
     public func accept(offer body: [UInt8]) throws -> [UInt8] {
-        let nonce = try draw(Int(DH_NONCE_SIZE))
-        return try withFreshKey { privateKey, out, capacity, written in
-            body.withUnsafeBufferPointer { offered in
-                dh_seal_rx_offered(rx, offered.baseAddress, offered.count, privateKey, nonce, out,
-                                   capacity, &written)
+        try acceptExchange(offer: body).body
+    }
+
+    /// `fresh` means the caller must retire its old incoming transfer namespace.
+    public func acceptExchange(offer body: [UInt8]) throws -> (body: [UInt8], fresh: Bool) {
+        var fresh = false
+        let answer = try exchange { entropy, out, capacity, written in
+            body.withUnsafeBufferPointer {
+                dh_seal_accept(rx, entropy, $0.baseAddress, $0.count, out, capacity,
+                               &written, &fresh)
             }
         }
+        return (answer, fresh)
     }
 
     /// The peer holds no key for a seal it was sent. If it is this end's
@@ -302,41 +307,29 @@ public final class ClipboardSeal {
 
     // MARK: - Internals
 
-    private func draw(_ count: Int) throws -> [UInt8] {
-        let bytes = entropy(count)
-        guard bytes.count == count else { throw SealError.badKey }
-        return bytes
-    }
-
-    private func drawSealID() throws -> UInt32 {
-        let bytes = try draw(4)
-        return UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16
-            | UInt32(bytes[3]) << 24
-    }
-
-    /*
-     * Random 32 bytes are a usable P-256 scalar all but about once in 2^32
-     * draws, which is rare enough to be a retry and far too common to be a
-     * crash. A handful of attempts is already beyond any plausible run of bad
-     * luck; past that, the entropy source is what is wrong.
-     */
-    private func withFreshKey(
-        _ body: (UnsafePointer<UInt8>, UnsafeMutablePointer<UInt8>, Int, inout Int)
-            -> dh_seal_result
+    private func exchange(
+        _ operation: (UnsafePointer<dh_seal_entropy>, UnsafeMutablePointer<UInt8>, Int,
+                      inout Int) -> dh_seal_result
     ) throws -> [UInt8] {
         var out = [UInt8](repeating: 0, count: Int(DH_SEAL_EXCHANGE_LEN))
-        for _ in 0..<8 {
-            let privateKey = try draw(Int(DH_P256_PRIVATE_SIZE))
-            var written = 0
-            let rc = privateKey.withUnsafeBufferPointer { key in
-                out.withUnsafeMutableBufferPointer { buffer in
-                    body(key.baseAddress!, buffer.baseAddress!, buffer.count, &written)
-                }
+        var written = 0
+        let rc = withUnsafePointer(to: entropy) { source in
+            var adapter = dh_seal_entropy(
+                ctx: UnsafeMutableRawPointer(mutating: source),
+                draw: { context, destination, count in
+                    guard let context, let destination else { return false }
+                    let draw = context.assumingMemoryBound(to: ((Int) -> [UInt8]).self).pointee
+                    let bytes = draw(count)
+                    guard bytes.count == count else { return false }
+                    destination.update(from: bytes, count: count)
+                    return true
+                })
+            return out.withUnsafeMutableBufferPointer {
+                operation(&adapter, $0.baseAddress!, $0.count, &written)
             }
-            if rc == DH_SEAL_OK { return Array(out.prefix(written)) }
-            guard rc == DH_SEAL_ERR_KEY else { throw SealError.from(rc) }
         }
-        throw SealError.badKey
+        guard rc == DH_SEAL_OK else { throw SealError.from(rc) }
+        return Array(out.prefix(written))
     }
 }
 

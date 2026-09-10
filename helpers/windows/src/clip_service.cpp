@@ -137,7 +137,12 @@ ClipService::ClipService(const dh_seal_aead *aead, std::function<void(uint8_t *,
     dh_xfer_init(xfer_.get(), rx_buffer_.data(), rx_buffer_.size());
 }
 
-void ClipService::draw(uint8_t *out, size_t len) { entropy_(out, len); }
+dh_seal_entropy ClipService::seal_entropy() {
+    return {&entropy_, [](void *ctx, uint8_t *out, size_t len) {
+        (*static_cast<std::function<void(uint8_t *, size_t)> *>(ctx))(out, len);
+        return true;
+    }};
+}
 
 // ------------------------------------------------------- what this computer does
 
@@ -400,10 +405,6 @@ std::vector<ClipOutput> ClipService::session_ended() {
     have_incoming_files_ = false;
     incoming_files_.clear();
     reoffer_when_sealed_ = false;
-    /* Both halves of the exchange belong to the session that made them. */
-    outstanding_offer_.clear();
-    answered_offer_.clear();
-    last_accept_.clear();
 
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> rendered;
@@ -433,6 +434,7 @@ std::vector<ClipOutput> ClipService::session_ended() {
     tx_payload_.clear();
     tx_meta_.clear();
 
+    /* Both halves of the exchange belong to the session that made them. */
     dh_seal_tx_init(&seal_tx_);
     dh_seal_rx_init(&seal_rx_);
 
@@ -784,61 +786,31 @@ std::vector<ClipOutput> ClipService::received(uint8_t type, const uint8_t *body,
  * to the seal just replaced and can never be finished; it is abandoned rather
  * than delivered in part.
  *
- * A healthy receive cannot be thrown away this way. A duplicated frame never
- * reaches here — a counter seen once is refused for ever (dh_auth.h) — and a
- * genuinely fresh offer means the far end holds no key, which is exactly the
- * state in which it cannot be sending anything.
+ * An identical retry repeats its accept without retiring this namespace.
+ * Only a successfully accepted fresh exchange replaces the incoming key.
  */
 std::vector<ClipOutput> ClipService::on_seal_offered(const uint8_t *body, size_t len) {
-    /*
-     * The same offer again, compared as bytes — a retry re-sends it verbatim,
-     * so equality is the whole test and no parse of the body is needed.
-     * Answering it with a freshly derived key would leave this end holding one
-     * the offerer can never arrive at, because the offerer is still answering
-     * the first accept; it would also reset a receive that is not being
-     * replaced at all.
-     */
-    if (!answered_offer_.empty() && answered_offer_.size() == len &&
-        std::equal(answered_offer_.begin(), answered_offer_.end(), body)) {
-        return {send(DH_MSG_SEAL_ACCEPT, last_accept_.data(), last_accept_.size())};
-    }
-
     uint8_t reply[DH_SEAL_EXCHANGE_LEN];
-    uint8_t nonce[DH_NONCE_SIZE];
-    draw(nonce, sizeof nonce);
-
-    /*
-     * Random 32 bytes are a usable P-256 scalar all but about once in 2^32
-     * draws — rare enough to be a retry and far too common to be a crash. A
-     * handful of attempts is already beyond any plausible run of bad luck;
-     * past that, the entropy source is what is wrong.
-     */
-    for (int attempt = 0; attempt < 8; attempt++) {
-        uint8_t eph_private[DH_P256_PRIVATE_SIZE];
-        draw(eph_private, sizeof eph_private);
-        size_t written = 0;
-        const dh_seal_result rc = dh_seal_rx_offered(&seal_rx_, body, len, eph_private, nonce,
-                                                     reply, sizeof reply, &written);
-        if (rc == DH_SEAL_OK) {
-            answered_offer_.assign(body, body + len);
-            last_accept_.assign(reply, reply + written);
-            std::vector<ClipOutput> outputs{send(DH_MSG_SEAL_ACCEPT, reply, written)};
-            dh_xfer_action actions[kActionCapacity];
-            const size_t n = dh_xfer_rx_seal_replaced(xfer_.get(), actions, kActionCapacity);
-            append(outputs, render(actions, n));
-            return outputs;
-        }
-        if (rc != DH_SEAL_ERR_KEY)
-            return {note("a seal offer could not be accepted: error " + std::to_string(rc))};
+    size_t written = 0;
+    bool fresh = false;
+    const auto entropy = seal_entropy();
+    const dh_seal_result rc = dh_seal_accept(&seal_rx_, &entropy, body, len, reply,
+                                             sizeof reply, &written, &fresh);
+    if (rc != DH_SEAL_OK)
+        return {note("a seal offer could not be accepted: error " + std::to_string(rc))};
+    std::vector<ClipOutput> outputs{send(DH_MSG_SEAL_ACCEPT, reply, written)};
+    if (fresh) {
+        dh_xfer_action actions[kActionCapacity];
+        const size_t n = dh_xfer_rx_seal_replaced(xfer_.get(), actions, kActionCapacity);
+        append(outputs, render(actions, n));
     }
-    return {note("a seal offer could not be accepted: no usable ephemeral key was drawn")};
+    return outputs;
 }
 
 std::vector<ClipOutput> ClipService::on_seal_accepted(const uint8_t *body, size_t len) {
     const dh_seal_result rc = dh_seal_tx_accepted(&seal_tx_, body, len);
     if (rc != DH_SEAL_OK)
         return {note("a seal accept could not be used: error " + std::to_string(rc))};
-    outstanding_offer_.clear();
     const ClipOutput sealed_note = note("the seal is live; this end can send now");
 
     /* The copy that was waiting for exactly this, or the transfer a stale seal
@@ -865,7 +837,6 @@ std::vector<ClipOutput> ClipService::on_seal_stale(const uint8_t *body, size_t l
     /* A stale naming some other seal changes nothing: this end has already
        moved on, and re-offering would restart a transfer that is working. */
     if (!dh_seal_tx_stale(&seal_tx_, seal_id)) return {};
-    outstanding_offer_.clear();
 
     if (!have_pending_) {
         dh_clip_offer current{};
@@ -1290,24 +1261,13 @@ std::vector<ClipOutput> ClipService::reoffer() {
  * in one pass buy nothing and make the peer answer twice.
  */
 std::vector<ClipOutput> ClipService::offer_seal() {
-    if (!outstanding_offer_.empty()) return {};
+    if (seal_tx_.offered) return {};
     return resend_seal_offer();
 }
 
-/*
- * The retry: the same bytes again, because the peer may be answering them at
- * this moment.
- *
- * `dh_seal_tx_offer` draws a new seal id and a new ephemeral key — the offerer
- * owns the seal — so minting a fresh offer on every retry threw away the key
- * the peer was answering, and the accept came back naming an id this end no
- * longer knew (DH_SEAL_ERR_UNKNOWN_ID). On a link whose round trip runs past
- * kSweepDelayMs that is a livelock, not a race: nothing is ever sealed and no
- * file is ever offered (#161).
- */
+/* Retry identity belongs to the seal; this caller owns the retry cadence. */
 std::vector<ClipOutput> ClipService::resend_seal_offer() {
-    if (!outstanding_offer_.empty())
-        return {send(DH_MSG_SEAL_OFFER, outstanding_offer_.data(), outstanding_offer_.size())};
+    const bool retry = seal_tx_.offered;
     if (aead_ == nullptr) {
         have_pending_ = false;
         pending_.clear();
@@ -1315,33 +1275,13 @@ std::vector<ClipOutput> ClipService::resend_seal_offer() {
         return {note("no AES-GCM provider, so nothing can be sealed and nothing can be sent")};
     }
 
-    uint8_t seal_id_bytes[DH_SEAL_ID_SIZE];
-    draw(seal_id_bytes, sizeof seal_id_bytes);
-    const uint32_t seal_id = static_cast<uint32_t>(seal_id_bytes[0]) |
-                             (static_cast<uint32_t>(seal_id_bytes[1]) << 8) |
-                             (static_cast<uint32_t>(seal_id_bytes[2]) << 16) |
-                             (static_cast<uint32_t>(seal_id_bytes[3]) << 24);
-
-    uint8_t nonce[DH_NONCE_SIZE];
-    draw(nonce, sizeof nonce);
-
+    const auto entropy = seal_entropy();
     uint8_t out[DH_SEAL_EXCHANGE_LEN];
-    for (int attempt = 0; attempt < 8; attempt++) {
-        uint8_t eph_private[DH_P256_PRIVATE_SIZE];
-        draw(eph_private, sizeof eph_private);
-        size_t written = 0;
-        const dh_seal_result rc = dh_seal_tx_offer(&seal_tx_, seal_id, eph_private, nonce, out,
-                                                   sizeof out, &written);
-        if (rc == DH_SEAL_OK) {
-            outstanding_offer_.assign(out, out + written);
-            /* The exchange had no line in the log at all, which is why two
-               faults in it were diagnosed by inference rather than by reading
-               (#161). Said on the mint and on the accept only — a retry is
-               silent, so this stays two lines per exchange. */
-            return {send(DH_MSG_SEAL_OFFER, out, written),
-                    note("offering a seal so this end can send")};
-        }
-        if (rc != DH_SEAL_ERR_KEY) break;
+    size_t written = 0;
+    if (dh_seal_offer(&seal_tx_, &entropy, out, sizeof out, &written) == DH_SEAL_OK) {
+        std::vector<ClipOutput> outputs{send(DH_MSG_SEAL_OFFER, out, written)};
+        if (!retry) outputs.push_back(note("offering a seal so this end can send"));
+        return outputs;
     }
 
     have_pending_ = false;

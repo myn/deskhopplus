@@ -98,6 +98,7 @@ dh_seal_result dh_seal_tx_offer(dh_seal_tx *tx, uint32_t seal_id,
     /* Whatever this end held is gone from here: the offer supersedes it, and a
        key kept beside a fresh offer is a key nothing will ever open again. */
     dh_seal_tx_init(tx);
+    memcpy(tx->offer, out, DH_SEAL_EXCHANGE_LEN);
     tx->offered = true;
     tx->seal_id = seal_id;
     memcpy(tx->nonce, nonce, DH_NONCE_SIZE);
@@ -155,6 +156,8 @@ dh_seal_result dh_seal_rx_offered(dh_seal_rx *rx, const uint8_t *body, size_t le
         return DH_SEAL_ERR_BUFFER;
     }
 
+    memcpy(rx->offer, body, DH_SEAL_EXCHANGE_LEN);
+    memcpy(rx->accept, out, DH_SEAL_EXCHANGE_LEN);
     rx->live = true;
     rx->seal_id = seal_id;
     memcpy(rx->key, key, sizeof rx->key);
@@ -162,6 +165,56 @@ dh_seal_result dh_seal_rx_offered(dh_seal_rx *rx, const uint8_t *body, size_t le
 
     *out_len = (size_t)n;
     return DH_SEAL_OK;
+}
+
+dh_seal_result dh_seal_offer(dh_seal_tx *tx, const dh_seal_entropy *entropy,
+                              uint8_t *out, size_t cap, size_t *out_len) {
+    *out_len = 0;
+    if (cap < DH_SEAL_EXCHANGE_LEN) return DH_SEAL_ERR_BUFFER;
+    if (tx->offered) {
+        memcpy(out, tx->offer, DH_SEAL_EXCHANGE_LEN);
+        *out_len = DH_SEAL_EXCHANGE_LEN;
+        return DH_SEAL_OK;
+    }
+    uint8_t id[DH_SEAL_ID_SIZE], nonce[DH_NONCE_SIZE];
+    if (!entropy->draw(entropy->ctx, id, sizeof id) ||
+        !entropy->draw(entropy->ctx, nonce, sizeof nonce)) return DH_SEAL_ERR_KEY;
+    /* Random scalars fail about once in 2^32 draws. Keep the helpers' bound. */
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        uint8_t private_key[DH_P256_PRIVATE_SIZE] = {0};
+        bool drawn = entropy->draw(entropy->ctx, private_key, sizeof private_key);
+        dh_seal_result rc = drawn ? dh_seal_tx_offer(tx, get32(id), private_key, nonce,
+                                                     out, cap, out_len) : DH_SEAL_ERR_KEY;
+        memset(private_key, 0, sizeof private_key);
+        if (!drawn || rc != DH_SEAL_ERR_KEY) return rc;
+    }
+    return DH_SEAL_ERR_KEY;
+}
+
+dh_seal_result dh_seal_accept(dh_seal_rx *rx, const dh_seal_entropy *entropy,
+                               const uint8_t *body, size_t len, uint8_t *out, size_t cap,
+                               size_t *out_len, bool *fresh) {
+    *out_len = 0;
+    *fresh = false;
+    if (len != DH_SEAL_EXCHANGE_LEN) return DH_SEAL_ERR_MALFORMED;
+    if (cap < DH_SEAL_EXCHANGE_LEN) return DH_SEAL_ERR_BUFFER;
+    if (rx->live && memcmp(rx->offer, body, len) == 0) {
+        memcpy(out, rx->accept, DH_SEAL_EXCHANGE_LEN);
+        *out_len = DH_SEAL_EXCHANGE_LEN;
+        return DH_SEAL_OK;
+    }
+    uint8_t nonce[DH_NONCE_SIZE];
+    if (!entropy->draw(entropy->ctx, nonce, sizeof nonce)) return DH_SEAL_ERR_KEY;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        uint8_t private_key[DH_P256_PRIVATE_SIZE] = {0};
+        bool drawn = entropy->draw(entropy->ctx, private_key, sizeof private_key);
+        dh_seal_result rc = drawn ? dh_seal_rx_offered(rx, body, len, private_key, nonce,
+                                                       out, cap, out_len) : DH_SEAL_ERR_KEY;
+        memset(private_key, 0, sizeof private_key);
+        if (rc == DH_SEAL_OK) *fresh = true;
+        if (!drawn || rc != DH_SEAL_ERR_KEY) return rc;
+    }
+    return DH_SEAL_ERR_KEY;
 }
 
 bool dh_seal_tx_stale(dh_seal_tx *tx, uint32_t seal_id) {

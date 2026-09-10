@@ -329,7 +329,7 @@ class ClipService {
        starts over. */
     std::vector<ClipOutput> reoffer();
 
-    void draw(uint8_t *out, size_t len);
+    dh_seal_entropy seal_entropy();
 
     /* How far each direction has got. A stall that says only "no progress"
        cannot tell a transfer whose chunks never arrived from one whose chunks
@@ -367,16 +367,10 @@ class ClipService {
        holds no key for the seal. Once a fresh seal is accepted it has to start
        again, rather than carry on into a far end that never saw its offer. */
     bool reoffer_when_sealed_{false};
-    /* The exchange, made idempotent under retransmission (#161): the offer this
-       end is still waiting on, and the answer it already gave to an offer, both
-       repeated verbatim rather than derived again. */
     /* The board's clipboard size cap, as the copy side needs it. Zero until the
        board has said, and nothing is refused on a cap nobody stated. */
     size_t cap_bytes_{0};
     uint8_t cap_megabytes_{0};
-    std::vector<uint8_t> outstanding_offer_;
-    std::vector<uint8_t> answered_offer_;
-    std::vector<uint8_t> last_accept_;
     uint32_t lazy_image_id_{0};
 
     /*

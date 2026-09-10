@@ -28,6 +28,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a lost seal offer is retried", testALostSealOfferIsRetried),
     ("a lost seal accept is retried", testALostSealAcceptIsRetried),
     ("a slow seal accept survives a retry", testASlowSealAcceptSurvivesARetry),
+    ("a repeated seal preserves an incoming transfer", testARepeatedSealPreservesAnIncomingTransfer),
     ("seal retries do not extend the copy deadline", testSealRetriesDoNotExtendTheCopyDeadline),
     ("a payload larger than one chunk is reassembled", testAMultiChunkPayloadArrives),
     ("a second copy supersedes the first", testASecondCopySupersedes),
@@ -1787,4 +1788,29 @@ private func testADelayedOfferCannotRevive() {
                }, "an offer under the replaced seal was opened rather than refused")
     Check.equal(text(pair.deliveredToB), ["first, to establish a seal", "after the restart"],
                 "a delayed offer under the replaced seal changed what arrived")
+}
+
+private func testARepeatedSealPreservesAnIncomingTransfer() {
+    let pair = Pair()
+    pair.dropNext[MessageType.clipChunk] = 1000
+    pair.copyOnA("waiting for chunks")
+    let offer = pair.carriedFrames.first { $0.0 == MessageType.sealOffer }!.1
+    let accept = pair.carriedFrames.first { $0.0 == MessageType.sealAccept }!.1
+    let answer = pair.b.received(type: MessageType.sealOffer, body: offer)
+    Check.equal(answer.count, 1, "a repeated seal reset the receive")
+    Check.that(answer.contains {
+        if case .send(let type, let body) = $0 {
+            return type == MessageType.sealAccept && body == accept
+        }
+        return false
+    }, "a repeated seal changed its answer")
+    pair.dropNext[MessageType.clipChunk] = 0
+    _ = pair.b.tick(at: 0)
+    pair.settle(pair.b.tick(at: ClipboardService.sweepDelay), from: .b)
+    Check.equal(text(pair.deliveredToB), ["waiting for chunks"],
+                "the receive did not resume after a repeated seal")
+    pair.copyOnA("next copy under the live seal")
+    pair.copyOnB("the other direction still works")
+    Check.equal(pair.deliveredToB.count, 2, "a copy under the live seal did not resume")
+    Check.equal(pair.deliveredToA.count, 1, "the other direction stopped working")
 }

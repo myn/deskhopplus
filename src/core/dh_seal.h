@@ -21,9 +21,9 @@
  * more than that: the board never instantiates this file at all. Its primitive
  * set stays SHA-256, HMAC, HKDF and P-256.
  *
- * **Not here: entropy.** An ephemeral private key and a nonce are bytes the
- * caller draws and hands in, exactly as dh_pair_open_window takes its fresh
- * secret and dh_session stages its nonce. A core that cannot be tested
+ * **Not here: entropy.** The platform supplies the entropy callback used for
+ * fresh exchanges; retries need no new material. The explicit-material
+ * primitives below also serve deterministic wire-vector tests. A core that cannot be tested
  * deterministically is a core whose security property cannot be tested at all.
  * ---------------------------------------------------------------------------
  *
@@ -144,6 +144,7 @@ typedef struct {
  * re-sealed under a fresh counter rather than resent byte for byte.
  */
 typedef struct {
+    uint8_t offer[DH_SEAL_EXCHANGE_LEN];
     bool offered; /* an offer is out; no key until the accept arrives */
     bool live;
     uint32_t seal_id;
@@ -156,6 +157,8 @@ typedef struct {
 /* The receiving half: the peer offered, this end accepted, and this is the key
    that opens what the peer sends. */
 typedef struct {
+    uint8_t offer[DH_SEAL_EXCHANGE_LEN];
+    uint8_t accept[DH_SEAL_EXCHANGE_LEN];
     bool live;
     uint32_t seal_id;
     uint8_t key[DH_SEAL_KEY_SIZE];
@@ -168,6 +171,25 @@ typedef struct {
  */
 void dh_seal_tx_init(dh_seal_tx *tx);
 void dh_seal_rx_init(dh_seal_rx *rx);
+
+/* The platform fills every requested byte, or returns false. Called only for
+   fresh exchanges; no entropy, cipher work, or key replacement on retries. */
+typedef struct {
+    void *ctx;
+    bool (*draw)(void *ctx, uint8_t *out, size_t len);
+} dh_seal_entropy;
+
+/* Repeat an outstanding offer unchanged, otherwise draw a fresh exchange.
+   Retry cadence and deadlines remain the caller's responsibility. */
+dh_seal_result dh_seal_offer(dh_seal_tx *tx, const dh_seal_entropy *entropy,
+                              uint8_t *out, size_t cap, size_t *out_len);
+
+/* Repeat the last answer to identical bytes. On success, fresh is true only
+   when a new incoming key was installed: retire the incoming transfer namespace
+   then. Errors leave the old incoming key and answer intact. */
+dh_seal_result dh_seal_accept(dh_seal_rx *rx, const dh_seal_entropy *entropy,
+                               const uint8_t *body, size_t len, uint8_t *out, size_t cap,
+                               size_t *out_len, bool *fresh);
 
 /*
  * Offer a seal. `eph_private` and `nonce` are freshly drawn by the caller, and
