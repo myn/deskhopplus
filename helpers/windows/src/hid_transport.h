@@ -141,7 +141,7 @@ class HidTransport {
     HWND window_{nullptr};
     HDEVNOTIFY notification_{nullptr};
     std::vector<Channel> channels_;
-    uint8_t next_bulk_{0};
+    uint8_t next_striped_{0};
     size_t config_mode_nodes_{0};
 
     /* The serial of the device this helper is talking to. Every channel must

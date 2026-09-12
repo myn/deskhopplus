@@ -120,15 +120,16 @@ static void init(void) {
     CHECK(drain(sizeof wire) > 0);
 }
 
-static size_t queue_bulk(uint8_t *encoded) {
+static size_t queue_relayed(uint8_t type, uint8_t *encoded) {
     const uint8_t body[100] = {0x5a};
-    dh_frame_view f = {.hdr = {.type = DH_MSG_CLIP_CHUNK, .len = sizeof body},
-                       .payload = body};
+    dh_frame_view f = {.hdr = {.type = type, .len = sizeof body}, .payload = body};
     size_t len = 0;
     CHECK(dh_session_emit_relayed(&c.session, &f, encoded, 256, &len) == DH_FRAME_OK);
     CHECK(channel_lifecycle_queue(&c, encoded, len, 100));
     return len;
 }
+
+static size_t queue_bulk(uint8_t *encoded) { return queue_relayed(DH_MSG_CLIP_CHUNK, encoded); }
 
 static void test_fresh_hello_discards_partial_and_queued_frames(void) {
     init();
@@ -416,6 +417,31 @@ static void test_two_channels_keep_frames_whole_and_priority_on_zero(void) {
     CHECK(c.session.channel_count == 1);
 }
 
+/* Only chunks rotate across the channels (#63). A credit or a retransmit request
+   between two chunks stays on channel 0, and does not take a turn in the
+   rotation — the channels drain on their own clocks, and the transfer's control
+   messages must reach the far end in the order they were sent. */
+static void test_only_chunks_rotate_across_channels(void) {
+    init();
+    c.session.channel_count = 2;
+    uint8_t chunk0[256], credit[256], chunk1[256];
+    const size_t n = queue_bulk(chunk0);
+    CHECK(queue_relayed(DH_MSG_CLIP_CREDIT, credit) == n);
+    CHECK(queue_bulk(chunk1) == n);
+    dh_outq_view a, b;
+    CHECK(dh_outq_peek(&c.out, &a));
+    CHECK(a.total == n && memcmp(a.at, chunk0, n) == 0);
+    dh_outq_advance(&c.out, &a, (uint16_t)n);
+    CHECK(dh_outq_peek(&c.out, &a));
+    CHECK(a.total == n && memcmp(a.at, credit, n) == 0);
+    dh_outq_advance(&c.out, &a, (uint16_t)n);
+    CHECK(!dh_outq_busy(&c.out));
+    CHECK(dh_outq_peek(&c.extra_out[0], &b));
+    CHECK(b.total == n && memcmp(b.at, chunk1, n) == 0);
+    dh_outq_advance(&c.extra_out[0], &b, (uint16_t)n);
+    CHECK(!dh_outq_busy(&c.extra_out[0]));
+}
+
 static void test_interleaved_channel_reports_reassemble_independently(void) {
     init();
     c.session.channel_count = 2;
@@ -461,6 +487,7 @@ static void test_two_channels_share_one_transfer_credit_window(void) {
 
 int main(void) {
     test_two_channels_share_one_transfer_credit_window();
+    test_only_chunks_rotate_across_channels();
     test_interleaved_channel_reports_reassemble_independently();
     test_two_channels_keep_frames_whole_and_priority_on_zero();
     test_fresh_hello_discards_partial_and_queued_frames();

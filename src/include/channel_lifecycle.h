@@ -44,7 +44,7 @@ typedef struct {
     dh_pair pair;
     dh_outq out;
     dh_outq extra_out[DH_SESSION_CHANNEL_COUNT - 1];
-    uint8_t next_bulk;
+    uint8_t next_striped;
     dh_txq_stats tx;
     dh_frame_reader reader;
     dh_frame_reader extra_reader[DH_SESSION_CHANNEL_COUNT - 1];

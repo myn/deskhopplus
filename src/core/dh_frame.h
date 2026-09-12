@@ -141,9 +141,21 @@ typedef struct {
 
 bool dh_msg_type_known(uint8_t type);
 
-/* Both firmware decisions — priority and routing — are this one comparison. */
+/* The queue's band and the relay's routing are this one comparison. */
 static inline bool dh_msg_is_bulk(uint8_t type) {
     return type >= DH_MSG_BULK_BASE;
+}
+
+/*
+ * Which frames rotate across the negotiated USB channels (#63). Only
+ * CLIP_CHUNK does: the channels drain on their own clocks, so anything striped
+ * arrives out of order about half the time. A chunk carries its own sequence
+ * number and the transfer machine tolerates that; a credit, a retransmit
+ * request or a seal message does not, and stays on channel 0 behind whatever
+ * was sent before it.
+ */
+static inline bool dh_msg_is_striped(uint8_t type) {
+    return type == DH_MSG_CLIP_CHUNK;
 }
 
 /*

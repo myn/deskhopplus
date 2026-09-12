@@ -39,6 +39,14 @@ powershell -ExecutionPolicy Bypass -File tools\windows-checks\Confirm-HidExclusi
       bytes, record sustained throughput, and watch refusal/stream-gap counters.
       Move the cursor across the seam and type during transfer; check placement
       and input latency. Repeat with the macOS menu open.
+- [ ] During the 10 MB runs, both of these stay near zero (a handful at the tail
+      is the DONE sweep naming a chunk still in flight on the other channel; hundreds
+      is the 2026-09-12 fault — chunks reordered across channels and asked for again):
+
+```sh
+grep -c "transfer machine refused" /tmp/deskhop-helper.log /Volumes/deskhopplus/helper.log
+grep -c "counter already seen"    /tmp/deskhop-helper.log /Volumes/deskhopplus/helper.log
+```
 - [ ] Verify a one-channel hello negotiates one and traffic remains on channel 0
       (an earlier helper build is sufficient if available).
 

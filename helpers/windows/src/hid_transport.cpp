@@ -461,7 +461,7 @@ void HidTransport::acquire() {
 }
 
 void HidTransport::release() {
-    next_bulk_ = 0;
+    next_striped_ = 0;
     for (Channel &channel : channels_) close(channel);
 }
 
@@ -573,8 +573,8 @@ void HidTransport::pump_reads() {
 }
 
 bool HidTransport::send(const uint8_t *frame, size_t len, uint8_t count) {
-    const bool bulk = len > 0 && dh_msg_is_bulk(frame[0]);
-    const uint8_t index = bulk && count > 0 ? next_bulk_ % count : 0;
+    const bool striped = len > 0 && dh_msg_is_striped(frame[0]);
+    const uint8_t index = striped && count > 0 ? next_striped_ % count : 0;
     if (count == 0 || count > channels_.size() ||
         !std::all_of(channels_.begin(), channels_.end(), [](const Channel &c) { return c.opened; }))
         return false;
@@ -649,7 +649,7 @@ bool HidTransport::send(const uint8_t *frame, size_t len, uint8_t count) {
             return false;
         }
     }
-    if (bulk) next_bulk_ = static_cast<uint8_t>((index + 1u) % count);
+    if (striped) next_striped_ = static_cast<uint8_t>((index + 1u) % count);
     return true;
 }
 

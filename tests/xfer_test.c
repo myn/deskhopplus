@@ -85,6 +85,13 @@ struct fault_plan {
     struct wire_msg held_credits[16];
     size_t held_count;
     int cancel_rx_on_retransmit; /* receiver cancels after emitting a retransmit */
+    /* Two USB channels drain on their own clocks, so chunk n+1 lands before chunk
+       n about half the time (#63). Modelled as every pair of chunks in a pump
+       batch crossing the wire swapped. */
+    int swap_chunk_pairs;
+    int done_overtakes_last_chunk; /* DONE on channel 0 lands before the odd chunk on channel 1 */
+    struct wire_msg held_chunk;
+    int held_chunk_armed;
     /* A link that loses roughly one message in `loss_one_in`, deterministically.
        The offer is exempt: a lost CLIP_OFFER is the sender's to time out
        (docs/protocol.md), and no sweep on the receiving side can recover a
@@ -347,14 +354,33 @@ struct queued {
 static struct queued queue[QUEUE_CAP];
 static size_t q_head, q_tail;
 
+static void put_on_wire(const struct wire_msg *m, struct side *to) {
+    CHECK(q_tail < QUEUE_CAP, "wire", "queue overflow");
+    if (q_tail < QUEUE_CAP)
+        queue[q_tail++] = (struct queued){*m, to};
+}
+
 static void enqueue_actions(struct side *from, struct side *to, const dh_xfer_action *acts,
                             size_t n) {
     for (size_t i = 0; i < n; i++) {
         struct wire_msg m;
         if (encode_action(from, &acts[i], &m)) {
-            CHECK(q_tail < QUEUE_CAP, "wire", "queue overflow");
-            if (q_tail < QUEUE_CAP)
-                queue[q_tail++] = (struct queued){m, to};
+            if (plan.swap_chunk_pairs && acts[i].type == DH_XFER_ACT_SEND_CHUNK) {
+                if (plan.held_chunk_armed) {
+                    put_on_wire(&m, to);
+                    put_on_wire(&plan.held_chunk, to);
+                    plan.held_chunk_armed = 0;
+                } else {
+                    plan.held_chunk = m;
+                    plan.held_chunk_armed = 1;
+                }
+                continue;
+            }
+            if (plan.held_chunk_armed && !plan.done_overtakes_last_chunk) {
+                plan.held_chunk_armed = 0;
+                put_on_wire(&plan.held_chunk, to);
+            }
+            put_on_wire(&m, to);
         }
         if (plan.cancel_rx_on_retransmit && acts[i].type == DH_XFER_ACT_SEND_RETRANSMIT) {
             plan.cancel_rx_on_retransmit = 0;
@@ -362,6 +388,10 @@ static void enqueue_actions(struct side *from, struct side *to, const dh_xfer_ac
             size_t cn = dh_xfer_cancel_rx(&from->x, cancel_acts, ACTS_CAP);
             enqueue_actions(from, to, cancel_acts, cn);
         }
+    }
+    if (plan.held_chunk_armed) {
+        plan.held_chunk_armed = 0;
+        put_on_wire(&plan.held_chunk, to);
     }
 }
 
@@ -752,6 +782,35 @@ int main(void) {
         run_until_quiet();
         CHECK(B.delivered == 0, "lazy", "failed provider still delivered");
         CHECK(!A.x.tx.active, "lazy", "failed provider left transfer active");
+    }
+
+    /* Two channels reorder chunks (#63): every pair crosses swapped, so the
+       receiver sees 1 before 0, 4 before 3, and so on. Nothing is lost, so
+       nothing may be asked for again — the sweep, not the gap, names a loss. */
+    {
+        reset_scenario();
+        plan.swap_chunk_pairs = 1;
+        const size_t len = 9 * DH_XFER_CHUNK_SIZE + 5;
+        offer_and_run(&A, payload, len);
+        CHECK(B.delivered == 1 && B.delivered_len == len, "reorder", "not delivered");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "reorder", "bytes differ");
+        CHECK(B.retransmits_sent == 0, "reorder", "a reordered chunk was asked for again");
+        CHECK(A.chunks_sent == 10, "reorder", "a chunk was sent twice");
+    }
+
+    /* DONE rides channel 0 and the last chunk may ride channel 1, so DONE can land
+       first. Its sweep then names that one chunk — a bounded cost of one
+       re-request at the tail, and the transfer still completes on the copy
+       already in flight. */
+    {
+        reset_scenario();
+        plan.swap_chunk_pairs = 1;
+        plan.done_overtakes_last_chunk = 1;
+        const size_t len = 9 * DH_XFER_CHUNK_SIZE + 5;
+        offer_and_run(&A, payload, len);
+        CHECK(B.delivered == 1 && B.delivered_len == len, "reorder-done", "not delivered");
+        CHECK(memcmp(B.rx_buf, payload, len) == 0, "reorder-done", "bytes differ");
+        CHECK(B.retransmits_sent == 1, "reorder-done", "DONE overtaking should cost one ask");
     }
 
     /* AC: a dropped chunk is detected and re-requested — transfer completes. */

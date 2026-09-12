@@ -549,12 +549,15 @@ size_t dh_xfer_handle_chunk(dh_xfer *x, const dh_clip_chunk *chunk, dh_xfer_acti
         return n;
     }
 
-    /* A skipped seq is a loss candidate: report the gap as soon as it shows. */
-    const uint32_t next_expected = x->rx.any_seen ? x->rx.max_seq_seen + 1 : 0;
-    for (uint32_t m = next_expected; m < chunk->seq; m++) {
-        if (!bit_get(x->rx.received, m))
-            rx_request_chunk(x, m, false, acts, &n, acts_cap, &credits);
-    }
+    /*
+     * A skipped seq is not a loss. Two USB channels drain on their own clocks
+     * (#63), so chunk n+1 lands before chunk n about half the time — asking
+     * for n here made every reordered chunk cross twice and flooded the
+     * reverse channel with requests and credits. A hole is named by the sweep
+     * (dh_xfer_sweep_rx, on 2 s of silence and at CLIP_DONE), by which time
+     * the other channel has delivered or the chunk is really gone. Only the
+     * frontier moves here.
+     */
     if (!x->rx.any_seen || chunk->seq > x->rx.max_seq_seen) {
         x->rx.max_seq_seen = chunk->seq;
         x->rx.any_seen = true;

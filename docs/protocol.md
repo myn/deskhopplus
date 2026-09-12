@@ -89,11 +89,18 @@ ack requiring more channels than they hold. Collections are ordered by usage, ne
 by discovery order. Removing or adding a collection ends the connection before it
 is rebuilt.
 
-Session/control and placement use channel 0. Each bulk frame stays on one channel;
-successive bulk frames rotate across the negotiated set. Each channel has its own
-report reader and firmware output queue. The session keys, replay window, inter-board
-relay, and transfer credit window remain shared. A successful hello clears all firmware
-output queues and report readers before its ack. No channel number is added to a frame.
+Only `CLIP_CHUNK` rotates across the negotiated set; each chunk stays whole on the
+channel it was given. Everything else — session, control, placement, and the
+transfer's own credits, retransmit requests, DONE and seal messages — uses channel 0.
+The channels drain on their own clocks, so a striped frame lands out of order about
+half the time: a chunk carries its sequence number and the receiver tolerates that (a
+skipped sequence is not a loss; the stall and DONE sweeps name losses), a control
+message does not. Each channel has its own report reader and firmware output queue.
+The session keys, replay window, inter-board relay, and transfer credit window remain
+shared. A successful hello clears all firmware output queues and report readers
+before its ack. No channel number is added to a frame. A receiver accepts any bulk
+frame on any negotiated channel, so an older sender that still rotates control
+messages keeps working.
 
 See [two-channel hardware validation](verification/parallel-hid-channels.md) for the
 remaining enumeration, acquisition, and load checks.
@@ -888,8 +895,10 @@ between the helpers**; the firmware relays its messages opaquely.
 - **Integrity and loss.** The paste side unseals each chunk, verifies its CRC32 and tracks
   received seqs. A chunk that fails to unseal is treated as a corrupt chunk, not as a protocol
   error: it is a bulk payload and the transfer's own machinery already handles losing one. A
-  corrupt chunk, a skipped seq, or a gap found when CLIP_DONE arrives produces
-  CLIP_RETRANSMIT for exactly the missing chunks. After retransmitting, the sender repeats
+  corrupt chunk, or a hole found by a sweep — after 2 s of silence, or when CLIP_DONE arrives —
+  produces CLIP_RETRANSMIT for exactly the missing chunks. A skipped seq on its own produces
+  nothing: with two channels it is usually a chunk still in flight on the other one (ADR-0002,
+  amendment of 2026-09-12). After retransmitting, the sender repeats
   CLIP_DONE. A loss is reported once per round: a DONE sweep leaves a freshly requested
   chunk alone once — its retransmission is behind that DONE in the FIFO — **but a chunk
   still missing a full round later is requested again**, so a retransmitted chunk that is

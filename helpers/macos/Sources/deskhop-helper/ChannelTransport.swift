@@ -42,7 +42,7 @@ final class ChannelTransport {
     private let manager: IOHIDManager
     private var channels: [Channel] = []
     private var configModeNodes = 0
-    private var nextBulk = 0
+    private var nextStriped = 0
 
     /*
      * The serial of the device this helper is talking to. Every channel must
@@ -232,7 +232,7 @@ final class ChannelTransport {
     }
 
     func release() {
-        nextBulk = 0
+        nextStriped = 0
         for channel in channels where channel.opened {
             unlisten(channel)
             IOHIDDeviceClose(channel.device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
@@ -261,9 +261,10 @@ final class ChannelTransport {
     // MARK: - Writing
 
     /*
-     * Session and control use channel 0; each bulk frame stays on its chosen
-     * channel while successive frames rotate through the negotiated set. A report is a fixed 64 bytes
-     * with a padded tail, since it carries no length of its own.
+     * Only chunks rotate through the negotiated set (dh_msg_is_striped);
+     * session, control and the transfer's own credits and requests stay on
+     * channel 0. A report is a fixed 64 bytes with a padded tail, since it
+     * carries no length of its own.
      */
     /// Whether the frame actually went out. The answer matters to ADR-0004's
     /// idle timer: a caller that charged it for a frame this refused would
@@ -273,8 +274,8 @@ final class ChannelTransport {
        timer for a frame that never went out. That is exactly what #107 was. */
     func send(_ frameBytes: [UInt8], channelCount: UInt8 = 1) -> Bool {
         let count = Int(channelCount)
-        let bulk = frameBytes.first.map { dh_msg_is_bulk($0) } ?? false
-        let index = bulk && count > 0 ? nextBulk % count : 0
+        let striped = frameBytes.first.map { dh_msg_is_striped($0) } ?? false
+        let index = striped && count > 0 ? nextStriped % count : 0
         guard count > 0, count <= channels.count,
               channels.allSatisfy({ $0.opened }),
               let channel = channels.first(where: { Int($0.index) == index }) else {
@@ -314,7 +315,7 @@ final class ChannelTransport {
                 return false
             }
         }
-        if bulk { nextBulk = (index + 1) % count }
+        if striped { nextStriped = (index + 1) % count }
         return true
     }
 

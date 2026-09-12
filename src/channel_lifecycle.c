@@ -17,18 +17,18 @@ static void reset_readers(channel_lifecycle *c) {
 static void reset_output(channel_lifecycle *c) {
     for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT; ++i)
         dh_outq_reset(channel_lifecycle_output(c, i));
-    c->next_bulk = 0;
+    c->next_striped = 0;
 }
 
 bool channel_lifecycle_queue(channel_lifecycle *c, const uint8_t *frame, size_t len,
                              uint32_t now) {
     channel_lifecycle_lock();
-    const bool bulk = len > 0 && dh_msg_is_bulk(frame[0]);
+    const bool striped = len > 0 && dh_msg_is_striped(frame[0]);
     const uint8_t count = c->session.channel_count ? c->session.channel_count : 1;
-    const uint8_t index = bulk ? c->next_bulk % count : 0;
+    const uint8_t index = striped ? c->next_striped % count : 0;
     const bool queued = dh_outq_offer(channel_lifecycle_output(c, index), frame, len) == DH_OUTQ_OK;
-    if (queued && bulk)
-        c->next_bulk = (uint8_t)((index + 1u) % count);
+    if (queued && striped)
+        c->next_striped = (uint8_t)((index + 1u) % count);
     if (queued)
         dh_session_note_sent(&c->session, now);
     channel_lifecycle_unlock();
