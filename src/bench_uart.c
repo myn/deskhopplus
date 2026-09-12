@@ -42,6 +42,8 @@
 #include "bench_typing.h"
 #include "bench_uart.h"
 
+_Static_assert(BENCH_UART_PAYLOAD == PACKET_DATA_LENGTH, "the bench's payload size drifted from the packet's");
+
 #define BENCH_SETTLE_US (10u * 1000u * 1000u) /* let the host enumerate, and the user pick a window */
 #define BENCH_HELLO_US  (1000u * 1000u)
 #define BENCH_QUIET_US  (2u * 1000u * 1000u)  /* no packet for this long: the peer board's flood is over */

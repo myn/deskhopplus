@@ -8,11 +8,12 @@
  */
 #pragma once
 
-#include <stdbool.h>
-#include <stddef.h>
 #include <stdint.h>
 
-#include "packet.h"
+/* PACKET_DATA_LENGTH, restated: packet.h carries __attribute__((packed)),
+   which MSVC in the CI host suite cannot parse. bench_uart.c asserts the two
+   agree, where the firmware build can see both. */
+#define BENCH_UART_PAYLOAD 8u
 
 /*
  * The bench's packet type. Outside enum packet_type_e on purpose: the product
@@ -80,5 +81,5 @@ static inline void bench_uart_rx_note(volatile bench_uart_rx_t *rx, uint32_t seq
 static inline uint32_t bench_uart_bytes_per_s(uint32_t packets, uint32_t elapsed_us) {
     if (elapsed_us == 0)
         return 0;
-    return (uint32_t)((uint64_t)packets * PACKET_DATA_LENGTH * 1000000u / elapsed_us);
+    return (uint32_t)((uint64_t)packets * BENCH_UART_PAYLOAD * 1000000u / elapsed_us);
 }
