@@ -485,7 +485,61 @@ static void test_two_channels_share_one_transfer_credit_window(void) {
     CHECK(dh_xfer_pump(&transfer, actions, 8) == 1);
 }
 
+/* Full-sized opaque chunks through the core-1 handoff, board tagging, both
+   output queues and the helper's report reader. Cross the ring-counter wrap
+   many times; a short pair of frames cannot reproduce sustained corruption. */
+static void test_sustained_two_channel_chunks_preserve_tags_and_bytes(void) {
+    init();
+    c.session.channel_count = 2;
+    dh_frame_reader readers[2] = {0};
+    dh_auth_counter counter = {0};
+    uint8_t body[DH_XFER_CHUNK_SIZE + 40];
+    uint8_t frame[DH_INQ_SLOT_MAX];
+    unsigned delivered = 0;
+    for (unsigned batch = 0; batch < 5120; ++batch) {
+        for (unsigned i = 0; i < 2; ++i) {
+            for (size_t j = 0; j < sizeof body; ++j)
+                body[j] = (uint8_t)(batch + i + j);
+            size_t len = 0;
+            CHECK(dh_frame_encode(DH_MSG_CLIP_CHUNK, 0, body, sizeof body,
+                                  frame, sizeof frame, &len) == DH_FRAME_OK);
+            CHECK(dh_inq_stage(&c.inbound, frame, (uint16_t)len));
+            dh_inq_publish(&c.inbound);
+        }
+        channel_lifecycle_step(&c, 100, NULL);
+        while (dh_outq_busy(&c.out) || dh_outq_busy(&c.extra_out[0])) {
+            for (int i = 1; i >= 0; --i) {
+                dh_outq *q = channel_lifecycle_output(&c, (uint8_t)i);
+                dh_outq_view owed;
+                if (!dh_outq_peek(q, &owed)) continue;
+                uint8_t report[CHANNEL_REPORT_SIZE] = {0};
+                const uint16_t n = owed.remaining < sizeof report ? owed.remaining : sizeof report;
+                memcpy(report, owed.at, n);
+                dh_outq_advance(q, &owed, n);
+                dh_frame_view received;
+                size_t used = 0;
+                const dh_frame_result rc = dh_frame_reader_push(&readers[i], report,
+                                                                sizeof report, &used, &received);
+                CHECK(rc == DH_FRAME_AGAIN || rc == DH_FRAME_OK);
+                if (rc != DH_FRAME_OK) continue;
+                const uint8_t *opened = NULL;
+                size_t len = 0;
+                CHECK(dh_auth_open(c.session.k_b2h, &received.hdr, received.payload,
+                                   &counter, &opened, &len) == DH_AUTH_OK);
+                if (received.hdr.type != DH_MSG_CLIP_CHUNK) continue;
+                CHECK(len == sizeof body);
+                for (size_t j = 0; j < len; ++j)
+                    CHECK(opened[j] == (uint8_t)(batch + (unsigned)i + j));
+                ++delivered;
+            }
+        }
+    }
+    CHECK(delivered == 10240);
+    CHECK(c.inbound.dropped == 0);
+}
+
 int main(void) {
+    test_sustained_two_channel_chunks_preserve_tags_and_bytes();
     test_two_channels_share_one_transfer_credit_window();
     test_only_chunks_rotate_across_channels();
     test_interleaved_channel_reports_reassemble_independently();

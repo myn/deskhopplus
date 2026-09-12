@@ -37,6 +37,14 @@
 //--------------------------------------------------------------------+
 static void _hw_endpoint_xfer_sync(struct hw_endpoint* ep);
 
+// Keep USB DPRAM copies byte-wise. Some memcpy implementations widen these
+// accesses, which can fault or corrupt the tail of a 64-byte HID report.
+static void unaligned_memcpy(uint8_t* dst, const uint8_t* src, size_t n) {
+  volatile uint8_t* dst_byte = dst;
+  const volatile uint8_t* src_byte = src;
+  while (n--) *dst_byte++ = *src_byte++;
+}
+
 #if TUD_OPT_RP2040_USB_DEVICE_UFRAME_FIX
   static bool e15_is_bulkin_ep(struct hw_endpoint* ep);
   static bool e15_is_critical_frame_period(struct hw_endpoint* ep);
@@ -125,7 +133,7 @@ static uint32_t __tusb_irq_path_func(prepare_ep_buffer)(struct hw_endpoint* ep, 
 
   if (!ep->rx) {
     // Copy data from user buffer to hw buffer
-    memcpy(ep->hw_data_buf + buf_id * 64, ep->user_buf, buflen);
+    unaligned_memcpy(ep->hw_data_buf + buf_id * 64, ep->user_buf, buflen);
     ep->user_buf += buflen;
 
     // Mark as full
@@ -230,7 +238,7 @@ static uint16_t __tusb_irq_path_func(sync_ep_buffer)(struct hw_endpoint* ep, uin
     // we have received AFTER we have copied it to the user buffer at the appropriate offset
     assert(buf_ctrl & USB_BUF_CTRL_FULL);
 
-    memcpy(ep->user_buf, ep->hw_data_buf + buf_id * 64, xferred_bytes);
+    unaligned_memcpy(ep->user_buf, ep->hw_data_buf + buf_id * 64, xferred_bytes);
     ep->xferred_len = (uint16_t) (ep->xferred_len + xferred_bytes);
     ep->user_buf += xferred_bytes;
   }
