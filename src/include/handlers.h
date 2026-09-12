@@ -79,3 +79,9 @@ void handle_write_fw_msg(uart_packet_t *, device_t *);
  *==============================================================================*/
 
 void set_active_output(device_t *, uint8_t);
+
+#ifdef DH_BENCH_UART
+/* Measure-only build (-DDH_BENCH_UART=ON): counts the peer board's flood. Not part
+   of the product: see src/bench_uart.c. */
+void bench_uart_rx_msg(uart_packet_t *, device_t *);
+#endif

@@ -34,6 +34,9 @@ int main(void) {
 #ifdef DH_BENCH_ECDH
         [7] = {.exec = &bench_ecdh_task,          .frequency = _HZ(100)},    // | MEASURE-ONLY BUILD: time a P-256 ECDH and type the answer (#110)
 #endif
+#ifdef DH_BENCH_UART
+        [7] = {.exec = &bench_uart_task,          .frequency = _HZ(1000)},   // | MEASURE-ONLY BUILD: flood the inter-board link and type the answer (#166)
+#endif
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core0);
 
@@ -62,7 +65,7 @@ void core1_main() {
         [5] = {.exec = &firmware_upgrade_task,   .frequency = _HZ(4000)},    // | Send firmware to the other board if needed
 #ifndef DH_BENCH_ECDH
         [6] = {.exec = &heartbeat_output_task,   .frequency = _HZ(1)},       // | Output periodic heartbeats
-#endif                                                                       // | (silenced in the measure-only build -- see below)
+#endif                                                                       // | (silenced in the ECDH measure-only build -- see below)
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core1);
 
@@ -75,7 +78,7 @@ void core1_main() {
     }
 }
 /*
- * Why the measure-only build (#110) has no heartbeat.
+ * Why the measure-only ECDH build (#110) has no heartbeat.
  *
  * The heartbeat is what carries this board's firmware version and checksum to
  * its peer, and handle_heartbeat_msg on the far side pulls the image whenever
@@ -86,5 +89,10 @@ void core1_main() {
  *
  * So it stays quiet. The peer simply does not learn what this board is
  * running, for as long as the measurement takes.
+ *
+ * The UART build (#166) keeps it, on purpose: it takes two boards to measure
+ * a link, board B cannot be flashed by cable, and that same pull is the only
+ * way to reach it. The product image goes back the same way, by flashing
+ * board A with it.
  */
 /* =======  End of Main Program Loops  ======= */

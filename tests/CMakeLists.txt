@@ -256,3 +256,11 @@ add_executable(channel_lifecycle_test channel_lifecycle_test.c ${FW}/channel_lif
                ${CORE}/dh_auth.c ${CORE}/dh_sha256.c ${CORE}/dh_p256.c ${CORE}/dh_outq.c ${CORE}/dh_inq.c ${CORE}/dh_relay.c)
 target_include_directories(channel_lifecycle_test PRIVATE ${CORE} ${FW}/include)
 add_test(NAME channel_lifecycle_test COMMAND channel_lifecycle_test)
+
+# What the UART bench counts as it receives, and the bytes/s it types (#166).
+# The image is measure-only and its answer is one typed line, so the counting
+# is kept SDK-free where a test can reach it instead of costing a flash of
+# both boards to find out a number was wrong.
+add_executable(bench_uart_test bench_uart_test.c)
+target_include_directories(bench_uart_test PRIVATE ${CORE} ${FW}/include)
+add_test(NAME bench_uart_test COMMAND bench_uart_test)

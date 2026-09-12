@@ -99,6 +99,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/core/dh_p256.c
   ${SRC_DIR}/core/dh_auth.c
   ${SRC_DIR}/bench_ecdh.c   # empty unless DH_BENCH_ECDH is on
+  ${SRC_DIR}/bench_uart.c   # empty unless DH_BENCH_UART is on
   ${SRC_DIR}/core/dh_crc32.c
   ${SRC_DIR}/core/dh_clip.c
   ${SRC_DIR}/core/dh_xfer.c
@@ -273,6 +274,22 @@ option(DH_BENCH_ECDH "Build the measure-only ECDH timing image, not the product"
 if(DH_BENCH_ECDH)
   target_compile_definitions(${binary} PRIVATE DH_BENCH_ECDH=1)
   message(WARNING "DH_BENCH_ECDH is ON: this image measures and types, it is not the firmware")
+endif()
+
+# The same idea for the inter-board link (#166): both boards flood it and
+# each types what it sent and what arrived intact, because every figure
+# ADR-0002 holds for that link is arithmetic. Unlike the ECDH image this one
+# keeps its heartbeat, so board B pulls it over the inter-board link -- it
+# takes two boards to measure one, and B cannot be flashed by cable.
+#
+#   cmake -S . -B build-bench -DDH_BENCH_UART=ON && cmake --build build-bench
+option(DH_BENCH_UART "Build the measure-only UART throughput image, not the product" OFF)
+if(DH_BENCH_UART)
+  target_compile_definitions(${binary} PRIVATE DH_BENCH_UART=1)
+  message(WARNING "DH_BENCH_UART is ON: this image floods the inter-board link and types, it is not the firmware")
+endif()
+if(DH_BENCH_ECDH AND DH_BENCH_UART)
+  message(FATAL_ERROR "DH_BENCH_ECDH and DH_BENCH_UART are two images; build one at a time")
 endif()
 
 pico_enable_stdio_usb(${binary} 0)

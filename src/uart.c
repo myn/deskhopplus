@@ -11,6 +11,10 @@
 
 #include "main.h"
 
+#ifdef DH_BENCH_UART
+#include "bench_uart.h"
+#endif
+
 /* ================================================== *
  * ===============  Sending Packets  ================ *
  * ================================================== */
@@ -112,6 +116,12 @@ const uart_handler_t uart_handler[] = {
 
     {.type = HEARTBEAT_MSG, .handler = handle_heartbeat_msg},
     {.type = PROXY_PACKET_MSG, .handler = handle_proxy_msg},
+
+#ifdef DH_BENCH_UART
+    /* Measure-only build (#166): the peer board's flood, counted where every other
+       packet is dispatched so the receive path under test is the real one. */
+    {.type = BENCH_UART_MSG, .handler = bench_uart_rx_msg},
+#endif
 };
 
 void process_packet(uart_packet_t *packet, device_t *state) {

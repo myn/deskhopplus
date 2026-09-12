@@ -42,3 +42,9 @@ void usb_host_task(device_t *);
    src/bench_ecdh.c and tools/board-checks/README.md. */
 void bench_ecdh_task(device_t *);
 #endif
+
+#ifdef DH_BENCH_UART
+/* Measure-only build (-DDH_BENCH_UART=ON). Not part of the product: see
+   src/bench_uart.c and tools/board-checks/README.md. */
+void bench_uart_task(device_t *);
+#endif

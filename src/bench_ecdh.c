@@ -29,6 +29,7 @@
 #include <hardware/watchdog.h>
 #include <pico/time.h>
 
+#include "bench_typing.h"
 #include "dh_p256.h"
 
 #define BENCH_RUNS 10u
@@ -58,38 +59,6 @@ static uint32_t ecdh_total_us;
 static uint32_t ecdh_worst_us;
 static unsigned runs_done;
 static bool arithmetic_ok = true;
-
-static char line[96];
-static size_t line_len;
-static size_t typed;      /* index of the next character */
-static bool key_is_down;  /* every character is a press then a release */
-
-/* Digits, lower-case letters and space. Everything this prints is one of those. */
-static uint8_t hid_key_for(char c) {
-    if (c >= 'a' && c <= 'z')
-        return (uint8_t)(HID_KEY_A + (c - 'a'));
-    if (c == '0')
-        return HID_KEY_0;
-    if (c > '0' && c <= '9')
-        return (uint8_t)(HID_KEY_1 + (c - '1'));
-    return HID_KEY_SPACE;
-}
-
-static void append_text(const char *text) {
-    while (*text != '\0' && line_len + 1u < sizeof line)
-        line[line_len++] = *text++;
-}
-
-static void append_u32(uint32_t value) {
-    char digits[11];
-    size_t n = 0;
-    do {
-        digits[n++] = (char)('0' + (value % 10u));
-        value /= 10u;
-    } while (value > 0u && n < sizeof digits);
-    while (n > 0u && line_len + 1u < sizeof line)
-        line[line_len++] = digits[--n];
-}
 
 /*
  * The watchdog is kicked immediately before each measured call, so the whole
@@ -141,36 +110,23 @@ void bench_ecdh_task(device_t *state) {
             if (++runs_done < BENCH_RUNS)
                 return;
 
-            append_text("deskhopplus ecdh keygen ");
-            append_u32(keygen_us);
-            append_text(" us mean ");
-            append_u32(ecdh_total_us / BENCH_RUNS);
-            append_text(" us worst ");
-            append_u32(ecdh_worst_us);
-            append_text(" us over ");
-            append_u32(BENCH_RUNS);
-            append_text(arithmetic_ok ? " runs ok" : " runs FAILED");
+            bench_append_text("deskhopplus ecdh keygen ");
+            bench_append_u32(keygen_us);
+            bench_append_text(" us mean ");
+            bench_append_u32(ecdh_total_us / BENCH_RUNS);
+            bench_append_text(" us worst ");
+            bench_append_u32(ecdh_worst_us);
+            bench_append_text(" us over ");
+            bench_append_u32(BENCH_RUNS);
+            bench_append_text(arithmetic_ok ? " runs ok" : " runs failed");
             phase = BENCH_TYPING;
             return;
         }
 
-        case BENCH_TYPING: {
-            /* One report per pass. The queue is short and queue_try_add drops
-               silently when it is full, so filling it here would lose
-               characters out of the middle of the answer. */
-            if (typed >= line_len) {
+        case BENCH_TYPING:
+            if (bench_type_step(state))
                 phase = BENCH_DONE;
-                return;
-            }
-            hid_keyboard_report_t report = {0};
-            if (!key_is_down)
-                report.keycode[0] = hid_key_for(line[typed]);
-            queue_kbd_report(&report, state);
-            if (key_is_down)
-                typed++;
-            key_is_down = !key_is_down;
             return;
-        }
 
         case BENCH_DONE:
         default:
