@@ -127,8 +127,11 @@ final class ChannelTransport {
         }
         serial = deviceSerial ?? serial
 
+        /* `DeviceUsage` is a *matching* key only; as a property it reads nil
+           on every macOS tested, which silently dropped every channel (#176).
+           The value lives under `PrimaryUsage`. */
         guard !channels.contains(where: { $0.device == device }),
-              let usage = property(device, kIOHIDDeviceUsageKey) as? Int,
+              let usage = property(device, kIOHIDPrimaryUsageKey) as? Int,
               (ChannelIdentity.usage...ChannelIdentity.usage + 1).contains(usage) else { return }
         if isHoldingChannels {
             release()
