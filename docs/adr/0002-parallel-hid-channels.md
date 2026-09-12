@@ -29,7 +29,10 @@ Specifically:
 ADR-0001 moved the transport to vendor HID and, in doing so, dropped the USB hop from CDC bulk to a
 full-speed interrupt endpoint: **one 64-byte report per 1 ms frame, i.e. ~64 KB/s per direction**. The
 inter-board UART carries ~200 KB/s, so a single HID channel is roughly **3× worse than the link it
-feeds**, and the USB hop becomes the system bottleneck where the UART used to be.
+feeds**, and the USB hop becomes the system bottleneck where the UART used to be. *(Measured
+2026-09-12, [#166](https://github.com/myn/deskhopplus/issues/166): 200,000 payload bytes/s in both
+directions at once, nothing lost, nothing corrupt, and within 0.5% of that with the mouse moving.
+The arithmetic held exactly.)*
 
 Pasting speed is a user-visible property that matters, so the ceiling needed addressing rather than
 accepting.
@@ -40,7 +43,7 @@ accepting.
 | --- | --- |
 | **Accept ~64 KB/s** | 10 MB at the default cap is ~2.7 minutes, 64 MB is ~17 minutes. Acceptable for the lazy file case, poor for images and anything interactive. |
 | **Hybrid: HID for control, CDC for bulk** | Reintroduces every cost ADR-0001 avoided — the `usbser.sys` binding question and the Trellix `hdlpdbk` filter on the Ports class — and does so for the payload most likely to be DLP-inspected. |
-| **More than three channels** | The UART is the wall at ~200 KB/s. Three lands just under it; four or more is machinery feeding a queue. |
+| **More than three channels** | The UART is the wall at ~200 KB/s (measured, #166). Three lands just under it; four or more is machinery feeding a queue. |
 | **Per-report round-robin striping** | Costs a sequence byte per report and requires a resequencing buffer at both ends — precisely the per-packet sequencing overhead [#32](https://github.com/myn/deskhopplus/issues/32) rejected on the inter-board link, reappearing on a different link for the same bad reason. |
 
 ## Why chunk affinity, specifically
@@ -105,7 +108,8 @@ inter-board link, which remains a single serialised path.
 - **[#39](https://github.com/myn/deskhopplus/issues/39)** must measure real throughput on one channel
   before `N` is raised. The 64 KB/s figure is arithmetic from the frame interval and report size, not
   an observation — the same status the spec's earlier ~200 KB/s UART figure had, and it should be
-  treated with the same suspicion.
+  treated with the same suspicion. *(The UART figure lost that status on 2026-09-12: #166 measured
+  it at 200,000 bytes/s, both directions, intact.)*
 - The working **chunk size** is a build constant to be set after that measurement. The design fixes only
   that a chunk is one frame's payload, within the unchanged 4 KiB frame maximum. **The
   loss-amplification math, not only measured throughput, should drive the choice** *(amended
@@ -117,7 +121,8 @@ inter-board link, which remains a single serialised path.
 - **Amended 2026-08-09: `N = 2` is the default candidate for that raise, not an off-ramp.** The
   latency benefit — placement on channel 0 never queuing behind bulk — arrives fully at two channels.
   The third channel moves bulk from ~128 to ~192 KB/s against a UART wall the same arithmetic puts at
-  ~200 KB/s, while carrying the longest descriptor and a third exclusive acquisition. Raise to 3 only
+  ~200 KB/s (and #166 measured there), while carrying the longest descriptor and a third exclusive
+  acquisition. Raise to 3 only
   if #39 shows a single channel actually achieves its arithmetic and the inter-board link, not the
   USB hop, is measurably the wall. The negotiated count makes this a late, cheap choice — which is
   the point of negotiating it.
