@@ -221,3 +221,34 @@ was seen no longer exists.
 The window is sized far above the real reorder distance, which the queue bounds at **two** staged
 frames behind one in flight (three since #141 — see the amendment on
 [ADR-0005](0005-bounded-outbound-queues.md); the window is far above either). The cost is eight bytes per counter space.
+
+## Amendment, 2026-09-13 — a bad tag on a `CLIP_CHUNK` costs the chunk, not the connection
+
+"Either way the connection goes" (above, the helper's side of the tag rule) turned out to be too
+blunt for one frame type. Measured on hardware in [#63](https://github.com/myn/deskhopplus/issues/63):
+a USB dock between a board and its computer (an HP G5 Thunderbolt dock) can flip bits inside one
+64-byte report under concurrent traffic, producing exactly the same failure this rule was written to
+answer — with no attacker anywhere near the channel. A direct connection to the same computer, no
+dock, was reliable across repeated runs; the dock's own firmware and the USB cable were both ruled
+out first.
+
+`dh_helper.c`'s `on_authenticated` now excepts `DH_MSG_CLIP_CHUNK` alone: a tag failure on that one
+type is counted (`DH_NOTE_CHUNK_TAG_TOLERATED`) and the frame is dropped, but the connection is kept.
+Every other frame type — hello, pairing, credits, retransmits, DONE, cursor placement, anything that
+carries authority rather than plain payload bytes — still ends the connection on any bad tag,
+unchanged.
+
+**The security property this ADR argues for is not weakened.** A `CLIP_CHUNK` is ciphertext with no
+side effect of its own: it either decrypts under the session key or it does not, and a forged one
+fails exactly the same tag check a corrupted one does. Tolerating it changes only how the *reaction*
+is expressed — this frame type had no way to authorise anything a listener could not already be
+refused for by the rules above. Nothing here relies on trusting a frame type read before the tag
+verifies (the header carrying it is unauthenticated, as it always has been): a listener that labels
+every forged frame `CLIP_CHUNK` to dodge the harsher reaction still cannot get anything decrypted,
+read, or acted on — the only change is that the connection survives its noise instead of tearing down
+over it, which is a smaller foothold for a listener's own denial-of-service than the rule replaced.
+
+Recovery needed no new mechanism: `dh_xfer_sweep_rx` already re-requests a chunk that never arrived
+at all (2 s of no progress, or the sweep at `CLIP_DONE`), and a corrupted-then-discarded chunk is now
+indistinguishable from a lost one at that layer. `docs/protocol.md`, "the helper's side of the same
+rule," carries the same amendment.

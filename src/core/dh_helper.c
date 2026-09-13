@@ -1021,7 +1021,23 @@ static void on_authenticated(dh_helper *h, const dh_frame_view *f, uint32_t now_
          * the board is not the board this helper paired with, or the byte
          * stream is corrupt. Either way the connection goes, and nothing is
          * replied — an answer would reach every attached client.
+         *
+         * One deliberate exception (#63): a CLIP_CHUNK. Measured on hardware,
+         * a dock can flip a few bits inside one 64-byte report and produce
+         * exactly this failure with no attacker anywhere near the channel. A
+         * CLIP_CHUNK carries nothing but ciphertext payload — corrupted or
+         * forged, it can never be decrypted or acted on without this exact
+         * tag passing — so costing only the chunk, not the connection, gives
+         * up nothing #34 cares about. dh_xfer already recovers a chunk that
+         * never arrived at all (dh_xfer_sweep_rx); this makes a corrupted one
+         * indistinguishable from a lost one instead of a session-ending event.
+         * Every other frame type — hello, pairing, credits, retransmits,
+         * DONE, cursor placement — still drops the connection here, unchanged.
          */
+        if (f->hdr.type == DH_MSG_CLIP_CHUNK) {
+            put_note(o, DH_NOTE_CHUNK_TAG_TOLERATED, f->hdr.type, 0);
+            return;
+        }
         drop_connection(h, now_ms, o, DH_NOTE_TAG_FAILED, f->hdr.type, 0);
         return;
     }

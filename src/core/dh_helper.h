@@ -407,6 +407,21 @@ typedef enum {
      * reads as complete right up to the frame that broke it.
      */
     DH_NOTE_STREAM_MISALIGNED = 36,
+    /*
+     * A CLIP_CHUNK failed its tag and the connection was kept (#63).
+     *
+     * Every other frame type still drops the connection on a bad tag
+     * (DH_NOTE_TAG_FAILED) — this is the one deliberate exception, not a
+     * relaxation of that rule. A CLIP_CHUNK carries nothing but ciphertext
+     * payload: whether the corruption is a hostile frame or a flaky USB link
+     * (a dock was the one measured, #63), it can never be decrypted or acted
+     * on without this exact tag passing, so tolerating it costs nothing #34's
+     * isolation guarantee cares about — only *how loudly* the same undecodable
+     * bytes are reacted to. dh_xfer's own recovery (dh_xfer_sweep_rx) is what
+     * asks for it again; this note is otherwise a no-op, same as
+     * DH_NOTE_FRAME_DROPPED. a = frame type (always DH_MSG_CLIP_CHUNK).
+     */
+    DH_NOTE_CHUNK_TAG_TOLERATED = 39,
 } dh_helper_note;
 
 /*

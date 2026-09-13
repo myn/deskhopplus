@@ -173,6 +173,12 @@ std::string note_line(dh_helper_note note, int32_t a, int32_t b,
         return "dropping a " + type_name(a) + " with no session key";
     case DH_NOTE_TAG_FAILED:
         return "a device→helper " + type_name(a) + " failed its tag";
+    case DH_NOTE_CHUNK_TAG_TOLERATED:
+        /* Kept deliberately close to DH_NOTE_TAG_FAILED's wording — same fact,
+           different consequence (#63): this one costs the chunk, not the
+           connection, so the transfer's own retry sweep is what answers it. */
+        return "a device→helper " + type_name(a) + " failed its tag; asking for it again "
+               "rather than dropping the connection";
     case DH_NOTE_COUNTER_REPLAYED:
         return "dropping a " + type_name(a) + " with a counter already seen";
     case DH_NOTE_FRAME_DROPPED:

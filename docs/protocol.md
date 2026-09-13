@@ -299,7 +299,17 @@ measured over.
 not verify, and answers nothing. It is not expected to see one: only the device emits
 device→helper reports, so a bad tag there means the board is not the board this helper paired
 with, or the byte stream is corrupt. Either way the answer is to drop the connection and
-reconnect, not to reply.
+reconnect, not to reply — with one deliberate exception.
+
+**A `CLIP_CHUNK` costs only the chunk, not the connection** ([#63](https://github.com/myn/deskhopplus/issues/63)).
+Measured on hardware: a USB dock between a board and its computer can flip bits inside one 64-byte
+report and produce this exact failure with no attacker anywhere near the channel. A `CLIP_CHUNK`
+carries nothing but ciphertext payload — corrupted or forged, it can never be decrypted or acted on
+without this same tag passing — so nothing the rule above protects is given up by asking for it
+again instead of ending the session: `dh_xfer_sweep_rx` already recovers a chunk that never arrived
+at all, and a corrupted one is now indistinguishable from a lost one rather than a session-ending
+event. Every other frame type — hello, pairing, credits, retransmits, DONE, cursor placement — still
+drops the connection on any bad tag, unchanged.
 
 The helper state this alert drives must never prompt the config chord. That rule is inherited
 verbatim from the `channelHeld` state it replaces, which is now removed

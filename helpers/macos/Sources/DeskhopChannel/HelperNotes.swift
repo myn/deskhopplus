@@ -39,6 +39,12 @@ enum HelperNotes {
             return "dropping a \(typeName(a)) with no session key"
         case DH_NOTE_TAG_FAILED:
             return "a device→helper \(typeName(a)) failed its tag"
+        case DH_NOTE_CHUNK_TAG_TOLERATED:
+            // Kept deliberately close to DH_NOTE_TAG_FAILED's wording — same
+            // fact, different consequence (#63): this one costs the chunk,
+            // not the connection, so the transfer's own retry sweep answers it.
+            return "a device→helper \(typeName(a)) failed its tag; asking for it again "
+                 + "rather than dropping the connection"
         case DH_NOTE_COUNTER_REPLAYED:
             return "dropping a \(typeName(a)) with a counter already seen"
         case DH_NOTE_FRAME_DROPPED:

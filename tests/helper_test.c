@@ -2496,6 +2496,12 @@ static void record_payload(void *ctx, uint8_t type, const uint8_t *body, size_t 
     if (body != NULL) memcpy(payloads.body, body, payloads.len);
 }
 
+/*
+ * Every other frame type is unchanged by #63: a bad tag still drops the
+ * session, same as test_a_bad_tag_drops_the_session_and_a_replay_does_not
+ * covers for DEVICE_HEARTBEAT. This is the same rule, checked here for the
+ * one frame type deliberately excepted from it — not a new frame type.
+ */
 static void test_verified_bulk_reaches_the_platform(void) {
     const char *name = "verified bulk reaches the platform";
     dh_helper h;
@@ -2517,14 +2523,21 @@ static void test_verified_bulk_reaches_the_platform(void) {
           "the platform was handed the wrong body");
     no_overflow(name);
 
-    /* The sink sits behind the tag, not beside it. */
+    /* The sink sits behind the tag, not beside it. And a bulk frame that fails
+       its tag costs only the chunk, not the session (#63): a dock corrupting
+       one report looks identical here to a listener forging one, and either
+       way the bytes are unusable, so nothing is given up by asking for the
+       chunk again instead of dropping the connection. */
     CHECK(board_frame(DH_MSG_CLIP_CHUNK, chunk, sizeof chunk, frame, sizeof frame, &len), name,
           "the second bulk frame would not build");
     frame[DH_FRAME_HEADER_SIZE + DH_FRAME_COUNTER_SIZE] ^= 0x40u;
     dh_helper_outputs_reset(&out);
     dh_helper_received(&h, frame, len, 200, &out);
     CHECK(payloads.calls == 1, name, "a frame that did not authenticate reached the platform");
-    CHECK(saw_note(&out, DH_NOTE_TAG_FAILED), name, "a bad tag on bulk was not traced");
+    CHECK(saw_note(&out, DH_NOTE_CHUNK_TAG_TOLERATED), name, "a bad tag on bulk was not traced");
+    CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 0, name,
+          "a bad tag on a single chunk cost the whole session");
+    CHECK(h.state == DH_HELPER_CONNECTED, name, "a bad tag on bulk changed what the user is told");
     no_overflow(name);
 }
 
