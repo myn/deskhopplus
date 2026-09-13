@@ -242,17 +242,31 @@ now, with no mount and no sudo; the hand-patch this sheet used to recommend
 
 Two different mechanisms, routinely confused for each other:
 
-- **`CURRENT_CONFIG_VERSION` went 8 → 9** for #46's pairing secret. That was spent on the first
-  boot of 0.80. The constant is **still 9**, so a version bump is not in play today.
+- **`CURRENT_CONFIG_VERSION` is 15.** It went 8 → 9 for #46's pairing secret, spent on the first
+  boot of 0.80 — and then six more times between 2026-08-19 and 2026-08-29: 10 for #111's
+  registration, then #27, #22, #26, #24 and #29, each listed in `src/include/config_layout.h`
+  (the dates are in `git log`).
+  `config_is_valid` (`src/config_store.c:31`) wants an exact match and there is no migration, so
+  **a board flashed across any of those boundaries boots on defaults, unpaired.** The stored
+  bytes are not erased — see the RAM-only fallback below — so an image that understands the
+  stored version reads it again untouched. But anything that saves on the mismatched build (a
+  chord round trip, a config-page write, a screen-border hotkey on either board) rewrites it in
+  that build's layout, and a chord round trip is then owed on the way back too. Either board
+  pulls the other's image when it is newer (B also at equal version with a different checksum),
+  so an upgrade across a boundary reaches both boards, and a downgrade is pulled back over on
+  the next heartbeat unless the peer board is unplugged — which is how §5 uses it.
 - **`5cf72db` moved the checksum** from offset 152 to 156 (`_reserved` became `uint32_t[2]`), so
   a config written by any earlier build cannot validate. That fired once, on the first boot of
   **0.81**, and is also spent. `7541a25` is often blamed for this and did not do it: it named
   interior padding and moved `config_t` to `config_layout.h`, moving no bytes.
 
-Since 0.81 the layout has been stable, and `FLASH_CONFIG` is `NOLOAD`, so **flashing does not
-reset anything**. If a board comes back unpaired after a flash, look elsewhere.
+`FLASH_CONFIG` is `NOLOAD`, so **the flash write itself never resets anything**. If a board comes
+back unpaired after a flash, read the config version of the image that went on: same as what
+the board held, look elsewhere; different, that is the reason, and one chord round trip on the
+new build is the recovery. **This paragraph said "still 9" and "look elsewhere" with no version
+check until 2026-09-12 (#177).**
 
-One trap in how this recovers: `load_config` (`src/utils.c:116`) falls back to defaults **in RAM
+One trap in how this recovers: `load_config` (`src/utils.c:118`) falls back to defaults **in RAM
 only** — it never writes them back. So an invalid stored config defaults on *every* boot, not
 once, until something calls `save_config`. "The first boot defaults and the second is the test"
 only holds because re-pairing performs that write
@@ -299,8 +313,10 @@ Note `picotool info -a` **segfaults** (v2.3.0, macOS) whenever a BOOTSEL board i
 or without `sudo`. `load` is unaffected. Do not read that crash as a flashing problem.
 
 The UF2 spans `0x10000000`–`0x10040000`, and `FLASH_CONFIG` lives at the end of the 2 MB flash
-and is `NOLOAD` — so **a firmware write does not erase the configuration**. If a board comes
-back unpaired after flashing, the firmware write is not the reason.
+and is `NOLOAD` — so **a firmware write does not erase the configuration**. But the image written
+may not *read* it: across a `CURRENT_CONFIG_VERSION` boundary the board boots unpaired, and that
+is expected, not a fault — see *Which flashes reset the configuration* above. Same version and
+still unpaired, the firmware write is not the reason.
 
 ### Build
 
@@ -648,7 +664,9 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
       ```
 - [x] A configuration wipe leaves the helper unpaired, and a chord round trip restores it. The
       8 → 9 config version change gave this for free on the *first* boot of 0.80 and that is
-      spent — `CURRENT_CONFIG_VERSION` is still 9, so a later flash wipes nothing. Trigger it
+      spent — `CURRENT_CONFIG_VERSION` was still 9 when this ran (2026-08-17, on 0.91), so a
+      later flash wiped nothing then; it is 15 now — see *Which flashes reset the configuration*.
+      Trigger it
       deliberately with the wipe chord, **`Right Shift + F12 + D`**, which **wipes both boards**:
       `wipe_config_hotkey_handler` erases locally and sends `WIPE_CONFIG_MSG` to the peer.
       **From 0.90 the wipe takes effect immediately** (#75 — before it, the secret stayed live
@@ -958,6 +976,12 @@ number to trust is the ROM landing time.
 sudo ./tools/macos-checks/interrupted_pull_to_rom.sh check   # touches nothing
 sudo ./tools/macos-checks/interrupted_pull_to_rom.sh run     # ends with A in ROM
 ```
+
+**Expect A unpaired while it runs 0.90.** 0.90 reads config version 9 and the board holds 15, so
+it boots on defaults, and the helper cannot pair with it anyway — 0.90 speaks v1. That is not a
+fault. Nothing saves the config on that build during this run, so the `picotool load -x` that
+restores A reads the stored registration again and the helper comes back `Connected and paired`
+with no chord. If it reports `Not paired` after the restore, something wrote the config in between.
 
 The script flashes A, waits for the pull, prompts for the unplug, times the landing, and then —
 before anything else — takes the `picotool save` and reads the first sector back to say which of
