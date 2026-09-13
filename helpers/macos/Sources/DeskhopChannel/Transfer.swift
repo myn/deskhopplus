@@ -318,12 +318,6 @@ public final class Transfer {
     /// Whether a payload is arriving.
     public var isReceiving: Bool { dh_xfer_is_receiving(machine) }
 
-    /// Whether anything at all is incoming, a lazy offer held for a decision
-    /// included. Wider than `isReceiving`, and the honest way to ask whether an
-    /// incoming transfer is over — a transfer id cannot answer that, because
-    /// ids collide across the two directions (#136).
-    public var isIncomingBusy: Bool { dh_xfer_rx_busy(machine) }
-
     /// Whether an offer is being held for a decision — accepted into the
     /// machine, nothing requested, not one byte moving. The question to ask
     /// before putting an offer to the user; `receivedOfferID` alone is not,
@@ -515,6 +509,15 @@ public final class Transfer {
         let bytes = Array(UnsafeBufferPointer(start: rxBuffer.baseAddress,
                                               count: min(length, rxBuffer.count)))
         return (dh_xfer_delivered_kind(machine), bytes)
+    }
+
+    /// The delivered transfer's offer metadata, as the machine copied it from
+    /// the offer it accepted — for files, the list that splits the payload.
+    /// Valid until the next incoming offer, like `delivered()`.
+    public var deliveredMeta: [UInt8] {
+        var length: UInt16 = 0
+        guard let meta = dh_xfer_delivered_meta(machine, &length) else { return [] }
+        return Array(UnsafeBufferPointer(start: meta, count: Int(length)))
     }
 
     // MARK: - Internals

@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -301,11 +302,25 @@ class ClipService {
     std::vector<ClipOutput> on_offer(const uint8_t *body, size_t len);
     std::vector<ClipOutput> on_file_offer(const dh_clip_offer &offer, bool had_offer,
                                           uint32_t previous_id);
-    /* A newer offer replaces whatever was arriving, so a question being held
-       about the old one no longer stands. Needed on the *non-file* path too,
-       which is what makes it worth having once: without it the tray goes on
-       offering Accept for a transfer the far end has already moved past. */
-    std::vector<ClipOutput> withdraw_held_offer(uint32_t superseded_by);
+    /* Put the held question to the user, once. Nothing if there is none or it
+       has been put already: crossings are frequent and a question is asked once. */
+    std::vector<ClipOutput> announce_held();
+    /*
+     * The question stands exactly while the transfer machine is still holding
+     * that offer for a decision. Run after every batch of actions, so no
+     * transition has to remember to take it back — a newer offer superseding
+     * it, a cancel from either end, a toggle, a replaced seal, the session
+     * going: each retires the offer inside the machine, and this reads that
+     * off. Without it the tray went on offering Accept for a transfer the far
+     * end had moved past, where accepting did nothing and said nothing.
+     *
+     * Read from the machine rather than from the offer that arrived, because
+     * an offer the machine *ignored* — a late retry of one already superseded
+     * — retires nothing, and the question about the newer one has to stand.
+     *
+     * Taking it back tells the tray so, whatever state the question was in.
+     */
+    std::vector<ClipOutput> sync_held();
     std::vector<ClipOutput> deliver_files(const uint8_t *bytes, size_t len);
     std::vector<ClipOutput> on_chunk(const uint8_t *body, size_t len);
 
@@ -391,17 +406,29 @@ class ClipService {
     std::vector<uint8_t> tx_meta_;
 
     /*
-     * The incoming half: an offer being *held* for an answer, and the list of
-     * the transfer now arriving so that what is delivered can be split back
-     * into files without parsing the metadata twice.
+     * The incoming half: a file offer waiting on this computer's user, and how
+     * far its question has got (#56).
+     *
+     * The offer is *accepted* into the transfer machine as lazy, so the far end
+     * knows it was heard and stops retrying (#78) — but no request goes out, so
+     * not one byte crosses until `accept_files`. Exactly one, like the pending
+     * copy: a newer offer supersedes it, because what was last copied is what
+     * the user means to paste.
+     *
+     * The question stands exactly as long as the machine is still holding that
+     * offer for a decision — `sync_held` takes it back the moment it is not,
+     * whatever retired it — and the machine is where the file list lives, so
+     * there is nothing else here to keep in step. Quiet until the user arrives;
+     * `since` is stamped by the first tick after the question is put, which is
+     * where a clock is read, and the hold deadline runs from there: it is time
+     * the user had to answer, and they have had none before.
      */
-    bool have_held_offer_{false};
-    deskhop::FileOffer held_offer_;
-    /* When the offer now being held was first put to the user. */
-    bool held_timed_{false};
-    /* Whether the held offer's question has actually been put to the user.
-       False while it waits for them to arrive at this computer. */
-    bool held_announced_{false};
+    struct HeldOffer {
+        deskhop::FileOffer offer;
+        bool announced{false};
+        std::optional<uint32_t> since;
+    };
+    std::optional<HeldOffer> held_;
     /* What the far computer could not send for being over the cap, waiting for
        the user to come here and wonder why nothing pasted. */
     std::string too_big_waiting_;
@@ -418,9 +445,6 @@ class ClipService {
     uint32_t arrived_at_{0};
     bool have_arrived_{false};
     bool saw_arrival_{false};
-    uint32_t held_since_{0};
-    bool have_incoming_files_{false};
-    std::vector<FileEntry> incoming_files_;
 
     /* A size cap change waiting for the link to go quiet; zero means none. */
     size_t wanted_capacity_{0};

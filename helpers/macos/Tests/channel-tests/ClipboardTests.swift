@@ -83,6 +83,15 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a set past the size cap is never put to the user", testAnOverCapSetIsNeverPutToTheUser),
     ("offer retries do not re-ask after the answer", testOfferRetriesDoNotReAskAfterTheAnswer),
     ("an accept that cannot run poisons nothing", testAnAcceptThatCannotRunPoisonsNothing),
+    ("a late retry of an older offer leaves the newer question standing",
+     testALateOlderOfferLeavesTheNewerQuestionStanding),
+    ("time held quietly is not time to answer", testTimeHeldQuietlyIsNotTimeToAnswer),
+    ("accepting an obsolete question touches nothing newer",
+     testAcceptingAnObsoleteQuestionTouchesNothingNewer),
+    ("receiving turned off withdraws a held question",
+     testReceivingTurnedOffWithdrawsAHeldQuestion),
+    ("the copy side cancelling withdraws a held question",
+     testTheCopySideCancellingWithdrawsAHeldQuestion),
 ]
 
 // MARK: - Files (#56)
@@ -659,6 +668,139 @@ private func testAnAcceptThatCannotRunPoisonsNothing() {
     Check.equal(pair.filesToB.count, 1, "a healthy transfer did not arrive after a dead accept")
     Check.equal(pair.filesToB.first?.bytes, threeFilePayload,
                 "a healthy transfer was split by a dead transfer's list")
+}
+
+/*
+ * The copy side repeats an offer every two seconds, and the two lanes of the
+ * channel do not keep frames in order (#63) — so a retry of the offer the far
+ * end has already moved past can land *after* the offer that replaced it. The
+ * transfer machine ignores it as stale. The question about the newer offer
+ * has to survive it too: the only question that can be withdrawn is one the
+ * machine is no longer holding.
+ */
+private func testALateOlderOfferLeavesTheNewerQuestionStanding() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let first = pair.carriedFrames.first(where: { $0.type == MessageType.clipOffer }) else {
+        Check.that(false, "no offer crossed the link")
+        return
+    }
+
+    /* A second copy supersedes the first; its question replaces the first's. */
+    pair.copyFilesOnA([FileListEntry(name: "later.bin", size: UInt64(bigSize))], bytes: bigPayload)
+    guard let newer = pair.b.awaitingDecision else {
+        Check.that(false, "the newer offer was not held")
+        return
+    }
+    Check.equal(pair.fileQuestions.count, 2, "the two offers did not each ask once")
+
+    /* The first offer's retry arrives late, behind the one that replaced it. */
+    pair.settle(pair.b.received(type: first.type, body: first.body), from: .b)
+    Check.equal(pair.b.awaitingDecision, newer,
+                "a stale retry of an older offer took the newer question down with it")
+    Check.that(!pair.withdrawnQuestions.contains(newer.id),
+               "the newer question was withdrawn by an offer the machine ignored")
+
+    /* And the newer question still works. */
+    pair.settle(pair.b.acceptFiles(id: newer.id), from: .b)
+    Check.equal(pair.filesToB.first?.files.first?.name, "later.bin",
+                "accepting the newer question did not deliver the newer files")
+}
+
+/*
+ * The hold deadline is time the user had to answer. An offer can sit unasked
+ * for as long as nobody comes to this computer, and none of that counts: the
+ * two minutes start when the question is put, not when the copy was made.
+ */
+private func testTimeHeldQuietlyIsNotTimeToAnswer() {
+    let pair = bigPair()
+    pair.userArrives = false
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+
+    /* Unasked for longer than the whole answer window. */
+    pair.settle(pair.b.tick(at: 0), from: .b)
+    pair.settle(pair.b.tick(at: ClipboardService.holdTimeout * 2), from: .b)
+    Check.that(pair.fileQuestions.isEmpty, "a question was put with nobody here to answer it")
+    Check.that(pair.b.awaitingDecision != nil, "an offer nobody had been asked about expired")
+
+    /* The user arrives, and the window opens here. */
+    let arrived = ClipboardService.holdTimeout * 2 + 1
+    pair.settle(pair.b.userIsHere(), from: .b)
+    pair.settle(pair.b.tick(at: arrived), from: .b)
+    Check.equal(pair.fileQuestions.count, 1, "arriving did not put the question")
+    pair.settle(pair.b.tick(at: arrived + ClipboardService.holdTimeout - 1), from: .b)
+    Check.that(pair.b.awaitingDecision != nil,
+               "the time held quietly was counted against the user's answer")
+    pair.settle(pair.b.tick(at: arrived + ClipboardService.holdTimeout), from: .b)
+    Check.that(pair.b.awaitingDecision == nil, "the answer window never closed")
+}
+
+/*
+ * A menu item can outlive the question it was built for. Accepting the old
+ * one must neither request the transfer that replaced it nor split what then
+ * arrives by the old list.
+ */
+private func testAcceptingAnObsoleteQuestionTouchesNothingNewer() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let old = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+    let later = [FileListEntry(name: "later.bin", size: UInt64(bigSize))]
+    pair.copyFilesOnA(later, bytes: bigPayload)
+    Check.that(pair.withdrawnQuestions.contains(old.id), "the superseded question stayed up")
+
+    let requested = pair.carriedFrames.filter { $0.type == MessageType.clipRequest }.count
+    pair.settle(pair.b.acceptFiles(id: old.id), from: .b)
+    Check.equal(pair.carriedFrames.filter { $0.type == MessageType.clipRequest }.count, requested,
+                "accepting an obsolete question requested the transfer that replaced it")
+    Check.that(pair.filesToB.isEmpty, "an obsolete accept delivered something")
+    guard let newer = pair.b.awaitingDecision else {
+        Check.that(false, "the newer question was lost to an obsolete accept")
+        return
+    }
+
+    pair.settle(pair.b.acceptFiles(id: newer.id), from: .b)
+    Check.equal(pair.filesToB.first?.files, later,
+                "the newer transfer was split by the obsolete question's list")
+}
+
+/// The board turned receiving off under a question the user has not answered.
+private func testReceivingTurnedOffWithdrawsAHeldQuestion() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    pair.settle(pair.b.policyChanged(flags: UInt8(DH_CLIP_MAY_SEND)), from: .b)
+    Check.that(pair.withdrawnQuestions.contains(offer.id),
+               "receiving turned off left a question standing that cannot be accepted")
+    Check.that(pair.b.awaitingDecision == nil, "the refused offer is still held")
+    Check.that(!pair.a.awaitingSend, "the copy side still offers a transfer the toggle refused")
+}
+
+/// The copy side gave up on its transfer while the question here still stood.
+private func testTheCopySideCancellingWithdrawsAHeldQuestion() {
+    let pair = bigPair()
+    pair.answerFileOffers = false
+    pair.copyFilesOnA(bigFiles, bytes: bigPayload)
+    guard let offer = pair.fileQuestions.first?.offer else {
+        Check.that(false, "no question was asked")
+        return
+    }
+
+    pair.settle(pair.a.abortSend(), from: .a)
+    Check.that(pair.withdrawnQuestions.contains(offer.id),
+               "the copy side's cancel left a question standing over a transfer that is gone")
+    Check.that(pair.b.awaitingDecision == nil, "the cancelled offer is still held")
+    Check.that(pair.b.acceptFiles(id: offer.id).isEmpty, "a cancelled offer could still be accepted")
 }
 
 private func testAnAcceptedTransferReportsProgress() {

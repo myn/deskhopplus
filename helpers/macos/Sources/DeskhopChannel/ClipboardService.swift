@@ -199,19 +199,34 @@ public final class ClipboardService {
     private var outgoingProvider: (() -> [UInt8]?)?
 
     /*
-     * A file offer that has arrived and is waiting for this computer's user.
+     * A file offer that has arrived and is waiting for this computer's user,
+     * and how far its question has got (#56).
      *
      * The offer is *accepted* into the transfer machine as lazy, so the far end
      * knows it was heard and stops retrying (#78) — but no request goes out, so
      * not one byte crosses until `acceptFiles`. Exactly one, like `pending`:
      * a newer offer supersedes it, because what was last copied is what the
      * user means to paste.
+     *
+     * The question stands exactly as long as the machine is still holding that
+     * offer for a decision — `syncHeld` takes it back the moment it is not,
+     * whatever retired it — and the machine is where the file list lives, so
+     * there is nothing else here to keep in step. Quiet until the user arrives;
+     * `since` is stamped by the first tick after the question is put, which is
+     * where a clock is read, and the hold deadline runs from there: it is time
+     * the user had to answer, and they have had none before.
      */
-    private var heldFileOffer: FileOffer?
+    private enum HeldOffer {
+        case quiet(FileOffer)
+        case asked(FileOffer, since: TimeInterval?)
 
-    /// The file list of the transfer now arriving, so that what is delivered
-    /// can be split back into files without parsing the metadata twice.
-    private var incomingFiles: [FileListEntry]?
+        var offer: FileOffer {
+            switch self {
+            case .quiet(let offer), .asked(let offer, _): return offer
+            }
+        }
+    }
+    private var held: HeldOffer?
 
     /*
      * The largest payload this helper will accept, and a change to it that is
@@ -232,9 +247,6 @@ public final class ClipboardService {
      * far end that never saw its offer.
      */
     private var reofferWhenSealed = false
-    /// Whether the held offer's question has actually been put to the user.
-    /// False while it waits for them to arrive at this computer.
-    private var heldAnnounced = false
     /// What the far computer could not send for being over the cap, waiting
     /// for the user to come here and wonder why nothing pasted.
     private var tooBigWaiting: String?
@@ -283,8 +295,6 @@ public final class ClipboardService {
     private var receivingSince: TimeInterval?
     private var receivingMark: UInt32 = 0
     private var sweptSince: TimeInterval?
-    /// When the offer now being held was first put to the user.
-    private var heldSince: TimeInterval?
 
     public init(entropy: @escaping (Int) -> [UInt8], capacity: Int = ClipboardService.defaultCapacity) {
         seal = ClipboardSeal(entropy: entropy)
@@ -377,10 +387,7 @@ public final class ClipboardService {
             tooBigWaiting = nil
             outputs.append(.tellUser(waiting))
         }
-        guard let held = heldFileOffer, !heldAnnounced else { return outputs }
-        heldAnnounced = true
-        heldSince = nil
-        return outputs + [.fileOffer(held)]
+        return outputs + announceHeld()
     }
 
     /*
@@ -389,25 +396,8 @@ public final class ClipboardService {
      * copy made over there (#56, ADR-0011).
      */
     public func acceptFiles(id: UInt32) -> [ClipboardOutput] {
-        guard let offer = heldFileOffer, offer.id == id else { return [] }
-        /*
-         * The machine has to still be holding it. Without this the file list
-         * is remembered for a transfer that will never run — and the *next*
-         * transfer then arrives and is split by the wrong list, which reads at
-         * the desk as a paste that silently never happens (#56).
-         */
-        guard transfer.isIncomingHeld else {
-            heldFileOffer = nil
-            heldAnnounced = false
-            heldSince = nil
-            return [.fileOfferWithdrawn(id: id),
-                    .note("the files were accepted here, but that transfer is no longer "
-                          + "waiting to be asked for; nothing was requested")]
-        }
-        heldFileOffer = nil
-        heldAnnounced = false
-        heldSince = nil
-        incomingFiles = offer.files
+        guard let offer = held?.offer, offer.id == id else { return [] }
+        held = nil
         return render(transfer.requestLazy(id: id))
             + [.note("\(offer.files.count) file(s), \(offer.total) bytes, were accepted here "
                      + "and asked for")]
@@ -416,10 +406,8 @@ public final class ClipboardService {
     /// The user declined them. The far end is told, so its copy stops waiting
     /// and its offer retries stop.
     public func declineFiles(id: UInt32) -> [ClipboardOutput] {
-        guard let offer = heldFileOffer, offer.id == id else { return [] }
-        heldFileOffer = nil
-        heldAnnounced = false
-        heldSince = nil
+        guard let offer = held?.offer, offer.id == id else { return [] }
+        held = nil
         return render(transfer.cancelIncoming())
             + [.fileOfferWithdrawn(id: id),
                .note("\(offer.files.count) file(s) offered from the other computer were "
@@ -429,7 +417,7 @@ public final class ClipboardService {
     /// The user gave up on a transfer that is already running. Nothing partial
     /// is ever delivered, so this loses the whole of it.
     public func abortReceive() -> [ClipboardOutput] {
-        if let offer = heldFileOffer { return declineFiles(id: offer.id) }
+        if let offer = held?.offer { return declineFiles(id: offer.id) }
         guard transfer.isReceiving else { return [] }
         return render(transfer.cancelIncoming())
             + [.note("an arriving transfer was cancelled here; nothing partial is kept")]
@@ -474,7 +462,7 @@ public final class ClipboardService {
     public var arriving: (kind: UInt8, received: UInt64, total: UInt64)? { transfer.arriving }
 
     /// The file offer waiting on this computer's user, if there is one.
-    public var awaitingDecision: FileOffer? { heldFileOffer }
+    public var awaitingDecision: FileOffer? { held?.offer }
 
     /// Whether anything is still on its way out of this computer. False after a
     /// transfer the far end declined or that could not be read — the two ways a
@@ -503,13 +491,6 @@ public final class ClipboardService {
                                  + "abandoned"))
         }
         if couldReceive && !mayReceive {
-            if let held = heldFileOffer {
-                heldFileOffer = nil
-                heldAnnounced = false
-                heldSince = nil
-                outputs.append(.fileOfferWithdrawn(id: held.id))
-            }
-            incomingFiles = nil
             outputs += render(transfer.cancelIncoming())
             outputs.append(.note("clipboard receiving was turned off; anything in flight was "
                                  + "abandoned"))
@@ -523,7 +504,6 @@ public final class ClipboardService {
     public func sessionEnded() -> [ClipboardOutput] {
         reofferWhenSealed = false
         outgoingProvider = nil
-        incomingFiles = nil
         /*
          * A copy still waiting for a seal is *kept*. What is on the clipboard
          * does not change because the link wobbled, and the pasteboard is only
@@ -533,18 +513,12 @@ public final class ClipboardService {
          * session ends as the link manages, and `tick` still gives up out loud
          * at the end of it.
          */
-        var withdrawn: [ClipboardOutput] = []
+        var outputs: [ClipboardOutput] = []
         if let waiting = pending {
-            withdrawn.append(.note("the session went away; \(describe(waiting)) copied here "
-                                   + "are still waiting for one that can carry them"))
+            outputs.append(.note("the session went away; \(describe(waiting)) copied here "
+                                 + "are still waiting for one that can carry them"))
         }
-        if let held = heldFileOffer {
-            heldFileOffer = nil
-            heldAnnounced = false
-            heldSince = nil
-            withdrawn.append(.fileOfferWithdrawn(id: held.id))
-        }
-        let outputs = withdrawn + render(transfer.linkDown())
+        outputs += render(transfer.linkDown())
         /* Both halves of the exchange belong to the session that made them. */
         seal.reset()
         /* Sends produced here have nowhere to go: there is no session to
@@ -605,35 +579,27 @@ public final class ClipboardService {
             sawArrival = false
             arrivedAt = now
         }
-        /* An offer that landed just after the crossing: the user is plainly
-           here and came for it, so it is not made to wait for a second one. */
-        if let held = heldFileOffer, !heldAnnounced, let at = arrivedAt,
-           now - at <= Self.recentArrival {
-            heldAnnounced = true
-            heldSince = nil
-            outputs.append(.fileOffer(held))
+        /* An offer that landed just after the crossing, or a refusal with no
+           question behind it: the user is plainly here and came for it, so it
+           is not made to wait for a second crossing. */
+        if let at = arrivedAt, now - at <= Self.recentArrival {
+            outputs += announceHeld()
             if let waiting = tooBigWaiting {
                 tooBigWaiting = nil
                 outputs.append(.tellUser(waiting))
             }
         }
-        /* And the same for a refusal with no question behind it. */
-        if heldFileOffer == nil, let waiting = tooBigWaiting, let at = arrivedAt,
-           now - at <= Self.recentArrival {
-            tooBigWaiting = nil
-            outputs.append(.tellUser(waiting))
-        }
 
-        if let held = heldFileOffer, heldAnnounced {
-            if heldSince == nil {
-                heldSince = now
-            } else if now - heldSince! >= Self.holdTimeout {
-                outputs += declineFiles(id: held.id)
-                outputs.append(.note("a file offer went unanswered for "
-                                     + "\(Int(Self.holdTimeout))s and was declined"))
+        if case .asked(let offer, let since)? = held {
+            if let since = since {
+                if now - since >= Self.holdTimeout {
+                    outputs += declineFiles(id: offer.id)
+                    outputs.append(.note("a file offer went unanswered for "
+                                         + "\(Int(Self.holdTimeout))s and was declined"))
+                }
+            } else {
+                held = .asked(offer, since: now)
             }
-        } else {
-            heldSince = nil
         }
 
         if let wanted = wantedCapacity, transfer.canSetReceiveCapacity,
@@ -854,26 +820,39 @@ public final class ClipboardService {
         return offerSeal() + [.note("the far helper lost the seal; offering a fresh one")]
     }
 
-    // MARK: - Receiving a payload
+    // MARK: - The held question
+
+    /// Put the held question to the user, once. Nothing if there is none or it
+    /// has been put already: crossings are frequent and a question is asked once.
+    private func announceHeld() -> [ClipboardOutput] {
+        guard case .quiet(let offer)? = held else { return [] }
+        held = .asked(offer, since: nil)
+        return [.fileOffer(offer)]
+    }
 
     /*
-     * A newer offer replaces whatever was arriving, and a question that was
-     * being held about the old one no longer stands.
+     * The question stands exactly while the transfer machine is still holding
+     * that offer for a decision. Run after every batch of actions, so no
+     * transition has to remember to take it back — a newer offer superseding
+     * it, a cancel from either end, a toggle, a replaced seal, the session
+     * going: each retires the offer inside the machine, and this reads that
+     * off. Without it the menu bar went on offering Accept for a transfer the
+     * far end had moved past, where accepting did nothing and said nothing.
      *
-     * Needed on the *non-file* path too, which is what makes it worth having
-     * once: a text or image copy supersedes a held file offer inside the
-     * transfer machine, and without this the menu bar goes on offering Accept
-     * for a transfer the far end has already moved past — where accepting does
-     * nothing at all and says nothing either.
+     * Read from the machine rather than from the offer that arrived, because
+     * an offer the machine *ignored* — a late retry of one already superseded
+     * — retires nothing, and the question about the newer one has to stand.
+     *
+     * Taking it back tells the menu bar so, whatever state the question was in.
      */
-    private func withdrawHeldOffer(supersededBy id: UInt32) -> [ClipboardOutput] {
-        guard let held = heldFileOffer, held.id != id else { return [] }
-        heldFileOffer = nil
-        heldAnnounced = false
-        heldSince = nil
-        incomingFiles = nil
-        return [.fileOfferWithdrawn(id: held.id)]
+    private func syncHeld() -> [ClipboardOutput] {
+        guard let offer = held?.offer,
+              !(transfer.isIncomingHeld && transfer.receivedOfferID == offer.id) else { return [] }
+        held = nil
+        return [.fileOfferWithdrawn(id: offer.id)]
     }
+
+    // MARK: - Receiving a payload
 
     private func onOffer(_ body: [UInt8]) -> [ClipboardOutput] {
         /*
@@ -909,9 +888,8 @@ public final class ClipboardService {
             }
             let lazy = offer.kind == ClipKind.png.rawValue &&
                        offer.total > UInt64(Self.eagerImageThreshold)
-            var outputs = withdrawHeldOffer(supersededBy: offer.id)
-            outputs += render(lazy ? transfer.handleLazy(offer: offer)
-                                   : transfer.handle(offer: offer))
+            var outputs = render(lazy ? transfer.handleLazy(offer: offer)
+                                      : transfer.handle(offer: offer))
             if lazy && previousID != offer.id && transfer.receivedOfferID == offer.id {
                 lazyImageID = offer.id
                 outputs.append(.lazyImage(id: offer.id, total: offer.total))
@@ -963,19 +941,15 @@ public final class ClipboardService {
         }
         let files = listed.files
 
-        /* An identical retry of the offer already being held is the far end
-           repeating itself, not a second question to ask (#78, ADR-0009). */
         /* A newer offer makes any earlier "too large" stale: the user is being
            told about a copy they have already replaced. */
         tooBigWaiting = nil
+        /* An identical retry of the offer already being held is the far end
+           repeating itself, not a second question to ask (#78, ADR-0009). */
         let waiting = FileOffer(id: offer.id, total: offer.total, files: files)
-        if heldFileOffer == waiting { return [] }
+        if held?.offer == waiting { return [] }
 
-        var outputs = withdrawHeldOffer(supersededBy: offer.id)
-        heldFileOffer = nil
-        heldAnnounced = false
-        heldSince = nil
-        outputs += render(transfer.handleLazy(offer: offer))
+        var outputs = render(transfer.handleLazy(offer: offer))
         /*
          * Held, and held for *this* offer — the only state in which there is a
          * question to ask.
@@ -1017,7 +991,6 @@ public final class ClipboardService {
         }
 
         if offer.total <= UInt64(Self.filePromptThreshold) {
-            incomingFiles = files
             /* Said out loud. A set under the line crosses with no question, and
                from the desk that is indistinguishable from a question that
                failed to appear — which is exactly how it was reported. */
@@ -1026,7 +999,6 @@ public final class ClipboardService {
                          + "\(Self.filePromptThreshold / (1024 * 1024)) MB line, so they were "
                          + "taken without asking")]
         }
-        heldFileOffer = waiting
         /*
          * Held quietly. The question is put when the user arrives at this
          * computer (`userIsHere`), not when the copy happened on the other one.
@@ -1037,12 +1009,8 @@ public final class ClipboardService {
          * was at the Windows machine. A paste over here can only follow the
          * cursor arriving over here, so arrival is the moment the question
          * becomes worth asking — and if it never comes, it never is (#56).
-         *
-         * `heldSince` stays nil until then: the hold deadline is time the user
-         * had to answer, and they have had none.
          */
-        heldSince = nil
-        heldAnnounced = false
+        held = .quiet(waiting)
         return outputs + [.note("\(files.count) file(s), \(offer.total) bytes, are held; the "
                                 + "question waits until the cursor comes to this computer")]
     }
@@ -1217,22 +1185,6 @@ public final class ClipboardService {
                     lazyImageID = nil
                     outputs.append(.cancelLazyImage(id: action.id))
                 }
-                /*
-                 * Which direction failed is asked of the machine, not of the
-                 * id: ids are per direction and collide across the two (#136),
-                 * so a send that failed would otherwise throw away a healthy
-                 * receive's file list — and the receive would then arrive with
-                 * nothing to split it by.
-                 */
-                if !transfer.isIncomingBusy {
-                    if let held = heldFileOffer {
-                        heldFileOffer = nil
-                        heldAnnounced = false
-                        heldSince = nil
-                        outputs.append(.fileOfferWithdrawn(id: held.id))
-                    }
-                    incomingFiles = nil
-                }
                 if !transfer.isSending { outgoingProvider = nil }
                 outputs.append(.note("transfer \(action.id) was abandoned: "
                                      + Self.reason(action.reason)))
@@ -1294,33 +1246,31 @@ public final class ClipboardService {
             }
         }
         if !transfer.isSending { outgoingProvider = nil }
-        return outputs
+        return outputs + syncHeld()
     }
 
     /*
      * Split a delivered file payload back into files.
      *
-     * The list comes from the offer, checked against that offer's own total
-     * before a single byte was asked for — so the offsets here are arithmetic
-     * over numbers already agreed, not a second parse of anything the far end
-     * says now. The bounds check stays all the same: a payload shorter than
-     * the list claims is a bug on this path, and the answer to one is a
-     * refused delivery, never a short file presented as whole.
+     * The list is the delivered transfer's own metadata, as the machine kept
+     * it: the same bytes `onFileOffer` decoded and checked against the offer's
+     * total before a single byte was asked for, so it can only ever be the
+     * list of the transfer that actually arrived. The bounds check stays all
+     * the same: a payload shorter than the list claims is a bug on this path,
+     * and the answer to one is a refused delivery, never a short file
+     * presented as whole.
      */
     private func deliverFiles(_ bytes: [UInt8]) -> [ClipboardOutput] {
-        guard let files = incomingFiles else {
+        guard let listed = FileList.decode(transfer.deliveredMeta) else {
             return [.note("a file payload arrived with no list to split it by; nothing was "
                           + "written")]
         }
-        incomingFiles = nil
-
-        let listed = files.reduce(UInt64(0)) { $0 &+ $1.size }
-        guard listed == UInt64(bytes.count) else {
+        guard listed.total == UInt64(bytes.count) else {
             return [.note("a file payload of \(bytes.count) bytes did not match the "
-                          + "\(listed) its list named; nothing was written")]
+                          + "\(listed.total) its list named; nothing was written")]
         }
-        return [.deliverFiles(FileDelivery(files: files, bytes: bytes)),
-                .note("\(files.count) file(s), \(bytes.count) bytes, arrived whole")]
+        return [.deliverFiles(FileDelivery(files: listed.files, bytes: bytes)),
+                .note("\(listed.files.count) file(s), \(bytes.count) bytes, arrived whole")]
     }
 
     private func sealedOffer() -> [ClipboardOutput] {

@@ -223,45 +223,14 @@ std::vector<ClipOutput> ClipService::user_is_here() {
         outputs.push_back(tell_user(too_big_waiting_));
         too_big_waiting_.clear();
     }
-    if (!have_held_offer_ || held_announced_) return outputs;
-    held_announced_ = true;
-    held_timed_ = false;
-    ClipOutput ask;
-    ask.kind = ClipOutput::Kind::FileOffer;
-    ask.transfer_id = held_offer_.id;
-    ask.total = held_offer_.total;
-    ask.files = held_offer_.files;
-    outputs.push_back(std::move(ask));
+    append(outputs, announce_held());
     return outputs;
 }
 
 std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
-    if (!have_held_offer_ || held_offer_.id != id) return {};
-    /*
-     * The machine has to still be holding it. Without this the file list is
-     * remembered for a transfer that will never run — and the *next* transfer
-     * then arrives and is split by the wrong list, which reads at the desk as
-     * a paste that silently never happens (#56).
-     */
-    if (!dh_xfer_rx_is_held(xfer_.get())) {
-        have_held_offer_ = false;
-        held_announced_ = false;
-        held_timed_ = false;
-        ClipOutput withdrawn;
-        withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
-        withdrawn.transfer_id = id;
-        std::vector<ClipOutput> outputs;
-        outputs.push_back(std::move(withdrawn));
-        outputs.push_back(note("the files were accepted here, but that transfer is no longer "
-                               "waiting to be asked for; nothing was requested"));
-        return outputs;
-    }
-    const deskhop::FileOffer offer = held_offer_;
-    have_held_offer_ = false;
-    held_announced_ = false;
-    held_timed_ = false;
-    incoming_files_ = offer.files;
-    have_incoming_files_ = true;
+    if (!held_ || held_->offer.id != id) return {};
+    const deskhop::FileOffer offer = std::move(held_->offer);
+    held_.reset();
 
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> outputs =
@@ -273,11 +242,9 @@ std::vector<ClipOutput> ClipService::accept_files(uint32_t id) {
 }
 
 std::vector<ClipOutput> ClipService::decline_files(uint32_t id) {
-    if (!have_held_offer_ || held_offer_.id != id) return {};
-    const size_t count = held_offer_.files.size();
-    have_held_offer_ = false;
-    held_announced_ = false;
-    held_timed_ = false;
+    if (!held_ || held_->offer.id != id) return {};
+    const size_t count = held_->offer.files.size();
+    held_.reset();
 
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> outputs =
@@ -292,7 +259,7 @@ std::vector<ClipOutput> ClipService::decline_files(uint32_t id) {
 }
 
 std::vector<ClipOutput> ClipService::abort_receive() {
-    if (have_held_offer_) return decline_files(held_offer_.id);
+    if (held_) return decline_files(held_->offer.id);
     if (!dh_xfer_is_receiving(xfer_.get())) return {};
     dh_xfer_action actions[kActionCapacity];
     std::vector<ClipOutput> outputs =
@@ -356,7 +323,7 @@ bool ClipService::arriving(uint8_t *kind, uint64_t *received, uint64_t *total) c
 }
 
 const deskhop::FileOffer *ClipService::awaiting_decision() const {
-    return have_held_offer_ ? &held_offer_ : nullptr;
+    return held_ ? &held_->offer : nullptr;
 }
 
 std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
@@ -381,17 +348,6 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
             note("clipboard sending was turned off; anything in flight was abandoned"));
     }
     if (could_receive && !may_receive_) {
-        if (have_held_offer_) {
-            have_held_offer_ = false;
-        held_announced_ = false;
-            held_timed_ = false;
-            ClipOutput withdrawn;
-            withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
-            withdrawn.transfer_id = held_offer_.id;
-            outputs.push_back(std::move(withdrawn));
-        }
-        have_incoming_files_ = false;
-        incoming_files_.clear();
         const size_t n = dh_xfer_cancel_rx(xfer_.get(), actions, kActionCapacity);
         append(outputs, render(actions, n));
         outputs.push_back(
@@ -402,8 +358,6 @@ std::vector<ClipOutput> ClipService::policy_changed(uint8_t flags) {
 
 std::vector<ClipOutput> ClipService::session_ended() {
     outgoing_provider_ = nullptr;
-    have_incoming_files_ = false;
-    incoming_files_.clear();
     reoffer_when_sealed_ = false;
 
     dh_xfer_action actions[kActionCapacity];
@@ -419,15 +373,6 @@ std::vector<ClipOutput> ClipService::session_ended() {
     if (have_pending_) {
         rendered.push_back(note("the session went away; " + describe_pending() +
                                 " copied here are still waiting for one that can carry them"));
-    }
-    if (have_held_offer_) {
-        have_held_offer_ = false;
-        held_announced_ = false;
-        held_timed_ = false;
-        ClipOutput withdrawn;
-        withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
-        withdrawn.transfer_id = held_offer_.id;
-        rendered.push_back(std::move(withdrawn));
     }
     const size_t n = dh_xfer_link_down(xfer_.get(), actions, kActionCapacity);
     append(rendered, render(actions, n));
@@ -576,39 +521,26 @@ std::vector<ClipOutput> ClipService::tick(uint32_t now_ms, const dh_device_drops
         arrived_at_ = now_ms;
         have_arrived_ = true;
     }
-    /* An offer that landed just after the crossing: the user is plainly here
-       and came for it, so it is not made to wait for a second one. */
-    const bool recently_arrived =
-        have_arrived_ && now_ms - arrived_at_ <= kRecentArrivalMs;
-    if (have_held_offer_ && !held_announced_ && recently_arrived) {
-        held_announced_ = true;
-        held_timed_ = false;
-        ClipOutput ask;
-        ask.kind = ClipOutput::Kind::FileOffer;
-        ask.transfer_id = held_offer_.id;
-        ask.total = held_offer_.total;
-        ask.files = held_offer_.files;
-        outputs.push_back(std::move(ask));
-    }
-    /* And the same for a refusal with no question behind it. */
-    if (!too_big_waiting_.empty() && recently_arrived) {
-        outputs.push_back(tell_user(too_big_waiting_));
-        too_big_waiting_.clear();
+    /* An offer that landed just after the crossing, or a refusal with no
+       question behind it: the user is plainly here and came for it, so it is
+       not made to wait for a second crossing. */
+    if (have_arrived_ && now_ms - arrived_at_ <= kRecentArrivalMs) {
+        append(outputs, announce_held());
+        if (!too_big_waiting_.empty()) {
+            outputs.push_back(tell_user(too_big_waiting_));
+            too_big_waiting_.clear();
+        }
     }
 
-    if (have_held_offer_ && held_announced_) {
-        if (!held_timed_) {
-            held_timed_ = true;
-            held_since_ = now_ms;
-        } else if (now_ms - held_since_ >= kHoldTimeoutMs) {
-            const uint32_t id = held_offer_.id;
-            append(outputs, decline_files(id));
+    if (held_ && held_->announced) {
+        if (!held_->since) {
+            held_->since = now_ms;
+        } else if (now_ms - *held_->since >= kHoldTimeoutMs) {
+            append(outputs, decline_files(held_->offer.id));
             outputs.push_back(note("a file offer went unanswered for " +
                                    std::to_string(kHoldTimeoutMs / 1000u) +
                                    "s and was declined"));
         }
-    } else {
-        held_timed_ = false;
     }
 
     /* A size cap that changed while something was arriving (#56). Tried here
@@ -894,10 +826,9 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
         return on_file_offer(offer, had_offer, previous_id);
     const bool lazy = offer.kind == static_cast<uint8_t>(ClipKind::Png) &&
                       offer.total > kEagerImageThreshold;
-    std::vector<ClipOutput> outputs = withdraw_held_offer(offer.id);
-    append(outputs, render(
+    std::vector<ClipOutput> outputs = render(
         actions, lazy ? dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions, kActionCapacity)
-                      : dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity)));
+                      : dh_xfer_handle_offer(xfer_.get(), &offer, actions, kActionCapacity));
     if (lazy) {
         const bool accepted = dh_xfer_rx_has_offer(xfer_.get()) &&
                               dh_xfer_rx_offer_id(xfer_.get()) == offer.id;
@@ -933,6 +864,32 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
     return outputs;
 }
 
+std::vector<ClipOutput> ClipService::announce_held() {
+    if (!held_ || held_->announced) return {};
+    held_->announced = true;
+    ClipOutput ask;
+    ask.kind = ClipOutput::Kind::FileOffer;
+    ask.transfer_id = held_->offer.id;
+    ask.total = held_->offer.total;
+    ask.files = held_->offer.files;
+    std::vector<ClipOutput> outputs;
+    outputs.push_back(std::move(ask));
+    return outputs;
+}
+
+std::vector<ClipOutput> ClipService::sync_held() {
+    if (!held_) return {};
+    if (dh_xfer_rx_is_held(xfer_.get()) && dh_xfer_rx_offer_id(xfer_.get()) == held_->offer.id)
+        return {};
+    ClipOutput withdrawn;
+    withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
+    withdrawn.transfer_id = held_->offer.id;
+    held_.reset();
+    std::vector<ClipOutput> outputs;
+    outputs.push_back(std::move(withdrawn));
+    return outputs;
+}
+
 /*
  * Files are offered from the other computer.
  *
@@ -944,21 +901,6 @@ std::vector<ClipOutput> ClipService::on_offer(const uint8_t *body, size_t len) {
  *
  * Twin: ClipboardService.onFileOffer.
  */
-std::vector<ClipOutput> ClipService::withdraw_held_offer(uint32_t superseded_by) {
-    if (!have_held_offer_ || held_offer_.id == superseded_by) return {};
-    ClipOutput withdrawn;
-    withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
-    withdrawn.transfer_id = held_offer_.id;
-    have_held_offer_ = false;
-    held_announced_ = false;
-    held_timed_ = false;
-    have_incoming_files_ = false;
-    incoming_files_.clear();
-    std::vector<ClipOutput> outputs;
-    outputs.push_back(std::move(withdrawn));
-    return outputs;
-}
-
 std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, bool had_offer,
                                                    uint32_t previous_id) {
     std::vector<FileEntry> files;
@@ -992,18 +934,13 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
 
     /* An identical retry of the offer already being held is the far end
        repeating itself, not a second question to ask (#78, ADR-0009). */
-    if (have_held_offer_ && held_offer_.id == offer.id && held_offer_.total == offer.total &&
-        held_offer_.files == files)
+    if (held_ && held_->offer.id == offer.id && held_->offer.total == offer.total &&
+        held_->offer.files == files)
         return {};
 
-    std::vector<ClipOutput> outputs = withdraw_held_offer(offer.id);
-    have_held_offer_ = false;
-    held_announced_ = false;
-    held_timed_ = false;
-
     dh_xfer_action actions[kActionCapacity];
-    append(outputs, render(actions, dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions,
-                                                              kActionCapacity)));
+    std::vector<ClipOutput> outputs = render(
+        actions, dh_xfer_handle_offer_lazy(xfer_.get(), &offer, actions, kActionCapacity));
     /*
      * Held, and held for *this* offer — the only state in which there is a
      * question to ask.
@@ -1048,8 +985,6 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
     }
 
     if (offer.total <= kFilePromptThreshold) {
-        incoming_files_ = files;
-        have_incoming_files_ = true;
         append(outputs, render(actions, dh_xfer_request_lazy(xfer_.get(), offer.id, actions,
                                                              kActionCapacity)));
         /* Said out loud. A set under the line crosses with no question, and from
@@ -1062,8 +997,6 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
         return outputs;
     }
 
-    held_offer_ = deskhop::FileOffer{offer.id, offer.total, files};
-    have_held_offer_ = true;
     /*
      * Held quietly. The question is put when the user arrives at this computer
      * (`user_is_here`), not when the copy happened on the other one.
@@ -1074,13 +1007,10 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
      * machine. A paste here can only follow the cursor arriving here, so
      * arrival is the moment the question becomes worth asking — and if it never
      * comes, it never is (#56).
-     *
-     * `held_timed_` stays false until then: the hold deadline is time the user
-     * had to answer, and they have had none.
      */
-    held_timed_ = false;
-    held_announced_ = false;
-    outputs.push_back(note(std::to_string(files.size()) + " file(s), " +
+    held_ = HeldOffer{deskhop::FileOffer{offer.id, offer.total, std::move(files)}, false,
+                      std::nullopt};
+    outputs.push_back(note(std::to_string(held_->offer.files.size()) + " file(s), " +
                            std::to_string(offer.total) +
                            " bytes, are held; the question waits until the cursor comes to "
                            "this computer"));
@@ -1090,23 +1020,20 @@ std::vector<ClipOutput> ClipService::on_file_offer(const dh_clip_offer &offer, b
 /*
  * Split a delivered file payload back into files.
  *
- * The list comes from the offer, checked against that offer's own total before
- * a single byte was asked for — so the sizes here are numbers already agreed,
- * not a second parse of anything the far end says now. The bounds check stays
- * all the same: a payload shorter than the list claims is a bug on this path,
- * and the answer to one is a refused delivery, never a short file presented as
- * whole.
+ * The list is the delivered transfer's own metadata, as the machine kept it:
+ * the same bytes `on_file_offer` decoded and checked against the offer's total
+ * before a single byte was asked for, so it can only ever be the list of the
+ * transfer that actually arrived. The bounds check stays all the same: a
+ * payload shorter than the list claims is a bug on this path, and the answer to
+ * one is a refused delivery, never a short file presented as whole.
  */
 std::vector<ClipOutput> ClipService::deliver_files(const uint8_t *bytes, size_t len) {
-    if (!have_incoming_files_)
-        return {note("a file payload arrived with no list to split it by; nothing was written")};
-
-    std::vector<FileEntry> files = std::move(incoming_files_);
-    incoming_files_.clear();
-    have_incoming_files_ = false;
-
+    uint16_t meta_len = 0;
+    const uint8_t *meta = dh_xfer_delivered_meta(xfer_.get(), &meta_len);
+    std::vector<FileEntry> files;
     uint64_t listed = 0;
-    for (const FileEntry &file : files) listed += file.size;
+    if (!decode_file_list(meta, meta_len, files, listed))
+        return {note("a file payload arrived with no list to split it by; nothing was written")};
     if (listed != len)
         return {note("a file payload of " + std::to_string(len) + " bytes did not match the " +
                      std::to_string(listed) + " its list named; nothing was written")};
@@ -1366,26 +1293,6 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
                 clear.transfer_id = action.id;
                 outputs.push_back(std::move(clear));
             }
-            /*
-             * Which direction failed is asked of the machine, not of the id:
-             * ids are per direction and collide across the two (#136), so a
-             * send that failed would otherwise throw away a healthy receive's
-             * file list — and the receive would then arrive with nothing to
-             * split it by.
-             */
-            if (!dh_xfer_rx_busy(xfer_.get())) {
-                if (have_held_offer_) {
-                    have_held_offer_ = false;
-        held_announced_ = false;
-                    held_timed_ = false;
-                    ClipOutput withdrawn;
-                    withdrawn.kind = ClipOutput::Kind::FileOfferWithdrawn;
-                    withdrawn.transfer_id = held_offer_.id;
-                    outputs.push_back(std::move(withdrawn));
-                }
-                have_incoming_files_ = false;
-                incoming_files_.clear();
-            }
             if (!dh_xfer_is_sending(xfer_.get())) outgoing_provider_ = nullptr;
             outputs.push_back(note("transfer " + std::to_string(action.id) + " was abandoned: " +
                                    fail_reason(action.reason)));
@@ -1473,6 +1380,7 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
         std::vector<uint8_t>().swap(tx_meta_);
         outgoing_provider_ = nullptr;
     }
+    append(outputs, sync_held());
     return outputs;
 }
 

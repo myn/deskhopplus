@@ -200,12 +200,8 @@ bool dh_xfer_set_rx_buffer(dh_xfer *x, uint8_t *rx_buf, size_t rx_cap);
 /*
  * Whether anything at all is incoming — a payload assembling, or a lazy offer
  * being held for a decision. Wider than dh_xfer_is_receiving, which excludes
- * the held case.
- *
- * It is what a caller needs to answer "is my incoming transfer over?" after a
- * FAILED action, because a transfer id cannot answer it: ids are per direction
- * and collide across the two (#136), so a failure of the outgoing transfer
- * would otherwise be read as the incoming one's and throw its state away.
+ * the held case. It is what gates a receive-buffer swap, below: the buffer
+ * cannot move under either.
  */
 static inline bool dh_xfer_rx_busy(const dh_xfer *x) { return x->rx.active; }
 

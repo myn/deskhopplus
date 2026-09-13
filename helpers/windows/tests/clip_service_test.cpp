@@ -1157,6 +1157,19 @@ std::vector<uint8_t> big_payload() {
     return std::vector<uint8_t>(static_cast<size_t>(big_size), 0x5a);
 }
 
+bool withdrew(const Pair &pair, uint32_t id) {
+    for (uint32_t seen : pair.withdrawn_questions)
+        if (seen == id) return true;
+    return false;
+}
+
+size_t requests_carried(const Pair &pair) {
+    size_t n = 0;
+    for (const auto &frame : pair.carried_frames)
+        if (frame.first == DH_MSG_CLIP_REQUEST) n++;
+    return n;
+}
+
 /*
  * A copy made while the link is reconnecting is held, not thrown away.
  *
@@ -1537,10 +1550,7 @@ void test_a_held_question_is_withdrawn() {
     const uint32_t id = pair.file_questions[0].id;
 
     pair.settle(pair.b.session_ended(), Side::B);
-    bool withdrawn = false;
-    for (uint32_t seen : pair.withdrawn_questions)
-        if (seen == id) withdrawn = true;
-    CHECK(withdrawn,
+    CHECK(withdrew(pair, id),
           "a session that ended left a question standing over a transfer that is gone");
     CHECK(pair.b.awaiting_decision() == nullptr,
           "the offer is still held after the session ended");
@@ -1605,10 +1615,7 @@ void test_a_newer_copy_withdraws_a_held_question() {
     const uint32_t id = pair.file_questions[0].id;
 
     pair.copy_on_a("something else entirely");
-    bool withdrawn = false;
-    for (uint32_t seen : pair.withdrawn_questions)
-        if (seen == id) withdrawn = true;
-    CHECK(withdrawn, "a newer copy left the question about the old transfer standing");
+    CHECK(withdrew(pair, id), "a newer copy left the question about the old transfer standing");
     CHECK(pair.b.awaiting_decision() == nullptr, "the superseded offer is still held");
     CHECK(!pair.delivered_to_b.empty() &&
               text_of(pair.delivered_to_b.back()) == "something else entirely",
@@ -1639,10 +1646,7 @@ void test_an_unanswered_question_is_declined_in_the_end() {
     pair.settle(pair.b.tick(1000 + ClipService::kHoldTimeoutMs), Side::B);
     CHECK(pair.b.awaiting_decision() == nullptr,
           "an unanswered question stood past its deadline");
-    bool withdrawn = false;
-    for (uint32_t seen : pair.withdrawn_questions)
-        if (seen == id) withdrawn = true;
-    CHECK(withdrawn, "the expired question was not taken back");
+    CHECK(withdrew(pair, id), "the expired question was not taken back");
     CHECK(pair.files_to_b.empty(), "an expired question delivered its files anyway");
     CHECK(!pair.a.awaiting_send(), "the copy side is still offering a declined transfer");
 }
@@ -1722,6 +1726,139 @@ void test_an_accept_that_cannot_run_poisons_nothing() {
     CHECK(pair.files_to_b.size() == 1, "a healthy transfer did not arrive after a dead accept");
     CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].bytes == three_file_payload(),
           "a healthy transfer was split by a dead transfer's list");
+}
+
+/*
+ * The copy side repeats an offer every two seconds, and the two lanes of the
+ * channel do not keep frames in order (#63) — so a retry of the offer the far
+ * end has already moved past can land *after* the offer that replaced it. The
+ * transfer machine ignores it as stale. The question about the newer offer has
+ * to survive it too: the only question that can be withdrawn is one the
+ * machine is no longer holding.
+ */
+void test_a_late_older_offer_leaves_the_newer_question_standing() {
+    Pair pair(big_capacity);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    std::pair<uint8_t, std::vector<uint8_t>> first;
+    bool have_first = false;
+    for (const auto &frame : pair.carried_frames)
+        if (frame.first == DH_MSG_CLIP_OFFER && !have_first) { first = frame; have_first = true; }
+    CHECK(have_first, "no offer crossed the link");
+    if (!have_first) return;
+
+    /* A second copy supersedes the first; its question replaces the first's. */
+    pair.copy_files_on_a({deskhop::FileEntry{"later.bin", big_size}}, big_payload());
+    const deskhop::FileOffer *newer = pair.b.awaiting_decision();
+    CHECK(newer != nullptr, "the newer offer was not held");
+    if (newer == nullptr) return;
+    const uint32_t newer_id = newer->id;
+    CHECK(pair.file_questions.size() == 2, "the two offers did not each ask once");
+
+    /* The first offer's retry arrives late, behind the one that replaced it. */
+    pair.settle(pair.b.received(first.first, first.second.data(), first.second.size()), Side::B);
+    CHECK(pair.b.awaiting_decision() != nullptr && pair.b.awaiting_decision()->id == newer_id,
+          "a stale retry of an older offer took the newer question down with it");
+    CHECK(!withdrew(pair, newer_id),
+          "the newer question was withdrawn by an offer the machine ignored");
+
+    /* And the newer question still works. */
+    pair.settle(pair.b.accept_files(newer_id), Side::B);
+    CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].files.size() == 1 &&
+              pair.files_to_b[0].files[0].name == "later.bin",
+          "accepting the newer question did not deliver the newer files");
+}
+
+/*
+ * The hold deadline is time the user had to answer. An offer can sit unasked
+ * for as long as nobody comes to this computer, and none of that counts: the
+ * two minutes start when the question is put, not when the copy was made.
+ */
+void test_time_held_quietly_is_not_time_to_answer() {
+    Pair pair(big_capacity);
+    pair.user_arrives = false;
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+
+    /* Unasked for longer than the whole answer window. */
+    pair.settle(pair.b.tick(0), Side::B);
+    pair.settle(pair.b.tick(ClipService::kHoldTimeoutMs * 2), Side::B);
+    CHECK(pair.file_questions.empty(), "a question was put with nobody here to answer it");
+    CHECK(pair.b.awaiting_decision() != nullptr,
+          "an offer nobody had been asked about expired");
+
+    /* The user arrives, and the window opens here. */
+    const uint32_t arrived = ClipService::kHoldTimeoutMs * 2 + 1;
+    pair.settle(pair.b.user_is_here(), Side::B);
+    pair.settle(pair.b.tick(arrived), Side::B);
+    CHECK(pair.file_questions.size() == 1, "arriving did not put the question");
+    pair.settle(pair.b.tick(arrived + ClipService::kHoldTimeoutMs - 1), Side::B);
+    CHECK(pair.b.awaiting_decision() != nullptr,
+          "the time held quietly was counted against the user's answer");
+    pair.settle(pair.b.tick(arrived + ClipService::kHoldTimeoutMs), Side::B);
+    CHECK(pair.b.awaiting_decision() == nullptr, "the answer window never closed");
+}
+
+/*
+ * A tray item can outlive the question it was built for. Accepting the old one
+ * must neither request the transfer that replaced it nor split what then
+ * arrives by the old list.
+ */
+void test_accepting_an_obsolete_question_touches_nothing_newer() {
+    Pair pair(big_capacity);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t old_id = pair.file_questions[0].id;
+    const std::vector<deskhop::FileEntry> later{deskhop::FileEntry{"later.bin", big_size}};
+    pair.copy_files_on_a(later, big_payload());
+    CHECK(withdrew(pair, old_id), "the superseded question stayed up");
+
+    const size_t requested = requests_carried(pair);
+    pair.settle(pair.b.accept_files(old_id), Side::B);
+    CHECK(requests_carried(pair) == requested,
+          "accepting an obsolete question requested the transfer that replaced it");
+    CHECK(pair.files_to_b.empty(), "an obsolete accept delivered something");
+    const deskhop::FileOffer *newer = pair.b.awaiting_decision();
+    CHECK(newer != nullptr, "the newer question was lost to an obsolete accept");
+    if (newer == nullptr) return;
+
+    pair.settle(pair.b.accept_files(newer->id), Side::B);
+    CHECK(!pair.files_to_b.empty() && pair.files_to_b[0].files == later,
+          "the newer transfer was split by the obsolete question's list");
+}
+
+/* The board turned receiving off under a question the user has not answered. */
+void test_receiving_turned_off_withdraws_a_held_question() {
+    Pair pair(big_capacity);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    pair.settle(pair.b.policy_changed(DH_CLIP_MAY_SEND), Side::B);
+    CHECK(withdrew(pair, id),
+          "receiving turned off left a question standing that cannot be accepted");
+    CHECK(pair.b.awaiting_decision() == nullptr, "the refused offer is still held");
+    CHECK(!pair.a.awaiting_send(), "the copy side still offers a transfer the toggle refused");
+}
+
+/* The copy side gave up on its transfer while the question here still stood. */
+void test_the_copy_side_cancelling_withdraws_a_held_question() {
+    Pair pair(big_capacity);
+    pair.answer_file_offers = false;
+    pair.copy_files_on_a(big_files(), big_payload());
+    CHECK(!pair.file_questions.empty(), "no question was asked");
+    if (pair.file_questions.empty()) return;
+    const uint32_t id = pair.file_questions[0].id;
+
+    pair.settle(pair.a.abort_send(), Side::A);
+    CHECK(withdrew(pair, id),
+          "the copy side's cancel left a question standing over a transfer that is gone");
+    CHECK(pair.b.awaiting_decision() == nullptr, "the cancelled offer is still held");
+    CHECK(pair.b.accept_files(id).empty(), "a cancelled offer could still be accepted");
 }
 
 void test_an_accepted_transfer_reports_progress() {
@@ -1842,6 +1979,11 @@ int main() {
     test_an_over_cap_set_is_never_put_to_the_user();
     test_offer_retries_do_not_re_ask_after_the_answer();
     test_an_accept_that_cannot_run_poisons_nothing();
+    test_a_late_older_offer_leaves_the_newer_question_standing();
+    test_time_held_quietly_is_not_time_to_answer();
+    test_accepting_an_obsolete_question_touches_nothing_newer();
+    test_receiving_turned_off_withdraws_a_held_question();
+    test_the_copy_side_cancelling_withdraws_a_held_question();
     test_colliding_names_are_renamed();
 
     if (failures > 0) {
