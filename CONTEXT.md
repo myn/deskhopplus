@@ -69,6 +69,22 @@ refusal being read by another as its own, which is how a listener manufactured t
 (#108).
 _Avoid_: nonce (a nonce feeds key derivation here and is a different field), token, request id
 
+**Frame**:
+The logical unit of the wire protocol: a type, an authentication prefix (every type but the
+handful that precede a session), and a body. One frame carries exactly one message — a hello, a
+credit grant, a chunk. A frame never shares a **report** with another frame: it always begins at
+a report boundary and pads out to fill however many reports it takes to carry it.
+_Avoid_: message, packet (a packet is the 12-byte inter-board wire unit), report (a frame's
+carrier, not the frame itself)
+
+**Report**:
+The physical carrier: one fixed 64-byte HID exchange, with no ID, length or sequence of its own —
+the framing layer owns every byte. A small frame fits in one; a chunk spans many, back to back.
+Losing one **whole** report, mid-frame, is invisible today until the frame riding it fails its
+tag or the reader's byte count comes up short, because nothing about a report says which one it
+was.
+_Avoid_: packet, message, frame (a report carries a frame; it is not one)
+
 **Opaque relay**:
 The firmware's role on the channel: it parses frame headers only — never payloads — and forwards
 fragments between the USB and inter-board links. Clipboard format changes never touch firmware.
