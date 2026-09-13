@@ -394,6 +394,14 @@ incomplete, and the two BOOTSEL chords are the ones worth knowing.
 Copy the checklist into #70 and fill it in with the **measurement**, never a tick. A check that
 cannot be run is recorded as **not run** with the reason — never as a pass.
 
+The box column is read before the body is, so the box carries the verdict on its own. Three marks:
+
+- `- [x]` — run and **passed**, with the measurement.
+- `- [ ]` — **not run**, with the reason. Whether it is *not yet* or *never* is the body's job.
+- `- ❌` — run and **failed**, with the measurement. A failure is a result and is recorded as one;
+  it never gets an empty box, which reads as *not run*, and never a tick. A failed box that can no
+  longer be re-run keeps the ❌ and says why in the body — the measurement stands.
+
 The helper's log is the surface until the menu-bar item exists (#54): `/tmp/deskhop-helper.log`
 under launchd, or stderr when run in the foreground. Every state change prints as
 `deskhop-helper: state: <message>` — the same sentence the menu bar will carry.
@@ -432,25 +440,26 @@ helper timed.
 swift run deskhop-helper         # foreground, logging to stderr
 ```
 
-- [x] Every channel opens with `kIOHIDOptionsTypeSeizeDevice` against the real device, and a
-      second process is refused. Start a second `deskhop-helper` while the first holds the
-      channel; the second must report the refusal distinctly and must **not** prompt the config
-      chord.
-      **FAILED 2026-08-13 — see [#95](https://github.com/myn/deskhopplus/issues/95).** macOS does
+- [x] **Windows refuses a second open of the channel.** `hidclass.sys` refuses it, so a listener
+      is impossible there. **Measured** across ten vendor collections and **confirmed against this
+      device 2026-08-10** — ADR-0001, *Windows: exclusivity survives*.
+- ❌ **macOS refuses a second open of the channel.** Every channel opens with
+      `kIOHIDOptionsTypeSeizeDevice` against the real device; start a second `deskhop-helper`
+      while the first holds the channel, and the second must report the refusal distinctly and
+      must **not** prompt the config chord.
+      **Failed 2026-08-13 — see [#95](https://github.com/myn/deskhopplus/issues/95).** macOS does
       not refuse the second seize. A second helper reported `holding 1 channel(s) exclusively` and
       `Connected and paired` while the first held a live session and saw no disruption at all;
       `tools/macos-checks/probe_seize_exclusivity.swift` independently got
       `IOHIDDeviceOpen(seize) -> 0x00000000` and then **read ten `DEVICE_HEARTBEAT` frames off the
-      seized channel**. The state this box asks for is unreachable on macOS, so the check cannot
-      pass as written. Windows refusal was measured separately and stands.
-      **This box is unrunnable on macOS as of [#114](https://github.com/myn/deskhopplus/issues/114):**
-      the state it asked for by name — *another program holds the channel* — is deleted, not
-      repaired, so there is no longer a state for the second helper to report. It was previously
-      worded as that state's name; that wording is removed here rather than left pointing at
-      something that does not exist. **The tick is still wrong** and the sheet still has no
-      notation for *run and failed* as distinct from *not run* —
-      [#99](https://github.com/myn/deskhopplus/issues/99) owns both, and this edit deliberately
-      does not do its work
+      seized channel**.
+      **Cannot be re-run: the state it asked for is deleted.** ADR-0008 accepted that a listener is
+      real on macOS — the second open succeeding is now the expected platform behaviour, not a
+      defect to fix — and [#114](https://github.com/myn/deskhopplus/issues/114) deleted the state
+      this box asked the listener to be reported by, so there is nothing left to report. The
+      property that replaced it — the helper reports a listener that writes into the session — is
+      §6a's second box. This box was ticked from 2026-08-13 until
+      [#99](https://github.com/myn/deskhopplus/issues/99) corrected it
 - [ ] **Partial acquisition fails the session.** *Expected `not run`* — see the note below
 - [x] A config-mode round trip reconnects by itself. Press the chord, watch the helper report
       **device in config mode** distinctly from **device not connected**, leave config mode,
@@ -461,9 +470,15 @@ swift run deskhop-helper         # foreground, logging to stderr
 - [x] The `LaunchAgent` restarts the helper after a crash. Install per `helpers/macos/README.md`,
       then `kill -9` it and confirm it comes back. Note: run the installed copy from launchd
       only — running it once from a terminal that itself holds permissions is the false-pass
-      trap recorded in the macOS research. **Passed 2026-08-13**: pid 94445 `kill -9`'d, launchd
-      respawned it as 9454 with `ppid 1` and `launchctl list` reporting last exit `-9`, and the
-      session re-established unaided. One gotcha while checking this: `pgrep -f release/deskhop-helper`
+      trap recorded in the macOS research. **Passed 2026-08-13**: the helper was `kill -9`'d,
+      launchd respawned it as pid 9454 with `ppid 1` and `launchctl list` reporting last exit
+      `-9`, and the session re-established unaided. The killed pid was first written here as
+      `94445`, which cannot be right — pids allocate upward and wrap at 99998, so 94445 → 9454
+      needs ~15,000 allocations in a moment — and `/tmp/deskhop-helper.log` from that day is
+      gone, so it is **unrecoverable** and dropped. 9454 is corroborated: #93's deploy output
+      that afternoon shows it started at 13:09:21, two minutes before this record was committed
+      (`c4de59e`).
+      One gotcha while checking this: `pgrep -f release/deskhop-helper`
       matches its *own* shell, since the pattern is in that command line — it will show a phantom
       second pid. Confirm against `ps -o ppid=` or `launchctl list`, not `pgrep` alone
 - [x] Hello and heartbeat run end to end against real firmware. **Passed 2026-08-13**, repeatedly
@@ -565,9 +580,9 @@ shasum ~/Library/Application\ Support/deskhopplus/secret
 
       **The duration could not be measured**, only bounded: the exit was unattended and the log
       is consistent with the 300 s timeout counting from the last config-page read, but the
-      helper log carries **no timestamps**, so entry time is unrecoverable. Anything that needs
-      a config-mode duration — #92's first criterion — must be timed at the desk against the USB
-      identity, not reconstructed from this log afterwards
+      helper log carried **no timestamps** before #103, so entry time is unrecoverable. Anything
+      that needed a config-mode duration — #92's first criterion — had to be timed at the desk
+      against the USB identity
 - [ ] A bus reset inside the window does **not** cancel it — **not run, and not runnable by the
       method this box used to give.** #100 asked for "unplug and replug the board's USB within
       the 60 s". **That cannot test it.** Each board is powered only by the computer it plugs
@@ -709,7 +724,7 @@ upstream rather than to this fork. A macOS control that *passes* would be the su
       **Nothing to restore for the 2026-08-13 sitting**: no board was reflashed, both stayed on
       0.89 throughout, and only the *helper* was rebuilt
 - [x] Configuration re-entered through the web UI — **not needed 2026-08-13**, the configuration
-      was never wiped. See the config-wipe box in §2, which remains outstanding
+      was never wiped. See the config-wipe box in §2, which has since passed (2026-08-17)
 - [ ] Both computers: keyboard, mouse, switching, and config mode all still work.
       **Not run as a deliberate check on 2026-08-13.** Config mode was exercised on board A and
       the Mac stayed usable throughout, but no switching test was run and the Windows side was
@@ -1120,10 +1135,10 @@ unmeasured on hardware, and the same missing endpoint is why —
 [#112](https://github.com/myn/deskhopplus/issues/112) gives the helper a v2 side to speak it
 with.
 
-§1's exclusivity box still records this run sheet's oldest wrong claim — see
-[#99](https://github.com/myn/deskhopplus/issues/99), which now has a settled answer behind it:
-the state that box waits for is **deleted**, not repaired
-([#114](https://github.com/myn/deskhopplus/issues/114)).
+§1's exclusivity box is the failed measurement this section builds on. It is recorded there as
+❌ and cannot be re-run: the state it waited for is **deleted**, not repaired
+([#114](https://github.com/myn/deskhopplus/issues/114),
+[#99](https://github.com/myn/deskhopplus/issues/99)).
 
 ## 6a. The trap on v2, and the state that replaced *channel held* ([#114](https://github.com/myn/deskhopplus/issues/114))
 
