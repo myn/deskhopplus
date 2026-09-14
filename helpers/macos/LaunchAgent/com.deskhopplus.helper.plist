@@ -4,8 +4,8 @@
   The macOS helper as a background agent (#33): it starts at login and is
   restarted after a crash. Exclusivity on the channel is first-come, so
   starting as early as possible is a real requirement rather than a nicety
-  (ADR-0001) - RunAtLoad, and KeepAlive so a crash costs seconds, not the
-  session.
+  (ADR-0001) - RunAtLoad, and KeepAlive on failure so a crash costs seconds,
+  not the login.
 
   ProgramArguments must be edited to the installed binary's path; packaging
   and distribution are out of scope for this ticket (#42, "Out of Scope").
@@ -34,11 +34,13 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart after a crash. Not KeepAlive-always with SuccessfulExit
-         handling: the helper has no clean exit of its own, so any exit is a
-         crash and should bring it back. -->
+    <!-- Restart after a crash only. A bare <true/> here restarts after any
+         exit, the menu bar's Quit included (#190). -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <!-- A crash loop should not spin: launchd's own ten-second floor applies,
          and the helper's reconnection backoff handles the device side. -->

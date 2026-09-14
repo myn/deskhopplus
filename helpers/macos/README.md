@@ -294,6 +294,13 @@ or its transfers. macOS background-item restrictions or a `launchctl disable` ov
 prevent startup; allow the helper in System Settings if startup is blocked. Keep the executable at
 its registered path. Existing launchd jobs retain their current restart policy until reloaded.
 
+**Quit deskhopplus helper** stops the helper until the next login. Under launchd it boots the job
+out (`launchctl bootout`) rather than exiting, so it stays stopped whatever `KeepAlive` an installed
+plist carries (#190). To start it again before the next login, bootstrap the plist as under
+*Installing the agent* — turning **Start at login** on first if the file is still
+`com.deskhopplus.helper.plist.disabled` — or run the binary from a terminal. A crash is still
+restarted.
+
 ## Installing the agent
 
 Packaging, signing and distribution are out of scope for this ticket. To run it as a background

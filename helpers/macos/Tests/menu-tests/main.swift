@@ -17,6 +17,17 @@ check(login.isEnabled, "enabling registers the helper for login")
 let registered = try PropertyListSerialization.propertyList(from: Data(contentsOf: plist), format: nil) as! [String: Any]
 check(registered["ProgramArguments"] as? [String] == ["/Applications/My Helper/deskhop-helper"], "the executable path is one argument, including spaces")
 check(registered["RunAtLoad"] as? Bool == true, "login starts the helper")
+// The documented install and the job Start at login writes must agree on when
+// launchd brings the helper back: after a crash, never after Quit (#190). The
+// relative path holds because tools/macos-checks/menu-tests.sh runs from the
+// repo root.
+let shipped = try PropertyListSerialization.propertyList(
+    from: Data(contentsOf: URL(fileURLWithPath: "helpers/macos/LaunchAgent/com.deskhopplus.helper.plist")),
+    format: nil) as! [String: Any]
+for (name, job) in [("shipped", shipped), ("written", registered)] {
+    check(job["KeepAlive"] as? [String: Bool] == ["SuccessfulExit": false],
+          "the \(name) job restarts the helper after a crash, not after Quit")
+}
 let original = try Data(contentsOf: plist)
 try login.setEnabled(false)
 check(!login.isEnabled, "disabling removes the login registration")

@@ -250,13 +250,45 @@ final class HelperRuntime: HelperEffects {
                 guard let self else { return }
                 self.dispatch.emit(self.clipboard.abortSend())
             },
-            quit: { NSApplication.shared.terminate(nil) }))
+            quit: { [weak self] in self?.quit() }))
 
         startTimersAndTransport()
         /* Separate from the session tick, and slower: what the menu bar shows
            changes at human speed. */
         Self.everyMode(MenuBar.progressInterval) { [weak self] in self?.refreshProgress() }
         application.run()
+    }
+
+    /*
+     * Quit means "stop now; come back at the next login". Under launchd that
+     * is a bootout of the job, not an exit: the job's KeepAlive decides what
+     * an exit means, and an installed plist from before #190 says any exit is
+     * a crash to recover from — so Quit came back ten seconds later, for ever.
+     * Bootout removes the job whatever the plist says; RunAtLoad brings it
+     * back at login. launchd answers the bootout by ending this process, so
+     * the terminate below is reached only when there was no job to boot out,
+     * such as a foreground `swift run`.
+     *
+     * launchd is pid 1, and names the job it started in XPC_SERVICE_NAME —
+     * a terminal shell carries "0" there, so the parent check comes first.
+     */
+    private func quit() {
+        Self.note("quit from the menu bar")
+        let underLaunchd = getppid() == 1
+        if underLaunchd, let job = ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] {
+            Self.note("unloading launchd job \(job) until the next login")
+            let bootout = Process()
+            bootout.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            bootout.arguments = ["bootout", "gui/\(getuid())/\(job)"]
+            do {
+                try bootout.run()
+                bootout.waitUntilExit()
+                Self.note("launchctl bootout returned \(bootout.terminationStatus); exiting instead")
+            } catch {
+                Self.note("launchctl could not be run (\(error)); exiting instead")
+            }
+        }
+        NSApplication.shared.terminate(nil)
     }
 
     /// Everything the helper needs to do its job, with no user interface in it.
