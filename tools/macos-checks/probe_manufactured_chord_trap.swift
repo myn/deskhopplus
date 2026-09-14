@@ -1,5 +1,5 @@
 // What a listener attached to the channel can still make the real helper say.
-// (#108 on v1; re-pointed at v2 by #114.)
+// (#108 on v1; re-pointed at v2 by #114; at v3's report shape by #189.)
 //
 // #95 measured that a second kIOHIDOptionsTypeSeizeDevice open succeeds and
 // receives session traffic. On protocol v1 this probe then measured the
@@ -13,7 +13,7 @@
 //      chord" — #34's losing sequence of 2026-08-10, with no race won.
 //
 // ADR-0008 closed that, and this probe now measures whether it stayed closed.
-// It asks two questions of a v2 board, in one run:
+// It asks two questions of a v3 board, in one run:
 //
 //   A. THE TRAP. A hello whose tag is wrong carries the *probe's* correlation
 //      value, so every answer to it carries the probe's value too. The real
@@ -129,11 +129,40 @@ let PREFIX_SIZE = COUNTER_SIZE + TAG_SIZE
 func le16(_ v: UInt16) -> [UInt8] { [UInt8(v & 0xff), UInt8(v >> 8)] }
 func le64(_ v: UInt64) -> [UInt8] { (0..<8).map { UInt8((v >> (UInt64($0) * 8)) & 0xff) } }
 
-/// header ‖ counter ‖ tag ‖ body — docs/protocol.md v2. Nothing here computes a
+/// header ‖ counter ‖ tag ‖ body — docs/protocol.md v3. Nothing here computes a
 /// tag: the probe has no key and wants a wrong one.
 func frame(_ type: UInt8, counter: UInt64, tag: [UInt8], body: [UInt8]) -> [UInt8] {
     let payload = le64(counter) + tag + body
     return [type, 0x00] + le16(UInt16(payload.count)) + payload
+}
+
+let REPORT_SIZE = 64
+let REPORT_STREAM = REPORT_SIZE - 1   // byte 0 is the frame-start flag
+
+/// One frame's run of reports — docs/protocol.md v3, ADR-0012. Byte 0 is the
+/// frame-start flag, 1 on the first report and 0 on the rest; 63 bytes of the
+/// frame follow, and the last report's tail is 0x00. The helper's
+/// FrameCodec.reports(packing:) does the same, restated here for the reason
+/// the encoder is.
+func reports(packing frame: [UInt8]) -> [[UInt8]] {
+    stride(from: 0, to: frame.count, by: REPORT_STREAM).map { offset in
+        var report: [UInt8] = [offset == 0 ? 1 : 0]
+        report += frame[offset..<min(offset + REPORT_STREAM, frame.count)]
+        report += [UInt8](repeating: 0x00, count: REPORT_SIZE - report.count)
+        return report
+    }
+}
+
+/// The frame one received report starts, as (type, payload length, offset of
+/// the payload) — or nil. Byte 0 is the frame-start flag: a continuation
+/// (flag 0) is the middle of a longer frame and is discarded rather than read as
+/// a header, and so is a frame that runs past the report. Every reply this
+/// probe reads fits one report, so neither is a loss.
+func frameIn(report: UnsafePointer<UInt8>, length: Int) -> (type: UInt8, len: Int, body: Int)? {
+    guard length >= 5, report[0] == 1, report[1] != 0x00 else { return nil }   // 0x00: idle padding
+    let len = Int(report[3]) | (Int(report[4]) << 8)
+    guard 5 + len <= length else { return nil }
+    return (report[1], len, 5)
 }
 
 func helloBody(correlation: UInt64, keyId: [UInt8], nonce: [UInt8]) -> [UInt8] {
@@ -178,7 +207,46 @@ guard rebuilt == goldenHelloMac else {
     print("       and the result would look like the trap does not exist.")
     exit(3)
 }
-print("probe: self-test ok — hello matches the hello_mac vector")
+
+/* The report split, checked against the shape docs/protocol.md states rather
+   than against the function above: "HELLO is 67 bytes, two reports", the first
+   flagged 1 and full, the second flagged 0 with 4 bytes of hello and padding. */
+let helloReports = reports(packing: goldenHelloMac)
+guard helloReports.count == 2,
+      helloReports.allSatisfy({ $0.count == 64 }),
+      helloReports[0] == [1] + goldenHelloMac[0..<63],
+      helloReports[1] == [0] + goldenHelloMac[63..<67] + [UInt8](repeating: 0x00, count: 59)
+else {
+    print("probe: SELF-TEST FAILED — the 67-byte hello does not split into two v3 reports")
+    for (n, r) in helloReports.enumerated() { print("       report \(n): \(hex(r[...]))") }
+    print("       Refusing to run: a board reads byte 0 as the frame-start flag, so a")
+    print("       mis-split hello is refused for the wrong reason.")
+    exit(3)
+}
+
+/* The reader, on the hello_refused_unpaired vector (test-vectors/frames.txt)
+   as a v3 board sends it: flag 1, the 15-byte frame, padding. The same bytes
+   under flag 0 are a continuation and must read as nothing. */
+let goldenRefused: [UInt8] = [
+    0x0b, 0x00, 0x0b, 0x00,
+    0x0d, 0xf0, 0xfe, 0xca, 0xef, 0xbe, 0xad, 0xde,
+    0x03, 0x00, 0x03,
+]
+let refusedReport = [1] + goldenRefused + [UInt8](repeating: 0x00, count: 48)
+func frameIn(_ report: [UInt8]) -> (type: UInt8, len: Int, body: Int)? {
+    report.withUnsafeBufferPointer { frameIn(report: $0.baseAddress!, length: $0.count) }
+}
+guard let parsed = frameIn(refusedReport),
+      parsed.type == MSG_HELLO_REFUSED, parsed.len == 11,
+      refusedReport[parsed.body + 10] == 3,            // status: unpaired
+      frameIn([0] + refusedReport.dropFirst()) == nil
+else {
+    print("probe: SELF-TEST FAILED — the reader does not skip the frame-start flag, so a")
+    print("       board's HELLO_REFUSED would read as the wrong type. Refusing to run.")
+    exit(3)
+}
+print("probe: self-test ok — hello matches the hello_mac vector, splits into 2 reports,")
+print("       and the reader parses a flagged HELLO_REFUSED")
 
 /* The probe's own correlation value, which is the whole of question A: every
    answer the board gives to these hellos echoes this number, and the real
@@ -285,70 +353,57 @@ func readLE64(_ p: UnsafeMutablePointer<UInt8>, _ at: Int) -> UInt64 {
     (0..<8).reduce(UInt64(0)) { $0 | UInt64(p[at + $1]) << (UInt64($1) * 8) }
 }
 
-/* One report, one or more whole frames, 0x00 padding between them
-   (dh_frame.h). Session frames are far shorter than a 64-byte report, so a
-   frame split across reports is not handled here and does not arise for the
-   types this probe reads. */
+/* One report, at most one frame (v3, ADR-0012): frameIn above says which. */
 func handle(report: UnsafeMutablePointer<UInt8>, length: Int) {
-    var i = 0
-    while i < length {
-        if report[i] == 0x00 { i += 1; continue }          // padding
-        guard i + 4 <= length else { return }
-        let type = report[i]
-        let len = Int(report[i + 2]) | (Int(report[i + 3]) << 8)
-        let body = i + 4
-        guard body + len <= length else { return }
-
-        switch type {
-        /* Untagged, so it is read straight from the body. The correlation is
-           the first eight bytes — question A in one field. */
-        case MSG_HELLO_REFUSED where len >= 11:
-            let correlation = readLE64(report, body)
-            let status = report[body + 10]
-            refusedStatus = status
-            if correlation == probeCorrelation {
-                if !sawRefusedOurs {
-                    print("probe: <- HELLO_REFUSED(\(statusName(status))) echoing the PROBE's"
-                          + " correlation value")
-                }
-                sawRefusedOurs = true
-            } else {
-                sawRefusedOther = true
-                print(String(format: "probe: <- HELLO_REFUSED(%@) for correlation %016llx"
-                             + " — not ours; the real helper is retrying",
-                             statusName(status), correlation))
+    guard let (type, len, body) = frameIn(report: report, length: length) else { return }
+    switch type {
+    /* Untagged, so it is read straight from the body. The correlation is
+       the first eight bytes — question A in one field. */
+    case MSG_HELLO_REFUSED where len >= 11:
+        let correlation = readLE64(report, body)
+        let status = report[body + 10]
+        refusedStatus = status
+        if correlation == probeCorrelation {
+            if !sawRefusedOurs {
+                print("probe: <- HELLO_REFUSED(\(statusName(status))) echoing the PROBE's"
+                      + " correlation value")
             }
-        case MSG_HELLO_ACK:
-            sawOkAck = true
-            print("probe: <- HELLO_ACK — the device accepted a hello whose tag it could not have"
-                  + " verified")
-        case MSG_LISTENER_ALERT where len >= PREFIX_SIZE + 8:
-            /* Tagged under k_b2h, which this process cannot verify — it does
-               not need to. That the board emitted one at all is the answer,
-               and the window it reports is read from the frame rather than
-               assumed, because the threshold is the firmware's and may move. */
-            let alertBody = body + PREFIX_SIZE
-            alertWindowMs = readLE32(report, alertBody)
-            alertRefused = readLE32(report, alertBody + 4)
-            print("probe: <- LISTENER_ALERT window=\(alertWindowMs!)ms refused=\(alertRefused!)")
-        case MSG_DEVICE_HEARTBEAT:
-            if !sawDeviceHeartbeat { print("probe: <- DEVICE_HEARTBEAT — a session is live here") }
-            sawDeviceHeartbeat = true
-        case MSG_SESSION_END where len >= 1:
-            sawSessionEnd = report[body]
-            print("probe: <- SESSION_END reason=\(report[body])")
-        default:
-            print("probe: <- frame type 0x\(String(format: "%02x", type)) len=\(len)")
+            sawRefusedOurs = true
+        } else {
+            sawRefusedOther = true
+            print(String(format: "probe: <- HELLO_REFUSED(%@) for correlation %016llx"
+                         + " — not ours; the real helper is retrying",
+                         statusName(status), correlation))
         }
-        i = body + len
+    case MSG_HELLO_ACK:
+        sawOkAck = true
+        print("probe: <- HELLO_ACK — the device accepted a hello whose tag it could not have"
+              + " verified")
+    case MSG_LISTENER_ALERT where len >= PREFIX_SIZE + 8:
+        /* Tagged under k_b2h, which this process cannot verify — it does
+           not need to. That the board emitted one at all is the answer,
+           and the window it reports is read from the frame rather than
+           assumed, because the threshold is the firmware's and may move. */
+        let alertBody = body + PREFIX_SIZE
+        alertWindowMs = readLE32(report, alertBody)
+        alertRefused = readLE32(report, alertBody + 4)
+        print("probe: <- LISTENER_ALERT window=\(alertWindowMs!)ms refused=\(alertRefused!)")
+    case MSG_DEVICE_HEARTBEAT:
+        if !sawDeviceHeartbeat { print("probe: <- DEVICE_HEARTBEAT — a session is live here") }
+        sawDeviceHeartbeat = true
+    case MSG_SESSION_END where len >= 1:
+        sawSessionEnd = report[body]
+        print("probe: <- SESSION_END reason=\(report[body])")
+    default:
+        print("probe: <- frame type 0x\(String(format: "%02x", type)) len=\(len)")
     }
 }
 
-let inputBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
+let inputBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: REPORT_SIZE)
 /* Argument order is (context, result, sender, type, reportID, report, length).
    Reading the 5th as the length is a silent zero, and a run that observed
    nothing would read as a device that sent nothing. */
-IOHIDDeviceRegisterInputReportCallback(dev, inputBuffer, 64, { _, _, _, _, _, report, length in
+IOHIDDeviceRegisterInputReportCallback(dev, inputBuffer, REPORT_SIZE, { _, _, _, _, _, report, length in
     handle(report: report, length: Int(length))
 }, nil)
 IOHIDDeviceScheduleWithRunLoop(dev, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
@@ -359,11 +414,12 @@ var hellosSent = 0
 var beatsSent = 0
 
 @Sendable func send(_ frame: [UInt8], what: String) -> Bool {
-    var report = frame + [UInt8](repeating: 0x00, count: 64 - frame.count)
-    let rc = IOHIDDeviceSetReport(dev, kIOHIDReportTypeOutput, 0, &report, report.count)
-    if rc != kIOReturnSuccess {
-        print(String(format: "probe: -> %@ FAILED to send, 0x%08x", what, rc))
-        return false
+    for report in reports(packing: frame) {
+        let rc = IOHIDDeviceSetReport(dev, kIOHIDReportTypeOutput, 0, report, report.count)
+        if rc != kIOReturnSuccess {
+            print(String(format: "probe: -> %@ FAILED to send, 0x%08x", what, rc))
+            return false
+        }
     }
     return true
 }
