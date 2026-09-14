@@ -20,6 +20,10 @@ The shared frame reader (`dh_frame.c`) takes one report per call and applies two
 - **Flag `0` while no frame is in progress:** this is the tail of a frame whose head was lost. Throw
   the report away and count one resync.
 
+And one check the flag cannot make for it, the padding rule `only_padding` already applied one
+layer up: **a frame that completes mid-report with a non-padding tail** borrowed the bytes of a
+lost report's neighbour (a gap spanning a frame boundary). Throw it away and count one resync.
+
 Everything else is unchanged. A frame still begins at a report boundary and pads its own tail, so
 a frame never shares a report with another frame, and at most one frame completes per report.
 

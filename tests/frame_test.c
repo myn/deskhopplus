@@ -86,97 +86,192 @@ static size_t load_vectors(const char *path, struct vector *out, size_t cap) {
 }
 
 /*
- * What losing bytes mid-frame costs the reader (#161).
+ * The report carrier as the sender shapes it (ADR-0012): byte 0 of every
+ * 64-byte report is the frame-start flag, the other 63 are the byte stream,
+ * one frame per run of reports, the last one's tail padded. Several frames'
+ * reports in order, so a test can drop any of them and see what the reader
+ * does with the rest.
+ */
+#define MAX_REPORTS 32
+
+struct reports {
+    uint8_t report[MAX_REPORTS][DH_REPORT_SIZE];
+    size_t count;
+};
+
+/* Append one frame's reports. The payload is bytes 0..255 repeating, so no
+   run of padding appears inside a frame by accident. */
+static void add_frame(struct reports *w, const char *name, uint8_t type, size_t payload_len) {
+    uint8_t payload[DH_FRAME_MAX_PAYLOAD];
+    for (size_t i = 0; i < payload_len; i++) payload[i] = (uint8_t)i;
+    uint8_t frame[DH_FRAME_MAX_SIZE];
+    size_t len = 0;
+    CHECK(dh_frame_encode(type, 0, payload, payload_len, frame, sizeof frame, &len) ==
+              DH_FRAME_OK,
+          name, "a frame would not encode");
+    for (size_t off = 0; off < len; off += DH_REPORT_STREAM_SIZE) {
+        CHECK(w->count < MAX_REPORTS, name, "too many reports for the run");
+        if (w->count >= MAX_REPORTS) return;
+        uint8_t *report = w->report[w->count++];
+        memset(report, DH_FRAME_PAD, DH_REPORT_SIZE);
+        report[0] = off == 0 ? DH_REPORT_FRAME_START : DH_REPORT_FRAME_CONTINUES;
+        const size_t take =
+            len - off < DH_REPORT_STREAM_SIZE ? len - off : DH_REPORT_STREAM_SIZE;
+        memcpy(report + 1, frame + off, take);
+    }
+}
+
+/* A 600-byte chunk spans ten reports, the last one 37 bytes deep: room for a
+   borrow to show in its tail. Then a heartbeat, one report. */
+static void a_chunk_then_a_heartbeat(struct reports *w, const char *name) {
+    w->count = 0;
+    add_frame(w, name, DH_MSG_CLIP_CHUNK, 600);
+    add_frame(w, name, DH_MSG_HEARTBEAT, 8);
+    CHECK(w->count == 11, name, "the run is not the ten-plus-one reports this expects");
+}
+
+/*
+ * Deliver the reports one per call, skipping `lost` of them from index
+ * `lost_from`. Returns the frames delivered; their types land in `types`.
+ */
+static size_t deliver(const struct reports *w, const char *name, size_t lost_from, size_t lost,
+                      dh_frame_reader *r, uint8_t *types, size_t types_cap) {
+    size_t frames = 0;
+    for (size_t i = 0; i < w->count; i++) {
+        if (i >= lost_from && i < lost_from + lost) continue; /* the dropped report */
+        dh_frame_view fv;
+        const dh_frame_result rc = dh_frame_reader_report(r, w->report[i], DH_REPORT_SIZE, &fv);
+        CHECK(rc == DH_FRAME_OK || rc == DH_FRAME_AGAIN, name, "reader error on a report");
+        if (rc == DH_FRAME_OK) {
+            if (frames < types_cap) types[frames] = fv.hdr.type;
+            frames++;
+        }
+    }
+    return frames;
+}
+
+/*
+ * What losing a report mid-frame costs the reader (#161, then #184).
  *
  * The board's inbound ring is finite, and a report that does not fit is
- * counted and dropped. The comment on that drop says a lost report "loses a
- * frame, which the helper's own machinery re-requests or times out on". This
- * is here because that is not what happens.
+ * counted and dropped; a dock under load loses reports outright (#63). The
+ * reader is a byte stream, and until ADR-0012 a gap in it was unrecoverable:
+ * the reader went on filling the frame it was in from the frames after it,
+ * so the only honest answer was to end the session.
  *
- * The reader is a byte stream. Losing bytes out of the middle of one frame
- * does not lose that frame and resume at the next: the reader goes on filling
- * the frame it is in from bytes belonging to the frames after it, and it
- * cannot tell. What it waits for is decided by a length it read before the
- * loss — so it waits for a body that will never be delivered as such, and
- * while it waits **nothing authenticates, so nothing on the board updates the
- * liveness clock.** Three seconds of that is an eviction with no explanation,
- * and no refusals to show for it.
- *
- * The point is not that the reader is wrong. It is that a gap is
- * unrecoverable, so the only honest answer to a dropped report is to end the
- * session and let the helper open a clean stream.
+ * The frame-start flag is the one bit that changes that. The report after the
+ * gap that begins a frame says so, and the reader throws the partial frame
+ * away and parses from there — one frame lost, the session kept.
  */
-static void test_a_gap_mid_frame_is_not_recoverable(void) {
-    uint8_t first[DH_FRAME_MAX_SIZE];
-    uint8_t second[DH_FRAME_MAX_SIZE];
-    size_t first_len = 0, second_len = 0;
-    uint8_t payload[600];
-    for (size_t i = 0; i < sizeof payload; i++) payload[i] = (uint8_t)i;
+static void test_a_lost_report_mid_frame_costs_that_frame_only(void) {
+    const char *name = "a lost report mid-frame costs that frame only";
+    static struct reports w;
+    a_chunk_then_a_heartbeat(&w, name);
 
-    CHECK(dh_frame_encode(DH_MSG_CLIP_CHUNK, 0, payload, sizeof payload, first, sizeof first,
-                          &first_len) == DH_FRAME_OK,
-          "gap", "the first frame would not encode");
-    CHECK(dh_frame_encode(DH_MSG_HEARTBEAT, 0, payload, 8, second, sizeof second,
-                          &second_len) == DH_FRAME_OK,
-          "gap", "the second frame would not encode");
-
+    uint8_t types[4] = {0};
     dh_frame_reader r;
     dh_frame_reader_init(&r);
 
-    /* The first frame arrives with one 64-byte report missing from its middle
-       — exactly what the board's ring drops under pressure. */
-    const size_t report = 64;
-    const size_t gap_at = report * 3;
-    size_t frames = 0;
-    for (size_t off = 0; off < first_len; off += report) {
-        if (off == gap_at) continue; /* the dropped report */
-        const size_t take = (first_len - off) < report ? (first_len - off) : report;
-        size_t at = 0;
-        while (at < take) {
-            dh_frame_view fv;
-            size_t consumed = 0;
-            const dh_frame_result rc =
-                dh_frame_reader_push(&r, first + off + at, take - at, &consumed, &fv);
-            at += consumed;
-            if (rc == DH_FRAME_OK) frames++;
-            if (consumed == 0) break;
-        }
-    }
+    /* The control: nothing lost, both frames arrive, and the count is silent —
+       a note on an intact stream would be noise nobody reads. */
+    CHECK(deliver(&w, name, 0, 0, &r, types, sizeof types) == 2, name,
+          "an intact run did not deliver both frames");
+    CHECK(types[0] == DH_MSG_CLIP_CHUNK && types[1] == DH_MSG_HEARTBEAT, name,
+          "an intact run delivered the wrong frames");
+    CHECK(r.resyncs == 0, name, "an intact run counted a resync");
 
-    /* And now the frame after it, delivered whole and correctly. */
-    size_t at = 0;
-    while (at < second_len) {
-        dh_frame_view fv;
-        size_t consumed = 0;
-        const dh_frame_result rc =
-            dh_frame_reader_push(&r, second + at, second_len - at, &consumed, &fv);
-        at += consumed;
-        if (rc == DH_FRAME_OK) frames++;
-        if (consumed == 0) break;
-    }
-
-    CHECK(frames == 0, "gap",
-          "a gap mid-frame recovered on its own, which would make ending the session "
-          "unnecessary");
-
-    /* A reset is the only way back, and it is what the board must do. */
+    /* One report out of the chunk's middle. The chunk is lost; the heartbeat
+       behind it, whole and correct, is read without a reset. */
     dh_frame_reader_init(&r);
-    at = 0;
-    frames = 0;
-    while (at < second_len) {
-        dh_frame_view fv;
-        size_t consumed = 0;
-        const dh_frame_result rc =
-            dh_frame_reader_push(&r, second + at, second_len - at, &consumed, &fv);
-        at += consumed;
-        if (rc == DH_FRAME_OK) frames++;
-        if (consumed == 0) break;
-    }
-    CHECK(frames == 1, "gap", "a reset reader did not read the very next frame");
+    CHECK(deliver(&w, name, 3, 1, &r, types, sizeof types) == 1, name,
+          "the frame after a gap was not delivered");
+    CHECK(types[0] == DH_MSG_HEARTBEAT, name, "the broken chunk was delivered");
+    CHECK(r.resyncs == 1, name, "one gap did not count as one resync");
+}
+
+/*
+ * The same rule, at the two other places a gap can sit inside a frame. Several
+ * reports in a row is one gap, not several — the reader only learns of it
+ * from the next frame-start, however wide it was. And a frame's *last*
+ * report lost leaves nothing in the report after it to betray the borrow:
+ * the flag is the whole signal there.
+ */
+static void test_a_wider_gap_and_a_lost_last_report_cost_the_same(void) {
+    const char *name = "a wider gap and a lost last report cost the same";
+    static struct reports w;
+    a_chunk_then_a_heartbeat(&w, name);
+
+    uint8_t types[4] = {0};
+    dh_frame_reader r;
+    dh_frame_reader_init(&r);
+
+    /* Three consecutive reports out of the middle. */
+    CHECK(deliver(&w, name, 3, 3, &r, types, sizeof types) == 1 && types[0] == DH_MSG_HEARTBEAT,
+          name, "the frame after a three-report gap was not the one delivered");
+    CHECK(r.resyncs == 1, name, "a three-report gap did not count as one resync");
+
+    /* The chunk's last report, so the heartbeat's start is the only tell. */
+    dh_frame_reader_init(&r);
+    CHECK(deliver(&w, name, 9, 1, &r, types, sizeof types) == 1 && types[0] == DH_MSG_HEARTBEAT,
+          name, "the frame after a lost last report was not the one delivered");
+    CHECK(r.resyncs == 1, name, "a lost last report did not count as one resync");
+}
+
+/*
+ * A frame whose *head* is lost leaves only its tail reports, each flagged as
+ * a continuation with nothing to continue. Before the flag, the first of them
+ * was read as a header — ciphertext as a type byte, a protocol error, the
+ * session gone. Now each is thrown away and counted: one lost head reads as
+ * one resync per orphaned report, since the reader keeps no memory of the
+ * frame it never saw.
+ */
+static void test_a_lost_first_report_orphans_the_rest_of_the_frame(void) {
+    const char *name = "a lost first report orphans the rest of the frame";
+    static struct reports w;
+    a_chunk_then_a_heartbeat(&w, name);
+
+    uint8_t types[4] = {0};
+    dh_frame_reader r;
+    dh_frame_reader_init(&r);
+    CHECK(deliver(&w, name, 0, 1, &r, types, sizeof types) == 1 && types[0] == DH_MSG_HEARTBEAT,
+          name, "the frame after a lost head was not the one delivered");
+    CHECK(r.resyncs == 9, name, "nine orphaned reports did not count as nine resyncs");
+}
+
+/*
+ * A gap spanning a frame boundary is the case a per-report sequence could not
+ * resync (ADR-0012, "Alternatives considered"), and the flag alone does not
+ * see it either: the first frame's last report and the second frame's first
+ * are both gone, so the second frame's continuations read as the first
+ * frame's. The first frame then completes partway through one of them —
+ * with borrowed bytes, and with the rest of that report behind it where its
+ * padding belongs. That tail is the tell. The frame is discarded, never
+ * delivered broken to the tag layer.
+ */
+static void test_a_gap_across_a_frame_boundary_discards_the_borrowing_frame(void) {
+    const char *name = "a gap across a frame boundary discards the borrowing frame";
+    static struct reports w;
+    w.count = 0;
+    add_frame(&w, name, DH_MSG_CLIP_CHUNK, 600);
+    add_frame(&w, name, DH_MSG_CLIP_CHUNK, 600);
+    add_frame(&w, name, DH_MSG_HEARTBEAT, 8);
+    CHECK(w.count == 21, name, "the run is not the ten-ten-one reports this expects");
+
+    uint8_t types[4] = {0};
+    dh_frame_reader r;
+    dh_frame_reader_init(&r);
+    /* Reports 9 and 10: the first chunk's last, the second chunk's first. */
+    CHECK(deliver(&w, name, 9, 2, &r, types, sizeof types) == 1 && types[0] == DH_MSG_HEARTBEAT,
+          name, "a chunk built from two chunks' bytes was delivered");
+    /* One for the borrow, then one per orphaned report of the second chunk. */
+    CHECK(r.resyncs == 1 + 8, name, "the borrow and the orphans were not each counted");
 }
 
 int main(int argc, char **argv) {
-    test_a_gap_mid_frame_is_not_recoverable();
+    test_a_lost_report_mid_frame_costs_that_frame_only();
+    test_a_wider_gap_and_a_lost_last_report_cost_the_same();
+    test_a_lost_first_report_orphans_the_rest_of_the_frame();
+    test_a_gap_across_a_frame_boundary_discards_the_borrowing_frame();
 
     const char *path = argc > 1 ? argv[1] : DH_TEST_VECTORS;
     static struct vector vectors[MAX_VECTORS];

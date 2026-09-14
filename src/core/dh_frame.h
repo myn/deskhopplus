@@ -182,10 +182,10 @@ dh_frame_result dh_frame_encode(uint8_t type, uint8_t flags, const uint8_t *payl
                                 size_t *out_len);
 
 /*
- * Incremental reader over an ordered byte stream — the channel delivers frames
- * packed into 64-byte HID report carriers, so frame boundaries never align
- * with delivery boundaries. DH_FRAME_PAD bytes between frames are skipped.
- * Fixed storage, no allocation. Feed arbitrary slices; call in a loop while
+ * Incremental reader over an ordered byte stream — a frame spans as many
+ * 64-byte HID reports as it needs, so a frame's end never has to align with a
+ * delivery boundary. DH_FRAME_PAD bytes between frames are skipped. Fixed
+ * storage, no allocation. Feed arbitrary slices; call in a loop while
  * *consumed < len:
  *
  *   DH_FRAME_OK    — a complete frame is in *out (viewing the reader's buffer,
@@ -197,11 +197,49 @@ dh_frame_result dh_frame_encode(uint8_t type, uint8_t flags, const uint8_t *payl
 typedef struct {
     uint8_t buf[DH_FRAME_MAX_SIZE];
     uint16_t have;
+    /* Reports and partial frames dh_frame_reader_report threw away to bridge
+       a gap. Since init, so per session — the reader restarts with it. */
+    uint32_t resyncs;
 } dh_frame_reader;
 
 void dh_frame_reader_init(dh_frame_reader *r);
 dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, size_t len,
                                      size_t *consumed, dh_frame_view *out);
+
+/*
+ * The report carrier (ADR-0012): the channel's 64-byte HID reports carry no
+ * length or sequence of their own, so byte 0 is a frame-start flag — 1 when a
+ * frame begins in this report, 0 when it continues the one in progress — and
+ * bytes 1..63 are the byte stream above. A frame begins at a report boundary
+ * and pads its own tail, so a frame never shares a report and at most one
+ * frame completes per report.
+ */
+#define DH_REPORT_SIZE 64u
+#define DH_REPORT_STREAM_SIZE (DH_REPORT_SIZE - 1u)
+#define DH_REPORT_FRAME_START 1u
+#define DH_REPORT_FRAME_CONTINUES 0u
+
+/*
+ * Read one report. The flag is what lets the reader survive a lost report,
+ * which the byte stream alone cannot see. Only an exact 1 starts a frame: a
+ * corrupted flag then costs a frame, where reading any nonzero byte as a
+ * start would parse ciphertext as a header and end the session.
+ *
+ *   flag 1 while a frame is in progress — that frame lost a report. It is
+ *     discarded, one resync counted, and this report parsed from the start.
+ *   flag 0 while no frame is in progress — the tail of a frame whose head
+ *     was lost. The report is discarded and one resync counted.
+ *   a frame completing mid-report with a non-padding tail — it borrowed the
+ *     bytes of a lost report's neighbour. Discarded, one resync counted.
+ *
+ * A frame that lost a report is discarded before it is judged, never
+ * delivered broken: the receiver sees the same gap a refused outbound frame
+ * leaves (ADR-0005), which it already recovers from. Returns as
+ * dh_frame_reader_push does — DH_FRAME_OK with the one frame in *out,
+ * DH_FRAME_AGAIN otherwise, an error on a protocol error.
+ */
+dh_frame_result dh_frame_reader_report(dh_frame_reader *r, const uint8_t *report, size_t len,
+                                       dh_frame_view *out);
 
 #ifdef __cplusplus
 } /* extern "C" */

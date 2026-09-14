@@ -69,6 +69,7 @@ dh_frame_result dh_frame_encode(uint8_t type, uint8_t flags, const uint8_t *payl
 
 void dh_frame_reader_init(dh_frame_reader *r) {
     r->have = 0;
+    r->resyncs = 0;
 }
 
 /* Buffer up to `want` more bytes from the unread part of data; returns bytes taken. */
@@ -80,18 +81,22 @@ static size_t reader_fill(dh_frame_reader *r, const uint8_t *data, size_t len, s
     return take;
 }
 
+/* A complete frame only ever rests in the buffer after being returned, so it
+ * is released on the next push or report. */
+static void reader_release(dh_frame_reader *r) {
+    if (r->have < DH_FRAME_HEADER_SIZE)
+        return;
+    dh_frame_header hdr;
+    if (dh_frame_header_parse(r->buf, r->have, &hdr) == DH_FRAME_OK &&
+        r->have == DH_FRAME_HEADER_SIZE + hdr.len)
+        r->have = 0;
+}
+
 dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, size_t len,
                                      size_t *consumed, dh_frame_view *out) {
     size_t used = 0;
 
-    /* A complete frame only ever rests in the buffer after being returned,
-     * so it is released on the next push. */
-    if (r->have >= DH_FRAME_HEADER_SIZE) {
-        dh_frame_header hdr;
-        if (dh_frame_header_parse(r->buf, r->have, &hdr) == DH_FRAME_OK &&
-            r->have == DH_FRAME_HEADER_SIZE + hdr.len)
-            r->have = 0;
-    }
+    reader_release(r);
 
     while (used < len) {
         /* Skip carrier padding, which only ever appears between frames. */
@@ -131,4 +136,54 @@ dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, si
 
     *consumed = used;
     return DH_FRAME_AGAIN;
+}
+
+/* Saturating, like every other counter on this path: a wrapped count reads
+ * as a quiet session. */
+static void reader_resynced(dh_frame_reader *r) {
+    if (r->resyncs != UINT32_MAX) r->resyncs++;
+}
+
+dh_frame_result dh_frame_reader_report(dh_frame_reader *r, const uint8_t *report, size_t len,
+                                       dh_frame_view *out) {
+    if (len == 0)
+        return DH_FRAME_AGAIN;
+    reader_release(r);
+
+    const bool starts = report[0] == DH_REPORT_FRAME_START;
+    if (starts && r->have > 0) {
+        /* The frame in progress lost a report: the sender says one begins
+           here, which it never does mid-frame. Parse from this report. */
+        r->have = 0;
+        reader_resynced(r);
+    } else if (!starts && r->have == 0) {
+        /* The tail of a frame whose head was lost: nothing to continue, and
+           reading ciphertext as a header would end the session. */
+        reader_resynced(r);
+        return DH_FRAME_AGAIN;
+    }
+
+    size_t consumed = 0;
+    const dh_frame_result rc = dh_frame_reader_push(r, report + 1, len - 1, &consumed, out);
+    if (rc != DH_FRAME_OK)
+        return rc;
+
+    /* A frame never shares a report, so whatever follows one it completed is
+     * padding. Anything else is the tell for a gap spanning a frame boundary:
+     * the frame in progress lost its last report, the next frame lost its
+     * first, and the continuations that followed were read as this frame's.
+     * It completed on borrowed bytes; the leftover is the borrowed frame's.
+     *
+     * ponytail: the same gap with the first frame's last report exactly full
+     * leaves no tail to check, and that frame reaches the tag layer broken —
+     * tolerated for a CLIP_CHUNK, session-ending otherwise (#63). A ≥2-report
+     * gap on a boundary *and* an exactly-full report; judged as today. */
+    for (size_t i = 1 + consumed; i < len; i++) {
+        if (report[i] != DH_FRAME_PAD) {
+            r->have = 0;
+            reader_resynced(r);
+            return DH_FRAME_AGAIN;
+        }
+    }
+    return DH_FRAME_OK;
 }
