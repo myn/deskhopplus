@@ -56,6 +56,10 @@ add_executable(cursor_trace_test cursor_trace_test.c ${CORE}/dh_cursor_trace.c)
 target_include_directories(cursor_trace_test PRIVATE ${CORE})
 add_test(NAME cursor_trace_test COMMAND cursor_trace_test)
 
+add_executable(host_replug_test host_replug_test.c)
+target_include_directories(host_replug_test PRIVATE ${CORE})
+add_test(NAME host_replug_test COMMAND host_replug_test)
+
 add_executable(mouse_seam_test mouse_seam_test.c
                cursor_trace_adapter_stub.c
                ${CMAKE_CURRENT_SOURCE_DIR}/../src/mouse_logic.c ${CORE}/dh_mouse_layout.c

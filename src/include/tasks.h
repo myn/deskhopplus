@@ -37,6 +37,12 @@ void screensaver_task(device_t *);
 void usb_device_task(device_t *);
 void usb_host_task(device_t *);
 
+/* The board's own USB host port, for usb_host_task's replug watch (#102).
+   Defined in usb.c beside the host callbacks. */
+bool usb_host_attached(void);
+bool usb_host_any_mounted(void);
+void usb_host_replug(void);
+
 #ifdef DH_BENCH_ECDH
 /* Measure-only build (-DDH_BENCH_ECDH=ON). Not part of the product: see
    src/bench_ecdh.c and tools/board-checks/README.md. */

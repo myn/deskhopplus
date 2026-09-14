@@ -11,6 +11,8 @@
 
 #include "main.h"
 
+#include "pio_usb_ll.h"
+
 _Static_assert(MAX_DEVICES <= CFG_TUH_DEVICE_MAX,
                "MAX_DEVICES must not exceed CFG_TUH_DEVICE_MAX");
 
@@ -163,6 +165,56 @@ void tud_cdc_rx_cb(uint8_t itf) {
 /* ================================================== *
  * ===============  USB HOST Section  =============== *
  * ================================================== */
+
+/* The device itself, before any class driver claims an interface (#102). */
+void tuh_mount_cb(uint8_t dev_addr) {
+    cursor_trace_event(&global_state, DH_CURSOR_TRACE_DEV_MOUNT, dev_addr, 0, 0, 0, 0);
+}
+
+void tuh_umount_cb(uint8_t dev_addr) {
+    cursor_trace_event(&global_state, DH_CURSOR_TRACE_DEV_UNMOUNT, dev_addr, 0, 0, 0, 0);
+}
+
+/*
+ * Whether the root port holds a device, as the library sees it: set when an
+ * idle line is first seen, cleared only by its own two-sample SE0 check at
+ * the top of a frame. Not a raw pin read — every SOF ends in a few hundred
+ * nanoseconds of SE0, so a read from this core would say "unplugged" several
+ * times a second in exactly the wedge this exists to catch.
+ */
+bool usb_host_attached(void) {
+    return PIO_USB_ROOT_PORT(0)->connected;
+}
+
+/* Every address TinyUSB hands out: the end devices and, after them, the hub
+   (usbh.c TOTAL_DEVICES). A mounted hub with nothing behind it counts, so an
+   empty hub is not pulled forever. */
+bool usb_host_any_mounted(void) {
+    for (uint8_t addr = 1; addr <= CFG_TUH_DEVICE_MAX + CFG_TUH_HUB; ++addr)
+        if (tuh_mounted(addr))
+            return true;
+    return false;
+}
+
+/*
+ * Emulate a cable pull on the root port (#102).
+ *
+ * A pull is SE0 on the bus, which the SOF handler's connection check reads
+ * as a disconnect: TinyUSB tears down whatever half-enumerated device it
+ * holds (dev0 included), and the next idle frame is a fresh attach with the
+ * full reset-and-enumerate that follows one. The port reset already drives
+ * SE0; it also marks the root suspended, which is what keeps the check from
+ * running during TinyUSB's own reset. Clearing that flag while the line is
+ * held low is the whole trick. Held for 20 ms: past the 10 ms a device needs
+ * to take it as a reset, and many frames more than the check needs.
+ */
+void usb_host_replug(void) {
+    root_port_t *root = PIO_USB_ROOT_PORT(0);
+    pio_usb_host_port_reset_start(0);
+    root->suspended = false;
+    busy_wait_ms(20);
+    pio_usb_host_port_reset_end(0);
+}
 
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);

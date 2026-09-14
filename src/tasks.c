@@ -52,6 +52,21 @@ void usb_host_task(device_t *state) {
     if (tuh_inited())
         tuh_task();
     mouse_crossing_task(state, time_us_32());
+
+    /* A receiver left attached across a warm reboot is sometimes never
+       enumerated (#102). When the port holds a device and nothing has mounted
+       for a while, do what always fixes it: pull the cable. Looked at ten
+       times a second; the decision is on a two-second clock. */
+    static dh_host_replug replug;
+    static uint32_t last_look_us;
+    const uint32_t now = time_us_32();
+    if (!tuh_inited() || (uint32_t)(now - last_look_us) < 100000u)
+        return;
+    last_look_us = now;
+    if (dh_host_replug_due(&replug, usb_host_attached(), usb_host_any_mounted(), now)) {
+        cursor_trace_event(state, DH_CURSOR_TRACE_HOST_REPLUG, replug.attempts, 0, 0, 0, 0);
+        usb_host_replug();
+    }
 }
 
 mouse_report_t *screensaver_pong(device_t *state) {

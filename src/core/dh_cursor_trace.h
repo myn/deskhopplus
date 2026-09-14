@@ -37,10 +37,21 @@ typedef enum {
      *           bit1 = mouse seen; transition 1 = report polling started,
      *           2 = it refused, 3 = rejected by the bounds guard.
      * HID_UNMOUNT the same three, no outcome.
+     * DEV_MOUNT / DEV_UNMOUNT query_id = dev_addr: the device itself, after
+     *           enumeration and before any class driver claims it. A DEV_MOUNT
+     *           with no HID_MOUNT behind it is a descriptor the HID driver
+     *           refused; a boot with neither is an enumeration that never
+     *           finished.
+     * HOST_REPLUG query_id = pulls this run, this one included: the firmware
+     *           emulated a cable pull because the port read attached and
+     *           nothing had mounted (dh_host_replug.h).
      */
     DH_CURSOR_TRACE_BOOT,
     DH_CURSOR_TRACE_HID_MOUNT,
     DH_CURSOR_TRACE_HID_UNMOUNT,
+    DH_CURSOR_TRACE_DEV_MOUNT,
+    DH_CURSOR_TRACE_DEV_UNMOUNT,
+    DH_CURSOR_TRACE_HOST_REPLUG,
 } dh_cursor_trace_event_t;
 
 /* Twelve bytes so one config response can carry either six-byte half. */
