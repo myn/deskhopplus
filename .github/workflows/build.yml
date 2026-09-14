@@ -249,3 +249,8 @@ jobs:
     - name: Run menu and login registration tests
       shell: bash
       run: bash tools/macos-checks/menu-tests.sh
+
+    # build.sh's deploy report, against a fake launchctl (#192).
+    - name: Run build report tests
+      shell: bash
+      run: bash tools/macos-checks/build-report-tests.sh

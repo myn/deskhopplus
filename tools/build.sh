@@ -62,7 +62,8 @@ need_toolchain() {
 
 # ---------------------------------------------------------------- artifacts
 
-# The two things this script produces, and where the agent's job file lives.
+# The two things this script produces, and where the agent's job file is
+# installed -- one candidate for the file launchd loaded, see helper_plist().
 helper_bin=.build/release/deskhop-helper
 helper_plist_installed="$HOME/Library/LaunchAgents/com.deskhopplus.helper.plist"
 
@@ -137,6 +138,7 @@ test_helper() {
     say "helper tests"
     swift run -c release channel-tests
     bash tools/macos-checks/menu-tests.sh
+    bash tools/macos-checks/build-report-tests.sh
 }
 
 test_core() {
@@ -189,13 +191,35 @@ PY
 # points, whether anything is there, and whether what is running predates what
 # was just built.
 
-# The installed copy wins. Its ProgramArguments is routinely edited away from
-# the repo's /usr/local/bin default to avoid sudo (see #70's first sitting),
-# and it is the file launchd actually reads.
+# One field of the loaded job, as launchd reports it: "path" is the plist it
+# was bootstrapped from, "program" the binary it runs. Empty when no job is
+# loaded. Anchored so that "stderr path =" does not match "path".
+agent_field() {
+    launchctl print "gui/$(id -u)/com.deskhopplus.helper" 2>/dev/null \
+        | sed -n "s/^[[:space:]]*$1 = //p" | head -1
+}
+
+# The file launchd actually loaded wins, and only launchd knows which that is:
+# with Start at login off the installed copy is renamed .disabled and the job
+# gets bootstrapped from a copy elsewhere (#192). Next the installed copy, whose
+# ProgramArguments is routinely edited away from the repo's /usr/local/bin
+# default to avoid sudo (see #70's first sitting); the repo plist is last.
 helper_plist() {
-    if [ -f "$helper_plist_installed" ]; then printf '%s' "$helper_plist_installed"
+    local loaded; loaded="$(agent_field path)"
+    if [ -n "$loaded" ]; then printf '%s' "$loaded"
+    elif [ -f "$helper_plist_installed" ]; then printf '%s' "$helper_plist_installed"
     else printf '%s' helpers/macos/LaunchAgent/com.deskhopplus.helper.plist
     fi
+}
+
+# The binary the agent runs. From launchd while the job is loaded -- the plist
+# it was bootstrapped from may be gone by now (#192: a copy in /tmp) -- and
+# from the plist otherwise. plutil writes its parse errors to stdout, so a bare
+# 2>/dev/null would capture the error text and go on to treat it as a path.
+helper_target() {
+    local t; t="$(agent_field program)"
+    [ -n "$t" ] || t="$(plutil -extract ProgramArguments.0 raw -o - "$(helper_plist)" 2>/dev/null)" || t=""
+    case "$t" in /*) printf '%s' "$t" ;; esac
 }
 
 # By inode, not by string: the plist may name the same binary by an absolute
@@ -237,11 +261,13 @@ report_helper() {
     printf '  built     %s%s\n' \
         "$(date -r "$helper_bin" '+%Y-%m-%d %H:%M:%S')" "$(freshness "$helper_before" "$built")"
 
-    # Keyed on the agent being installed, not on any deskhop-helper existing:
-    # a developer running one in the foreground has no agent to be stale, and
-    # telling them to kickstart a job that was never bootstrapped is a remedy
-    # that errors out.
-    if [ ! -f "$helper_plist_installed" ]; then
+    # Keyed on launchd having the job, or failing that on the plist being
+    # installed -- not on any deskhop-helper existing: a developer running one
+    # in the foreground has no agent to be stale, and telling them to kickstart
+    # a job that was never bootstrapped is a remedy that errors out. launchd is
+    # asked first because the job can be loaded from a plist that is not the
+    # installed one (#192).
+    if ! agent_loaded && [ ! -f "$helper_plist_installed" ]; then
         printf '  agent     not installed — helpers/macos/README.md has the steps\n'
         if pgrep -qx deskhop-helper 2>/dev/null; then
             printf '  running   one in the foreground, which this does not manage\n'
@@ -253,13 +279,10 @@ report_helper() {
 
     local plist target stale=0
     plist="$(helper_plist)"
-    # plutil writes its parse errors to stdout, so a bare 2>/dev/null would
-    # capture the error text and go on to treat it as a path.
-    target="$(plutil -extract ProgramArguments.0 raw -o - "$plist" 2>/dev/null)" || target=""
-    case "$target" in /*) ;; *) target="" ;; esac
+    printf '  agent     %s\n' "$plist"
+    target="$(helper_target)"
 
     if [ -z "$target" ]; then
-        printf '  agent     %s%s%s\n' "$yellow" "$plist" "$off"
         printf '            %s↑ no readable ProgramArguments — cannot tell what it runs%s\n' "$yellow" "$off"
         stale=1
     elif [ ! -f "$target" ]; then
@@ -338,28 +361,25 @@ report() {
 
 # --------------------------------------------------------------------- main
 
+# tools/macos-checks/build-report-tests.sh sources this for its functions.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+
 case "$target" in
     all)    build_fw; build_helper; test_helper; test_core; report fw helper ;;
     fw)     build_fw; report fw ;;
     helper) build_helper; test_helper; report helper ;;
     tests)  test_helper; test_core ;;
-    clean)  # .build/ holds the agent binary, and an installed plist may point
+    clean)  # .build/ holds the agent binary, and the agent's plist may point
             # straight at it -- in which case this leaves launchd running a
-            # deleted file until the next build and restart (#93). Captured
-            # rather than piped into grep: under pipefail a grep that exits on
-            # its first match SIGPIPEs plutil and turns the test false, which
-            # would silently suppress the warning.
+            # deleted file until the next build and restart (#93).
             say "removing build/ tests/build/ .build/"
-            if [ -f "$helper_plist_installed" ]; then
-                agent_target="$(plutil -extract ProgramArguments.0 raw -o - \
-                                    "$helper_plist_installed" 2>/dev/null)" || agent_target=""
-                case "$agent_target" in
-                    "$repo"/.build/*)
-                        warn "the LaunchAgent runs $agent_target, which this deletes."
-                        warn "After the next build, restart it:"
-                        warn "  launchctl kickstart -k gui/\$(id -u)/com.deskhopplus.helper" ;;
-                esac
-            fi
+            agent_target="$(helper_target)"
+            case "$agent_target" in
+                "$repo"/.build/*)
+                    warn "the LaunchAgent runs $agent_target, which this deletes."
+                    warn "After the next build, restart it:"
+                    warn "  launchctl kickstart -k gui/\$(id -u)/com.deskhopplus.helper" ;;
+            esac
             rm -rf build tests/build .build ;;
     *)      die "unknown target '$target' — one of: all fw helper tests clean" ;;
 esac
