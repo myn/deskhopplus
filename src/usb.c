@@ -167,6 +167,8 @@ void tud_cdc_rx_cb(uint8_t itf) {
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
+    cursor_trace_event(&global_state, DH_CURSOR_TRACE_HID_UNMOUNT, dev_addr, instance,
+                       itf_protocol, 0, 0);
     if (dev_addr > MAX_DEVICES || instance >= MAX_INTERFACES)
         return;
 
@@ -190,8 +192,13 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len) {
     uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
-    if (dev_addr > MAX_DEVICES || instance >= MAX_INTERFACES)
+    /* A mount that silently does not take is #102's whole symptom, so every
+       exit from here leaves a record (see DH_CURSOR_TRACE_HID_MOUNT). */
+    if (dev_addr > MAX_DEVICES || instance >= MAX_INTERFACES) {
+        cursor_trace_event(&global_state, DH_CURSOR_TRACE_HID_MOUNT, dev_addr, instance,
+                           itf_protocol, 0, 3);
         return;
+    }
 
     /* Get interface information */
     hid_interface_t *iface = &global_state.iface[dev_addr-1][instance];
@@ -250,7 +257,12 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     (void)send_value(ENABLE, FLASH_LED_MSG);
 
     /* Kick off the report querying */
-    tuh_hid_receive_report(dev_addr, instance);
+    const bool polling = tuh_hid_receive_report(dev_addr, instance);
+    cursor_trace_event(&global_state, DH_CURSOR_TRACE_HID_MOUNT, dev_addr, instance,
+                       itf_protocol,
+                       (global_state.keyboard_connected ? 1u : 0u) |
+                           (global_state.mouse_connected ? 2u : 0u),
+                       polling ? 1 : 2);
 }
 
 /* Invoked when received report from device via interrupt endpoint */

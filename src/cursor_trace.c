@@ -20,6 +20,10 @@ void cursor_trace_boot(bool preserve) {
     critical_section_init(&cursor_trace_lock);
     critical_section_enter_blocking(&cursor_trace_lock);
     dh_cursor_trace_init(&cursor_trace_storage, preserve);
+    /* One record per boot, so the mounts that follow can be told from the
+       last boot's (#102). Raw: nothing in `state` is loaded yet. */
+    dh_cursor_trace_append(&cursor_trace_storage, (dh_cursor_trace_record_t){
+        .event = DH_CURSOR_TRACE_BOOT, .query_id = preserve});
     critical_section_exit(&cursor_trace_lock);
 }
 

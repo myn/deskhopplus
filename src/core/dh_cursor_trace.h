@@ -27,6 +27,20 @@ typedef enum {
     DH_CURSOR_TRACE_SWITCH,
     DH_CURSOR_TRACE_CANCEL,
     DH_CURSOR_TRACE_TIMEOUT,
+    /*
+     * Not cursor events: the board's own USB host bringing up the keyboard
+     * and mouse plugged into it (#102). The ring survives a reboot, which is
+     * the one thing a dead-after-boot keyboard needs a log to do. Fields:
+     * BOOT      query_id = 1 when booting into config mode.
+     * HID_MOUNT query_id = dev_addr, move_x = instance, move_y = itf protocol
+     *           (1 keyboard, 2 mouse, 0 none); direction bit0 = keyboard seen,
+     *           bit1 = mouse seen; transition 1 = report polling started,
+     *           2 = it refused, 3 = rejected by the bounds guard.
+     * HID_UNMOUNT the same three, no outcome.
+     */
+    DH_CURSOR_TRACE_BOOT,
+    DH_CURSOR_TRACE_HID_MOUNT,
+    DH_CURSOR_TRACE_HID_UNMOUNT,
 } dh_cursor_trace_event_t;
 
 /* Twelve bytes so one config response can carry either six-byte half. */

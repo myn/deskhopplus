@@ -25,3 +25,16 @@ if (actual !== expected) {
   console.error(`FAIL webconfig_cursor_trace: expected ${expected}; got ${actual}`);
   process.exit(1);
 }
+
+/* A USB host mount (#102): dev_addr 1, instance 0, keyboard protocol,
+   keyboard seen, polling started. The page names the event, and the number
+   must match DH_CURSOR_TRACE_HID_MOUNT in src/core/dh_cursor_trace.h. */
+const mountPacked = (1 << 4) | (1 << 11);
+const mount = [10, 1, 1, 0, 1, 0, 0, 0, 0, 0, mountPacked & 0xff, mountPacked >> 8];
+const mountExpected = "0: hid-mount q=1 d=(1,1) p=(0,0) out=A screen=0 dir=1 " +
+                      "transition=1 phase=0 relative=0";
+const mountActual = decode(0, mount);
+if (mountActual !== mountExpected) {
+  console.error(`FAIL webconfig_cursor_trace: expected ${mountExpected}; got ${mountActual}`);
+  process.exit(1);
+}
