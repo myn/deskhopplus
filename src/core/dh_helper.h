@@ -338,9 +338,9 @@ typedef enum {
      * DH_NOTE_BOARD_AT_END next door reports what the board took; this reports
      * what it could not take, and the two are only useful together. An
      * eviction where the board says it heard nothing while this end has frames
-     * out over the window is either a report the board dropped — which breaks
-     * the byte stream unrecoverably, so nothing after it completes — or
-     * something else entirely, and until now no log could tell them apart:
+     * out over the window is either a report the board dropped — which costs
+     * the frame riding it, and ended the session outright until ADR-0012 —
+     * or something else entirely, and until now no log could tell them apart:
      * the drop totals were printed only by a stalled *transfer*, which an
      * eviction is not.
      *
@@ -390,21 +390,19 @@ typedef enum {
      */
     DH_NOTE_BOARD_SENDS = 35,
     /*
-     * A report went missing between the board and here, said the moment it
-     * shows (#143). a = how many times this session.
+     * A report went missing between the board and here, and the reader
+     * bridged the gap (#143, ADR-0012). a = the reader's resync count this
+     * session: reports and partial frames it threw away to get back to a
+     * frame start, not gaps. One lost report from the middle of a frame
+     * counts one; the lost head of a 66-report chunk counts 65, one per
+     * orphaned continuation, each said on the report that arrived.
      *
-     * The one thing on this path that nothing could count, and the reason the
-     * fault took a failed tag to notice. The board writes one frame per run of
-     * reports and pads the last one's tail (channel_pump_out), so a frame
-     * always ends with padding behind it inside the same report. Lose a report
-     * out of the middle and the frame completes a report late, eating the head
-     * of the next one — so what sits behind it is a header rather than
-     * padding, and that is visible here one frame *before* the tag fails.
-     *
-     * Counted, never acted on: the frame it rides in is already failing on its
-     * own merits and this only says why. DH_NOTE_BOARD_SENDS cannot say it —
-     * the counter of a frame whose tag failed is never recorded, so the run
-     * reads as complete right up to the frame that broke it.
+     * Counted, never acted on: the frame that lost a report is discarded
+     * before it is judged, so the receiver sees the same gap a refused
+     * outbound frame leaves (ADR-0005) and recovers the way it already does.
+     * DH_NOTE_BOARD_SENDS cannot say it — a discarded frame's counter is
+     * never recorded, so that run reads as one frame short, the same as a
+     * refusal.
      */
     DH_NOTE_STREAM_MISALIGNED = 36,
     /*
@@ -582,13 +580,6 @@ typedef struct {
     dh_frame_reader reader;
     dh_frame_reader extra_reader[DH_SESSION_CHANNEL_COUNT - 1];
     uint8_t acquired_channels;
-    /*
-     * Times this session's byte stream did not resume on a report boundary —
-     * see DH_NOTE_STREAM_MISALIGNED. Per session, not since boot: it is the
-     * session that a broken stream kills, and the reader restarts with it, so
-     * a total carried across reconnects would answer a question nobody asks.
-     */
-    uint32_t stream_breaks;
 
     uint32_t backoff_ms;
     uint32_t hello_sent_at;
@@ -737,18 +728,19 @@ void dh_helper_channels_acquired(dh_helper *h, uint8_t count, uint32_t now_ms,
 void dh_helper_acquisition_refused(dh_helper *h, uint8_t acquired, uint8_t of, uint32_t now_ms,
                                    dh_helper_outputs *out);
 
-/* Bytes off the channel, in order. Frame boundaries never align with report
-   boundaries, so this is fed whatever arrived. */
+/* One 64-byte report off the channel, byte 0 its frame-start flag
+   (ADR-0012). One report per call, never a concatenation. */
 void dh_helper_received_channel(dh_helper *h, uint8_t channel, const uint8_t *data, size_t len,
                                  uint32_t now_ms, dh_helper_outputs *o);
 void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t now_ms,
                         dh_helper_outputs *out);
 
 /*
- * The transport could not carry something it was given. A frame written in
- * part leaves the device's reader mid-frame, where the padding skip does not
- * apply and the next frame is eaten as its tail — so this is a dropped
- * connection, not a retryable write.
+ * The transport could not carry something it was given. A refused write is a
+ * handle that can no longer be trusted — the device has stopped draining or
+ * gone — so this is a dropped connection, not a retryable write. (The frame
+ * itself is only lost: the device's reader discards a half-frame on the next
+ * frame's flag, ADR-0012.)
  */
 void dh_helper_transport_failed(dh_helper *h, uint32_t now_ms, dh_helper_outputs *out);
 

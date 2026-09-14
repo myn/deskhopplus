@@ -86,13 +86,26 @@ static void hello(bool valid) {
     channel_lifecycle_on_frame(&c, &frame, 100);
 }
 
-static void receive_bytes(const uint8_t *bytes, size_t len) {
-    while (len > 0) {
-        const uint16_t n = (uint16_t)(len < CHANNEL_REPORT_SIZE ? len : CHANNEL_REPORT_SIZE);
-        channel_lifecycle_receive_report(&c, bytes, n);
-        bytes += n;
-        len -= n;
+/* One frame's reports, the way every helper writes them (ADR-0012): byte 0
+   the frame-start flag, 63 bytes of stream, the last tail padded. */
+#define MAX_REPORTS ((DH_FRAME_MAX_SIZE + DH_REPORT_STREAM_SIZE - 1) / DH_REPORT_STREAM_SIZE)
+static size_t pack(const uint8_t *bytes, size_t len, uint8_t out[][DH_REPORT_SIZE]) {
+    size_t count = 0;
+    for (size_t off = 0; off < len; off += DH_REPORT_STREAM_SIZE) {
+        uint8_t *report = out[count++];
+        memset(report, DH_FRAME_PAD, DH_REPORT_SIZE);
+        report[0] = off == 0 ? DH_REPORT_FRAME_START : DH_REPORT_FRAME_CONTINUES;
+        const size_t take = len - off < DH_REPORT_STREAM_SIZE ? len - off : DH_REPORT_STREAM_SIZE;
+        memcpy(report + 1, bytes + off, take);
     }
+    return count;
+}
+
+static void receive_bytes(const uint8_t *bytes, size_t len) {
+    uint8_t reports[MAX_REPORTS][DH_REPORT_SIZE];
+    const size_t count = pack(bytes, len, reports);
+    for (size_t i = 0; i < count; ++i)
+        channel_lifecycle_receive_report(&c, reports[i], DH_REPORT_SIZE);
 }
 
 static void receive_hello(void) {
@@ -450,12 +463,36 @@ static void test_interleaved_channel_reports_reassemble_independently(void) {
     for (unsigned i = 0; i < 2; ++i)
         CHECK(dh_auth_frame(DH_MSG_CLIP_CHUNK, 0, c.session.k_h2b, i, body,
                             sizeof body, frames[i], sizeof frames[i], &len[i]) == DH_FRAME_OK);
-    channel_lifecycle_receive_channel_report(&c, 0, frames[0], 64);
-    channel_lifecycle_receive_channel_report(&c, 1, frames[1], 64);
-    channel_lifecycle_receive_channel_report(&c, 1, frames[1] + 64, (uint16_t)(len[1] - 64));
-    channel_lifecycle_receive_channel_report(&c, 0, frames[0] + 64, (uint16_t)(len[0] - 64));
+    uint8_t reports[2][MAX_REPORTS][DH_REPORT_SIZE];
+    CHECK(pack(frames[0], len[0], reports[0]) == 3);
+    CHECK(pack(frames[1], len[1], reports[1]) == 3);
+    for (unsigned i = 0; i < 3; ++i) {
+        channel_lifecycle_receive_channel_report(&c, 0, reports[0][i], DH_REPORT_SIZE);
+        channel_lifecycle_receive_channel_report(&c, 1, reports[1][i], DH_REPORT_SIZE);
+    }
     channel_lifecycle_step(&c, 101, NULL);
     CHECK(c.session.rx.accepted == 2);
+    CHECK(c.session.present);
+}
+
+/* A report lost out of the middle of a frame costs that frame and nothing
+   else (ADR-0012): the next frame lands and the session stays up, where the
+   old byte-stream reader failed the next tag and ended it (#183). */
+static void test_a_lost_report_costs_one_frame_not_the_session(void) {
+    init();
+    uint8_t frames[2][256], reports[MAX_REPORTS][DH_REPORT_SIZE], body[100] = {0x5a};
+    size_t len[2];
+    for (unsigned i = 0; i < 2; ++i)
+        CHECK(dh_auth_frame(DH_MSG_CLIP_CHUNK, 0, c.session.k_h2b, i, body,
+                            sizeof body, frames[i], sizeof frames[i], &len[i]) == DH_FRAME_OK);
+    CHECK(pack(frames[0], len[0], reports) == 3);
+    channel_lifecycle_receive_report(&c, reports[0], DH_REPORT_SIZE);
+    /* reports[1] is lost */
+    channel_lifecycle_receive_report(&c, reports[2], DH_REPORT_SIZE);
+    receive_bytes(frames[1], len[1]);
+    channel_lifecycle_step(&c, 101, NULL);
+    CHECK(c.reader.resyncs == 1);
+    CHECK(c.session.rx.accepted == 1);
     CHECK(c.session.present);
 }
 
@@ -512,14 +549,17 @@ static void test_sustained_two_channel_chunks_preserve_tags_and_bytes(void) {
                 dh_outq *q = channel_lifecycle_output(&c, (uint8_t)i);
                 dh_outq_view owed;
                 if (!dh_outq_peek(q, &owed)) continue;
-                uint8_t report[CHANNEL_REPORT_SIZE] = {0};
-                const uint16_t n = owed.remaining < sizeof report ? owed.remaining : sizeof report;
-                memcpy(report, owed.at, n);
+                /* As channel_pump_out writes it: the flag, then 63 bytes. */
+                uint8_t report[DH_REPORT_SIZE] = {0};
+                const uint16_t n = owed.remaining < DH_REPORT_STREAM_SIZE
+                                       ? owed.remaining : (uint16_t)DH_REPORT_STREAM_SIZE;
+                report[0] = owed.remaining == owed.total ? DH_REPORT_FRAME_START
+                                                         : DH_REPORT_FRAME_CONTINUES;
+                memcpy(report + 1, owed.at, n);
                 dh_outq_advance(q, &owed, n);
                 dh_frame_view received;
-                size_t used = 0;
-                const dh_frame_result rc = dh_frame_reader_push(&readers[i], report,
-                                                                sizeof report, &used, &received);
+                const dh_frame_result rc =
+                    dh_frame_reader_report(&readers[i], report, sizeof report, &received);
                 CHECK(rc == DH_FRAME_AGAIN || rc == DH_FRAME_OK);
                 if (rc != DH_FRAME_OK) continue;
                 const uint8_t *opened = NULL;
@@ -543,6 +583,7 @@ int main(void) {
     test_two_channels_share_one_transfer_credit_window();
     test_only_chunks_rotate_across_channels();
     test_interleaved_channel_reports_reassemble_independently();
+    test_a_lost_report_costs_one_frame_not_the_session();
     test_two_channels_keep_frames_whole_and_priority_on_zero();
     test_fresh_hello_discards_partial_and_queued_frames();
     test_refused_hello_preserves_live_stream();

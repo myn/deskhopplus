@@ -38,12 +38,12 @@ public enum SessionInput: Equatable {
        input — it is `acquisitionRefused`. */
     case channelsAcquired(count: Int)
     case acquisitionRefused(acquired: Int, of: Int)
+    /* One 64-byte report, byte 0 its frame-start flag (ADR-0012). */
     case received([UInt8])
     case receivedOnChannel(UInt8, [UInt8])
-    /* The transport could not carry something it was given. A frame written
-       in part leaves the device's reader mid-frame, where the padding skip
-       does not apply and the next frame is eaten as its tail — so this is a
-       dropped connection, not a retryable write.
+    /* The transport could not carry something it was given. A refused write
+       is a handle that can no longer be trusted, so this is a dropped
+       connection, not a retryable write (dh_helper.h).
 
        The reason is carried for the log only: the core takes the failure, not
        the sentence. */

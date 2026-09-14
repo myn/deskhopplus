@@ -120,16 +120,17 @@ enum HelperNotes {
         case DH_NOTE_BOARD_AT_END:
             return "at the end the board had accepted \(a) frame(s) from \(b) report(s)"
         case DH_NOTE_BOARD_SENDS:
-            /* Printed whole, zeros included. A zero is not proof the stream was
-               intact — a frame whose tag failed never records its counter, so a
-               desync reads as a complete run right up to the frame that broke
-               it. DH_NOTE_STREAM_MISALIGNED is the reading for that; this one
-               names whole frames lost, which is mostly the board's queue
-               refusing them (its own refusal totals say how many). */
+            /* Printed whole, zeros included. This names whole frames lost — the
+               board's queue refusing them (its own refusal totals say how many)
+               and frames the reader discarded around a lost report alike;
+               DH_NOTE_STREAM_MISALIGNED says whether the wire took any. */
             return "the board built \(a) frame(s) for this helper; \(b) never arrived"
         case DH_NOTE_STREAM_MISALIGNED:
-            return "a report from the board went missing: a frame ended with a header behind "
-                 + "it where padding belongs (\(a) this session)"
+            /* The reader's resync count: reports and partial frames it threw
+               away to get back to a frame start, not gaps — the lost head of a
+               long chunk counts once per orphaned continuation, one line each. */
+            return "a report from the board went missing; the reader resynced "
+                 + "(\(a) report(s) or partial frame(s) discarded this session)"
         case DH_NOTE_LOCAL_SENDS:
             return "this helper has written \(a) frame(s) since boot, \(b) refused by the transport"
         case DH_NOTE_CLIP_POLICY:

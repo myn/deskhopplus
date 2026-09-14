@@ -85,11 +85,10 @@ class HelperSession {
     std::vector<Output> channels_acquired(uint8_t count, uint32_t now_ms);
     std::vector<Output> acquisition_refused(uint8_t acquired, uint8_t of, uint32_t now_ms);
     std::vector<Output> received(const uint8_t *data, size_t len, uint32_t now_ms, uint8_t channel = 0);
-    /* The transport could not carry something it was given. A frame written in
-       part leaves the device's reader mid-frame, where the padding skip does
-       not apply and the next frame is eaten as its tail — so this is a dropped
-       connection, not a retryable write. The reason is for the log only: the
-       core takes the failure, not the sentence. */
+    /* The transport could not carry something it was given. A refused write
+       is a handle that can no longer be trusted, so this is a dropped
+       connection, not a retryable write (dh_helper.h). The reason is for the
+       log only: the core takes the failure, not the sentence. */
     std::vector<Output> transport_failed(const std::string &reason, uint32_t now_ms);
     std::vector<Output> tick(uint32_t now_ms);
 

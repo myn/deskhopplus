@@ -47,9 +47,9 @@ constexpr DWORD kWriteTimeoutMs = 250;
  *
  * The default is 32, and 32 is what #143 desynchronised on. The ring is
  * overwritten rather than stalled when it fills, so a helper that falls behind
- * loses reports with nothing said anywhere — and one report lost out of the
- * middle of a frame is not a lost frame, it is a reader that reads the next
- * frame's header as the tail of this one and every byte after it wrongly.
+ * loses reports with nothing said anywhere. The reader now bridges a lost
+ * report on the frame-start flag (ADR-0012), so it costs a frame rather than
+ * the session — but a frame lost here is still a frame lost.
  *
  * The board emits one 64-byte report per millisecond, so 32 buffers is 32ms of
  * slack on a single-threaded loop that also pumps window messages, owns the
@@ -558,10 +558,10 @@ void HidTransport::pump_reads() {
 
             /*
              * Byte 0 is the report ID Windows prepends to every buffer, even on
-             * a collection that declares none. It is not part of the frame
-             * stream — handing it to the reader would put a stray DH_FRAME_PAD
-             * in front of every report, which the reader skips, and a stray
-             * anything else would desynchronise it.
+             * a collection that declares none. It is not part of the report —
+             * handing it to the reader would put a stray 0 where the
+             * frame-start flag belongs, and every report would then read as
+             * the orphan of a lost head.
              */
             if (read > 1 && events_.received) events_.received(channel.index, channel.buffer.data() + 1, read - 1);
 
@@ -596,15 +596,19 @@ bool HidTransport::send(const uint8_t *frame, size_t len, uint8_t count) {
         return false;
     }
 
-    /* A report carries no length of its own, so the tail of the last one is
-       filled with the padding byte — that is what tells the device's reader
-       where the frames stopped (docs/protocol.md, "The report carrier"). */
-    for (size_t offset = 0; offset < len; offset += kReportSize) {
+    /* Behind the ID byte, the report's own byte 0 is the frame-start flag
+       (ADR-0012), which lets the device's reader bridge a lost report; then
+       63 bytes of stream.
+       A report carries no length of its own, so the tail of the last one is
+       filled with the padding byte — that is what tells the reader where the
+       frame stopped (docs/protocol.md, "The report carrier"). */
+    for (size_t offset = 0; offset < len; offset += DH_REPORT_STREAM_SIZE) {
         std::vector<uint8_t> report(channel->output_report_len,
                                    static_cast<uint8_t>(DH_FRAME_PAD));
         report[0] = 0; /* the report ID Windows expects in front of every write */
-        const size_t take = std::min(kReportSize, len - offset);
-        std::memcpy(report.data() + 1, frame + offset, take);
+        report[1] = offset == 0 ? DH_REPORT_FRAME_START : DH_REPORT_FRAME_CONTINUES;
+        const size_t take = std::min<size_t>(DH_REPORT_STREAM_SIZE, len - offset);
+        std::memcpy(report.data() + 2, frame + offset, take);
 
         OVERLAPPED overlapped{};
         overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -638,10 +642,9 @@ bool HidTransport::send(const uint8_t *frame, size_t len, uint8_t count) {
 
         if (!ok || written != static_cast<DWORD>(report.size())) {
             /*
-             * A frame written in part leaves the device's reader holding half
-             * of one, where the padding skip does not apply — the next frame
-             * would be eaten as its tail. The connection goes; this is not a
-             * retryable write.
+             * A refused write is a handle that can no longer be trusted — the
+             * device has stopped draining or gone. The connection goes; this
+             * is not a retryable write (dh_helper.h).
              */
             const std::string reason = last_error("report write failed");
             note(reason);

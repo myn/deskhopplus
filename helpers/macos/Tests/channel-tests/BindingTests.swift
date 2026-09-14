@@ -52,6 +52,9 @@ func testStreamReaderRecoversEveryVector() throws {
     }
 }
 
+/* A 4-byte heartbeat fills one report; a 71-byte offer spans two. Each frame
+   starts its own run, and byte 0 of every report says whether one starts
+   there (ADR-0012) — the flag the reader bridges a lost report with. */
 func testReportPaddingIsWrittenAndSkipped() throws {
     let frames = [Frame(type: MessageType.heartbeat),
                   try FrameCodec.decode(GoldenVectors.named("clip_offer_text2")).frame]
@@ -60,14 +63,23 @@ func testReportPaddingIsWrittenAndSkipped() throws {
     for report in reports {
         Check.equal(report.count, ChannelIdentity.reportSize, "report is not report-sized")
     }
+    Check.equal(reports.map { $0[0] }, [1, 1, 0], "the frame-start flags are not one per frame")
 
     let stream = FrameStream()
     var recovered: [Frame] = []
-    for report in reports { recovered += try stream.push(report) }
+    for report in reports { recovered += try stream.report(report) }
     Check.equal(recovered, frames, "packed frames did not survive the carrier")
 
-    let idle = [UInt8](repeating: 0, count: ChannelIdentity.reportSize)
-    Check.equal(try stream.push(idle), [], "an idle report produced frames")
+    var idle = [UInt8](repeating: 0, count: ChannelIdentity.reportSize)
+    idle[0] = UInt8(DH_REPORT_FRAME_START)
+    Check.equal(try stream.report(idle), [], "an idle report produced frames")
+
+    /* The offer's first report lost: the offer goes, the heartbeat stays,
+       and the orphaned continuation is not read as a frame. */
+    let gapped = FrameStream()
+    recovered = []
+    for report in [reports[0], reports[2]] { recovered += try gapped.report(report) }
+    Check.equal(recovered, [frames[0]], "a lost report cost more than its own frame")
 }
 
 func testMalformedInputIsRejected() throws {

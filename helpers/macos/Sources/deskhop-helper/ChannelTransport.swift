@@ -307,9 +307,9 @@ final class ChannelTransport {
                                      buffer.baseAddress!, buffer.count)
             }
             if result != kIOReturnSuccess {
-                /* A frame written in part leaves the device's reader holding
-                   half of one, where the padding skip does not apply — the
-                   next frame would be eaten as its tail. The connection goes. */
+                /* A refused write is a handle that can no longer be trusted —
+                   the device has stopped draining or gone. The connection goes;
+                   this is not a retryable write (dh_helper.h). */
                 onEvent?(.transportFailed("report write failed: "
                                           + String(format: "0x%08x", result)))
                 return false

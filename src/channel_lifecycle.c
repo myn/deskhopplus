@@ -118,19 +118,16 @@ void channel_lifecycle_receive_channel_report(channel_lifecycle *c, uint8_t inde
         /*
          * Counted, never silent (#43) — and no longer only counted.
          *
-         * A lost report does not lose one frame. The reader is a byte stream:
-         * the hole is filled from the frames behind it, and the reader goes on
-         * waiting for a body length it read before the loss. Nothing completes,
-         * so nothing authenticates, so `last_seen_ms` stops moving — and three
-         * seconds later this board evicts a helper that has been writing the
-         * whole time, with no refusals to show for it. That is #161's exact
-         * signature, and `test_a_gap_mid_frame_is_not_recoverable` is the proof
-         * that no amount of waiting recovers.
+         * Written when a lost report broke the byte stream for good: the
+         * reader went on waiting for a body length it read before the loss,
+         * nothing completed, and three seconds later this board evicted a
+         * helper that had been writing the whole time (#161). Ending the
+         * session was the cheapest honest answer to a stream that could no
+         * longer be trusted.
          *
-         * So the session ends instead. The helper reopens its handles and gets
-         * a clean stream in about a second, which is the cheapest honest answer
-         * to a stream that can no longer be trusted — and the same one this
-         * board already gives a frame that will not decode.
+         * The reader now resyncs on the frame-start flag (ADR-0012), so a
+         * dropped report costs a frame like any other lost one and this end
+         * is no longer needed. Dropping it is #188, not this change.
          */
         c->reports_dropped++;
         c->stream_broken = true;
@@ -158,8 +155,8 @@ void channel_lifecycle_receive_channel_report(channel_lifecycle *c, uint8_t inde
  * The shortened frame is built in place, over the last four bytes of the tag
  * that has just been verified and will never be read again — so a 1 KB chunk
  * is relayed without a second buffer to hold it in. The reader's own header at
- * the front of its buffer is untouched, which is what dh_frame_reader_push
- * uses on the next call to release the frame it returned.
+ * the front of its buffer is untouched, which is what dh_frame_reader_report
+ * uses on the next report to release the frame it returned.
  */
 static void relay_to_peer(channel_lifecycle *c, const dh_frame_view *frame, const uint8_t *body,
                                   size_t body_len) {
@@ -221,34 +218,26 @@ static void drain_reports(channel_lifecycle *c, uint32_t now, void *context) {
         c->report_head = (uint8_t)((c->report_head + 1u) % CHANNEL_REPORT_BACKLOG);
         c->report_used--;
 
-        size_t offset = 0;
-        while (offset < bufsize) {
-            dh_frame_view frame;
-            size_t consumed = 0;
-            const dh_frame_result rc = dh_frame_reader_push(
-                reader, buffer + offset, bufsize - offset, &consumed, &frame);
+        /* One report, at most one frame (ADR-0012): a frame never shares a
+           report, and a lost one is bridged inside the reader. */
+        dh_frame_view frame;
+        const dh_frame_result rc = dh_frame_reader_report(reader, buffer, bufsize, &frame);
 
-            if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) {
-                /* A protocol error drops the session: the stream is no longer
-                   trustworthy and the helper reconnects (docs/protocol.md). It
-                   is told so rather than left to time out, because until it
-                   finds out it goes on writing into a reader it has
-                   desynchronised — and this is the one path where the helper is
-                   the thing in the wrong and could stop. */
-                end_session(c, DH_SESSION_END_PROTOCOL_ERROR, now);
-                reset_readers(c);
-                return;
-            }
-
-            offset += consumed;
-
-            if (rc == DH_FRAME_OK) {
-                if (index == 0 || (index < c->session.channel_count &&
-                                   dh_msg_is_bulk(frame.hdr.type)))
-                    on_frame(c, &frame, now, context);
-            } else if (consumed == 0)
-                break; /* nothing more to take from this report */
+        if (rc != DH_FRAME_OK && rc != DH_FRAME_AGAIN) {
+            /* A protocol error drops the session: the stream is no longer
+               trustworthy and the helper reconnects (docs/protocol.md). It
+               is told so rather than left to time out, because until it
+               finds out it goes on writing into a reader it has
+               desynchronised — and this is the one path where the helper is
+               the thing in the wrong and could stop. */
+            end_session(c, DH_SESSION_END_PROTOCOL_ERROR, now);
+            reset_readers(c);
+            return;
         }
+
+        if (rc == DH_FRAME_OK &&
+            (index == 0 || (index < c->session.channel_count && dh_msg_is_bulk(frame.hdr.type))))
+            on_frame(c, &frame, now, context);
     }
 }
 

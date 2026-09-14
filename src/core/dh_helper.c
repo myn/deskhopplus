@@ -136,7 +136,6 @@ static void forget_session(dh_helper *h) {
     dh_frame_reader_init(&h->reader);
     for (uint8_t i = 0; i < DH_SESSION_CHANNEL_COUNT - 1; ++i)
         dh_frame_reader_init(&h->extra_reader[i]);
-    h->stream_breaks = 0;
     forget_beat_trace(h);
     forget_crypto_state(h);
 }
@@ -1121,18 +1120,11 @@ static void on_unauthenticated(dh_helper *h, const dh_frame_view *f, uint32_t no
     }
 }
 
-/* Whether every byte left in this carrier unit is inter-frame padding. */
-static bool only_padding(const uint8_t *at, size_t len) {
-    for (size_t i = 0; i < len; i++)
-        if (at[i] != DH_FRAME_PAD) return false;
-    return true;
-}
-
 /*
- * PRECONDITION: one carrier unit per call — one 64-byte HID report, as both
- * platforms deliver them. The stream-alignment reading above is what needs it:
- * two reports in one call would put a legitimate second frame where this
- * expects padding.
+ * PRECONDITION: one report per call — one 64-byte HID report, as both
+ * platforms deliver them, byte 0 the frame-start flag (ADR-0012). The reader
+ * reads the flag off byte 0, so two reports in one call would read the
+ * second's flag as stream.
  */
 void dh_helper_received(dh_helper *h, const uint8_t *data, size_t len, uint32_t now_ms,
                         dh_helper_outputs *o) {
@@ -1147,41 +1139,30 @@ void dh_helper_received_channel(dh_helper *h, uint8_t channel, const uint8_t *da
     note_started(h, now_ms);
     dh_frame_reader *reader = channel == 0 ? &h->reader : &h->extra_reader[channel - 1];
 
-    size_t offset = 0;
-    while (offset < len) {
-        size_t consumed = 0;
-        dh_frame_view f;
-        const dh_frame_result rc =
-            dh_frame_reader_push(reader, data + offset, len - offset, &consumed, &f);
-        offset += consumed;
+    /*
+     * The reader bridges a lost report for itself (ADR-0012) and counts what
+     * it threw away to do it. Said as the count moves, and before anything
+     * the report carried is judged: a protocol error below tears the reader
+     * down with the session, and this is the reading that says why (#143).
+     * At most one note per report, so a run of orphans cannot overflow the
+     * outputs.
+     */
+    const uint32_t resyncs = reader->resyncs;
+    dh_frame_view f;
+    const dh_frame_result rc = dh_frame_reader_report(reader, data, len, &f);
+    if (reader->resyncs != resyncs)
+        put_note(o, DH_NOTE_STREAM_MISALIGNED, (int32_t)reader->resyncs, 0);
 
-        if (rc == DH_FRAME_AGAIN) break;
-        if (rc != DH_FRAME_OK) {
-            drop_connection(h, now_ms, o, DH_NOTE_PROTOCOL_ERROR, (int32_t)rc, 0);
-            return;
-        }
-
-        /*
-         * Before the frame is judged, because judging it destroys the evidence:
-         * a failed tag tears the session down and the reader with it, and this
-         * is the reading that says the tag failed because a report went
-         * missing rather than because the board is not the board (#143).
-         *
-         * The rule is channel_pump_out's: one frame per run of reports, the
-         * last one's tail padded. So whatever follows a completed frame inside
-         * the same carrier unit is padding, always. Anything else means the
-         * run was short and this frame has eaten the head of the next.
-         */
-        if (!only_padding(data + offset, len - offset)) {
-            if (h->stream_breaks != UINT32_MAX) h->stream_breaks++;
-            put_note(o, DH_NOTE_STREAM_MISALIGNED, (int32_t)h->stream_breaks, 0);
-        }
-
-        if (dh_msg_is_authenticated(f.hdr.type))
-            on_authenticated(h, &f, now_ms, o);
-        else
-            on_unauthenticated(h, &f, now_ms, o);
+    if (rc == DH_FRAME_AGAIN) return;
+    if (rc != DH_FRAME_OK) {
+        drop_connection(h, now_ms, o, DH_NOTE_PROTOCOL_ERROR, (int32_t)rc, 0);
+        return;
     }
+
+    if (dh_msg_is_authenticated(f.hdr.type))
+        on_authenticated(h, &f, now_ms, o);
+    else
+        on_unauthenticated(h, &f, now_ms, o);
 }
 
 void dh_helper_transport_failed(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {

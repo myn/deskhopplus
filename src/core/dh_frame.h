@@ -13,6 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "dh_channel_identity.h"
+
 /* Shared by C11 core sources and C++ header consumers. */
 #ifdef __cplusplus
 #define DH_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
@@ -212,9 +214,10 @@ dh_frame_result dh_frame_reader_push(dh_frame_reader *r, const uint8_t *data, si
  * frame begins in this report, 0 when it continues the one in progress — and
  * bytes 1..63 are the byte stream above. A frame begins at a report boundary
  * and pads its own tail, so a frame never shares a report and at most one
- * frame completes per report.
+ * frame completes per report. The size is the HID report's, one constant for
+ * the descriptor and the three emitters.
  */
-#define DH_REPORT_SIZE 64u
+#define DH_REPORT_SIZE ((unsigned)DH_CHANNEL_REPORT_SIZE)
 #define DH_REPORT_STREAM_SIZE (DH_REPORT_SIZE - 1u)
 #define DH_REPORT_FRAME_START 1u
 #define DH_REPORT_FRAME_CONTINUES 0u

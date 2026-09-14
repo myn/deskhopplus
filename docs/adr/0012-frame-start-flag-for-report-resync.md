@@ -103,9 +103,12 @@ required.
 
 The bump is a record, not a gate. The hello itself rides the changed report shape, so a mismatched
 peer never parses it far enough to reach the version check: an old board reads a new hello's length
-as `0x3F00` and refuses it as oversize; a new board reads an old hello's second byte as type `0x3F`
-and refuses it as unknown. Either way the symptom is a protocol-error reconnect loop, which the
-helper already reports as repeated reconnection — loud, never silent, but not `HELLO_REFUSED`.
+as `0x3F00` and refuses it as oversize; a new board reads an old hello's flags byte as type `0x00`
+and refuses it as unknown. The board ends the session either way. An old helper reads the new
+board's flagged `SESSION_END` as an oversize frame and loops on a protocol error; a new helper
+discards the old board's un-flagged one as the orphan of a lost head and loops on its 2 s hello
+timeout instead, counting a resync each time. Both loops are the repeated reconnection the helper
+already reports — loud, never silent, but not `HELLO_REFUSED`.
 
 ### `DH_NOTE_STREAM_MISALIGNED` becomes a resync count
 
@@ -126,6 +129,12 @@ A frame that completes with borrowed bytes and a clean tail. That needs a gap of
 spanning a frame boundary *and* the first frame's last report exactly full, so that nothing in the
 report betrays the borrow. The frame then reaches the tag layer and is judged as today: tolerated
 for a `CLIP_CHUNK`, session-ending otherwise. Rare squared; noted in code, not engineered around.
+
+A corrupted flag on a continuation. The flag is the one byte a corruption no longer costs just a
+frame: a continuation's `0` flipped to exactly `1` makes the reader parse ciphertext as a header,
+which is a protocol error and ends the session, where the same flip in any other byte is a failed
+tag #63 tolerates. It needs byte 0 and bit 0 exactly, so it is a small fraction of the corruption
+#63 measured; the signature on hardware is a protocol-error session end mid-transfer.
 
 ## Outstanding
 

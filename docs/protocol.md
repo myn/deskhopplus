@@ -20,9 +20,11 @@ which is the thing being removed. Recovery is one chord press, by design.
 > changes; `DH_PROTO_VERSION` is `3`. **The bump is a record, not a gate.** The hello itself rides
 > the changed report shape, so a mismatched peer misparses it before it can read `proto_version`:
 > an old board reads a new hello's length as `0x3F00` and refuses it as oversize; a new board reads
-> an old hello's second byte as type `0x3F` and refuses it as unknown. Either way the symptom is a
-> protocol-error reconnect loop — the helpers' *Reconnecting repeatedly* state, whose wording
-> already says to check the helper is up to date — never `HELLO_REFUSED(version_incompatible)`. That refusal still
+> an old hello's flags byte as type `0x00` and refuses it as unknown. An old helper then loops on
+> a protocol error; a new helper discards the old board's un-flagged reply as an orphan and loops
+> on its hello timeout. Either way the symptom is a reconnect loop — the helpers' *Reconnecting
+> repeatedly* state, whose wording already says to check the helper is up to date — never
+> `HELLO_REFUSED(version_incompatible)`. That refusal still
 > exists for a hello that does arrive intact with the wrong number; it is the check, not the wire
 > path. Firmware and both helpers move together; there is no mixed-version rollout.
 >
@@ -216,24 +218,32 @@ right up to the frame that broke it. That is a different fault and it needs the 
 
 ### The report carrier, and what it makes checkable
 
-The channel's frames travel in fixed 64-byte HID reports that carry no length of their own. The
-board writes **one frame per run of reports and pads the last one's tail** with `DH_FRAME_PAD`
-(`channel_pump_out`); both helpers pad the same way on the way back. A frame therefore never
-shares a report with another frame, and **whatever follows a completed frame inside the same
-report is padding**.
+The channel's frames travel in fixed 64-byte HID reports that carry no length of their own. Byte
+0 of every report is a **frame-start flag** — `1` where a frame begins, `0` where it continues
+the one in progress — and every emitter writes **one frame per run of reports and pads the last
+one's tail** with `DH_FRAME_PAD` (`channel_pump_out`, `HidTransport::send`,
+`FrameCodec.reports(for:)`). A frame therefore never shares a report with another frame, and
+**whatever follows a completed frame inside the same report is padding**.
 
-That rule is the only thing on this path that can see a lost report, and it is why
-[#143](https://github.com/myn/deskhopplus/issues/143) took three sessions on hardware to locate.
-Every seam with a counter read clean while large transfers kept failing, because the loss was
-between the seams — a report the board handed to USB and the helper never read. One report lost
-out of the middle of a frame does not lose a frame: the frame completes a report late, having
-eaten the head of the next one, so it fails its tag and the reader is wrong for every byte after
-it. The first symptom is two events removed from the cause.
+The flag is what lets a receiver see a lost report, which the byte stream alone cannot — and is
+why [#143](https://github.com/myn/deskhopplus/issues/143) took three sessions on hardware to
+locate: every seam with a counter read clean, because the loss was between the seams. The shared
+reader (`dh_frame_reader_report`) applies three rules, one report per call
+([ADR-0012](adr/0012-frame-start-flag-for-report-resync.md)):
 
-A receiver checks the rule on every report and counts a break, saying so *before* it judges the
-frame that carried it — because judging that frame ends the session and takes the reader with it.
-It is counted and never acted on: the frame is already failing on its own merits, and this only
-says why.
+- flag `1` while a frame is in progress — that frame lost a report. It is discarded and this
+  report parsed from the start;
+- flag `0` while no frame is in progress — the tail of a frame whose head was lost. The report
+  is discarded;
+- a frame completing mid-report with a non-padding tail — it completed on the bytes of a lost
+  report's neighbour. Discarded.
+
+A frame that lost a report is discarded before it is judged, never delivered broken. The
+receiver sees exactly the gap a refused outbound frame leaves (ADR-0005) — a missed counter,
+and for a credit, request, retransmit or DONE a stall `dh_xfer_sweep_rx` already recovers from.
+Each discard counts one resync, reported as `DH_NOTE_STREAM_MISALIGNED` as the count moves:
+*reports and partial frames discarded*, not gaps, so the lost head of a 66-report chunk counts
+65, one per orphaned continuation.
 
 ### What an unauthenticated frame causes
 
@@ -334,19 +344,19 @@ verbatim from the `channelHeld` state it replaces, which is now removed
 The channel's HID reports are a fixed 64 bytes with no report ID and no length field of their
 own. **As of v3, byte 0 of every report is a frame-start flag** — `1` when a frame begins in
 this report, `0` when it continues the one in progress — and the framing layer owns the other
-63 ([ADR-0012](adr/0012-frame-start-flag-for-report-resync.md); the flag is read by
-`dh_frame_reader_report`; [#186](https://github.com/myn/deskhopplus/issues/186) wires it into
-every emitter and reader). Frames are packed into that byte
-stream back to back, and the tail of the last report of a batch is filled with **`0x00`**.
+63 ([ADR-0012](adr/0012-frame-start-flag-for-report-resync.md); written by every emitter, read
+by `dh_frame_reader_report`). Each frame begins at a report boundary and takes as many reports
+as it needs; the tail of its last report is filled with **`0x00`**.
 
 `0x00` is not a message type — the registry starts at `0x01` — so it cannot begin a frame. A
 decoder skips it **between** frames and nowhere else: inside a frame it is ordinary payload,
 accounted for by the length the header already gave. An all-padding report is idle traffic and
-means nothing.
+means nothing — and must carry flag `1`, since a `0` with no frame in progress reads as the
+orphan of a lost head. No emitter sends one today.
 
 This is a property of a fixed-size carrier, not of the framing: it costs no golden vector, and a
 carrier that already delimits its own records (the inter-board link's packets, a CDC stream)
-never emits it. A frame is free to span reports and several now do — `HELLO` is 67 bytes.
+never emits it. A frame spans reports but never shares one — `HELLO` is 67 bytes, two reports.
 
 ## Bands
 

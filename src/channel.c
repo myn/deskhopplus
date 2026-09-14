@@ -478,12 +478,16 @@ static void channel_pump_out(uint8_t index) {
 
     critical_section_enter_blocking(&channel.out_lock);
     if (dh_outq_peek(channel_lifecycle_output(&channel.lifecycle, index), &owed)) {
-        take = owed.remaining < CHANNEL_REPORT_SIZE ? owed.remaining : CHANNEL_REPORT_SIZE;
+        take = owed.remaining < DH_REPORT_STREAM_SIZE ? owed.remaining : DH_REPORT_STREAM_SIZE;
 
-        /* Pad the tail: a report is a fixed 64 bytes with no length of its own,
-           and DH_FRAME_PAD is what a decoder skips between frames. */
+        /* Byte 0 says whether a frame starts here (ADR-0012) — the reader
+           needs it to bridge a lost report. Then the stream, its tail padded:
+           a report is a fixed 64 bytes with no length of its own, and
+           DH_FRAME_PAD is what a decoder skips between frames. */
         memset(report, DH_FRAME_PAD, sizeof report);
-        memcpy(report, owed.at, take);
+        report[0] = owed.remaining == owed.total ? DH_REPORT_FRAME_START
+                                                 : DH_REPORT_FRAME_CONTINUES;
+        memcpy(report + 1, owed.at, take);
     }
     critical_section_exit(&channel.out_lock);
 

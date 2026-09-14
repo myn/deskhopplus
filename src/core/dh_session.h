@@ -205,10 +205,9 @@ typedef enum {
      *
      * Its own reason rather than a protocol error, which is what this used to
      * be reported as: nothing the helper did is wrong, and a log that says
-     * "protocol error" sends the next reader looking at the wrong end. The
-     * reader cannot recover from a gap — see
-     * `test_a_gap_mid_frame_is_not_recoverable` — so the session ends at once
-     * instead of going quiet until the liveness deadline.
+     * "protocol error" sends the next reader looking at the wrong end. Written
+     * when the reader could not recover from a gap; since ADR-0012 it resyncs
+     * on the frame-start flag, and this end goes with #188.
      *
      * Safe to add because these are diagnostic and not behavioural: a helper
      * that predates this reads it as unspecified, which is what the enum's

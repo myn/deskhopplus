@@ -30,10 +30,9 @@
  * number is still too small it says so instead of costing three seconds of
  * confusion.
  *
- * The old comment also said a lost report "loses a frame ... the helper
- * retries". It does not. The reader is a byte stream, and a gap in the middle
- * of a frame is filled from the frames after it; `frame_test.c`'s
- * `test_a_gap_mid_frame_is_not_recoverable` is what that costs.
+ * Since ADR-0012 the reader resyncs on the frame-start flag, so a dropped
+ * report costs the frame riding it and nothing after — the session end above
+ * is no longer needed, and dropping it is #188.
  */
 #define CHANNEL_REPORT_BACKLOG 32u
 

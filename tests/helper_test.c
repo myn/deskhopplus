@@ -241,6 +241,34 @@ static void an_unpaired_board(void) {
 static uint8_t last_board_frame[DH_SESSION_REPLY_MAX];
 static size_t last_board_frame_len;
 
+/*
+ * One frame to the helper, as the board's channel_pump_out writes it
+ * (ADR-0012): a run of 64-byte reports, byte 0 the frame-start flag, 63 bytes
+ * of stream, the last tail padded. One report per call, which is the
+ * precondition dh_helper_received states.
+ */
+#define MAX_REPORTS ((DH_FRAME_MAX_SIZE + DH_REPORT_STREAM_SIZE - 1) / DH_REPORT_STREAM_SIZE)
+static size_t pack(const uint8_t *frame, size_t len, uint8_t out[][DH_REPORT_SIZE]) {
+    size_t count = 0;
+    for (size_t off = 0; off < len; off += DH_REPORT_STREAM_SIZE) {
+        uint8_t *report = out[count++];
+        memset(report, DH_FRAME_PAD, DH_REPORT_SIZE);
+        report[0] = off == 0 ? DH_REPORT_FRAME_START : DH_REPORT_FRAME_CONTINUES;
+        const size_t take =
+            len - off < DH_REPORT_STREAM_SIZE ? len - off : DH_REPORT_STREAM_SIZE;
+        memcpy(report + 1, frame + off, take);
+    }
+    return count;
+}
+
+static void received(dh_helper *h, const uint8_t *frame, size_t len, uint32_t now_ms,
+                     dh_helper_outputs *o) {
+    uint8_t reports[MAX_REPORTS][DH_REPORT_SIZE];
+    const size_t count = pack(frame, len, reports);
+    for (size_t i = 0; i < count; i++)
+        dh_helper_received(h, reports[i], DH_REPORT_SIZE, now_ms, o);
+}
+
 /* One frame to the board; its reply, if any, straight back to the helper. */
 static void relay_to_board(dh_helper *h, const uint8_t *frame, size_t len, uint32_t now_ms,
                            dh_helper_outputs *o) {
@@ -259,7 +287,7 @@ static void relay_to_board(dh_helper *h, const uint8_t *frame, size_t len, uint3
 
     memcpy(last_board_frame, reply, reply_len);
     last_board_frame_len = reply_len;
-    dh_helper_received(h, reply, reply_len, now_ms, o);
+    received(h, reply, reply_len, now_ms, o);
 }
 
 /* The board's own clock, so a long run is a real one: without its beats the
@@ -270,7 +298,7 @@ static void board_ticks(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     if (dh_session_tick(&board, now_ms, frame, sizeof frame, &len) != DH_FRAME_OK) return;
     if (len == 0) return;
     dh_session_note_owed_sent(&board, frame[0]);
-    dh_helper_received(h, frame, len, now_ms, o);
+    received(h, frame, len, now_ms, o);
 }
 
 /* Every frame the helper produced in `from`, answered by the board. */
@@ -467,7 +495,7 @@ static void test_negotiation_comes_from_the_reply(void) {
           "the ack would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 0, &out);
+    received(&h, frame, len, 0, &out);
 
     CHECK(h.negotiated.channel_count == 1, name, "the channel count was not read off the reply");
     CHECK(h.negotiated.max_chunk == 256, name, "the chunk size was not read off the reply");
@@ -592,7 +620,7 @@ static void test_the_board_is_absent_only_after_the_window(void) {
           name, "the beat would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, beat, beat_len, 2000, &out);
+    received(&h, beat, beat_len, 2000, &out);
     CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 0, name, "the beat was not accepted");
     dh_helper_tick(&h, DH_SESSION_ABSENT_MS, &out);
     CHECK(dh_helper_can_send_bulk(&h), name, "a beat did not refresh the deadline");
@@ -1201,7 +1229,7 @@ static void test_an_answer_to_someone_elses_question_is_dropped(void) {
           "the refusal would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     CHECK(h.state != DH_HELPER_NOT_PAIRED, name, "a provoked refusal reached the chord prompt");
     CHECK(saw_note(&out, DH_NOTE_IGNORED_WRONG_CORRELATION), name, "the mismatch was not noted");
@@ -1227,7 +1255,7 @@ static void test_the_listener_alert_expires_like_a_rate(void) {
           name, "the alert would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 1000, &out);
+    received(&h, frame, len, 1000, &out);
     CHECK(h.state == DH_HELPER_LISTENER_DETECTED, name, "the alert was not reported");
     CHECK(saw_note(&out, DH_NOTE_LISTENER_DETECTED), name, "the alert was reported without its rate");
     CHECK(dh_helper_allows_bulk(h.state), name,
@@ -1266,7 +1294,7 @@ static void test_a_bad_tag_drops_the_session_and_a_replay_does_not(void) {
           name, "the frame would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, bad, bad_len, 100, &out);
+    received(&h, bad, bad_len, 100, &out);
     CHECK(saw_note(&out, DH_NOTE_TAG_FAILED), name, "a failed tag was not noticed");
     CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 1, name, "a failed tag kept the session");
     CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 0, name, "a failed tag was answered");
@@ -1281,8 +1309,8 @@ static void test_a_bad_tag_drops_the_session_and_a_replay_does_not(void) {
           name, "the beat would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, beat, beat_len, 100, &out);
-    dh_helper_received(&h, beat, beat_len, 200, &out);
+    received(&h, beat, beat_len, 100, &out);
+    received(&h, beat, beat_len, 200, &out);
     CHECK(saw_note(&out, DH_NOTE_COUNTER_REPLAYED), name, "a replay was not noticed");
     CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 0, name, "a replay cost the session");
     CHECK(h.state == DH_HELPER_CONNECTED, name, "a replay changed what the user is told");
@@ -1303,7 +1331,7 @@ static void test_a_session_end_is_acted_on(void) {
           name, "the session end would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     const dh_helper_output *note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1358,7 +1386,7 @@ static void test_a_session_end_says_what_the_boards_usb_heard(void) {
                         drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
           name, "the first drop totals would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, drops_frame, drops_len, 50, &out);
+    received(&h, drops_frame, drops_len, 50, &out);
     dh_helper_outputs_reset(&out);
     dh_helper_tick(&h, 100, &out);
 
@@ -1368,7 +1396,7 @@ static void test_a_session_end_says_what_the_boards_usb_heard(void) {
                         drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
           name, "the second drop totals would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, drops_frame, drops_len, 1200, &out);
+    received(&h, drops_frame, drops_len, 1200, &out);
 
     uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
     uint8_t frame[DH_FRAME_MAX_SIZE];
@@ -1377,7 +1405,7 @@ static void test_a_session_end_says_what_the_boards_usb_heard(void) {
                         sizeof frame, &len) == DH_FRAME_OK,
           name, "the session end would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 1200, &out);
+    received(&h, frame, len, 1200, &out);
 
     const dh_helper_output *note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1422,7 +1450,7 @@ static void test_a_session_end_carries_the_boards_own_totals(void) {
                         drops_frame, sizeof drops_frame, &drops_len) == DH_FRAME_OK,
           name, "the drop totals would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, drops_frame, drops_len, 50, &out);
+    received(&h, drops_frame, drops_len, 50, &out);
 
     uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
     uint8_t frame[DH_FRAME_MAX_SIZE];
@@ -1432,7 +1460,7 @@ static void test_a_session_end_carries_the_boards_own_totals(void) {
           name, "the session end would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     const dh_helper_output *note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1473,7 +1501,7 @@ static void test_a_teardown_says_what_the_board_sent_and_never_arrived(void) {
                         &beat_len) == DH_FRAME_OK,
           name, "the beat would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, beat, beat_len, 50, &out);
+    received(&h, beat, beat_len, 50, &out);
 
     uint8_t body[DH_SESSION_END_LEN] = {DH_SESSION_END_LIVENESS_TIMEOUT};
     uint8_t frame[DH_FRAME_MAX_SIZE];
@@ -1483,7 +1511,7 @@ static void test_a_teardown_says_what_the_board_sent_and_never_arrived(void) {
           name, "the session end would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     const dh_helper_output *note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1498,76 +1526,60 @@ static void test_a_teardown_says_what_the_board_sent_and_never_arrived(void) {
 }
 
 /*
- * The fault #143 is about, reproduced: one report lost out of the middle of a
- * frame.
- *
- * The board writes one frame per run of 64-byte reports and pads the last
- * one's tail. Drop a report and the frame completes a report late, having
- * eaten the head of the next one — so it fails its tag, and the reader is
- * wrong for every byte after it. Everything with a counter reads clean, which
- * is why this took three sessions on hardware to even locate.
- *
- * What must be true is the ordering: the stream reading comes out *before* the
- * failed tag, because the tag failure ends the session and takes the reader
- * with it.
+ * The fault #143 is about, reproduced: a report lost between the board and
+ * here. Byte 0 of every report is a frame-start flag (ADR-0012), so the reader
+ * sees the loss for itself: a continuation with no frame in progress is the
+ * orphan of a lost head, and it is discarded and counted rather than read as
+ * a header. The broken frame is never judged — no failed tag, no teardown —
+ * and the next frame lands. The note is the count of what the reader threw
+ * away, said as it moves.
  */
-/*
- * The carrier unit both platforms deliver, stated here because the core does
- * not know it — the check under test is "whatever follows a frame in this call
- * is padding" and never reads a width. The firmware's TEST_REPORT_SIZE and
- * the two helpers' own copies are the same 64, which #120 exists to unify.
- */
-#define TEST_REPORT_SIZE 64u
-
-static void test_a_lost_report_is_named_before_the_tag_fails(void) {
-    const char *name = "a lost report is named before the tag fails";
+static void test_a_lost_report_is_counted_and_never_judged(void) {
+    const char *name = "a lost report is counted and never judged";
     dh_helper h;
     a_live_session(&h);
 
-    /* Two beats, each a frame the board would pad out to one whole report. */
+    /* A beat carrying enough body to span two reports, then a bare one. */
+    uint8_t body[DH_REPORT_STREAM_SIZE] = {0x5a};
     uint8_t first[DH_FRAME_MAX_SIZE], second[DH_FRAME_MAX_SIZE];
     size_t first_len = 0, second_len = 0;
-    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 1, NULL, 0, first, sizeof first,
-                        &first_len) == DH_FRAME_OK,
+    CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 1, body, sizeof body, first,
+                        sizeof first, &first_len) == DH_FRAME_OK,
           name, "the first beat would not encode");
     CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 2, NULL, 0, second, sizeof second,
                         &second_len) == DH_FRAME_OK,
           name, "the second beat would not encode");
-    CHECK(first_len < TEST_REPORT_SIZE, name, "a beat no longer fits one report");
+    CHECK(first_len > DH_REPORT_STREAM_SIZE && first_len <= 2 * DH_REPORT_STREAM_SIZE, name,
+          "the first beat does not span exactly two reports");
 
-    /*
-     * The first frame arrives one byte short — the shape a lost report leaves,
-     * scaled to a frame that fits in a single report — so the head of the
-     * second frame lands where this frame's padding belongs.
-     */
-    uint8_t report[TEST_REPORT_SIZE];
-    memset(report, DH_FRAME_PAD, sizeof report);
-    memcpy(report, first, first_len - 1);
-    memcpy(report + first_len - 1, second, TEST_REPORT_SIZE - (first_len - 1));
+    /* Its head is lost; only the continuation arrives. */
+    uint8_t tail[DH_REPORT_SIZE];
+    memset(tail, DH_FRAME_PAD, sizeof tail);
+    tail[0] = DH_REPORT_FRAME_CONTINUES;
+    memcpy(tail + 1, first + DH_REPORT_STREAM_SIZE, first_len - DH_REPORT_STREAM_SIZE);
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, report, sizeof report, 50, &out);
+    dh_helper_received(&h, tail, sizeof tail, 50, &out);
+    CHECK(saw_note(&out, DH_NOTE_STREAM_MISALIGNED), name, "the orphaned report was not counted");
+    for (size_t i = 0; i < out.count; i++)
+        if (out.items[i].kind == DH_HELPER_OUT_NOTE && out.items[i].note == DH_NOTE_STREAM_MISALIGNED)
+            CHECK(out.items[i].a == 1, name, "the first loss of the session did not count as one");
+    CHECK(!saw_note(&out, DH_NOTE_TAG_FAILED), name, "the broken frame was judged");
+    CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 0, name, "a lost report ended the session");
 
-    /* The reading, and before the verdict on the frame that carried it. */
-    size_t misaligned = out.count, failed = out.count;
-    for (size_t i = 0; i < out.count; i++) {
-        if (out.items[i].kind != DH_HELPER_OUT_NOTE) continue;
-        if (out.items[i].note == DH_NOTE_STREAM_MISALIGNED && misaligned == out.count)
-            misaligned = i;
-        if (out.items[i].note == DH_NOTE_TAG_FAILED && failed == out.count) failed = i;
-    }
-    CHECK(misaligned < out.count, name, "a lost report was not named at all");
-    CHECK(failed < out.count, name, "the frame it broke did not fail its tag");
-    CHECK(misaligned < failed, name, "the cause was said after the symptom");
-    CHECK(misaligned < out.count && out.items[misaligned].a == 1, name,
-          "the first break of the session did not count as one");
+    /* The frame behind the loss lands, and says nothing about the carrier. */
+    dh_helper_outputs_reset(&out);
+    received(&h, second, second_len, 60, &out);
+    CHECK(!saw_note(&out, DH_NOTE_STREAM_MISALIGNED), name,
+          "an intact frame was counted as a lost one");
+    CHECK(dh_auth_counter_built(&h.rx) == 3, name, "the beat after the loss did not land");
     no_overflow(name);
 }
 
 /*
- * The ordinary case says nothing, which is the whole value of the reading
- * above: a padded tail is what an intact stream looks like, and a note on
- * every report would be noise nobody reads.
+ * The ordinary case says nothing, which is the whole value of the count above:
+ * a padded tail is what an intact stream looks like, and a note on every
+ * report would be noise nobody reads.
  */
 static void test_a_padded_tail_is_silent(void) {
     const char *name = "a padded tail is silent";
@@ -1579,10 +1591,12 @@ static void test_a_padded_tail_is_silent(void) {
     CHECK(dh_auth_frame(DH_MSG_DEVICE_HEARTBEAT, 0, k_b2h, 1, NULL, 0, beat, sizeof beat,
                         &beat_len) == DH_FRAME_OK,
           name, "the beat would not encode");
+    CHECK(beat_len <= DH_REPORT_STREAM_SIZE, name, "a beat no longer fits one report");
 
-    uint8_t report[TEST_REPORT_SIZE];
+    uint8_t report[DH_REPORT_SIZE];
     memset(report, DH_FRAME_PAD, sizeof report);
-    memcpy(report, beat, beat_len);
+    report[0] = DH_REPORT_FRAME_START;
+    memcpy(report + 1, beat, beat_len);
 
     dh_helper_outputs_reset(&out);
     dh_helper_received(&h, report, sizeof report, 50, &out);
@@ -1637,7 +1651,7 @@ static void test_a_session_end_says_how_much_this_end_got_out(void) {
           name, "the session end would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 400, &out);
+    received(&h, frame, len, 400, &out);
 
     const dh_helper_output *note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1660,7 +1674,7 @@ static void test_a_session_end_says_how_much_this_end_got_out(void) {
     dh_helper_note_sent(&h2, 100 + DH_SESSION_ABSENT_MS); /* rolls the bucket */
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h2, frame, len, 100 + DH_SESSION_ABSENT_MS, &out);
+    received(&h2, frame, len, 100 + DH_SESSION_ABSENT_MS, &out);
 
     note = NULL;
     for (size_t i = 0; i < out.count; i++)
@@ -1733,7 +1747,7 @@ static void test_an_incompatible_board_refuses_bulk(void) {
           "the refusal would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     CHECK(h.state == DH_HELPER_VERSION_INCOMPATIBLE, name, "the mismatch was not reported");
     CHECK(saw_note(&out, DH_NOTE_VERSION_MISMATCH), name, "the versions were not recorded");
@@ -1907,7 +1921,7 @@ static void test_a_grant_nobody_asked_for_is_ignored(void) {
 
     /* The same grant again, 2 s into the session it produced. */
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, grant, grant_len, 3000, &out);
+    received(&h, grant, grant_len, 3000, &out);
 
     CHECK(dh_helper_can_send_bulk(&h), name, "a repeated grant tore down the live session");
     CHECK(count_of(&out, DH_HELPER_OUT_STORE_BOARD_KEY) == 0, name,
@@ -2007,7 +2021,7 @@ static void test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet(void)
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 0, &out);
+    received(&h, frame, len, 0, &out);
     CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
           "the first beat of a session was not traced as the first");
 
@@ -2018,7 +2032,7 @@ static void test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet(void)
         dh_helper_outputs_reset(&out);
         CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
               "the beat would not encode");
-        dh_helper_received(&h, frame, len, t, &out);
+        received(&h, frame, len, t, &out);
         CHECK(count_of(&out, DH_HELPER_OUT_NOTE) == 0, name, "a beat arriving on time was traced");
         no_overflow(name);
     }
@@ -2037,7 +2051,7 @@ static void test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet(void)
               "healthy traffic was reported as heartbeat silence");
         CHECK(board_frame(DH_MSG_PLACE, place, sizeof place, frame, sizeof frame, &len), name,
               "the placement would not encode");
-        dh_helper_received(&h, frame, len, t, &out);
+        received(&h, frame, len, t, &out);
         no_overflow(name);
     }
     CHECK(h.state == DH_HELPER_CONNECTED, name, "a transfer without beats dropped the session");
@@ -2048,7 +2062,7 @@ static void test_healthy_device_traffic_is_not_reported_as_heartbeat_quiet(void)
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, t, &out);
+    received(&h, frame, len, t, &out);
 
     CHECK(!saw_note(&out, DH_NOTE_BEAT_RESUMED), name,
           "an idle filler returning after healthy traffic was reported as recovery");
@@ -2078,7 +2092,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 0, &out);
+    received(&h, frame, len, 0, &out);
 
     /* The chord: config mode, minutes away, then back as itself. */
     dh_helper_outputs_reset(&out);
@@ -2103,7 +2117,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 300250, &out);
+    received(&h, frame, len, 300250, &out);
     CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
           "the first beat after a config-mode round trip was not traced as the first");
     no_overflow(name);
@@ -2122,7 +2136,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
     dh_helper_transport_failed(&h, 100, &out);
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, stray, stray_len, 200, &out);
+    received(&h, stray, stray_len, 200, &out);
     CHECK(saw_note(&out, DH_NOTE_NO_SESSION_KEY), name,
           "a beat outside a session was acted on rather than refused");
     CHECK(!saw_note(&out, DH_NOTE_FIRST_BEAT), name,
@@ -2138,7 +2152,7 @@ static void test_the_beat_trace_does_not_outlive_its_session(void) {
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 400, &out);
+    received(&h, frame, len, 400, &out);
     CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
           "the stale beat consumed the new session's first");
     no_overflow(name);
@@ -2165,7 +2179,7 @@ static void test_the_beat_trace_starts_afresh_after_a_hello_is_refused(void) {
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 0, &out);
+    received(&h, frame, len, 0, &out);
 
     /* The link goes, and this time the board has forgotten the registration. */
     dh_helper_outputs_reset(&out);
@@ -2215,7 +2229,7 @@ static void test_the_beat_trace_starts_afresh_after_a_hello_is_refused(void) {
     dh_helper_outputs_reset(&out);
     CHECK(board_frame(DH_MSG_DEVICE_HEARTBEAT, NULL, 0, frame, sizeof frame, &len), name,
           "the beat would not encode");
-    dh_helper_received(&h, frame, len, 11100, &out);
+    received(&h, frame, len, 11100, &out);
     CHECK(saw_note(&out, DH_NOTE_FIRST_BEAT), name,
           "the first beat of the session pairing established was not traced at all");
     no_overflow(name);
@@ -2248,7 +2262,7 @@ static void test_an_ack_for_someone_elses_hello_is_dropped(void) {
           "the ack would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
     CHECK(saw_note(&out, DH_NOTE_IGNORED_WRONG_CORRELATION), name, "the mismatch was not noted");
     CHECK(h.state != DH_HELPER_CONNECTED, name, "an ack answering a different question connected");
     CHECK(!dh_helper_can_send_bulk(&h), name, "a session built on somebody else's ack carries bulk");
@@ -2264,7 +2278,7 @@ static void test_an_ack_for_someone_elses_hello_is_dropped(void) {
     CHECK(dh_hello_ack_encode(&ack, k_b2h, 0, frame, sizeof frame, &len) == DH_FRAME_OK, name,
           "the genuine ack would not encode");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
     CHECK(h.state == DH_HELPER_CONNECTED, name,
           "the genuine ack was refused after a forged one had been dropped");
     no_overflow(name);
@@ -2310,7 +2324,7 @@ static void test_a_grant_answering_someone_elses_request_is_dropped(void) {
           "the grant would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 1000, &out);
+    received(&h, frame, len, 1000, &out);
     CHECK(saw_note(&out, DH_NOTE_IGNORED_WRONG_CORRELATION), name, "the mismatch was not noted");
     CHECK(count_of(&out, DH_HELPER_OUT_STORE_BOARD_KEY) == 0, name,
           "a key nobody asked for was pinned as the board's");
@@ -2326,7 +2340,7 @@ static void test_a_grant_answering_someone_elses_request_is_dropped(void) {
           "the genuine grant would not encode");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 1000, &out);
+    received(&h, frame, len, 1000, &out);
     CHECK(first_of(&out, DH_HELPER_OUT_STORE_BOARD_KEY) != NULL, name,
           "the board's own grant was refused along with the forged one");
     CHECK(count_of(&out, DH_HELPER_OUT_SEND) == 1, name, "no fresh hello after being paired");
@@ -2356,7 +2370,7 @@ static void test_the_board_states_the_clipboard_policy(void) {
           name, "the policy frame would not build");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
 
     const dh_helper_output *stated = first_of(&out, DH_HELPER_OUT_CLIP_POLICY);
     CHECK(stated != NULL, name, "the policy was not reported to the platform");
@@ -2382,7 +2396,7 @@ static void test_the_board_states_the_clipboard_policy(void) {
     CHECK(board_frame(DH_MSG_CLIP_POLICY, with_cap, sizeof with_cap, frame, sizeof frame, &len),
           name, "the policy frame carrying a cap would not build");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 150, &out);
+    received(&h, frame, len, 150, &out);
     const dh_helper_output *capped = first_of(&out, DH_HELPER_OUT_CLIP_POLICY);
     CHECK(capped != NULL && capped->b == 64, name, "the stated size cap was not reported");
     CHECK(dh_helper_clip_cap_mb(&h) == 64, name, "the stated size cap was not recorded");
@@ -2394,7 +2408,7 @@ static void test_the_board_states_the_clipboard_policy(void) {
     CHECK(board_frame(DH_MSG_CLIP_POLICY, absurd, sizeof absurd, frame, sizeof frame, &len),
           name, "the policy frame carrying an absurd cap would not build");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 160, &out);
+    received(&h, frame, len, 160, &out);
     CHECK(dh_helper_clip_cap_mb(&h) == DH_CLIP_CAP_MB_MAX, name,
           "a size cap past the maximum was not clamped to it");
 
@@ -2405,7 +2419,7 @@ static void test_the_board_states_the_clipboard_policy(void) {
     CHECK(board_frame(DH_MSG_CLIP_POLICY, too_long, sizeof too_long, frame, sizeof frame, &len),
           name, "the malformed frame would not build");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 200, &out);
+    received(&h, frame, len, 200, &out);
     CHECK(first_of(&out, DH_HELPER_OUT_CLIP_POLICY) == NULL, name,
           "a malformed policy was reported as a policy");
     CHECK(saw_note(&out, DH_NOTE_UNDECODABLE), name, "a malformed policy was not traced");
@@ -2446,7 +2460,7 @@ static void test_the_board_states_what_it_has_dropped(void) {
           "the drops frame would not build");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
     CHECK(dh_helper_device_drops(&h, &got), name, "a stated reading was not recorded");
     CHECK(got.reports == 1 && got.inbound == 2 && got.outq == 3 && got.unsent == 4 &&
               got.orphans == 5 && got.truncated == 6 && got.relay_q == 7,
@@ -2460,7 +2474,7 @@ static void test_the_board_states_what_it_has_dropped(void) {
     CHECK(board_frame(DH_MSG_DEVICE_DROPS, too_short, sizeof too_short, frame, sizeof frame, &len),
           name, "the malformed frame would not build");
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 200, &out);
+    received(&h, frame, len, 200, &out);
     CHECK(saw_note(&out, DH_NOTE_UNDECODABLE), name, "a malformed reading was not traced");
     CHECK(dh_helper_device_drops(&h, &got) && got.reports == 1, name,
           "a malformed reading overwrote the one that was understood");
@@ -2516,7 +2530,7 @@ static void test_verified_bulk_reaches_the_platform(void) {
           "the bulk frame would not build");
 
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 100, &out);
+    received(&h, frame, len, 100, &out);
     CHECK(payloads.calls == 1, name, "the bulk frame did not reach the platform");
     CHECK(payloads.type == DH_MSG_CLIP_CHUNK, name, "the platform was handed the wrong type");
     CHECK(payloads.len == sizeof chunk && memcmp(payloads.body, chunk, sizeof chunk) == 0, name,
@@ -2532,7 +2546,7 @@ static void test_verified_bulk_reaches_the_platform(void) {
           "the second bulk frame would not build");
     frame[DH_FRAME_HEADER_SIZE + DH_FRAME_COUNTER_SIZE] ^= 0x40u;
     dh_helper_outputs_reset(&out);
-    dh_helper_received(&h, frame, len, 200, &out);
+    received(&h, frame, len, 200, &out);
     CHECK(payloads.calls == 1, name, "a frame that did not authenticate reached the platform");
     CHECK(saw_note(&out, DH_NOTE_CHUNK_TAG_TOLERATED), name, "a bad tag on bulk was not traced");
     CHECK(count_of(&out, DH_HELPER_OUT_CLOSE_CHANNELS) == 0, name,
@@ -2600,20 +2614,24 @@ static void test_a_reordered_bulk_frame_survives_the_counter(void) {
           "the queue refused the beat");
 
     /*
-     * Drain the queue the way channel_pump_out does — one report per pass, the
-     * tail padded — and hand each to the helper on its own. Concatenating the
-     * two frames into one buffer instead would be a stream the wire never
-     * carries, and the helper reads a frame followed by anything but padding
-     * as a lost report (DH_NOTE_STREAM_MISALIGNED).
+     * Drain the queue the way channel_pump_out does — one report per pass,
+     * byte 0 the frame-start flag, the tail padded — and hand each to the
+     * helper on its own. Concatenating the two frames into one buffer instead
+     * would be a stream the wire never carries, and the reader discards a
+     * frame followed by anything but padding as a lost report
+     * (DH_NOTE_STREAM_MISALIGNED).
      */
     dh_helper_outputs_reset(&out);
     dh_outq_view owed;
     while (dh_outq_peek(&queue, &owed)) {
-        uint8_t report[TEST_REPORT_SIZE];
-        const uint16_t take = owed.remaining < TEST_REPORT_SIZE ? owed.remaining
-                                                                : (uint16_t)TEST_REPORT_SIZE;
+        uint8_t report[DH_REPORT_SIZE];
+        const uint16_t take = owed.remaining < DH_REPORT_STREAM_SIZE
+                                  ? owed.remaining
+                                  : (uint16_t)DH_REPORT_STREAM_SIZE;
         memset(report, DH_FRAME_PAD, sizeof report);
-        memcpy(report, owed.at, take);
+        report[0] = owed.remaining == owed.total ? DH_REPORT_FRAME_START
+                                                 : DH_REPORT_FRAME_CONTINUES;
+        memcpy(report + 1, owed.at, take);
         dh_outq_advance(&queue, &owed, take);
         dh_helper_received(&h, report, sizeof report, 2000, &out);
     }
@@ -2656,11 +2674,14 @@ static void test_helper_reassembles_each_channel_before_authenticating(void) {
     for (unsigned i = 0; i < 2; ++i)
         CHECK(board_frame(DH_MSG_CLIP_CHUNK, body, sizeof body, frames[i],
                            sizeof frames[i], &len[i]), name, "encode failed");
+    uint8_t reports[2][MAX_REPORTS][DH_REPORT_SIZE];
+    CHECK(pack(frames[0], len[0], reports[0]) == 3, name, "a chunk no longer spans three reports");
+    CHECK(pack(frames[1], len[1], reports[1]) == 3, name, "a chunk no longer spans three reports");
     dh_helper_outputs_reset(&out);
-    dh_helper_received_channel(&h, 0, frames[0], 64, 1, &out);
-    dh_helper_received_channel(&h, 1, frames[1], 64, 1, &out);
-    dh_helper_received_channel(&h, 1, frames[1] + 64, 64, 1, &out);
-    dh_helper_received_channel(&h, 0, frames[0] + 64, 64, 1, &out);
+    for (unsigned i = 0; i < 3; ++i) {
+        dh_helper_received_channel(&h, 0, reports[0][i], DH_REPORT_SIZE, 1, &out);
+        dh_helper_received_channel(&h, 1, reports[1][i], DH_REPORT_SIZE, 1, &out);
+    }
     CHECK(h.rx.accepted == before + 2, name, "interleaved frames were lost");
     CHECK(dh_helper_can_send_bulk(&h), name, "interleaving broke the session");
 }
@@ -2705,7 +2726,7 @@ int main(int argc, char **argv) {
     test_a_session_end_carries_the_boards_own_totals();
     test_a_session_end_says_what_the_boards_usb_heard();
     test_a_teardown_says_what_the_board_sent_and_never_arrived();
-    test_a_lost_report_is_named_before_the_tag_fails();
+    test_a_lost_report_is_counted_and_never_judged();
     test_a_padded_tail_is_silent();
     test_a_teardown_with_no_session_reads_nothing();
     test_the_policy_predicates_are_decided_once();

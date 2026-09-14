@@ -146,9 +146,16 @@ private final class Fixture {
         dh_auth_counter_init(&boardRxCounter)
     }
 
+    /// A frame from the board arrives the way the transport delivers it
+    /// (ADR-0012): one 64-byte report per input, byte 0 the frame-start flag.
     @discardableResult
     func send(_ input: SessionInput) -> [SessionOutput] {
-        observe(session.handle(input, at: now))
+        guard case .received(let frame) = input else {
+            return observe(session.handle(input, at: now))
+        }
+        return FrameCodec.reports(packing: frame).flatMap {
+            observe(session.handle(.received($0), at: now))
+        }
     }
 
     func advance(_ seconds: TimeInterval) -> [SessionOutput] {

@@ -78,13 +78,13 @@ _Avoid_: message, packet (a packet is the 12-byte inter-board wire unit), report
 carrier, not the frame itself)
 
 **Report**:
-The physical carrier: one fixed 64-byte HID exchange, with no ID, length or sequence of its own —
-the framing layer owns every byte. A small frame fits in one; a chunk spans many, back to back.
-Losing one **whole** report, mid-frame, is invisible today until the frame riding it fails its
-tag or the reader's byte count comes up short, because nothing about a report says which one it
-was. ADR-0012 gives byte 0 to a **frame-start flag** — `1` when a frame begins in this report —
-which is the one fact a reader cannot recover on its own once the report carrying a header is
-gone; with it, a lost report costs the frame riding it and nothing after.
+The physical carrier: one fixed 64-byte HID exchange, with no ID, length or sequence of its own.
+Byte 0 is a **frame-start flag** — `1` when a frame begins in this report, `0` when it continues
+the one in progress (ADR-0012) — and the framing layer owns the other 63. A small frame fits in
+one; a chunk spans many, back to back. The flag is the one fact a reader cannot recover on its
+own once the report carrying a header is gone; with it, a lost report costs the frame riding it
+and nothing after, and the reader counts each **resync** — a report or partial frame discarded
+to get back to a frame start.
 _Avoid_: packet, message, frame (a report carries a frame; it is not one)
 
 **Opaque relay**:

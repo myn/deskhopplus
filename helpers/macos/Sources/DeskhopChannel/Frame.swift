@@ -78,31 +78,36 @@ public enum FrameCodec {
     }
 
     /*
-     * Pack frames into fixed-size reports, padding the tail. A report has no
-     * length of its own, so the padding byte is what tells a decoder where the
-     * frames stopped (docs/protocol.md, "The report carrier").
+     * Pack frames into fixed-size reports (ADR-0012): each frame on its own
+     * run, byte 0 the frame-start flag — 1 where a frame begins, 0 where it
+     * continues — then the stream, the last tail padded. A report has no
+     * length of its own, so the padding byte is what tells a decoder where
+     * the frame stopped, and the flag is what lets it bridge a lost report
+     * (docs/protocol.md, "The report carrier").
      */
     public static func reports(for frames: [Frame],
                                size: Int = ChannelIdentity.reportSize) throws -> [[UInt8]] {
-        var stream: [UInt8] = []
-        for frame in frames { stream += try encode(frame) }
+        try frames.flatMap { try reports(packing: encode($0), size: size) }
+    }
 
-        var reports: [[UInt8]] = []
-        var offset = 0
-        while offset < stream.count {
-            var report = Array(stream[offset..<min(offset + size, stream.count)])
+    /* One encoded frame's run of reports. */
+    public static func reports(packing bytes: [UInt8],
+                               size: Int = ChannelIdentity.reportSize) -> [[UInt8]] {
+        let streamSize = size - 1
+        return stride(from: 0, to: bytes.count, by: streamSize).map { offset in
+            var report = [UInt8(offset == 0 ? DH_REPORT_FRAME_START : DH_REPORT_FRAME_CONTINUES)]
+            report += bytes[offset..<min(offset + streamSize, bytes.count)]
             report += [UInt8](repeating: UInt8(DH_FRAME_PAD), count: size - report.count)
-            reports.append(report)
-            offset += size
+            return report
         }
-        return reports
     }
 }
 
 /*
- * The incremental reader, over the same fixed storage the C core uses. Frame
- * boundaries never align with report boundaries, so every arriving report goes
- * through here rather than being decoded on its own.
+ * The incremental reader, over the same fixed storage the C core uses — the
+ * binding's own view of it, for the vector and carrier tests. The helper
+ * itself hands reports to dh_helper_received, which reads through the same
+ * core.
  */
 public final class FrameStream {
     private let reader = UnsafeMutablePointer<dh_frame_reader>.allocate(capacity: 1)
@@ -112,6 +117,25 @@ public final class FrameStream {
 
     /* A protocol error resets the reader; the caller drops the connection. */
     public func reset() { dh_frame_reader_init(reader) }
+
+    /* One report (ADR-0012): byte 0 the frame-start flag, the rest the
+       stream. A frame never shares a report, so at most one completes here;
+       a lost report is bridged inside the core. */
+    public func report(_ bytes: [UInt8]) throws -> [Frame] {
+        var view = dh_frame_view()
+        let rc = bytes.withUnsafeBufferPointer { buffer in
+            dh_frame_reader_report(reader, buffer.baseAddress, buffer.count, &view)
+        }
+        switch rc {
+        case DH_FRAME_OK:
+            return [Frame(type: view.hdr.type, flags: view.hdr.flags, payload: view.payloadBytes)]
+        case DH_FRAME_AGAIN:
+            return []
+        default:
+            reset()
+            throw ChannelError.from(rc)
+        }
+    }
 
     public func push(_ bytes: [UInt8]) throws -> [Frame] {
         var frames: [Frame] = []
