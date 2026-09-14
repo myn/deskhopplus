@@ -1,13 +1,13 @@
 ---
 name: deskhopplus-adversarial-review
-description: Review a completed non-trivial DeskHopPlus change after normal code review to find credible boundary, failure, or emergent defects; not for implementation or routine code review.
+description: Review a completed non-trivial DeskHopPlus change after normal code review to find and fix credible boundary, failure, or emergent defects in the same turn; not for routine code review.
 ---
 
 # DeskHopPlus Adversarial Review
 
 Use this post-implementation review to answer: *now that the change works, what else did it expose, break, or make reachable?* DeskHopPlus is embedded firmware and a distributed protocol system; happy-path correctness is insufficient.
 
-Use only after normal code review is complete. Skip genuinely trivial documentation, comment, or formatting-only changes. This skill discovers and records defects; a finding becomes a separate implementation task only when the user asks to fix it.
+Use only after normal code review is complete. Skip genuinely trivial documentation, comment, or formatting-only changes. Fix every retained finding in this same turn, the way code-review findings are fixed before the commit. A finding leaves this turn as a separate ticket only when it needs a grilling session before anyone can write the fix (step 4).
 
 ## 1. Establish the review surface
 
@@ -44,13 +44,16 @@ For each candidate, attempt to disprove it before retaining it. Classify retaine
 
 Investigate at least two credible additional candidates, spanning two lenses when applicable. Do not manufacture findings: if fewer than two survive, document the routes examined and why no other credible defect was established.
 
-## 4. Record outcomes
+## 4. Fix or defer each finding
 
 For each retained finding, capture the affected subsystem, violated behavior or invariant, exact code path, proof/reproduction, expected and actual behavior, impact, classification, related change/issue, and hardware-verification need.
 
-Search existing `myn/deskhopplus` issues for the same underlying defect before drafting a new one. Follow `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. Unless the user has authorized GitHub writes, provide issue-ready findings for approval rather than creating issues.
+Then take the first route that applies:
 
-Finish without implementation changes:
+1. **Fix it now** — the default. Write the test that demonstrates the finding, make it pass, and carry the fix into the same commit as the reviewed change. This covers every finding whose fix stays inside the changed subsystems and needs no decision the user has not already made. A HARDWARE / ENVIRONMENT DEPENDENT finding with a small fix is still fixed now; the hardware step only verifies it, so record the verification need on the issue being closed.
+2. **Defer to a ticket** — only when the fix needs a grilling session first: it needs a new ADR or conflicts with an existing one, it changes the wire protocol or a persisted format, it reaches into a subsystem the reviewed change did not touch, or the right fix depends on a product decision the user has not made. Search existing `myn/deskhopplus` issues for the same underlying defect before drafting a new one. Follow `docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. Unless the user has authorized GitHub writes, provide an issue-ready finding for approval rather than creating the issue.
+
+Every finding ends fixed or deferred; a finding that is only recorded is unfinished work.
 
 ```text
 Adversarial Review
@@ -59,9 +62,8 @@ Changed area:
 Review baseline and evidence:
 Boundaries inspected:
 Findings:
-  1. [classification] ...
-  2. [classification] ...
-Issues created or ready for approval:
+  1. [classification] ... -> fixed: <files>, test <name>
+  2. [classification] ... -> deferred: <why it needs grilling>; issue #N or ready for approval
 Additional investigation:
 Hardware verification required:
 ```
