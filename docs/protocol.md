@@ -1,4 +1,4 @@
-# deskhopplus channel protocol — v2
+# deskhopplus channel protocol — v3
 
 The single source of truth for bytes on the helper↔firmware channel. Any change here must
 update `test-vectors/frames.txt` and the shared C core (`src/core/`) in the same change.
@@ -14,9 +14,21 @@ board will act on.
 **Old pairings do not migrate.** A migration path would have to accept the old bearer token,
 which is the thing being removed. Recovery is one chord press, by design.
 
+> **v3 is v2 plus one byte per report** ([#185](https://github.com/myn/deskhopplus/issues/185),
+> [ADR-0012](adr/0012-frame-start-flag-for-report-resync.md)): byte 0 of every 64-byte HID report
+> is a frame-start flag, so the reader can resync across a lost report. No frame layout below
+> changes; `DH_PROTO_VERSION` is `3`. **The bump is a record, not a gate.** The hello itself rides
+> the changed report shape, so a mismatched peer misparses it before it can read `proto_version`:
+> an old board reads a new hello's length as `0x3F00` and refuses it as oversize; a new board reads
+> an old hello's second byte as type `0x3F` and refuses it as unknown. Either way the symptom is a
+> protocol-error reconnect loop — the helpers' *Reconnecting repeatedly* state, whose wording
+> already says to check the helper is up to date — never `HELLO_REFUSED(version_incompatible)`. That refusal still
+> exists for a hello that does arrive intact with the wrong number; it is the check, not the wire
+> path. Firmware and both helpers move together; there is no mixed-version rollout.
+>
 > **Sequencing.** The **board speaks this document** as of
 > [#111](https://github.com/myn/deskhopplus/issues/111): `DH_PROTO_VERSION` in
-> `src/core/dh_session.h` is `2`, and it moved with `dh_session.c` rather than with this file,
+> `src/core/dh_session.h` was `2`, and it moved with `dh_session.c` rather than with this file,
 > because a board that announced version 2 while speaking v1 would be worse than one that
 > announces the version it actually speaks.
 > [#110](https://github.com/myn/deskhopplus/issues/110) landed the primitives underneath —
@@ -320,8 +332,12 @@ verbatim from the `channelHeld` state it replaces, which is now removed
 ### The report carrier
 
 The channel's HID reports are a fixed 64 bytes with no report ID and no length field of their
-own, so the framing layer owns every byte of a report. Frames are packed into that byte stream
-back to back, and the tail of the last report of a batch is filled with **`0x00`**.
+own. **As of v3, byte 0 of every report is a frame-start flag** — `1` when a frame begins in
+this report, `0` when it continues the one in progress — and the framing layer owns the other
+63 ([ADR-0012](adr/0012-frame-start-flag-for-report-resync.md); the flag is read by
+`dh_frame_reader_report`; [#186](https://github.com/myn/deskhopplus/issues/186) wires it into
+every emitter and reader). Frames are packed into that byte
+stream back to back, and the tail of the last report of a batch is filled with **`0x00`**.
 
 `0x00` is not a message type — the registry starts at `0x01` — so it cannot begin a frame. A
 decoder skips it **between** frames and nowhere else: inside a frame it is ordinary payload,
@@ -453,7 +469,9 @@ specification, not an implementation choice — two of these conditions can hold
 which answer is given tells the user which remedy to reach for.
 
 1. **`proto_version` is one the board does not implement** → `HELLO_REFUSED(version_incompatible)`,
-   untagged. First, because a board cannot verify a tag under rules it does not know.
+   untagged. First, because a board cannot verify a tag under rules it does not know. (A v2
+   peer never gets this far — its reports have no frame-start flag, so its hello is a protocol
+   error before it is a hello; see the v3 note at the top.)
 2. **The board holds no registration for the `helper_key_id` this hello names** →
    `HELLO_REFUSED(unpaired)`, untagged. There is no secret to prove and the honest remedy really
    is the config chord. Per key id, not per board: a board registered to *someone else* is

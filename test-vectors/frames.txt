@@ -8,7 +8,9 @@
 # The tags and seals below are real, computed from the fixed test key material published
 # in that script. A hand-written tag would make this file agree with nothing.
 #
-# Protocol v2 (ADR-0008, #109). Every frame outside types 0x08-0x0F carries the
+# Protocol v3: v2's frame layouts (ADR-0008, #109) carrying version 3 (ADR-0012, #185 —
+# the v3 wire break is the frame-start flag on every report, which lives one layer below
+# these frames and has no vector). Every frame outside types 0x08-0x0F carries the
 # 24-byte authentication prefix — an 8-byte counter and a 16-byte HMAC-SHA256 tag —
 # between the 4-byte header and the body. mkroamer's five byte-identical vectors did
 # not survive that: the names are kept, the bytes are not, because the frames now
@@ -28,8 +30,8 @@
 # message travels is not a property of its bytes — the tag is rewritten at each hop —
 # so one direction is enough to gate the layout.
 
-hello_mac                    | 01 00 3f 00 00 00 00 00 00 00 00 00 19 86 c3 f8 fd 48 86 7e eb 00 82 a8 4b ce 54 e9 02 00 01 00 01 00 04 0d f0 fe ca ef be ad de ca 5f 30 15 4a 8f 7c 61 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
-hello_ack_ok                 | 02 00 36 00 00 00 00 00 00 00 00 00 25 48 a1 b1 81 ba 76 5e c7 4d 4f 68 04 9c 90 71 0d f0 fe ca ef be ad de 02 00 00 01 00 04 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+hello_mac                    | 01 00 3f 00 00 00 00 00 00 00 00 00 50 2a 2a 0e 41 f9 f6 5a 6f 0e 7f 07 3f 48 9f 94 03 00 01 00 01 00 04 0d f0 fe ca ef be ad de ca 5f 30 15 4a 8f 7c 61 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+hello_ack_ok                 | 02 00 36 00 00 00 00 00 00 00 00 00 aa 8c e0 50 4f d2 df 1c 75 41 15 37 e5 cb bc 9b 0d f0 fe ca ef be ad de 03 00 00 01 00 04 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
 heartbeat                    | 05 00 18 00 00 00 00 00 00 00 00 00 27 16 96 9c e0 28 51 ef ab 46 6e 40 24 8b e1 81
 device_heartbeat             | 06 00 18 00 01 00 00 00 00 00 00 00 da 4c 18 18 29 fa 74 4f 99 61 11 71 63 3a 68 6a
 session_end_liveness         | 07 00 1d 00 02 00 00 00 00 00 00 00 65 b3 b7 45 91 e8 c0 2a 30 fe 33 dd 5e a1 ec 8e 01 b8 0b 00 00
@@ -43,8 +45,8 @@ pair_request                 | 08 00 48 00 0d f0 fe ca ef be ad de 51 5c 3d 6e b
 pair_grant                   | 09 00 48 00 0d f0 fe ca ef be ad de 1f 14 01 46 bf b1 b2 51 f8 4f 4d db e0 d4 cd cf d7 7a fd 98 4a 95 20 e3 57 94 02 1f 83 12 bb 9e ec 99 5a 08 b1 fa 77 04 df 3d cc 0b 50 a9 66 52 63 fb 77 11 f9 5f 9f 8a 44 9c 50 96 e4 7c 89 2b
 pair_refused_no_window       | 0a 00 09 00 0d f0 fe ca ef be ad de 00
 pair_refused_registered      | 0a 00 09 00 0d f0 fe ca ef be ad de 01
-hello_refused_version        | 0b 00 0b 00 0d f0 fe ca ef be ad de 02 00 02
-hello_refused_unpaired       | 0b 00 0b 00 0d f0 fe ca ef be ad de 02 00 03
+hello_refused_version        | 0b 00 0b 00 0d f0 fe ca ef be ad de 03 00 02
+hello_refused_unpaired       | 0b 00 0b 00 0d f0 fe ca ef be ad de 03 00 03
 place_chain2_mid             | 20 00 1c 00 06 00 00 00 00 00 00 00 30 30 c0 bd 86 87 9b 0a 1c a6 f7 79 aa 7d 7f 00 02 01 00 80
 pos_query                    | 21 00 18 00 07 00 00 00 00 00 00 00 fc 04 f0 b6 2b b8 85 c7 6e b6 3f da 47 54 8c cf
 pos_response_chain1          | 22 00 1d 00 01 00 00 00 00 00 00 00 f2 ef 33 e4 dc b0 b9 f8 0f 9f d3 10 89 fd f4 60 01 00 40 00 c0

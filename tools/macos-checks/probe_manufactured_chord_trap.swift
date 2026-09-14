@@ -118,7 +118,7 @@ let MSG_DEVICE_HEARTBEAT: UInt8 = 0x06
 let MSG_SESSION_END: UInt8 = 0x07
 let MSG_HELLO_REFUSED: UInt8 = 0x0B
 
-let PROTO_VERSION: UInt16 = 2
+let PROTO_VERSION: UInt16 = 3   // DH_PROTO_VERSION; the hello_mac vector below carries it
 let OS_MAC: UInt8 = 1
 let BUILD_RELEASE: UInt8 = 0
 
@@ -145,16 +145,16 @@ func helloBody(correlation: UInt64, keyId: [UInt8], nonce: [UInt8]) -> [UInt8] {
         + nonce
 }
 
-// The v2 `hello_mac` golden vector, copied from test-vectors/frames.txt. It is
+// The `hello_mac` golden vector, copied from test-vectors/frames.txt. It is
 // the shape gate for the encoder above, and its 16-byte tag is reused verbatim
 // below: a well-formed tag that no board's key produces is exactly what this
 // probe wants to send.
 let goldenHelloMac: [UInt8] = [
     0x01, 0x00, 0x3f, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x19, 0x86, 0xc3, 0xf8, 0xfd, 0x48, 0x86, 0x7e,
-    0xeb, 0x00, 0x82, 0xa8, 0x4b, 0xce, 0x54, 0xe9,
-    0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,
+    0x50, 0x2a, 0x2a, 0x0e, 0x41, 0xf9, 0xf6, 0x5a,
+    0x6f, 0x0e, 0x7f, 0x07, 0x3f, 0x48, 0x9f, 0x94,
+    0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x04,
     0x0d, 0xf0, 0xfe, 0xca, 0xef, 0xbe, 0xad, 0xde,
     0xca, 0x5f, 0x30, 0x15, 0x4a, 0x8f, 0x7c, 0x61,
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -171,14 +171,14 @@ let rebuilt = frame(MSG_HELLO, counter: 0, tag: goldenTag,
                                     keyId: [0xca, 0x5f, 0x30, 0x15, 0x4a, 0x8f, 0x7c, 0x61],
                                     nonce: (0...15).map { UInt8($0) }))
 guard rebuilt == goldenHelloMac else {
-    print("probe: SELF-TEST FAILED — this probe's hello does not match the v2 hello_mac vector")
+    print("probe: SELF-TEST FAILED — this probe's hello does not match the hello_mac vector")
     print("       built:  \(hex(rebuilt[...]))")
     print("       golden: \(hex(goldenHelloMac[...]))")
     print("       Refusing to run: a malformed hello would be refused for the wrong reason,")
     print("       and the result would look like the trap does not exist.")
     exit(3)
 }
-print("probe: self-test ok — hello matches the v2 hello_mac vector")
+print("probe: self-test ok — hello matches the hello_mac vector")
 
 /* The probe's own correlation value, which is the whole of question A: every
    answer the board gives to these hellos echoes this number, and the real

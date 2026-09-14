@@ -70,13 +70,12 @@ extern "C" {
 #endif
 
 /*
- * 2, and it moved with this file rather than with the specification. A board
- * that announced version 2 while speaking v1 would be worse than one
- * announcing the version it actually speaks — which is why #109 wrote
- * docs/protocol.md against 2 and #110 landed the primitives, and neither
- * touched this constant.
+ * 3 as of ADR-0012 (#185): a frame-start flag in byte 0 of every report. The
+ * bump is a record, not a gate — see docs/protocol.md, "v3 is v2 plus one
+ * byte per report". Bumped one commit ahead of #186, which moves the wire;
+ * nothing between the two is a release. tools/gen-frame-vectors.py mirrors it.
  */
-#define DH_PROTO_VERSION 2u
+#define DH_PROTO_VERSION 3u
 
 /*
  * Two channels (#63, ADR-0002): the count is negotiated in the hello

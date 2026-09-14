@@ -131,6 +131,11 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 | listener detected | Another program is writing to the device channel — find and stop it, and do not press the config chord while it is running | **no** |
 | board identity changed | Device identity changed — if you re-flashed it, remove the pinned board key | **no** |
 
+**"Version mismatch" is the board's refusal of a hello it could read.** A helper and board on
+different sides of the v3 report shape ([ADR-0012](../../docs/adr/0012-frame-start-flag-for-report-resync.md))
+never get that far — each misparses the other's hello — so that upgrade gap shows as
+*Reconnecting repeatedly*, whose wording already says to check the helper is up to date.
+
 **Only "not paired" prompts the chord.** A chord press provisions whatever is attached to the
 channel during the pairing window ([#34](https://github.com/myn/deskhopplus/issues/34)), so the two
 states where something else may be attached — a listener writing, or a board that granted under an

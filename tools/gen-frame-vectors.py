@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the golden vectors from docs/protocol.md's v2 layouts.
+"""Regenerate the golden vectors from docs/protocol.md's layouts (v3: v2's frames, version 3).
 
     python3 tools/gen-frame-vectors.py              > test-vectors/frames.txt
     python3 tools/gen-frame-vectors.py --primitives > test-vectors/primitives.txt
@@ -294,12 +294,17 @@ def seal(counter: int, plaintext: bytes, aad: bytes) -> bytes:
 # --------------------------------------------------------------------------
 
 
+# Mirrors DH_PROTO_VERSION in src/core/dh_session.h. 3 as of ADR-0012 (#185):
+# the wire break is the frame-start flag on every report, not any field below.
+PROTO_VERSION = 3
+
+
 def build():
     v = []
 
     # --- session, helper to device -----------------------------------------
     hello_body = (
-        struct.pack("<HBBBH", 2, 1, 0, 1, 1024)  # version, mac, release, 1 channel, 1024
+        struct.pack("<HBBBH", PROTO_VERSION, 1, 0, 1, 1024)  # version, mac, release, 1 channel, 1024
         + struct.pack("<Q", CORRELATION)
         + HELPER_KEY_ID
         + HELPER_NONCE
@@ -308,7 +313,7 @@ def build():
 
     ack_body = (
         struct.pack("<Q", CORRELATION)
-        + struct.pack("<HBBH", 2, 0, 1, 1024)  # version, release, 1 channel, 1024
+        + struct.pack("<HBBH", PROTO_VERSION, 0, 1, 1024)  # version, release, 1 channel, 1024
         + BOARD_NONCE
     )
     v.append(("hello_ack_ok", frame(0x02, ack_body, K_B2H, 0)))
@@ -350,8 +355,8 @@ def build():
     v.append(("pair_grant", frame(0x09, struct.pack("<Q", CORRELATION) + BOARD_PUB)))
     v.append(("pair_refused_no_window", frame(0x0A, struct.pack("<QB", CORRELATION, 0))))
     v.append(("pair_refused_registered", frame(0x0A, struct.pack("<QB", CORRELATION, 1))))
-    v.append(("hello_refused_version", frame(0x0B, struct.pack("<QHB", CORRELATION, 2, 2))))
-    v.append(("hello_refused_unpaired", frame(0x0B, struct.pack("<QHB", CORRELATION, 2, 3))))
+    v.append(("hello_refused_version", frame(0x0B, struct.pack("<QHB", CORRELATION, PROTO_VERSION, 2))))
+    v.append(("hello_refused_unpaired", frame(0x0B, struct.pack("<QHB", CORRELATION, PROTO_VERSION, 3))))
 
     # --- placement ----------------------------------------------------------
     v.append(("place_chain2_mid", frame(0x20, struct.pack("<BBH", 2, 1, 0x8000), K_B2H, 6)))
@@ -404,7 +409,9 @@ HEADER = """\
 # The tags and seals below are real, computed from the fixed test key material published
 # in that script. A hand-written tag would make this file agree with nothing.
 #
-# Protocol v2 (ADR-0008, #109). Every frame outside types 0x08-0x0F carries the
+# Protocol v3: v2's frame layouts (ADR-0008, #109) carrying version 3 (ADR-0012, #185 —
+# the v3 wire break is the frame-start flag on every report, which lives one layer below
+# these frames and has no vector). Every frame outside types 0x08-0x0F carries the
 # 24-byte authentication prefix — an 8-byte counter and a 16-byte HMAC-SHA256 tag —
 # between the 4-byte header and the body. mkroamer's five byte-identical vectors did
 # not survive that: the names are kept, the bytes are not, because the frames now

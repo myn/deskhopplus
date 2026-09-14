@@ -427,11 +427,16 @@ static void test_the_codecs_round_trip_the_golden_frames(void) {
                   v.hdr.type == DH_MSG_SESSION_END,
               "end_silence", "no session end after the absent window");
         CHECK(body_len == DH_SESSION_END_LEN, "end_silence", "the body is the wrong length");
-        CHECK(body[0] == DH_SESSION_END_LIVENESS_TIMEOUT, "end_silence", "the reason was lost");
-        const uint32_t silent = (uint32_t)body[1] | ((uint32_t)body[2] << 8) |
-                                ((uint32_t)body[3] << 16) | ((uint32_t)body[4] << 24);
-        CHECK(silent == DH_SESSION_ABSENT_MS + 7, "end_silence",
-              "the end did not carry how long the board had gone unheard");
+        /* Guarded, so a stale golden hello reports a failure rather than a
+           segfault that hides every check after it. */
+        if (body_len == DH_SESSION_END_LEN) {
+            CHECK(body[0] == DH_SESSION_END_LIVENESS_TIMEOUT, "end_silence",
+                  "the reason was lost");
+            const uint32_t silent = (uint32_t)body[1] | ((uint32_t)body[2] << 8) |
+                                    ((uint32_t)body[3] << 16) | ((uint32_t)body[4] << 24);
+            CHECK(silent == DH_SESSION_ABSENT_MS + 7, "end_silence",
+                  "the end did not carry how long the board had gone unheard");
+        }
     }
 
     const struct vector *drops_v = find("device_drops");
@@ -611,14 +616,16 @@ static void test_the_two_refusals_echo_the_callers_correlation(void) {
     uint8_t reply[DH_SESSION_REPLY_MAX];
     uint8_t encoded[DH_HELLO_LEN];
 
-    /* 1. A version this board does not implement. First, because a board
-          cannot verify a tag under rules it does not know — so this one is
-          answered even though its tag was never checked. */
+    /* 1. A version this board does not implement — the previous one, which
+          is what a helper left behind by an upgrade names. First, because a
+          board cannot verify a tag under rules it does not know — so this one
+          is answered even though its tag was never checked. This gates the
+          check itself, not the wire path (ADR-0012). */
     dh_session s;
     a_paired_board(&s, DH_BUILD_RELEASE);
 
     dh_hello wrong_version = golden;
-    wrong_version.proto_version = DH_PROTO_VERSION + 1u;
+    wrong_version.proto_version = DH_PROTO_VERSION - 1u;
     wrong_version.correlation = 0x0102030405060708ull;
     size_t len = 0;
     CHECK(dh_hello_encode(&wrong_version, k_hello, 0, frame, sizeof frame, &len) == DH_FRAME_OK,

@@ -148,7 +148,7 @@ func testPairingMessagesRoundTrip() throws {
     Check.equal(refDecoded.correlation, correlation, "pair_refused correlation")
     Check.equal(refDecoded.reason, .noWindow, "pair_refused reason")
 
-    let hRefused = HelloRefused(correlation: correlation, protocolVersion: 2, status: .unpaired)
+    let hRefused = HelloRefused(correlation: correlation, protocolVersion: UInt16(DH_PROTO_VERSION), status: .unpaired)
     let hRefBytes = try hRefused.encoded()
     let hRefDecoded = try HelloRefused.decode(payload: FrameCodec.decode(hRefBytes).frame.payload)
     Check.equal(hRefDecoded.correlation, correlation, "hello_refused correlation")
