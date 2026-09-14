@@ -252,3 +252,21 @@ Recovery needed no new mechanism: `dh_xfer_sweep_rx` already re-requests a chunk
 at all (2 s of no progress, or the sweep at `CLIP_DONE`), and a corrupted-then-discarded chunk is now
 indistinguishable from a lost one at that layer. `docs/protocol.md`, "the helper's side of the same
 rule," carries the same amendment.
+
+## Amendment, 2026-09-14 — the second open is refused on macOS 15.7.9
+
+"On macOS it does not exist" (the *Amends* line above) was true of the machine it was measured on
+in August and is not true of the same machine today. Measured three times on 2026-09-14 on macOS
+15.7.9 ([#191](https://github.com/myn/deskhopplus/issues/191)) with
+`tools/macos-checks/probe_seize_exclusivity.swift`: with the helper holding the channel, a second
+open is refused with `kIOReturnExclusiveAccess`, seize or plain; with the helper unloaded it
+succeeds; with the helper reloaded it is refused again. Not a TCC effect — that path returns
+`kIOReturnNotPermitted`. The August measurement did not record its macOS version.
+
+**Nothing in this decision moves.** Every rule here was chosen because it holds with *no*
+exclusivity; an OS that now supplies some is a second fence in front of a door that is already
+locked. The *"A macOS API that grants genuine exclusivity"* row under *Alternatives considered*
+stays rejected for the same reason it was: a behaviour that has been measured both ways across
+macOS versions is not a property to rest a security claim on. What changes is only what a run
+sheet can measure — a listener cannot attach beside the running helper on this macOS, so the
+listener probes (`probe_manufactured_chord_trap.swift`, #189) cannot run here.

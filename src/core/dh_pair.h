@@ -16,11 +16,12 @@
  * hello. Two properties made that unsound, and both were measured rather than
  * argued (#95, 2026-08-13):
  *
- *   1. On macOS the channel is not exclusive. A second
- *      kIOHIDOptionsTypeSeizeDevice open succeeds and every client receives
- *      every report, so a secret that crosses the wire is a secret anything
- *      running as the user can take — with no filesystem access and no
- *      permission of any kind.
+ *   1. On macOS the channel is not reliably exclusive. A second
+ *      kIOHIDOptionsTypeSeizeDevice open succeeded and every client received
+ *      every report (re-measured 2026-09-14 on macOS 15.7.9: refused, #191 —
+ *      which changes nothing here), so a secret that crosses the wire is a
+ *      secret anything running as the user can take — with no filesystem
+ *      access and no permission of any kind.
  *   2. Rotation therefore did not recover a stolen pairing, it re-issued it.
  *      A listener still attached when the user pressed the chord simply
  *      received the replacement. The documented remedy handed the thief the

@@ -2,7 +2,9 @@
 // (#108 on v1; re-pointed at v2 by #114; at v3's report shape by #189.)
 //
 // #95 measured that a second kIOHIDOptionsTypeSeizeDevice open succeeds and
-// receives session traffic. On protocol v1 this probe then measured the
+// receives session traffic (2026-08-13; on macOS 15.7.9 it is refused instead,
+// #191, and this probe cannot attach — check there before a run). On protocol
+// v1 this probe then measured the
 // consequence that mattered, and confirmed it on hardware on 2026-08-18:
 //
 //   1. A listener sends a HELLO carrying a token it made up.
@@ -321,8 +323,8 @@ let opened = IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
 print(String(format: "probe: IOHIDDeviceOpen(seize) -> 0x%08x  %@", opened,
              opened == kIOReturnSuccess ? "SUCCESS — not refused" : "refused"))
 guard opened == kIOReturnSuccess else {
-    print("probe: refused, so there is no listener and nothing to measure. On macOS this")
-    print("       would contradict #95 — say so on the ticket rather than assuming a fluke.")
+    print("probe: refused, so there is no listener and nothing to measure. Expected on macOS")
+    print("       15.7.9 (#191); on an older macOS it would contradict #95 — say which on the ticket.")
     exit(1)
 }
 

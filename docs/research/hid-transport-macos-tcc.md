@@ -26,7 +26,7 @@ Nothing broader. Cursor placement, clipboard and serial access are settled in
 | Where is that decided? | `IOHIDDevice::handleStart` sets `RequiresTCCAuthorization`; `IOHIDDeviceClass initConnect` reads it and **short-circuits to granted when absent** |
 | Measured, unsigned, unbundled, under launchd, with **no** grant | Vendor-page opens returned **`kIOReturnSuccess`** (7 devices, 2 vendor pages) |
 | Did a TCC record get written? | **No.** No `kTCCServiceListenEvent` row exists on this machine at all |
-| Exclusive open (`kIOHIDOptionsTypeSeizeDevice`)? | **Also succeeds**, permission-free |
+| Exclusive open (`kIOHIDOptionsTypeSeizeDevice`)? | **Also succeeds**, permission-free. Whether it *excludes* is version-dependent: a second seize succeeded on 2026-08-13 ([#95](https://github.com/myn/deskhopplus/issues/95)) and is refused on macOS 15.7.9 ([#191](https://github.com/myn/deskhopplus/issues/191), 2026-09-14) |
 | Failure mode when the gate *does* apply | `kIOReturnNotPermitted` (`0xE00002E2`), plus `TCC deny IOHIDDeviceOpen` in the log — distinguishable |
 | Version-dependent? | **No.** The gate's source is byte-identical from Catalina (Jan 2020) to macOS 26 (Jun 2026) |
 | Does unsigned / unbundled / background matter? | **Not for vendor pages** — TCC is never reached, so there is no grant to lose on rebuild |

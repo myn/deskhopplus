@@ -35,13 +35,14 @@ _Avoid_: other device, remote board, secondary, slave
 **Connection**:
 The channels a helper holds open, all-or-nothing. It can be dropped and reopened without the device
 going anywhere, which is a helper's ordinary recovery from a session it has lost. Holding a
-connection does not keep a **listener** out.
+connection is not relied on to keep a **listener** out.
 _Avoid_: session, link, socket
 
 **Listener**:
 A second program attached to the same channels as the helper. It receives every frame the helper
 receives, and the frames it writes are ones the device cannot tell from the helper's. Refused on
-Windows, real on macOS.
+Windows. On macOS it depends on the version: a second seize succeeded on 2026-08-13 (#95) and is
+refused on macOS 15.7.9 (#191, 2026-09-14). The protocol is written as if it is real.
 _Avoid_: intruder, second client, second helper, eavesdropper, attacker
 
 **Session**:

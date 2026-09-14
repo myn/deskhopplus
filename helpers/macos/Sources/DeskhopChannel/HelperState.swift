@@ -16,12 +16,12 @@ import DHCore
  * differently.
  *
  * `channelHeld` — *"Another program holds the channel"* — used to carry that
- * rule and is gone (#72, #114, ADR-0008). It asserted something that can never
- * be true on macOS: a second `kIOHIDOptionsTypeSeizeDevice` open succeeds,
- * measured on 2026-08-13, so the open is never refused for the reason the
- * message named. What replaces it is `listenerDetected`, which is measured
- * rather than assumed — the board counts frames it could not authenticate and
- * says so.
+ * rule and is gone (#72, #114, ADR-0008). It asserted something macOS does
+ * not promise: a second `kIOHIDOptionsTypeSeizeDevice` open succeeded on
+ * 2026-08-13 (#95) and is refused on macOS 15.7.9 (#191, 2026-09-14), so the
+ * open is not refused *reliably* for the reason the message named. What
+ * replaces it is `listenerDetected`, which is measured rather than assumed —
+ * the board counts frames it could not authenticate and says so.
  */
 public enum HelperState: UInt32, CaseIterable, Equatable {
     /* Looking, or briefly gone. Nothing is shown to the user: a device that

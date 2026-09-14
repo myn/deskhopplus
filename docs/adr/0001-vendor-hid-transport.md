@@ -173,6 +173,13 @@ on real boards, and both came back as the decision assumed. Evidence is on #25 a
 > tag, and a clipboard payload sealed between the two helpers. This ADR's transport choice is
 > unaffected; what changes is that exclusivity was never load-bearing enough to rest a security
 > property on, and this ADR should not be read as offering one.
+>
+> **Re-measured 2026-09-14 on macOS 15.7.9 ([#191](https://github.com/myn/deskhopplus/issues/191)).**
+> The second open is now **refused** — `kIOReturnExclusiveAccess`, for a seize and for a plain open
+> alike — while the helper holds the collection, and succeeds the moment the helper is unloaded.
+> The 2026-08-13 measurement did not record its macOS version, so which release changed it is not
+> known. Nothing above is re-decided: ADR-0008 holds without exclusivity, and a behaviour that has
+> gone both ways across versions is still not a property to rest a security claim on.
 
 1. **`tools/windows-checks/Confirm-HidExclusivity.ps1 -Check A,E` against our own vendor
    collection** — `zero-access UP=0xFF00 U=0x0020 'DeskHop Channel' -> FAILED (err=32)`. Twice, on

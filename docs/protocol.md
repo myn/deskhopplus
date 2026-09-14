@@ -71,9 +71,12 @@ golden vectors survived the CDC→HID move untouched, and a vector that depends 
 transport is a sign the framing layer has leaked.
 
 **The channel is shared, not exclusive.** On macOS a second
-`kIOHIDOptionsTypeSeizeDevice` open succeeds (#95, measured 2026-08-13), so the **listener**
-of `CONTEXT.md` is a real thing on that platform and every rule below is written for it. The
-leverage a listener has is asymmetric, and v2 is shaped by the asymmetry:
+`kIOHIDOptionsTypeSeizeDevice` open succeeded (#95, measured 2026-08-13), so the **listener**
+of `CONTEXT.md` is a real thing on that platform and every rule below is written for it.
+Re-measured on macOS 15.7.9 (#191, 2026-09-14): the second open — seize or plain — is refused
+while the helper holds the channel. The rules stand as written: they were built to hold with
+no exclusivity at all, and an OS behaviour that changed once between versions is not a property
+to rest them on. The leverage a listener has is asymmetric, and v2 is shaped by the asymmetry:
 
 - **Device→helper frames reach every attached client.** A listener reads them all. This is why
   the clipboard payload is sealed and why refusal messages must be safe to overhear.

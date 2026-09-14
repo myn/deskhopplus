@@ -469,6 +469,11 @@ swift run deskhop-helper         # foreground, logging to stderr
       `tools/macos-checks/probe_seize_exclusivity.swift` independently got
       `IOHIDDeviceOpen(seize) -> 0x00000000` and then **read ten `DEVICE_HEARTBEAT` frames off the
       seized channel**.
+      **Re-measured 2026-09-14 on macOS 15.7.9 — refused.** `IOHIDDeviceOpen(seize) -> 0xe00002c5`
+      (`kIOReturnExclusiveAccess`) while the helper holds the channel, success once it is unloaded,
+      refused again once reloaded; a plain open is refused the same way. See
+      [#191](https://github.com/myn/deskhopplus/issues/191). The August run did not record its
+      macOS version; record it next to any future measurement of this box.
       **Cannot be re-run: the state it asked for is deleted.** ADR-0008 accepted that a listener is
       real on macOS — the second open succeeding is now the expected platform behaviour, not a
       defect to fix — and [#114](https://github.com/myn/deskhopplus/issues/114) deleted the state
@@ -1072,6 +1077,10 @@ This is the consequence of #95 that decided ADR-0008. #95 established that a sec
 `kIOHIDOptionsTypeSeizeDevice` open succeeds and receives session traffic. What that buys an
 attacker is this: the answer to *its* hello is delivered to *your* helper, which cannot tell the
 two apart.
+
+**On macOS 15.7.9 this probe cannot attach** — the second open is refused while the helper holds
+the channel ([#191](https://github.com/myn/deskhopplus/issues/191), 2026-09-14). The v3 re-run
+asked for by [#189](https://github.com/myn/deskhopplus/issues/189) waits on a macOS where it can.
 
 ```sh
 swift tools/macos-checks/probe_manufactured_chord_trap.swift --seconds 12 --interval 1000
