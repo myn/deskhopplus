@@ -117,11 +117,12 @@ times the reader bridged a gap and kept going.
 
 ### The firmware's own "stream gap" session end is no longer needed
 
-`channel_lifecycle.c` ends the session when its inbound backlog overflows and a report is dropped
+`channel_lifecycle.c` ended the session when its inbound backlog overflowed and a report was dropped
 (`stream_broken`, `DH_SESSION_END_STREAM_GAP`), because "no amount of waiting recovers" — the
-reasoning `test_a_gap_mid_frame_is_not_recoverable` proved. That reasoning stops being true once the
-reader resyncs; an overflow becomes a lost frame like any other. Removing that path is a follow-up,
-not part of this change.
+reasoning the frame_test gap test proved (since rewritten as
+`test_a_lost_report_mid_frame_costs_that_frame_only`). That reasoning stops being true once the
+reader resyncs; an overflow becomes a lost frame like any other. Removed by #188 (2026-09-14); the
+reason value stays reserved.
 
 ### What still ends the session
 

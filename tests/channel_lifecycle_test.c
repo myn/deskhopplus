@@ -251,25 +251,35 @@ static void check_end_reason(uint8_t reason) {
     CHECK(body_len > 0 && body[0] == reason);
 }
 
-static void test_report_gap_discards_backlog_before_decoding(void) {
+/*
+ * The ring overflowing drops one report and nothing else (#188): the frame
+ * riding it is lost, the reader resyncs on the next frame start (ADR-0012),
+ * and the session is kept. Ending it here used to restart every transfer
+ * from chunk 0 for a loss the reader now bridges by itself.
+ */
+static void test_backlog_overflow_drops_a_report_and_keeps_the_session(void) {
     init();
-    const uint8_t partial[] = {DH_MSG_CLIP_CHUNK, 0, 100, 0, 0, 0};
-    receive_bytes(partial, sizeof partial);
-    channel_lifecycle_step(&c, 100, NULL);
-    while (drain(sizeof wire) > 0) {}
-    receive_hello(); /* Must not be decoded after the later report is lost. */
-    const uint8_t pad = 0;
-    for (unsigned i = 0; i < CHANNEL_REPORT_BACKLOG; ++i)
-        channel_lifecycle_receive_report(&c, &pad, 1);
+    uint8_t frames[2][2100], reports[MAX_REPORTS][DH_REPORT_SIZE], body[2000] = {0x5a};
+    size_t len[2];
+    /* One report more than the ring holds in a pass, then a chunk that fits. */
+    const size_t body_len[2] = {sizeof body, 100};
+    for (unsigned i = 0; i < 2; ++i)
+        CHECK(dh_auth_frame(DH_MSG_CLIP_CHUNK, 0, c.session.k_h2b, i, body,
+                            body_len[i], frames[i], sizeof frames[i], &len[i]) == DH_FRAME_OK);
+    const size_t count = pack(frames[0], len[0], reports);
+    CHECK(count == CHANNEL_REPORT_BACKLOG + 1);
+    for (size_t i = 0; i < count; ++i)
+        channel_lifecycle_receive_report(&c, reports[i], DH_REPORT_SIZE);
+    CHECK(c.reports_dropped == 1);
     channel_lifecycle_step(&c, 101, NULL);
-    check_end_reason(DH_SESSION_END_STREAM_GAP);
-    CHECK(drain(sizeof wire) == 0);
-    CHECK(c.reports_dropped > 0 && !c.session.present);
-    const uint32_t dropped = c.reports_dropped;
-    receive_hello();
+    CHECK(c.session.present);
+    while (drain(sizeof wire) > 0) CHECK(wire[0] != DH_MSG_SESSION_END);
+    receive_bytes(frames[1], len[1]);
     channel_lifecycle_step(&c, 102, NULL);
-    CHECK(drain(sizeof wire) > 0 && wire[0] == DH_MSG_HELLO_ACK);
-    CHECK(c.reports_dropped == dropped);
+    CHECK(c.reader.resyncs == 1);
+    CHECK(c.session.rx.accepted == 1);
+    CHECK(c.session.present && c.reports_dropped == 1);
+    while (drain(sizeof wire) > 0) CHECK(wire[0] != DH_MSG_SESSION_END);
 }
 
 static void test_malformed_report_ends_session_and_allows_reconnect(void) {
@@ -590,7 +600,7 @@ int main(void) {
     test_queue_refusal_survives_reconnect();
     test_link_loss_discards_work_but_keeps_registration_and_window();
     test_wipe_revokes_session_and_registration_but_preserves_identity();
-    test_report_gap_discards_backlog_before_decoding();
+    test_backlog_overflow_drops_a_report_and_keeps_the_session();
     test_malformed_report_ends_session_and_allows_reconnect();
     test_reception_and_liveness_share_the_pass_clock();
     test_policy_refusal_leaves_work_owed();

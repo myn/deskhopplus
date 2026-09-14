@@ -25,14 +25,10 @@
  *
  * Thirty-two shared slots cover about 16 ms with two saturated channels. It is not a measurement,
  * because nobody has measured the worst pass; it is generous depth behind a
- * drop that is no longer silent, which is the change that matters. See
- * `stream_broken` — a dropped report now ends the session, so if this
- * number is still too small it says so instead of costing three seconds of
- * confusion.
- *
- * Since ADR-0012 the reader resyncs on the frame-start flag, so a dropped
- * report costs the frame riding it and nothing after — the session end above
- * is no longer needed, and dropping it is #188.
+ * drop that is no longer silent, which is the change that matters: a drop
+ * counts in `reports_dropped` (DEVICE_DROPS), so if this number is still too
+ * small it says so. Since ADR-0012 the reader resyncs on the frame-start
+ * flag, so the drop costs the frame riding it and nothing after (#188).
  */
 #define CHANNEL_REPORT_BACKLOG 32u
 
@@ -62,14 +58,6 @@ typedef struct {
     uint8_t report_head; /* next to drain */
     uint8_t report_used;
     uint32_t reports_dropped;
-    /*
-     * A report was dropped, so the byte stream has a hole in it (#161).
-     *
-     * Raised in the USB callback and acted on in channel_task, the same shape
-     * as `config_wiped` and for the same reason: ending a session sends a
-     * frame, and no decision may run at the bottom of a TinyUSB callback.
-     */
-    bool stream_broken;
     /* Every report the USB callback delivered, dropped ones included. The head
        of the inbound chain, so a helper writing frames the board never accepts
        can be told apart from one whose frames never arrived (#107). */

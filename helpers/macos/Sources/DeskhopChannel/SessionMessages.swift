@@ -32,10 +32,10 @@ public enum SessionEndReason: UInt8, Equatable {
        rest — the hello that follows is refused, and the helper reports not
        paired. */
     case unpaired = 3
-    /* The board lost an inbound report, so the stream from this helper had a
-       hole in it and the reader could not find its way back (#161). Nothing
-       this end did is wrong — it is named separately from `protocolError`
-       precisely so a log does not send the next reader looking at this end. */
+    /* Reserved; nothing sends it since #188. It meant the board lost an
+       inbound report and the reader could not find its way back (#161).
+       Named separately from `protocolError` so a log does not send the next
+       reader looking at this end. */
     case streamGap = 4
 
     public init(wire: UInt8) {

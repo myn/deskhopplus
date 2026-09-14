@@ -72,7 +72,6 @@ void channel_lifecycle_link_lost(channel_lifecycle *c) {
 
     c->report_head = 0;
     c->report_used = 0;
-    c->stream_broken = false;
     dh_inq_reset(&c->inbound);
 
     /* Reset, never init: what is queued belonged to the link that just went,
@@ -116,21 +115,16 @@ void channel_lifecycle_receive_channel_report(channel_lifecycle *c, uint8_t inde
 
     if (c->report_used >= CHANNEL_REPORT_BACKLOG) {
         /*
-         * Counted, never silent (#43) — and no longer only counted.
+         * Counted, never silent (#43), and nothing else: the reader resyncs
+         * on the frame-start flag (ADR-0012), so a dropped report costs the
+         * frame riding it and the helper re-asks for what stalled.
          *
-         * Written when a lost report broke the byte stream for good: the
-         * reader went on waiting for a body length it read before the loss,
-         * nothing completed, and three seconds later this board evicted a
-         * helper that had been writing the whole time (#161). Ending the
-         * session was the cheapest honest answer to a stream that could no
-         * longer be trusted.
-         *
-         * The reader now resyncs on the frame-start flag (ADR-0012), so a
-         * dropped report costs a frame like any other lost one and this end
-         * is no longer needed. Dropping it is #188, not this change.
+         * This used to end the session (#161), from before the flag, when a
+         * lost report left the reader waiting forever for a length it had
+         * already read. That end restarted every transfer from chunk 0 for
+         * a loss the reader now bridges by itself (#188).
          */
         c->reports_dropped++;
-        c->stream_broken = true;
         return;
     }
 
@@ -364,15 +358,6 @@ static void pump_query(channel_lifecycle *c, uint32_t now, void *context) {
 }
 
 void channel_lifecycle_step(channel_lifecycle *c, uint32_t now, void *context) {
-    /* A missing report invalidates every byte parked behind the gap. Drop
-       backlog before decoding, but retain relay/outbound work as before. */
-    if (c->stream_broken) {
-        c->stream_broken = false;
-        c->report_head = 0;
-        c->report_used = 0;
-        end_session(c, DH_SESSION_END_STREAM_GAP, now);
-        reset_readers(c);
-    }
     drain_reports(c, now, context);
     pump_query(c, now, context);
     if (c->registration_unsaved) {

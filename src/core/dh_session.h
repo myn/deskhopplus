@@ -200,18 +200,11 @@ typedef enum {
        anything at the moment it was pressed. */
     DH_SESSION_END_UNPAIRED = 3,
     /*
-     * The board lost an inbound report, so the byte stream from this helper
-     * has a hole in it (#161).
-     *
-     * Its own reason rather than a protocol error, which is what this used to
-     * be reported as: nothing the helper did is wrong, and a log that says
-     * "protocol error" sends the next reader looking at the wrong end. Written
-     * when the reader could not recover from a gap; since ADR-0012 it resyncs
-     * on the frame-start flag, and this end goes with #188.
-     *
-     * Safe to add because these are diagnostic and not behavioural: a helper
-     * that predates this reads it as unspecified, which is what the enum's
-     * doc comment promises and the whole reason it says so.
+     * Reserved: sent before ADR-0012, when the board lost an inbound report
+     * and could not recover the byte stream (#161). The reader now resyncs
+     * on the frame-start flag, so nothing sends it (#188), and no helper can
+     * receive it from a board that old — the hello fails first. Kept so the
+     * value is not reused.
      */
     DH_SESSION_END_STREAM_GAP = 4,
 } dh_session_end_reason;
