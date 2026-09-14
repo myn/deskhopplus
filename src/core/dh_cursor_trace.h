@@ -1,4 +1,4 @@
-/* Bounded cursor-transition evidence preserved across a config-mode reboot (#28). */
+/* Bounded cursor-transition evidence preserved across reboots (#28, #102). */
 #pragma once
 
 #include <stdbool.h>
@@ -31,7 +31,10 @@ typedef enum {
      * Not cursor events: the board's own USB host bringing up the keyboard
      * and mouse plugged into it (#102). The ring survives a reboot, which is
      * the one thing a dead-after-boot keyboard needs a log to do. Fields:
-     * BOOT      query_id = 1 when booting into config mode.
+     * BOOT      query_id bit0 = booting into config mode, bit1 = the
+     *           watchdog reset the board, bit2 = the firmware meant to
+     *           reboot. bit1 without bit2 is a hang. move_x = 1 after the
+     *           config chord. All clear: power-on or a flash.
      * HID_MOUNT query_id = dev_addr, move_x = instance, move_y = itf protocol
      *           (1 keyboard, 2 mouse, 0 none); direction bit0 = keyboard seen,
      *           bit1 = mouse seen; transition 1 = report polling started,

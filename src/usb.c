@@ -207,9 +207,17 @@ bool usb_host_any_mounted(void) {
  * running during TinyUSB's own reset. Clearing that flag while the line is
  * held low is the whole trick. Held for 20 ms: past the 10 ms a device needs
  * to take it as a reset, and many frames more than the check needs.
+ *
+ * The root is parked first. The reset drives the pins through the PIO
+ * transmit state machine, and the SOF handler on the other core is using
+ * that machine every frame while the root is live; TinyUSB only ever resets
+ * a root it has just seen attach, which is still suspended. Two frames
+ * parked is one in flight finishing, with margin.
  */
 void usb_host_replug(void) {
     root_port_t *root = PIO_USB_ROOT_PORT(0);
+    root->suspended = true;
+    busy_wait_ms(2);
     pio_usb_host_port_reset_start(0);
     root->suspended = false;
     busy_wait_ms(20);

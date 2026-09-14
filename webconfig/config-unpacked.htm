@@ -3061,7 +3061,9 @@ const packetType = {
   getCursorTraceMsg: 33, cursorTraceMsg: 34
 };
 
-/* boot: q=1 into config mode. hid-mount/unmount (#102): q=dev_addr d=(instance,protocol);
+/* boot: q bit0 into config mode, bit1 watchdog reset, bit2 meant (bit1 without bit2 = hang);
+   d=(1,_) after the chord.
+   hid-mount/unmount (#102): q=dev_addr d=(instance,protocol);
    mount dir bit0 keyboard seen, bit1 mouse seen; transition 1 polling, 2 refused, 3 rejected.
    dev-mount/unmount: q=dev_addr, the device before any class driver. replug: q=pulls so far. */
 const cursorTraceEvents = ["", "input", "decision", "query", "response", "place", "switch", "cancel", "timeout", "boot", "hid-mount", "hid-unmount", "dev-mount", "dev-unmount", "replug"];

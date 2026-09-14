@@ -25,4 +25,9 @@
    scratch[4] on every boot, and watchdog_reboot() writes 5, 6 and 7, so a
    flag in any of those is erased before the boot that would have used it. */
 #define MAGIC_WORD_PAIR 0x9a17c0de
+/* Set on every reboot the firmware means — the chord's watchdog-timeout
+   path and reboot() alike — and read and cleared by cursor_trace_boot, so a
+   boot the watchdog caused without it is a hang (#102). scratch[2] because
+   0-2 are the ones nothing else writes. */
+#define MAGIC_WORD_REBOOT 0x0b00dead
 #define MAGIC_WORD_2 0x00c0ffee

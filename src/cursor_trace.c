@@ -16,14 +16,28 @@ static uint16_t pack_state(const device_t *state, uint8_t direction, uint8_t tra
     return packed;
 }
 
-void cursor_trace_boot(bool preserve) {
+/*
+ * Kept across every reboot, not only the one into config mode: the boot
+ * record below is what separates one boot's records from the last, and a
+ * board that rebooted on its own (#102's hunt hit one) would otherwise take
+ * the evidence with it. Only a ring that fails its magic starts over.
+ */
+void cursor_trace_boot(bool config_mode) {
     critical_section_init(&cursor_trace_lock);
     critical_section_enter_blocking(&cursor_trace_lock);
-    dh_cursor_trace_init(&cursor_trace_storage, preserve);
-    /* One record per boot, so the mounts that follow can be told from the
-       last boot's (#102). Raw: nothing in `state` is loaded yet. */
+    dh_cursor_trace_init(&cursor_trace_storage, true);
+    /* One record per boot, saying why it happened (#102). Raw: nothing in
+       `state` is loaded yet. The chord reboots through the watchdog too, so
+       its reason alone cannot name a hang; the firmware marks the reboots it
+       meant, and a watchdog boot without the mark is one it did not. The
+       chord's own magic is read before channel_init consumes it. */
+    const bool meant = watchdog_hw->scratch[2] == MAGIC_WORD_REBOOT;
+    watchdog_hw->scratch[2] = 0;
     dh_cursor_trace_append(&cursor_trace_storage, (dh_cursor_trace_record_t){
-        .event = DH_CURSOR_TRACE_BOOT, .query_id = preserve});
+        .event = DH_CURSOR_TRACE_BOOT,
+        .query_id = (uint8_t)((config_mode ? 1u : 0u) | (watchdog_caused_reboot() ? 2u : 0u) |
+                              (meant ? 4u : 0u)),
+        .move_x = watchdog_hw->scratch[3] == MAGIC_WORD_PAIR});
     critical_section_exit(&cursor_trace_lock);
 }
 

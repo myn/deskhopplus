@@ -32,8 +32,10 @@ void kick_watchdog_task(device_t *state) {
     uint32_t current_time         = time_us_32();
 
     /* If a reboot is requested, we'll stop updating watchdog */
-    if (state->reboot_requested)
+    if (state->reboot_requested) {
+        watchdog_hw->scratch[2] = MAGIC_WORD_REBOOT;
         return;
+    }
 
     /* If core1 stops updating the timestamp, we'll stop kicking the watchog and reboot */
     if ((uint32_t)(current_time - core1_last_loop_pass) < CORE1_HANG_TIMEOUT_US)

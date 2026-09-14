@@ -262,6 +262,7 @@ void request_byte(device_t *state, uint32_t address) {
 }
 
 void reboot(void) {
+    watchdog_hw->scratch[2] = MAGIC_WORD_REBOOT;
     *((volatile uint32_t*)(PPB_BASE + 0x0ED0C)) = 0x5FA0004;
 }
 
