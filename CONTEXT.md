@@ -154,6 +154,14 @@ The unit of integrity, loss detection, and selective retransmission — exactly 
 carrying id, length, and CRC32.
 _Avoid_: block, segment, packet (a packet is the 12-byte inter-board wire unit)
 
+**Bundle**:
+One copy carried as more than one representation of the same content — its plain text and the
+picture an application drew of it — so that the pasting application picks, as it would from a
+native clipboard. One offer, one transfer, one kind. The copy side builds one only when both are
+present and they fit the eager threshold together; past that, the text travels alone and the
+picture does not travel (ADR-0013).
+_Avoid_: multi-format, rich copy, both formats
+
 **Offer**:
 The immutable announcement of one clipboard transfer: its transfer id, kind, total length, and
 metadata. Repeating the same offer is a retry of that transfer; reusing its id with any different
