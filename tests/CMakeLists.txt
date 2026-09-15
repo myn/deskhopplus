@@ -195,6 +195,13 @@ add_executable(file_list_test file_list_test.c ${CORE}/dh_file_list.c)
 target_include_directories(file_list_test PRIVATE ${CORE})
 add_test(NAME file_list_test COMMAND file_list_test)
 
+# The bundle a kind-3 offer carries (#195): text beside its picture, so the
+# pasting application picks. A codec, like the file list above; its one
+# refusal is a part that runs past the payload it arrived in.
+add_executable(bundle_test bundle_test.c ${CORE}/dh_bundle.c)
+target_include_directories(bundle_test PRIVATE ${CORE})
+add_test(NAME bundle_test COMMAND bundle_test)
+
 # The end-to-end clipboard seal (#113). Gated by both vector files: the frames
 # carry the sealed bodies an independent implementation produced, and the
 # primitives carry the key material they were produced from. It drives a real

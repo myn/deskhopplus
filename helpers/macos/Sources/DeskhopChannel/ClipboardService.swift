@@ -23,6 +23,37 @@ public enum ClipKind: UInt8 {
     case text = 0
     case png = 1
     case files = 2
+    /// Text beside its picture, so the pasting application picks (#195).
+    case bundle = 3
+}
+
+/*
+ * What one copy sends when it holds text, a picture, or both (#195).
+ *
+ * A size of zero is "not there" — which is also what a read that came back
+ * empty is, so a picture the pasteboard offered and then would not give up
+ * still lets the text beside it travel.
+ *
+ * Both present and small enough together: a bundle, so the pasting
+ * application picks. Both present and over the limit: the text alone, and the
+ * picture does not travel — text is never made late by a rendering beside it
+ * (ADR-0013). The Windows twin is `select_clipboard_send` in
+ * clipboard_update.h, and a divergence is a clipboard that behaves differently
+ * on each computer.
+ */
+public enum ClipboardSend: Equatable {
+    case nothing, text, image, bundle
+
+    public static func select(textBytes: Int, imageBytes: Int,
+                              bundleLimit: Int = ClipboardService.eagerImageThreshold)
+        -> ClipboardSend {
+        if textBytes > 0 && imageBytes > 0 {
+            return textBytes + imageBytes <= bundleLimit ? .bundle : .text
+        }
+        if imageBytes > 0 { return .image }
+        if textBytes > 0 { return .text }
+        return .nothing
+    }
 }
 
 /// Files the other computer has offered, waiting for this computer's user to

@@ -60,6 +60,9 @@ class Clipboard {
            writes. UTF-8. */
         std::function<void(std::vector<uint8_t>)> local_copy;
         std::function<void(std::vector<uint8_t>)> local_image;
+        /* Text and its picture together (#195), already packed as a kind-3
+           payload — one transfer, so the pasting application picks. */
+        std::function<void(std::vector<uint8_t>)> local_bundle;
         /* Any external sequence, before inspecting its formats or send policy. */
         std::function<void()> local_replaced;
         std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
@@ -90,6 +93,11 @@ class Clipboard {
        clipboard, refuse to overwrite a local copy made while bytes crossed. */
     bool deliver_image(const std::vector<uint8_t> &png,
                        std::optional<DWORD> expected_sequence = std::nullopt);
+    /* Both parts of a bundle (#195) in one clipboard write: CF_UNICODETEXT
+       beside the PNG / CF_DIBV5 / CF_DIB set `deliver_image` publishes. Two
+       writes would bump the sequence twice and the second would clear the
+       first. Neither part is empty. */
+    void deliver_bundle(const std::vector<uint8_t> &utf8, const std::vector<uint8_t> &png);
     void lazy_image(uint32_t id, uint64_t total);
     void cancel_lazy_image(uint32_t id);
 

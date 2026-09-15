@@ -21,6 +21,7 @@ let clipboardTests: [(String, () throws -> Void)] = [
     ("a lost receipt recovers without delivering twice", testALostReceiptRecovers),
     ("unanswered receipt probes cannot retain a payload forever", testReceiptRetentionIsBounded),
     ("an image copied on one computer arrives byte-identically", testImageCrossesTheLink),
+    ("a bundle crosses eagerly, whatever its size", testABundleCrossesEagerly),
     ("a lazy offer retry does not reclaim the pasteboard", testALazyOfferRetryDoesNotReclaimThePasteboard),
     ("replacing a lazy image cancels its receive", testReplacingALazyImageCancelsItsReceive),
     ("the payload is byte-identical end to end", testFidelityIsPreserved),
@@ -1070,6 +1071,26 @@ private func testImageCrossesTheLink() {
         Check.equal(pair.lazyImages, expectedLazy,
                     "the image did not take the threshold-selected path")
     }
+}
+
+/*
+ * A bundle (#195) is never lazy: the copy side builds one only under the
+ * eager threshold, and the paste side goes lazy on kind alone. Sized just past
+ * the threshold here so that a paste side reading "total > threshold" without
+ * looking at the kind would take the lazy path and fail this.
+ */
+private func testABundleCrossesEagerly() {
+    let packed = ClipBundle.pack([
+        ClipBundle.Part(kind: ClipKind.text.rawValue, bytes: Array("hello".utf8)),
+        ClipBundle.Part(kind: ClipKind.png.rawValue,
+                        bytes: [UInt8](repeating: 0x55, count: ClipboardService.eagerImageThreshold)),
+    ])!
+    let pair = Pair(capacity: packed.count + 1024)
+    pair.settle(pair.a.localCopy(kind: .bundle, bytes: packed), from: .a)
+    Check.equal(pair.deliveredToB.first?.kind, ClipKind.bundle.rawValue,
+                "the payload did not arrive as a bundle")
+    Check.equal(pair.deliveredToB.first?.bytes, packed, "the bundle was not byte-identical end to end")
+    Check.equal(pair.lazyImages, 0, "a bundle took the lazy image path")
 }
 
 private func testALazyOfferRetryDoesNotReclaimThePasteboard() {

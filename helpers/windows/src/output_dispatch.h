@@ -70,6 +70,10 @@ class HelperEffects {
     /* This computer's clipboard. */
     virtual void deliver_text(const std::vector<uint8_t> &utf8) = 0;
     virtual void deliver_image(const std::vector<uint8_t> &png) = 0;
+    /* Both parts of a bundle (#195), in one clipboard write. Neither is empty:
+       a bundle with one usable part takes the single-format path above. */
+    virtual void deliver_bundle(const std::vector<uint8_t> &utf8,
+                                const std::vector<uint8_t> &png) = 0;
     virtual void lazy_image(uint32_t id, uint64_t total) = 0;
     virtual void cancel_lazy_image(uint32_t id) = 0;
     /* Files (#56). `ask_about_files` puts the acceptance to the user: nothing
@@ -114,6 +118,7 @@ class OutputDispatch {
 
   private:
     bool send_frame(const std::vector<uint8_t> &frame, const std::string &name);
+    void deliver_bundle(const std::vector<uint8_t> &payload);
     HelperEffects &effects_;
 };
 

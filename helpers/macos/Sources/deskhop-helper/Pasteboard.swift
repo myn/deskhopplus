@@ -59,6 +59,9 @@ final class Pasteboard {
     /// writes.
     var onLocalCopy: ((String) -> Void)?
     var onLocalImage: (([UInt8]) -> Void)?
+    /// Text and its picture together (#195), already packed as a kind-3
+    /// payload — one transfer, so the pasting application picks.
+    var onLocalBundle: (([UInt8]) -> Void)?
     /// Files copied here: what they are called and how long they are, plus the
     /// closure that reads them, which is called only if the transfer is
     /// accepted on the other computer.
@@ -114,7 +117,10 @@ final class Pasteboard {
         }
 
         /*
-         * Files, then image, then text.
+         * Files first; then text and image together as a bundle when both are
+         * there and small enough, else whichever is there (#195). The same
+         * order as the Windows twin, and a divergence here is a clipboard that
+         * behaves differently on each computer.
          *
          * **Files before text**, because copying one in Finder also puts its
          * path on the pasteboard as a string, and reading text first would
@@ -139,7 +145,19 @@ final class Pasteboard {
         let files = filesFromPasteboard()
         let image = files == nil || allImages(files!) ? pngFromPasteboard() : nil
         let filesToSend = image == nil ? files : nil
-        let text = image == nil && filesToSend == nil
+        /*
+         * Read beside the image, not instead of it. Every Office application
+         * puts a picture of a text selection beside the text, and until #195
+         * the picture won and the text was dropped on both sides — text copied
+         * in PowerPoint on Windows pasted here as a picture of the words. Which
+         * of the two goes, or whether both go together, is
+         * `ClipboardSend.select`'s call once the sizes are known.
+         *
+         * Not read beside files, even the image-only files a screenshot tool
+         * leaves: the string beside a copied file is its path, and a bundle of
+         * a path and a picture would paste the path into a text field.
+         */
+        let text = files == nil
             ? pasteboard.string(forType: .string).flatMap { $0.isEmpty ? nil : $0 } : nil
         guard case .take(let polls) = watch.looked(
             at: count, foundContent: filesToSend != nil || text != nil || image != nil)
@@ -148,9 +166,34 @@ final class Pasteboard {
         /* More than one means a copy was caught mid-write and waited for —
            the case that used to be dropped in silence. */
         if polls > 1 { log?("a copy took \(polls) polls to become readable") }
-        if let image { onLocalImage?(Array(image)) }
-        else if let filesToSend { onLocalFiles?(filesToSend) }
-        else if let text { onLocalCopy?(text) }
+        if let filesToSend {
+            onLocalFiles?(filesToSend)
+            return
+        }
+        let textBytes = text.map { Array($0.utf8) } ?? []
+        let imageBytes = image.map { Array($0) } ?? []
+        switch ClipboardSend.select(textBytes: textBytes.count, imageBytes: imageBytes.count) {
+        case .bundle:
+            guard let packed = ClipBundle.pack([
+                ClipBundle.Part(kind: ClipKind.text.rawValue, bytes: textBytes),
+                ClipBundle.Part(kind: ClipKind.png.rawValue, bytes: imageBytes),
+            ]) else {
+                log?("text and its picture would not pack; nothing was sent")
+                return
+            }
+            log?("bundling \(textBytes.count) bytes of text with its \(imageBytes.count)-byte picture")
+            onLocalBundle?(packed)
+        case .image:
+            onLocalImage?(imageBytes)
+        case .text:
+            if !imageBytes.isEmpty {
+                log?("sending \(textBytes.count) bytes of text alone; the \(imageBytes.count)-byte "
+                     + "picture beside it is over the bundle limit and does not travel")
+            }
+            onLocalCopy?(text!)
+        case .nothing:
+            break
+        }
     }
 
     /// Whether every copied file is itself a picture — the one case where an
@@ -325,6 +368,56 @@ final class Pasteboard {
         guard let displaced else { return }
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         if pasteboard.setString(displaced, forType: .string) {
+            watch.wrote(changeCount: pasteboard.changeCount)
+            log?("what was on the pasteboard before was put back")
+        } else {
+            log?("what was on the pasteboard before could not be put back; it is now empty")
+        }
+    }
+
+    /*
+     * Both parts of a bundle (#195) in one pasteboard write: `.string` beside
+     * `.png`, host-only like every other arrival. One `prepareForNewContents`
+     * and then both representations on the one item — two writes would bump
+     * the change count twice and the second would clear the first. Neither
+     * part is empty.
+     */
+    func deliver(bundle text: [UInt8], png: [UInt8]) {
+        let string = String(decoding: text, as: UTF8.self)
+        let data = Data(png)
+        let displacedString = pasteboard.string(forType: .string)
+        let displacedPng = pasteboard.data(forType: .png)
+
+        var delay = Self.firstRetryDelay
+        for attempt in 1...Self.writeAttempts {
+            pasteboard.prepareForNewContents(with: .currentHostOnly)
+            let wroteText = pasteboard.setString(string, forType: .string)
+            let wroteImage = pasteboard.setData(data, forType: .png)
+            if wroteText || wroteImage {
+                watch.wrote(changeCount: pasteboard.changeCount)
+                if attempt > 1 { log?("the pasteboard took \(attempt) attempts to accept a bundle") }
+                if !(wroteText && wroteImage) {
+                    log?("a bundle arrived but only its \(wroteText ? "text" : "picture") could be "
+                         + "written")
+                }
+                return
+            }
+            if attempt < Self.writeAttempts {
+                Thread.sleep(forTimeInterval: delay)
+                delay *= 2
+            }
+        }
+
+        log?("the pasteboard refused \(Self.writeAttempts) attempts to write a bundle; the "
+             + "content did not arrive")
+        /* Put back what was displaced, host-only, as the single-format writers
+           do: it may itself have arrived from the other computer. */
+        guard displacedString != nil || displacedPng != nil else { return }
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        var putBack = false
+        if let displacedString { putBack = pasteboard.setString(displacedString, forType: .string) }
+        if let displacedPng { putBack = pasteboard.setData(displacedPng, forType: .png) || putBack }
+        if putBack {
             watch.wrote(changeCount: pasteboard.changeCount)
             log?("what was on the pasteboard before was put back")
         } else {

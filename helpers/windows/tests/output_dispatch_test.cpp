@@ -91,6 +91,11 @@ class Recorder : public HelperEffects {
     void deliver_image(const std::vector<uint8_t> &bytes) override {
         effects.push_back("deliver_image(" + std::to_string(bytes.size()) + ")");
     }
+    void deliver_bundle(const std::vector<uint8_t> &utf8,
+                        const std::vector<uint8_t> &png) override {
+        effects.push_back("deliver_bundle(" + std::to_string(utf8.size()) + "," +
+                          std::to_string(png.size()) + ")");
+    }
     void lazy_image(uint32_t id, uint64_t total) override {
         effects.push_back("lazy_image(" + std::to_string(id) + "," +
                           std::to_string(total) + ")");
@@ -138,7 +143,8 @@ class Recorder : public HelperEffects {
     bool wrote_to_the_clipboard() const {
         for (const std::string &effect : effects)
             if (effect.rfind("deliver_text(", 0) == 0 ||
-                effect.rfind("deliver_image(", 0) == 0) return true;
+                effect.rfind("deliver_image(", 0) == 0 ||
+                effect.rfind("deliver_bundle(", 0) == 0) return true;
         return false;
     }
 
@@ -446,6 +452,39 @@ static void an_image_payload_reaches_this_computers_clipboard() {
     CHECK(recorder.did("deliver_image(4)"), "the PNG reaches the clipboard");
 }
 
+/*
+ * A bundle (#195) is unpacked here and written in *one* clipboard write: two
+ * writes would bump the sequence twice and the second would clear the first.
+ * One part alone takes the single-format path, which is the one already
+ * proven on hardware.
+ */
+static void a_bundle_reaches_this_computers_clipboard_in_one_write() {
+    Recorder recorder;
+    OutputDispatch dispatch(recorder);
+    ClipOutput output;
+    output.kind = ClipOutput::Kind::Deliver;
+    output.payload_kind = static_cast<uint8_t>(ClipKind::Bundle);
+    output.bytes = {0, 2, 0, 0, 0, 'h', 'i', 1, 4, 0, 0, 0, 0x89, 'P', 'N', 'G'};
+    dispatch.emit(output);
+    CHECK(recorder.did("deliver_bundle(2,4)"), "text and its picture reach the clipboard together");
+    CHECK(recorder.effects.size() == 1, "a bundle is one clipboard write, not two");
+
+    Recorder text_only;
+    OutputDispatch text_dispatch(text_only);
+    output.bytes = {7, 3, 0, 0, 0, 'r', 't', 'f', 0, 2, 0, 0, 0, 'h', 'i'};
+    text_dispatch.emit(output);
+    CHECK(text_only.did("deliver_text(hi)"),
+          "a bundle whose only known part is text takes the text path");
+
+    Recorder malformed;
+    OutputDispatch malformed_dispatch(malformed);
+    output.bytes = {0, 9, 0, 0, 0, 'h', 'i'};
+    malformed_dispatch.emit(output);
+    CHECK(malformed.logged("a bundle arrived that could not be unpacked"),
+          "a malformed bundle is named");
+    CHECK(!malformed.wrote_to_the_clipboard(), "a malformed bundle writes nothing");
+}
+
 /* A kind this helper does not carry is named rather than written. */
 static void a_payload_this_helper_cannot_write_is_named() {
     Recorder recorder;
@@ -611,6 +650,7 @@ int main() {
     a_refused_clipboard_frame_is_counted_and_said_out_loud();
     a_text_payload_reaches_this_computers_clipboard();
     an_image_payload_reaches_this_computers_clipboard();
+    a_bundle_reaches_this_computers_clipboard_in_one_write();
     a_payload_this_helper_cannot_write_is_named();
     a_clipboard_note_is_logged();
     a_protocol_error_drops_the_connection();

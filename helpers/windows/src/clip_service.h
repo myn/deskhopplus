@@ -36,7 +36,12 @@
 namespace deskhop {
 
 /* The payload kinds on the wire (docs/protocol.md, CLIP_OFFER). */
-enum class ClipKind : uint8_t { Text = 0, Png = 1, Files = 2 };
+enum class ClipKind : uint8_t {
+    Text = 0,
+    Png = 1,
+    Files = 2,
+    Bundle = 3, /* text beside its picture, so the pasting application picks (#195) */
+};
 
 /* One file in a transfer: what it is called, and how many bytes of the payload
    belong to it. Twin: FileListEntry.swift. */

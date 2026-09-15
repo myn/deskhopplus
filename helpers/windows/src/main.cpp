@@ -126,6 +126,10 @@ class Helper : public HelperEffects {
     void deliver_text(const std::vector<uint8_t> &utf8) override {
         clipboard_.deliver_text(utf8);
     }
+    void deliver_bundle(const std::vector<uint8_t> &utf8,
+                        const std::vector<uint8_t> &png) override {
+        clipboard_.deliver_bundle(utf8, png);
+    }
     void deliver_image(const std::vector<uint8_t> &png) override {
         if (waiting_for_image_) {
             awaited_image_ = png;
@@ -418,6 +422,9 @@ bool Helper::start(HINSTANCE instance) {
     };
     clipboard_callbacks.local_image = [this](std::vector<uint8_t> png) {
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Png, png));
+    };
+    clipboard_callbacks.local_bundle = [this](std::vector<uint8_t> packed) {
+        dispatch_.emit(clipboard_service_->local_copy(ClipKind::Bundle, packed));
     };
     clipboard_callbacks.local_replaced = [this] { abandon_prefetched_image(); };
     clipboard_callbacks.request_image = [this](uint32_t id, uint64_t total) {

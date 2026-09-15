@@ -69,7 +69,7 @@ typedef struct {
  */
 typedef struct {
     uint32_t id;
-    uint8_t kind; /* 0=utf8-text 1=png 2=file-list */
+    uint8_t kind; /* 0=utf8-text 1=png 2=file-list 3=bundle (dh_bundle.h) */
     uint64_t total;
     const uint8_t *meta;
     uint16_t meta_len;

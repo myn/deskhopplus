@@ -60,6 +60,9 @@ private final class Recorder: HelperEffects {
         effects.append("deliver(\(String(decoding: bytes, as: UTF8.self)))")
     }
     func deliver(image bytes: [UInt8]) { effects.append("deliverImage(\(bytes.count))") }
+    func deliver(bundle text: [UInt8], png: [UInt8]) {
+        effects.append("deliverBundle(\(text.count),\(png.count))")
+    }
     func lazyImage(id: UInt32, total: UInt64) { effects.append("lazyImage(\(id),\(total))") }
     func cancelLazyImage(id: UInt32) { effects.append("cancelLazyImage(\(id))") }
     func askAboutFiles(_ offer: FileOffer) {
@@ -85,7 +88,10 @@ private final class Recorder: HelperEffects {
     }
     func did(_ effect: String) -> Bool { effects.contains(effect) }
     func indexOf(_ effect: String) -> Int? { effects.firstIndex(of: effect) }
-    var wroteToThePasteboard: Bool { effects.contains { $0.hasPrefix("deliver(") } }
+    var wroteToThePasteboard: Bool {
+        effects.contains { $0.hasPrefix("deliver(") || $0.hasPrefix("deliverImage(")
+            || $0.hasPrefix("deliverBundle(") }
+    }
 }
 
 /*
@@ -339,6 +345,30 @@ private func anImagePayloadReachesThePasteboard() {
     Check.that(recorder.did("deliverImage(4)"), "the PNG reaches the pasteboard")
 }
 
+/*
+ * A bundle (#195) is unpacked here and written in *one* pasteboard write: two
+ * writes would bump the change count twice and the second would clear the
+ * first. One part alone takes the single-format path, which is the one
+ * already proven on hardware.
+ */
+private func aBundleReachesThePasteboardInOneWrite() {
+    let (recorder, dispatch) = fixture()
+    dispatch.emit(.deliver(kind: ClipKind.bundle.rawValue,
+                           bytes: [0, 2, 0, 0, 0, 0x68, 0x69, 1, 4, 0, 0, 0, 0x89, 0x50, 0x4e, 0x47]))
+    Check.that(recorder.did("deliverBundle(2,4)"), "text and its picture reach the pasteboard together")
+    Check.equal(recorder.effects.count, 1, "a bundle is one pasteboard write, not two")
+
+    let (textOnly, textDispatch) = fixture()
+    textDispatch.emit(.deliver(kind: ClipKind.bundle.rawValue,
+                               bytes: [7, 3, 0, 0, 0, 0x72, 0x74, 0x66, 0, 2, 0, 0, 0, 0x68, 0x69]))
+    Check.that(textOnly.did("deliver(hi)"), "a bundle whose only known part is text takes the text path")
+
+    let (malformed, malformedDispatch) = fixture()
+    malformedDispatch.emit(.deliver(kind: ClipKind.bundle.rawValue, bytes: [0, 9, 0, 0, 0, 0x68, 0x69]))
+    Check.that(malformed.noted("a bundle arrived that could not be unpacked"), "a malformed bundle is named")
+    Check.that(!malformed.wroteToThePasteboard, "a malformed bundle writes nothing")
+}
+
 /* A kind this helper does not carry is named rather than written. */
 private func aPayloadThisHelperCannotWriteIsNamed() {
     let (recorder, dispatch) = fixture()
@@ -407,6 +437,7 @@ let outputDispatchTests: [(String, () throws -> Void)] = [
      aRefusedClipboardFrameIsCountedAndSaidOutLoud),
     ("a text payload reaches the pasteboard", aTextPayloadReachesThePasteboard),
     ("an image payload reaches the pasteboard", anImagePayloadReachesThePasteboard),
+    ("a bundle reaches the pasteboard in one write", aBundleReachesThePasteboardInOneWrite),
     ("a payload this helper cannot write is named", aPayloadThisHelperCannotWriteIsNamed),
     ("a clipboard note is logged", aClipboardNoteIsLogged),
     ("a protocol error drops the connection", aProtocolErrorDropsTheConnection),

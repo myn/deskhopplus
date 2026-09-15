@@ -59,7 +59,9 @@ add_library(dhcore STATIC
   # The file list a kind-2 offer carries (#56), and the boundary that stops a
   # name from the other computer naming somewhere outside the temporary
   # directory it is about to be written into.
-  ${CORE}/dh_file_list.c)
+  ${CORE}/dh_file_list.c
+  # The bundle a kind-3 offer carries (#195): text beside its picture.
+  ${CORE}/dh_bundle.c)
 target_include_directories(dhcore PUBLIC ${CORE})
 
 if(MSVC)

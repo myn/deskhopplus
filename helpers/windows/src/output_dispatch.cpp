@@ -1,5 +1,6 @@
 #include "output_dispatch.h"
 
+#include "dh_bundle.h"
 #include "words.h"
 
 namespace deskhop {
@@ -103,6 +104,8 @@ void OutputDispatch::emit(const ClipOutput &output) {
             effects_.deliver_text(output.bytes);
         } else if (output.payload_kind == static_cast<uint8_t>(ClipKind::Png)) {
             effects_.deliver_image(output.bytes);
+        } else if (output.payload_kind == static_cast<uint8_t>(ClipKind::Bundle)) {
+            deliver_bundle(output.bytes);
         } else {
             effects_.log("a payload of kind " + std::to_string(output.payload_kind) +
                          " arrived, which this helper does not write");
@@ -146,6 +149,32 @@ void OutputDispatch::emit(const ClipOutput &output) {
         effects_.release_channels();
         break;
     }
+}
+
+/*
+ * A bundle (#195) is unpacked here, where a test can watch, and written in
+ * *one* clipboard write: `deliver_text` then `deliver_image` would bump the
+ * sequence twice and the second would clear the first. The first non-empty
+ * part of each kind is the one taken, as on macOS. A bundle with one usable
+ * part — the far end sent a
+ * kind this helper does not write beside it — takes the single-format path,
+ * which is the one already proven on hardware.
+ */
+void OutputDispatch::deliver_bundle(const std::vector<uint8_t> &payload) {
+    dh_bundle bundle;
+    if (!dh_bundle_unpack(payload.data(), payload.size(), &bundle)) {
+        effects_.log("a bundle arrived that could not be unpacked; nothing was written");
+        return;
+    }
+    std::vector<uint8_t> text, png;
+    for (uint8_t i = 0; i < bundle.count; i++) {
+        const dh_bundle_part &part = bundle.parts[i];
+        std::vector<uint8_t> &into = part.kind == DH_BUNDLE_PART_TEXT ? text : png;
+        if (into.empty()) into.assign(part.bytes, part.bytes + part.len);
+    }
+    if (!text.empty() && !png.empty()) effects_.deliver_bundle(text, png);
+    else if (!text.empty()) effects_.deliver_text(text);
+    else effects_.deliver_image(png);
 }
 
 void OutputDispatch::emit(const std::vector<ClipOutput> &outputs) {

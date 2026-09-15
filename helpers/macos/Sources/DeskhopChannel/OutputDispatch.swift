@@ -63,6 +63,9 @@ public protocol HelperEffects: AnyObject {
     /// This computer's pasteboard.
     func deliver(text: [UInt8])
     func deliver(image: [UInt8])
+    /// Both parts of a bundle (#195), in one pasteboard write. Neither is
+    /// empty: a bundle with one usable part takes the single-format path above.
+    func deliver(bundle text: [UInt8], png: [UInt8])
     func lazyImage(id: UInt32, total: UInt64)
     func cancelLazyImage(id: UInt32)
     /* Files (#56). `askAboutFiles` puts the acceptance to the user: nothing has
@@ -181,6 +184,8 @@ public final class OutputDispatch {
                 effects.deliver(text: bytes)
             } else if kind == ClipKind.png.rawValue {
                 effects.deliver(image: bytes)
+            } else if kind == ClipKind.bundle.rawValue {
+                deliver(bundle: bytes)
             } else {
                 effects.note("a payload of kind \(kind) arrived, which this helper does not "
                              + "write")
@@ -210,6 +215,31 @@ public final class OutputDispatch {
         case .protocolError(let note):
             effects.note("clipboard protocol error: \(note); dropping the connection")
             effects.releaseChannels()
+        }
+    }
+
+    /*
+     * A bundle (#195) is unpacked here, where a test can watch, and written in
+     * *one* pasteboard write: `deliver(text:)` then `deliver(image:)` would
+     * bump the change count twice and the second would clear the first. The
+     * first non-empty part of each kind is the one taken, as on Windows. A
+     * bundle with one usable part
+     * — the far end sent a kind this helper does not write beside it — takes
+     * the single-format path, which is the one already proven on hardware.
+     */
+    private func deliver(bundle payload: [UInt8]) {
+        guard let parts = ClipBundle.unpack(payload) else {
+            effects.note("a bundle arrived that could not be unpacked; nothing was written")
+            return
+        }
+        let text = parts.first { $0.kind == ClipKind.text.rawValue && !$0.bytes.isEmpty }?.bytes ?? []
+        let png = parts.first { $0.kind == ClipKind.png.rawValue && !$0.bytes.isEmpty }?.bytes ?? []
+        if !text.isEmpty && !png.isEmpty {
+            effects.deliver(bundle: text, png: png)
+        } else if !text.isEmpty {
+            effects.deliver(text: text)
+        } else {
+            effects.deliver(image: png)
         }
     }
 }

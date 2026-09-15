@@ -588,7 +588,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x20 | PLACE | d→h | `k_b2h` | `chain_index:u8` `chain_direction:u8` (the configured direction in which indices increase) `border_direction:u8` (which side of the target output is entered) `entry_pos:u16` (0–65535 normalized within the target monitor). Fire-and-forget; no reply path. Authenticated, **not** sealed — coordinates cross in the clear. |
 | 0x21 | POS_QUERY | d→h | `k_b2h` | `query_id:u8` (`0` denotes the post-placement refresh) |
 | 0x22 | POS_RESPONSE | h→d | `k_h2b` | `query_id:u8` `chain_index:u8` `x:u16` `y:u16` (the query ID is echoed; coordinates are 0–65535 normalized within the current monitor) |
-| 0x30 | CLIP_OFFER | h↔h | per hop | `id:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `kind:u8` (0=utf8-text, 1=png, 2=file-list) `total_size:u64` `meta_len:u16` `meta:bytes`. AAD is the 16 clear bytes. Kind 2's metadata is a UTF-8 JSON array of `{"name":…,"size":…}` objects **in that key order, with no escapes anywhere in it** — `dh_file_list.h` is the codec, and it cleans every name on the way out so that the two characters JSON would have to escape are already illegal in it. At most 64 files, each name at most 255 bytes, and the whole array must fit one offer. The sizes must sum to `total_size`; a receiver that finds otherwise refuses the transfer rather than slicing the payload at offsets it cannot trust. |
+| 0x30 | CLIP_OFFER | h↔h | per hop | `id:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `kind:u8` (0=utf8-text, 1=png, 2=file-list, 3=bundle) `total_size:u64` `meta_len:u16` `meta:bytes`. AAD is the 16 clear bytes. Kind 3 is text beside its picture, so the pasting application picks (ADR-0013): its payload is a list of parts, each `part_kind:u8 len:u32 bytes`, with `part_kind` reusing the offer kinds (0 = UTF-8 text, 1 = PNG) and its metadata empty. `dh_bundle.h` is the codec; the paste side refuses a part that runs past the payload and skips a part kind it does not know. Kind 2's metadata is a UTF-8 JSON array of `{"name":…,"size":…}` objects **in that key order, with no escapes anywhere in it** — `dh_file_list.h` is the codec, and it cleans every name on the way out so that the two characters JSON would have to escape are already illegal in it. At most 64 files, each name at most 255 bytes, and the whole array must fit one offer. The sizes must sum to `total_size`; a receiver that finds otherwise refuses the transfer rather than slicing the payload at offsets it cannot trust. |
 | 0x31 | CLIP_REQUEST | h↔h | per hop | `id:u32` |
 | 0x32 | CLIP_CHUNK | h↔h | per hop | `id:u32` `seq:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `crc32:u32` (of `data`, the end-to-end integrity check) `data:bytes`. AAD is the 20 clear bytes. |
 | 0x33 | CLIP_DONE | h↔h | per hop | `id:u32` |
@@ -881,8 +881,9 @@ between the helpers**; the firmware relays its messages opaquely.
   exactly that size, so a chunk's offset is `seq × chunk_size` and reassembly needs no
   bookkeeping beyond a received-set. A chunk is exactly one CLIP_CHUNK frame's sealed payload.
 - **Streaming starts on request, never before.** An offered transfer emits nothing until
-  CLIP_REQUEST arrives. Text and PNG images up to 256 KiB are requested as soon as their offer
-  arrives. Larger PNG images are prefetched on offer without claiming the platform clipboard, then
+  CLIP_REQUEST arrives. Text, PNG images up to 256 KiB, and bundles are requested as soon as
+  their offer arrives — a bundle is built only while its text and picture fit 256 KiB together,
+  and a copy holding both past that sends the text alone (ADR-0013). Larger PNG images are prefetched on offer without claiming the platform clipboard, then
   published only if no newer local copy exists (ADR-0010). Windows consumes delayed bitmap formats
   speculatively, while a macOS lazy data provider synchronously blocks the pasting application over
   the slow link; neither callback reliably represents acceptable paste behavior. Until the request,

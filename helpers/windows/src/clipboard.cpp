@@ -12,6 +12,7 @@
 
 #include "clipboard_update.h"
 #include "clipboard_image.h"
+#include "dh_bundle.h"
 
 namespace deskhop {
 
@@ -93,6 +94,22 @@ std::vector<uint8_t> global_bytes(HANDLE handle) {
     std::vector<uint8_t> result(bytes, bytes + size);
     GlobalUnlock(handle);
     return result;
+}
+
+/* NUL-terminated wide text in a movable block, as CF_UNICODETEXT wants it.
+   Null when it cannot be allocated or locked. */
+HGLOBAL wide_to_global(const std::wstring &wide) {
+    const size_t bytes = (wide.size() + 1) * sizeof(wchar_t);
+    HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (block == nullptr) return nullptr;
+    auto *destination = static_cast<wchar_t *>(GlobalLock(block));
+    if (destination == nullptr) {
+        GlobalFree(block);
+        return nullptr;
+    }
+    std::memcpy(destination, wide.c_str(), bytes);
+    GlobalUnlock(block);
+    return block;
 }
 
 HGLOBAL bytes_to_global(const std::vector<uint8_t> &bytes) {
@@ -493,8 +510,10 @@ void Clipboard::read_clipboard() {
     const bool has_image = image_format != ClipboardImageFormat::None;
 
     /*
-     * Files, then image, then text — the same order as the macOS twin, and a
-     * divergence here is a clipboard that behaves differently on each computer.
+     * Files first; then text and image together as a bundle when both are
+     * there and small enough, else whichever is there (#195). The same order
+     * as the macOS twin, and a divergence here is a clipboard that behaves
+     * differently on each computer.
      *
      * **Files before text**, because copying one in Explorer also puts its
      * path on the clipboard as text, and reading text first would send the
@@ -512,13 +531,14 @@ void Clipboard::read_clipboard() {
      * file. It cost the macOS twin every single-file copy (#56), and the rule
      * being shared is the reason to correct both.
      */
+    bool files_found = false;
     if (callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
         if (!open_with_retry()) return;
         std::vector<FileEntry> files;
         std::function<bool(std::vector<uint8_t> &)> read;
-        const bool found = read_files(files, read);
+        files_found = read_files(files, read);
         CloseClipboard();
-        if (found && !(has_image && all_files_are_images(files))) {
+        if (files_found && !(has_image && all_files_are_images(files))) {
             callbacks_.local_files(std::move(files), std::move(read));
             return;
         }
@@ -526,55 +546,93 @@ void Clipboard::read_clipboard() {
     if (!has_text && !has_image) return;
     if (!open_with_retry()) return;
 
-    std::vector<uint8_t> payload;
+    /*
+     * Both read when both are there. Every Office application puts a picture
+     * of a text selection beside the text, and until #195 the picture won and
+     * the text was dropped — so text copied in PowerPoint pasted on the Mac as
+     * a picture of the words. Which of the two goes, or whether both go
+     * together, is `select_clipboard_send`'s call once the sizes are known.
+     */
+    std::vector<uint8_t> image;
     const char *captured_format = nullptr;
     switch (image_format) {
     case ClipboardImageFormat::Png:
-        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(png_format_)));
+        image = capture_clipboard_image(image_format, global_bytes(GetClipboardData(png_format_)));
         captured_format = "registered PNG";
         break;
     case ClipboardImageFormat::DibV5:
-        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIBV5)));
+        image = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIBV5)));
         captured_format = "CF_DIBV5";
         break;
     case ClipboardImageFormat::Dib:
-        payload = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIB)));
+        image = capture_clipboard_image(image_format, global_bytes(GetClipboardData(CF_DIB)));
         captured_format = "CF_DIB";
         break;
     case ClipboardImageFormat::Bitmap:
         if (HBITMAP bitmap = static_cast<HBITMAP>(GetClipboardData(CF_BITMAP)))
-            payload = bitmap_to_png(bitmap);
+            image = bitmap_to_png(bitmap);
         captured_format = "CF_BITMAP";
         break;
     case ClipboardImageFormat::None:
         break;
     }
-    if (!payload.empty() && captured_format != nullptr && callbacks_.log)
+    if (!image.empty() && captured_format != nullptr && callbacks_.log)
         callbacks_.log(std::string("captured image from ") + captured_format);
-    if (!has_image) {
+    /* Not read beside files, even the image-only files a screenshot tool
+       leaves: the text beside a copied file is its path, and a bundle of a
+       path and a picture would paste the path into a text field. Gated on a
+       file being *found*, as the macOS twin is, so a copied folder still
+       behaves as it did. */
+    std::vector<uint8_t> text;
+    if (has_text && !files_found) {
         HANDLE handle = GetClipboardData(CF_UNICODETEXT);
-        if (const auto *text = static_cast<const wchar_t *>(GlobalLock(handle))) {
-            payload = wide_to_utf8(text);
+        if (const auto *wide = static_cast<const wchar_t *>(GlobalLock(handle))) {
+            text = wide_to_utf8(wide);
             GlobalUnlock(handle);
         }
     }
     CloseClipboard();
 
-    /*
-     * An empty read is not the same as an empty clipboard. The managed laptop
-     * runs Trellix DLP, whose block behaviour at the Win32 level is
-     * undocumented, so a read that "succeeded" and returned nothing cannot be
-     * ruled out (#60) — the spec's standing instruction is to treat a
-     * clipboard read failure as an expected state and say so rather than trust
-     * it. Nothing is sent, and the reason is in the log.
-     */
-    if (payload.empty()) {
+    switch (select_clipboard_send(text.size(), image.size(), ClipService::kEagerImageThreshold)) {
+    case ClipboardSend::Nothing:
+        /*
+         * An empty read is not the same as an empty clipboard. The managed
+         * laptop runs Trellix DLP, whose block behaviour at the Win32 level is
+         * undocumented, so a read that "succeeded" and returned nothing cannot
+         * be ruled out (#60) — the spec's standing instruction is to treat a
+         * clipboard read failure as an expected state and say so rather than
+         * trust it. Nothing is sent, and the reason is in the log.
+         */
         if (callbacks_.log)
             callbacks_.log("the clipboard offered content and then read as empty; nothing was sent");
         return;
+    case ClipboardSend::Bundle: {
+        const dh_bundle_part parts[] = {
+            {DH_BUNDLE_PART_TEXT, text.data(), static_cast<uint32_t>(text.size())},
+            {DH_BUNDLE_PART_PNG, image.data(), static_cast<uint32_t>(image.size())},
+        };
+        std::vector<uint8_t> packed(dh_bundle_packed_len(parts, 2));
+        if (dh_bundle_pack(parts, 2, packed.data(), packed.size()) == 0) {
+            if (callbacks_.log) callbacks_.log("text and its picture would not pack; nothing was sent");
+            return;
+        }
+        if (callbacks_.log)
+            callbacks_.log("bundling " + std::to_string(text.size()) + " bytes of text with its " +
+                           std::to_string(image.size()) + "-byte picture");
+        if (callbacks_.local_bundle) callbacks_.local_bundle(std::move(packed));
+        return;
     }
-    if (has_image && callbacks_.local_image) callbacks_.local_image(std::move(payload));
-    else if (callbacks_.local_copy) callbacks_.local_copy(std::move(payload));
+    case ClipboardSend::Image:
+        if (callbacks_.local_image) callbacks_.local_image(std::move(image));
+        return;
+    case ClipboardSend::Text:
+        if (!image.empty() && callbacks_.log)
+            callbacks_.log("sending " + std::to_string(text.size()) +
+                           " bytes of text alone; the " + std::to_string(image.size()) +
+                           "-byte picture beside it is over the bundle limit and does not travel");
+        if (callbacks_.local_copy) callbacks_.local_copy(std::move(text));
+        return;
+    }
 }
 
 /*
@@ -687,6 +745,67 @@ bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
     return dibv5_written && dib_written;
 }
 
+void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
+                               const std::vector<uint8_t> &png) {
+    /* Every handle is built before the clipboard is opened, so nothing else is
+       kept waiting on this process's allocator or its image codec. */
+    const std::wstring wide = utf8_to_wide(utf8.data(), utf8.size());
+    HGLOBAL text_block = wide.empty() ? nullptr : wide_to_global(wide);
+    const ClipboardImageRepresentations representations = clipboard_image_representations(png);
+    HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(representations.png) : nullptr;
+    HGLOBAL dibv5_block = bytes_to_global(representations.dibv5);
+    HGLOBAL dib_block = bytes_to_global(representations.dib);
+    HGLOBAL blocks[] = {text_block, png_block, dibv5_block, dib_block};
+    const auto free_all = [&blocks] {
+        for (HGLOBAL &block : blocks)
+            if (block) { GlobalFree(block); block = nullptr; }
+    };
+    /* A part that will not build costs that part, not the bundle: the text is
+       what the copy was about (#195), and the picture is the part the copy
+       side already drops when it must. The single-format writer takes over,
+       as it does for a bundle that arrived with one usable part. */
+    if (png_block == nullptr || dibv5_block == nullptr || dib_block == nullptr) {
+        free_all();
+        if (callbacks_.log)
+            callbacks_.log("an arriving bundle's picture could not build PNG, CF_DIBV5, and "
+                           "CF_DIB; its text is written alone");
+        deliver_text(utf8);
+        return;
+    }
+    if (text_block == nullptr) {
+        free_all();
+        if (callbacks_.log)
+            callbacks_.log("an arriving bundle's text would not convert to wide text; its "
+                           "picture is written alone");
+        deliver_image(png);
+        return;
+    }
+    if (!open_with_retry()) {
+        free_all();
+        if (callbacks_.log)
+            callbacks_.log("a bundle arrived but the clipboard would not open; it was not written");
+        return;
+    }
+    EmptyClipboard();
+    /* Ownership passes to the clipboard only on success; a refused handle is
+       still ours to free. Written as one transaction between one open and one
+       close, which is what makes the text and the picture one clipboard
+       entry rather than two. */
+    const UINT formats[] = {CF_UNICODETEXT, png_format_, CF_DIBV5, CF_DIB};
+    bool written[4] = {};
+    for (size_t i = 0; i < 4; i++) {
+        written[i] = SetClipboardData(formats[i], blocks[i]) != nullptr;
+        if (!written[i]) GlobalFree(blocks[i]);
+    }
+    self_sequence_ = GetClipboardSequenceNumber();
+    CloseClipboard();
+    if (callbacks_.log)
+        callbacks_.log(std::string("published arriving bundle: CF_UNICODETEXT=") +
+                       (written[0] ? "yes" : "no") + " PNG=" + (written[1] ? "yes" : "no") +
+                       " CF_DIBV5=" + (written[2] ? "yes" : "no") + " CF_DIB=" +
+                       (written[3] ? "yes" : "no"));
+}
+
 void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
     const std::wstring wide = utf8_to_wide(utf8.data(), utf8.size());
     if (wide.empty() && !utf8.empty()) {
@@ -698,18 +817,9 @@ void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
 
     /* Allocated before the clipboard is opened, so nothing else is kept
        waiting on this process's allocator. */
-    const size_t bytes = (wide.size() + 1) * sizeof(wchar_t);
-    HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    HGLOBAL block = wide_to_global(wide);
     if (block == nullptr) {
         if (callbacks_.log) callbacks_.log("no memory for an arriving clipboard payload");
-        return;
-    }
-    if (auto *destination = static_cast<wchar_t *>(GlobalLock(block))) {
-        std::memcpy(destination, wide.c_str(), bytes);
-        GlobalUnlock(block);
-    } else {
-        GlobalFree(block);
-        if (callbacks_.log) callbacks_.log("an arriving clipboard payload could not be locked");
         return;
     }
 

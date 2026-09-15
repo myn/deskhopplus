@@ -189,6 +189,11 @@ final class HelperRuntime: HelperEffects {
             self.menuBar.clearNotice()
             self.dispatch.emit(self.clipboard.localCopy(kind: .png, bytes: bytes))
         }
+        pasteboard.onLocalBundle = { [weak self] packed in
+            guard let self else { return }
+            self.menuBar.clearNotice()
+            self.dispatch.emit(self.clipboard.localCopy(kind: .bundle, bytes: packed))
+        }
         pasteboard.onLocalFiles = { [weak self] copied in
             guard let self else { return }
             /* Cleared before the copy is handed over, not after: a copy that is
@@ -394,6 +399,7 @@ final class HelperRuntime: HelperEffects {
     func noteSendRefused() { session.noteSendRefused() }
     func show(state: HelperState) { menuBar.show(state: state) }
     func deliver(text bytes: [UInt8]) { pasteboard.deliver(text: bytes) }
+    func deliver(bundle text: [UInt8], png: [UInt8]) { pasteboard.deliver(bundle: text, png: png) }
     func deliver(image bytes: [UInt8]) {
         switch imagePrefetch.complete() {
         case .ordinary:
