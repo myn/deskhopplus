@@ -165,8 +165,9 @@ _Avoid_: multi-format, rich copy, both formats
 **Offer**:
 The immutable announcement of one clipboard transfer: its transfer id, kind, total length, and
 metadata. Repeating the same offer is a retry of that transfer; reusing its id with any different
-field is a protocol error, never a newer transfer.
-_Avoid_: request (the paste side requests an offered transfer), proposal, header
+field is a protocol error, never a newer transfer. For a lazy file the total is the length that
+will be sent, measured at the copy — not a snapshot of the file's contents at that moment.
+_Avoid_: request (the paste side requests an offered transfer), proposal, header, snapshot
 
 ### Layout
 

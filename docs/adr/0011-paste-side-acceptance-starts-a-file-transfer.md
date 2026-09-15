@@ -41,3 +41,24 @@ who ignores the prompt has files that never arrive. Both helpers therefore show 
 their permanent presence and not only in a notification, which is also why #56 carries the first
 slice of [#54](https://github.com/myn/deskhopplus/issues/54): before this the macOS helper had no
 user interface at all.
+
+## Amendment, 2026-09-14 — a lazy file is sent at the offered length
+
+The offer's total is the length that will be sent, measured at the copy, and the copy side sends
+exactly that when the request arrives. A file that **grew** since the copy is sent as its first
+offered-length bytes, as they are at request time: for a log or any other appending writer that is
+the file as it was when copied, which is also what `cp` gives. A file that **shrank** cannot supply
+the offered length and the transfer fails, as it did before. The helper logs which of the two
+happened and, on a failed read, the file's name, the step that failed and the platform error
+([#181](https://github.com/myn/deskhopplus/issues/181)).
+
+Before this both providers refused any file whose size had changed, citing #56. That was a
+misreading: #56's criterion is that an *aborted* transfer never presents the partial file it leaves
+on the paste side as complete — a paste-side cleanup rule, not a copy-side read rule. Refusing
+every changed file meant that copying a log, a database or a download in progress produced no file
+at all ([#182](https://github.com/myn/deskhopplus/issues/182)).
+
+The accepted cost is a file **rewritten** at a larger size — a document saved between the copy and
+the acceptance — which arrives cut to the old length. Nothing on the copy side can tell an appended
+file from a rewritten one without reading it at copy time, which the lazy rule above forbids, and
+re-offering at the new size would loop for exactly the growing file this amendment exists for.
