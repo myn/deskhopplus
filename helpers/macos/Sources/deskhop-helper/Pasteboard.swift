@@ -36,10 +36,9 @@ final class Pasteboard {
     /// Files copied on this computer, and how to read them when asked.
     struct LocalFiles {
         let entries: [FileListEntry]
-        /// Every file's contents run together in `entries` order, or nil if any
-        /// of them can no longer be read at the promised length. Nil rather
-        /// than short: a file edited between the copy and the paste must fail
-        /// the transfer, not truncate it.
+        /// Every file's contents run together in `entries` order, each at
+        /// its offered length, or nil if any of them cannot give that length
+        /// (#182). Nil rather than short: the offer promised the total.
         let read: () -> [UInt8]?
     }
 
@@ -241,21 +240,33 @@ final class Pasteboard {
         }
         guard !entries.isEmpty else { return nil }
 
+        let log = self.log
         return LocalFiles(entries: entries) {
             var payload: [UInt8] = []
             for file in readable {
                 /*
-                 * Measured again, not assumed from the offer. A file that has
-                 * *grown* since the copy would otherwise have its first bytes
-                 * sent as the whole thing — a truncated file presented as
-                 * complete, which is the one outcome #56 names as
-                 * unacceptable. Reading the whole file and comparing catches
-                 * that as well as a file that shrank.
+                 * Each file at its offered length (#182). The name and not the
+                 * path goes in the log: the offer already carries the name.
                  */
-                guard let bytes = try? Data(contentsOf: file.url),
-                      UInt64(bytes.count) == file.size
-                else { return nil }
-                payload += bytes
+                let name = file.url.lastPathComponent
+                switch FileRead.read(file.url, offered: file.size) {
+                case .success(let read):
+                    if read.sizeNow > file.size {
+                        log?("\(name) grew by \(read.sizeNow - file.size) bytes since the copy; "
+                             + "the offered length was sent")
+                    }
+                    payload += read.bytes
+                case .failure(.shrank(let sizeNow)):
+                    log?("\(name) is \(sizeNow) bytes now and \(file.size) were offered; it "
+                         + "shrank since the copy, so the transfer was abandoned")
+                    return nil
+                case .failure(.openFailed(let error)):
+                    log?("\(name): open failed, error \(error)")
+                    return nil
+                case .failure(.readFailed(let error)):
+                    log?("\(name): read failed, error \(error)")
+                    return nil
+                }
             }
             return payload
         }

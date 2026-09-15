@@ -204,10 +204,9 @@ class ClipService {
      * small frame and never opens a file.
      *
      * `provider` fills its argument with every file's contents run together in
-     * `files` order and returns true, or returns false when they can no longer
-     * be read. The length it produces must equal what was offered; a file
-     * edited between the copy and the paste is a failed transfer rather than a
-     * truncated one.
+     * `files` order, each at its offered length, and returns true. It returns
+     * false when any file cannot give that length (#182). The total it
+     * produces must equal what was offered.
      */
     std::vector<ClipOutput> local_copy_files(
         const std::vector<FileEntry> &files,

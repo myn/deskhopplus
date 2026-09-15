@@ -12,6 +12,7 @@
 
 #include "clipboard_update.h"
 #include "clipboard_image.h"
+#include "file_read.h"
 #include "dh_bundle.h"
 
 namespace deskhop {
@@ -422,7 +423,7 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
     const UINT count = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
 
     entries.clear();
-    std::vector<std::pair<std::wstring, uint64_t>> readable;
+    std::vector<std::pair<std::wstring, FileEntry>> readable;
     unsigned skipped = 0;
     for (UINT i = 0; i < count; i++) {
         wchar_t path[MAX_PATH]{};
@@ -441,7 +442,7 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
         const wchar_t *name = wcsrchr(path, L'\\');
         name = name != nullptr ? name + 1 : path;
         entries.push_back(FileEntry{wide_to_utf8_string(name), size});
-        readable.emplace_back(path, size);
+        readable.emplace_back(path, entries.back());
     }
     if (skipped > 0 && callbacks_.log)
         callbacks_.log(std::to_string(skipped) +
@@ -449,46 +450,33 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
                        "and were left out");
     if (entries.empty()) return false;
 
-    read = [readable](std::vector<uint8_t> &payload) -> bool {
+    read = [readable, log = callbacks_.log](std::vector<uint8_t> &payload) -> bool {
         payload.clear();
-        for (const auto &file : readable) {
-            HANDLE handle = CreateFileW(file.first.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (handle == INVALID_HANDLE_VALUE) return false;
-            /*
-             * Measured again, not assumed from the offer. Reading the promised
-             * length out of a file that has *grown* since the copy would take
-             * its first bytes and send them as the whole thing — a truncated
-             * file presented as complete, which is the one outcome #56 names
-             * as unacceptable. A file that shrank is caught by the read
-             * falling short; only this catches one that grew.
-             */
-            LARGE_INTEGER now{};
-            if (!GetFileSizeEx(handle, &now) ||
-                static_cast<uint64_t>(now.QuadPart) != file.second) {
-                CloseHandle(handle);
-                return false;
+        for (const auto &[path, file] : readable) {
+            /* Each file at its offered length (#182). The name and not the
+               path goes in the log: the offer already carries the name. */
+            const FileRead result = read_offered(path, file.size, payload);
+            std::string line;
+            switch (result.outcome) {
+            case FileRead::Outcome::Read:
+                if (result.size_now > file.size)
+                    line = file.name + " grew by " + std::to_string(result.size_now - file.size) +
+                           " bytes since the copy; the offered length was sent";
+                break;
+            case FileRead::Outcome::Shrank:
+                line = file.name + " is " + std::to_string(result.size_now) + " bytes now and " +
+                       std::to_string(file.size) +
+                       " were offered; it shrank since the copy, so the transfer was abandoned";
+                break;
+            case FileRead::Outcome::OpenFailed:
+                line = file.name + ": open failed, error " + std::to_string(result.error);
+                break;
+            case FileRead::Outcome::ReadFailed:
+                line = file.name + ": read failed, error " + std::to_string(result.error);
+                break;
             }
-            const size_t at = payload.size();
-            payload.resize(at + static_cast<size_t>(file.second));
-            uint64_t left = file.second;
-            uint8_t *out = payload.data() + at;
-            bool ok = true;
-            while (left > 0) {
-                const DWORD ask = left > 0x100000u ? 0x100000u : static_cast<DWORD>(left);
-                DWORD got = 0;
-                if (!ReadFile(handle, out, ask, &got, nullptr) || got == 0) {
-                    ok = false;
-                    break;
-                }
-                out += got;
-                left -= got;
-            }
-            CloseHandle(handle);
-            /* Short is not "nearly": the offer promised this length, so a file
-               edited since the copy fails the transfer rather than truncating
-               it. */
-            if (!ok) return false;
+            if (log && !line.empty()) log(line);
+            if (result.outcome != FileRead::Outcome::Read) return false;
         }
         return true;
     };

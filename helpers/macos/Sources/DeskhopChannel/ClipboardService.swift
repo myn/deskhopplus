@@ -1256,9 +1256,10 @@ public final class ClipboardService {
                 /*
                  * The offer promised a length and the core will read exactly
                  * that many bytes from what it is given, so a short read here
-                 * is an overread there. It is also the ordinary case of a file
-                 * edited between the copy and the paste — which must fail the
-                 * transfer rather than truncate it.
+                 * is an overread there. A guard, not the rule: the provider
+                 * sends each file at its offered length (#182), and only the
+                 * provider knows where one file ends and the next starts. This
+                 * catches a provider that returns the wrong total.
                  */
                 let promised = transfer.outgoingOffer()?.total ?? 0
                 guard UInt64(bytes.count) == promised else {

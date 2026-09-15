@@ -58,6 +58,11 @@ on the paste side as complete — a paste-side cleanup rule, not a copy-side rea
 every changed file meant that copying a log, a database or a download in progress produced no file
 at all ([#182](https://github.com/myn/deskhopplus/issues/182)).
 
+On Windows the read also opens the file with share-write, not share-read alone. A log that is still
+growing is held open by its writer, and Win32 refuses a read-open that does not share write while a
+writer holds the file. The helper's own `helper.log` is such a file: its copy in the #182 report
+failed at the open, before the size check was reached.
+
 The accepted cost is a file **rewritten** at a larger size — a document saved between the copy and
 the acceptance — which arrives cut to the old length. Nothing on the copy side can tell an appended
 file from a rewritten one without reading it at copy time, which the lazy rule above forbids, and

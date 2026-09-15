@@ -141,6 +141,15 @@ if(WIN32)
   endif()
   add_test(NAME clipboard_image COMMAND clipboard_image_test)
 
+  # One lazy file read at its offered length (#182). Windows only because the
+  # read is Win32, and the test writes and holds open real files to run it.
+  add_executable(file_read_test tests/file_read_test.cpp src/file_read.cpp)
+  target_include_directories(file_read_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(MSVC)
+    target_compile_options(file_read_test PRIVATE /WX)
+  endif()
+  add_test(NAME file_read COMMAND file_read_test)
+
   # The seal, through the cipher this helper actually ships (#113). Windows
   # only, because BCrypt is — and that is exactly why it is worth having: CNG's
   # AES-GCM agreeing with the golden vectors is a claim no other machine's
@@ -182,6 +191,8 @@ if(WIN32)
     src/clip_service.cpp
     src/clipboard.cpp
     src/clipboard_image.cpp
+    # One lazy file, read at its offered length when the paste side asks (#182).
+    src/file_read.cpp
     # Where files that arrive are written, emptied at start (#56).
     src/file_store.cpp
     src/cursor_placement.cpp

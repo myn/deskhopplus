@@ -1345,9 +1345,10 @@ std::vector<ClipOutput> ClipService::render(const dh_xfer_action *actions, size_
             /*
              * The offer promised a length and the core will read exactly that
              * many bytes from what it is given, so a short read here is an
-             * overread there. It is also the ordinary case of a file edited
-             * between the copy and the paste, which must fail the transfer
-             * rather than truncate it.
+             * overread there. A guard, not the rule: the provider sends each
+             * file at its offered length (#182), and only the provider knows
+             * where one file ends and the next starts. This catches a
+             * provider that returns the wrong total.
              */
             if (payload.size() != promised) {
                 outgoing_provider_ = nullptr;
