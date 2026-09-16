@@ -33,7 +33,7 @@ class CursorPlacement {
     bool target(const dh_place &request, POINT &point);
     bool position_body(uint8_t query_id, std::vector<uint8_t> &body);
     bool secure_desktop_active() const;
-    bool foreground_is_higher_integrity() const;
+    bool foreground_is_higher_integrity(std::string &detail) const;
     static DWORD process_integrity(HANDLE process);
 
     static CursorPlacement *instance_;

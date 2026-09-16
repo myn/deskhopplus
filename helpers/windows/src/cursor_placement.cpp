@@ -1,6 +1,8 @@
 #include "cursor_placement.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <vector>
 
 #include "dh_frame.h"
@@ -75,10 +77,12 @@ bool CursorPlacement::place(const dh_place &request, uint32_t now_ms, bool may_d
         log_("cursor placement abandoned while the secure desktop is active");
         return false;
     }
-    if (foreground_is_higher_integrity()) {
+    std::string foreground;
+    if (foreground_is_higher_integrity(foreground)) {
         if (may_defer) {
             pending_ = Pending{request, now_ms + 500u};
-            log_("cursor placement deferred while a higher-integrity window has focus");
+            log_("cursor placement deferred while a higher-integrity window has focus: " +
+                 foreground);
         }
         return false;
     }
@@ -216,16 +220,35 @@ DWORD CursorPlacement::process_integrity(HANDLE process) {
     return rid;
 }
 
-bool CursorPlacement::foreground_is_higher_integrity() const {
+/* `detail` names the front window's program and integrity level, or says why
+   they could not be read: "higher integrity" also covers a process the helper
+   cannot open at all, such as a system-owned pop-up, and the log line has to
+   tell those apart (#53). */
+bool CursorPlacement::foreground_is_higher_integrity(std::string &detail) const {
     HWND foreground = GetForegroundWindow();
     if (!foreground) return false;
     DWORD pid = 0;
     GetWindowThreadProcessId(foreground, &pid);
+    detail = "pid=" + std::to_string(pid);
     HANDLE foreground_process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!foreground_process) return true;
+    if (!foreground_process) {
+        detail += " not readable (error " + std::to_string(GetLastError()) + ")";
+        return true;
+    }
+    char image[MAX_PATH] = "";
+    DWORD image_len = MAX_PATH;
+    if (QueryFullProcessImageNameA(foreground_process, 0, image, &image_len)) {
+        const char *base = strrchr(image, '\\');
+        detail += std::string(" ") + (base ? base + 1 : image);
+    }
     const DWORD foreground_integrity = process_integrity(foreground_process);
     CloseHandle(foreground_process);
     const DWORD own_integrity = process_integrity(GetCurrentProcess());
+    /* Hex, as #40's table reads them: 0x2000 is medium, 0x3000 is high. */
+    char levels[48];
+    snprintf(levels, sizeof levels, " integrity=0x%lx own=0x%lx",
+             (unsigned long)foreground_integrity, (unsigned long)own_integrity);
+    detail += levels;
     return foreground_integrity == 0 || own_integrity == 0 || foreground_integrity > own_integrity;
 }
 
