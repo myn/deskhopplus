@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+    # A v* tag runs the same three builds and then the release job (#203).
+    tags:
+      - 'v*'
   pull_request:
     branches: 
       - main
@@ -262,3 +265,100 @@ jobs:
     - name: Run build report tests
       shell: bash
       run: bash tools/macos-checks/build-report-tests.sh
+
+    # The release build, universal (#203; #197 decision 6). The owner's desk
+    # runs the x86_64 half daily and this runner tests only the arm64 half,
+    # so the lipo check is the one look the x86_64 slice gets before it ships.
+    #
+    # One build per architecture and a lipo, not `--arch arm64 --arch x86_64`:
+    # that form hands the build to Xcode's xcbuild, which a Command Line Tools
+    # install does not have — and that install is the one a developer has
+    # (Package.swift). This form works on both.
+    #
+    # Every run, not only a tag, so a change that breaks one slice fails on
+    # main rather than on release day.
+    - name: Build the release helper, universal
+      shell: bash
+      run: |
+        swift build -c release --product deskhop-helper --triple arm64-apple-macosx
+        swift build -c release --product deskhop-helper --triple x86_64-apple-macosx
+        lipo -create .build/arm64-apple-macosx/release/deskhop-helper \
+                     .build/x86_64-apple-macosx/release/deskhop-helper \
+             -output .build/deskhop-helper
+        lipo -info .build/deskhop-helper
+        lipo .build/deskhop-helper -verify_arch arm64 x86_64
+
+    - name: Publish the helper
+      uses: actions/upload-artifact@v4
+      with:
+        name: deskhop-helper-macos-${{ github.run_number }}
+        path: .build/deskhop-helper
+
+  # The release (#203, #197). A pushed v* tag makes a GitHub release holding
+  # the three files the README names, with no hand step. A push to main runs
+  # the three build jobs as always and skips this one. No third-party action:
+  # gh is on the runner and the release is one command.
+  #
+  # The files are renamed here and only here (#197 decision 4). Build targets,
+  # build.sh, the plist and the helper READMEs keep deskhop-helper.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, windows-helper, helper]
+    runs-on: ubuntu-latest
+    # The one job that writes to the repository, so the one job with the
+    # permission. Every other job keeps the default token.
+    permissions:
+      contents: write
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # actions/checkout fetches a tag push as `+<commit>:refs/tags/<tag>`, which
+    # leaves the local tag lightweight, pointing at the commit — and then
+    # --notes-from-tag below reads the commit message, not the tag's
+    # (actions/checkout#290). Fetch the real tag object over it.
+    - name: Fetch the annotated tag
+      shell: bash
+      run: git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+
+    # First, before anything is downloaded. A tag that does not name the
+    # version in dh_version.h would ship files whose menus and printouts say
+    # a different number. The script is the one a developer can run.
+    - name: The tag names the version in dh_version.h
+      shell: bash
+      run: ./tools/check-release-tag.sh "$GITHUB_REF_NAME"
+
+    # All three, flattened into one directory: the artifact names carry the
+    # run number, the file names inside do not, and none of them collide.
+    - name: Download the three builds
+      uses: actions/download-artifact@v4
+      with:
+        pattern: deskhop-*
+        path: dist
+        merge-multiple: true
+
+    # Artifacts drop file modes on the way through (upload-artifact stores
+    # every file as 644), so the execute bit goes back on before the zip
+    # records it. Info-ZIP keeps Unix modes, and both unzip and Archive
+    # Utility restore them, so the binary a user unzips is runnable.
+    - name: Name the files as the README does
+      shell: bash
+      run: |
+        mkdir release
+        mv dist/deskhop.uf2 release/deskhopplus.uf2
+        mv dist/deskhop-helper.exe release/deskhopplus-helper-windows.exe
+        mv dist/deskhop-helper dist/deskhopplus-helper-macos
+        chmod +x dist/deskhopplus-helper-macos
+        zip -j release/deskhopplus-helper-macos.zip dist/deskhopplus-helper-macos
+        ls -l release
+
+    # --verify-tag: the tag must already be on the remote, which pushing it
+    # guarantees. --notes-from-tag: the notes are the annotated tag's message,
+    # so they live in git (#197 decision 11). Published at once, not a draft:
+    # pushing the tag is the deliberate act (decision 13).
+    - name: Publish the release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh release create "$GITHUB_REF_NAME" --verify-tag --notes-from-tag release/*
