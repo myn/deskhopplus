@@ -1,5 +1,8 @@
 # The macOS helper
 
+Using it — pairing, what the menu says, the clipboard, fixing and removing it — is the
+[user guide](../../docs/user-guide.md). This file is for people building it.
+
 A background agent that finds the device, seizes every vendor HID channel, introduces itself, and
 keeps the session alive ([#45](https://github.com/myn/deskhopplus/issues/45)). It carries the
 clipboard — text, images and files — and places the cursor on the session this establishes.
@@ -23,7 +26,7 @@ session.
 
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
-256 KB waits in the menu bar until it is accepted here, and only then does anything cross the
+1 MB waits in the menu bar until it is accepted here, and only then does anything cross the
 link. They are written under the per-user temporary directory, which is emptied when the helper
 starts.
 
@@ -120,16 +123,9 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 
 ## The states, and the one that matters
 
-| State | Shown as | Prompts the config chord |
-| --- | --- | --- |
-| connected | Connected and paired | no |
-| reconnecting repeatedly | Reconnecting repeatedly — check the link, and that the helper is up to date | no |
-| not paired | Not paired — press the config chord on the device | **yes** |
-| config mode | Device in config mode | no |
-| absent | Device not connected | no |
-| version mismatch | Helper version does not match the device — update the helper; file transfers are refused | no |
-| listener detected | Another program is writing to the device channel — find and stop it, and do not press the config chord while it is running | **no** |
-| board identity changed | Device identity changed — if you re-flashed it, remove the pinned board key | **no** |
+The states, their wording and what a user does about each are the user guide's
+[What the menu bar or tray says](../../docs/user-guide.md#what-the-menu-bar-or-tray-says); the
+wording itself is `HelperState.message`. Only **not paired** prompts the config chord.
 
 **"Version mismatch" is the board's refusal of a hello it could read.** A helper and board on
 different sides of the v3 report shape ([ADR-0012](../../docs/adr/0012-frame-start-flag-for-report-resync.md))
@@ -207,32 +203,15 @@ accept the new board.
 
 Nothing on the channel can make the helper drop that pin — not even the board saying it has
 forgotten this helper, which leaves the pin exactly where it was. A control a restart clears is
-not a control. If you re-flashed the board yourself, say so where a bystander on the channel
-cannot reach:
-
-```sh
-rm ~/Library/Application\ Support/deskhopplus/board_key
-launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper
-```
+not a control. The remedy is a file deletion where a bystander on the channel cannot reach — the
+user guide's [Identity changed](../../docs/user-guide.md#identity-changed-after-a-re-flash).
 
 ### Which helper is the board paired with?
 
-The board's config page answers it, under **Paired helper**
-([#114](https://github.com/myn/deskhopplus/issues/114)): the key id of the one helper it has
-registered — SHA-256 of that helper's public key, first eight bytes — or *none* when the board
-holds no registration. It is read-only there, and the shared secret stored beside it never leaves
-the board at all.
-
-The helper prints its own key id, in the same byte order and spelling, as the first line of every
-run:
-
-```
-helper key id: 4f2a91c7e30b56d8
-```
-
-Equal means this helper is the registered one. Different means the board is paired with something
-else, and a chord press is what moves it — with the usual caution: press it only when nothing you
-did not start is attached to the channel.
+The user guide's [Which helper is a board paired with?](../../docs/user-guide.md#which-helper-is-a-board-paired-with)
+([#114](https://github.com/myn/deskhopplus/issues/114)). The key id is SHA-256 of the helper's
+public key, first eight bytes, printed by the config page and by the helper's first log line in
+the same byte order and spelling.
 
 ### The clipboard payload is sealed
 
@@ -281,27 +260,21 @@ Two limits, stated plainly, because a security note that only lists wins is not 
 
 ## Menu bar
 
-The item shows the helper name and connection state in words, including **paired**, **not paired**,
-**listener detected**, and **identity changed**. Open it for the full cause and remedy. The first
-row, greyed, is **deskhopplus helper** and the release number, from the one version the firmware
-and both helpers share (`src/core/dh_version.h`). It is not clickable. Security
-states retain their own wording even during a transfer or a placement failure. A brief config-mode
-round trip stays quiet. Placement failures remain in the menu until a placement succeeds.
+What the item shows is the user guide's
+[What the menu bar or tray says](../../docs/user-guide.md#what-the-menu-bar-or-tray-says). The
+release row comes from the one version the firmware and both helpers share
+(`src/core/dh_version.h`). Security states retain their own wording even during a transfer or a
+placement failure. A brief config-mode round trip stays quiet. Placement failures remain in the
+menu until a placement succeeds.
 
 **Start at login** installs a per-user LaunchAgent for the current executable. Turning it off moves
 the plist to `com.deskhopplus.helper.plist.disabled`; turning it back on restores it unchanged,
 including a custom executable path. The checkbox reports whether the plist is installed, not proof
-that macOS has launched it. Changes apply at the **next login** and do not stop the running helper
-or its transfers. macOS background-item restrictions or a `launchctl disable` override can still
-prevent startup; allow the helper in System Settings if startup is blocked. Keep the executable at
-its registered path. Existing launchd jobs retain their current restart policy until reloaded.
+that macOS has launched it. A `launchctl disable` override or a background-item restriction can
+still prevent startup. Existing launchd jobs retain their current restart policy until reloaded.
 
-**Quit deskhopplus helper** stops the helper until the next login. Under launchd it boots the job
-out (`launchctl bootout`) rather than exiting, so it stays stopped whatever `KeepAlive` an installed
-plist carries (#190). To start it again before the next login, bootstrap the plist as under
-*Installing the agent* — turning **Start at login** on first if the file is still
-`com.deskhopplus.helper.plist.disabled` — or run the binary from a terminal. A crash is still
-restarted.
+**Quit deskhopplus helper** boots the job out (`launchctl bootout`) rather than exiting, so it
+stays stopped whatever `KeepAlive` an installed plist carries (#190). A crash is still restarted.
 
 ## Installing the agent
 

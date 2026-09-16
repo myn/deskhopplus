@@ -1,5 +1,8 @@
 # The Windows helper
 
+Using it — pairing, what the tray says, the clipboard, fixing and removing it — is the
+[user guide](../../docs/user-guide.md). This file is for people building it.
+
 One `.exe`. Put it anywhere and run it. Nothing is installed, nothing is elevated, and it is
 unsigned — see [ADR-0006](../../docs/adr/0006-windows-helper-no-install.md) for why that is a
 requirement rather than a convenience.
@@ -15,7 +18,7 @@ firmware and both helpers share (`src/core/dh_version.h`). It is not clickable.
 
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
-256 KB waits in the notification area until it is accepted here, and only then does anything cross
+1 MB waits in the notification area until it is accepted here, and only then does anything cross
 the link. They are written under `%TEMP%\deskhopplus`, which is emptied when the helper starts.
 
 **It decides none of that.** The session machine is `src/core/dh_helper.c`, compiled in place —
@@ -53,16 +56,10 @@ helper draws.
 
 ## Pairing
 
-Start the helper **first**, then press the config chord on the board. Three facts, each of which
-has cost a debugging session:
-
-- the chord is a **toggle** — two quick presses enter and immediately leave, which looks exactly
-  like the chord not working;
-- the pairing window is **per board**, and the secret is written to the flash of whichever board
-  processed the chord — and the board that processes it is the one **the keyboard is plugged
-  into**, so pairing this helper means moving the keyboard to board B's USB-A port for the two
-  presses;
-- the window is 60 seconds, and a helper started after it opens has missed it.
+Start the helper **first**, then press the config chord on the board. The three facts that have
+each cost a debugging session — the chord is a toggle, the window is per board and opens only on
+the board the keyboard is plugged into, and it lasts 60 seconds — are in the user guide's
+[Pair a helper](../../docs/user-guide.md#pair-a-helper).
 
 ## The clipboard payload is sealed
 
@@ -118,5 +115,4 @@ portable exe moves, and this is what stops that silently breaking autostart.
 
 ## Removing it
 
-Turn autostart off from the tray menu, quit the helper, delete
-`%LOCALAPPDATA%\deskhopplus\`, and delete the exe. There is nothing else.
+The user guide's [Uninstall](../../docs/user-guide.md#uninstall). There is nothing else to remove.
