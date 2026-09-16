@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * CRC32 (IEEE, reflected, as in zlib) — the per-chunk end-to-end integrity
  * check. Pure C11, no I/O, no platform dependencies.

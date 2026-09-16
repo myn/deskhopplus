@@ -96,3 +96,16 @@ Before closing or handing off an issue, record important:
 - Remaining human-validation requirements
 
 Keep issue status accurate throughout the work.
+
+---
+
+## Licence headers
+
+Every new `.c`, `.h`, `.cpp`, `.swift`, `.sh` or `.py` file starts with, in that file's comment style, after any shebang:
+
+```
+SPDX-License-Identifier: GPL-3.0-only
+Copyright (c) 2026 Derek Reynolds
+```
+
+An upstream DeskHop file keeps its own notice and gains one line: `Modified by Derek Reynolds, 2026, for deskhopplus.` `tools/check-licence-headers.sh` gates CI on this.

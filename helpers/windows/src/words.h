@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #pragma once
 /*
  * The wording, which is the half of every output the shared core deliberately

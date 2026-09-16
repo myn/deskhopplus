@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
 // What a listener attached to the channel can still make the real helper say.
 // (#108 on v1; re-pointed at v2 by #114; at v3's report shape by #189.)
 //

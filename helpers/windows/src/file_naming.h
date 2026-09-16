@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #pragma once
 /*
  * What a file is called once it is on this computer's disk (#56).

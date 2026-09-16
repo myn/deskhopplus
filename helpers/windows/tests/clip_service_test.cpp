@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The clipboard payload path (#52, #55), driven as **two helpers talking to each
  * other** rather than one talking to a script.

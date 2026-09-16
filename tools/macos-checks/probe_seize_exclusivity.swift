@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
 // Minimal, dependency-free: does a second kIOHIDOptionsTypeSeizeDevice open
 // succeed while another process already holds one? Prints the raw IOReturn and
 // then reports whatever arrives, so we can also tell who receives.

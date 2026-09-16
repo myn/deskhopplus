@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #include "dh_seam_map.h"
 
 int32_t dh_seam_map_coordinate(int32_t position, int32_t source_start, int32_t source_end,

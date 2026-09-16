@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Golden-vector + codec tests for the shared core's frame codec (seam 1).
  * Style follows mkroamer's suite: an assertion macro, a main, a printed

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #include "main.h"
 
 void cursor_trace_event(const device_t *state, dh_cursor_trace_event_t event,

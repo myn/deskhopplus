@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus shared core — the file list a kind-2 CLIP_OFFER carries (#56).
  *

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #ifndef CHANNEL_LIFECYCLE_H_
 #define CHANNEL_LIFECYCLE_H_
 

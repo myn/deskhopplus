@@ -1,3 +1,4 @@
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 # Rendering needs jinja2 and Python 3.10 or newer — form.py annotates with
 # `int | None`, which the system python on macOS (3.9) cannot parse.
 #

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /* Bounded cursor-transition evidence preserved across reboots (#28, #102). */
 #pragma once
 

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The peer board's firmware version, tracked from its heartbeats (#89).
  * See peer_fw.h for why this is not inside the UART handler.

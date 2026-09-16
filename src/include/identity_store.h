@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The board's stored identity: what sits in the identity sector, whether it is
  * usable, and how one is made valid (#111, ADR-0008).

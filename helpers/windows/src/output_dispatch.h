@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #pragma once
 /*
  * What each output *does* — the shim's two switches, with the platform behind

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus shared core — CRC32 (IEEE, reflected, as in zlib).
  * The per-chunk end-to-end integrity check of the reliability model.

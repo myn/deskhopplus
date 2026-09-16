@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 """Regenerate the golden vectors from docs/protocol.md's layouts (v3: v2's frames, version 3).
 
     python3 tools/gen-frame-vectors.py              > test-vectors/frames.txt

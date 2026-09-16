@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #pragma once
 /*
  * This computer's clipboard: what was copied here, and what arrives from the

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 swift build

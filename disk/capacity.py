@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 """How much of the shipped config disk the page uses, and whether it fits.
 
 The volume is deliberately a lie. `mformat` lays out a 2 MB FAT12 filesystem

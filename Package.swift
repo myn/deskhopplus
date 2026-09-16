@@ -1,4 +1,6 @@
 // swift-tools-version: 5.9
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
 
 /*
  * The macOS helper (#45), and the thin binding through which it consumes the

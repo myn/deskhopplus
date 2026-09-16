@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The board's stored identity: what validates, what does not, and that a
  * round trip through seal and validate keeps the key intact (#111).

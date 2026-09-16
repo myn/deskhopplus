@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /* TDD specification for issue #22's public keyboard-output seam. */
 
 #include <stdio.h>

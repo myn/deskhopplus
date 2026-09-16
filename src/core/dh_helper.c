@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The helper's side of the session (#79, #80). See dh_helper.h for what lives
  * here and what deliberately does not.

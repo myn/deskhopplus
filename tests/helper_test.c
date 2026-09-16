@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The helper's side of the v2 session (#79, #80): the hello exchange,
  * negotiation, liveness, acquisition, pairing, and the states a user is shown.

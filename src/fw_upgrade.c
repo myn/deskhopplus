@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Whether a firmware upgrade being received is still alive (#90).
  * See fw_upgrade.h for why this is not inside the tasks and handlers.

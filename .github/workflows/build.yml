@@ -1,3 +1,4 @@
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 name: Build
 
 on:
@@ -71,6 +72,13 @@ jobs:
 
     - name: Checkout
       uses: actions/checkout@v4
+
+    # Straight after checkout, because it is the cheapest step and the one a
+    # new file is most likely to fail (#198). Same shape as the config-artifact
+    # check below: the script a developer runs is the one that gates the build.
+    - name: Every source file states its licence
+      shell: bash
+      run: ./tools/check-licence-headers.sh
 
     - name: Render webconfig
       shell: bash

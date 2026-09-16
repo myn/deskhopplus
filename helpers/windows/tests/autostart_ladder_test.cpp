@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The autostart ladder's decisions (#86): which mechanism took, whether the
  * recorded path still matches, what the marker proves, and what disabling has

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The Windows helper: a single portable exe that finds the device, seizes
  * every channel, introduces itself, keeps the session alive (#49), and carries

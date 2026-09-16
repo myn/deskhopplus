@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 
 # Takes a HTML file, outputs a minified and compressed version that self-decompresses when loaded.
 # This way, the device config page can be fitted in a small 64 kB "flash" partition and distributed

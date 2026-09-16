@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #include "hid_transport.h"
 
 #include <initguid.h> /* must precede hidclass.h so GUID_DEVINTERFACE_HID is defined here */

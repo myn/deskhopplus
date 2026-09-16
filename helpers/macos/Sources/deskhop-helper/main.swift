@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
 /*
  * The macOS helper: a background agent that finds the device, seizes every
  * channel, introduces itself, keeps the session alive (#45), and carries the

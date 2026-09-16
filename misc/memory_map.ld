@@ -1,3 +1,4 @@
+/* Modified by Derek Reynolds, 2026, for deskhopplus. */
 /* Based on GCC ARM embedded samples.
    Defines the following symbols for use by code:
     __exidx_start

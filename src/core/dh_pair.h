@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus shared core — the board's identity, and the one helper key it
  * registers (#111, ADR-0008).

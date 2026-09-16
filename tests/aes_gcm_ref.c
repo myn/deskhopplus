@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * A reference AES-256-GCM for the host suite. See aes_gcm_ref.h for why it
  * lives in tests/ rather than in the core. Straight from NIST SP 800-38D, with

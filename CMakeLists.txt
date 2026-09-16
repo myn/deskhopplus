@@ -1,3 +1,4 @@
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 cmake_minimum_required(VERSION 3.6)
 
 ## Version Configuration.

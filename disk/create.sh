@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 #
 # Build the config disk image that ships inside the firmware.
 #

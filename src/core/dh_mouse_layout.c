@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 #include "dh_mouse_layout.h"
 
 bool dh_mouse_reports_are_relative(bool relative_mouse, bool gaming_mode) {

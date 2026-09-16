@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Inter-board relay tests (#47): fragmentation, reassembly, the priority
  * band, the burst cap, and every way a packet can go missing.

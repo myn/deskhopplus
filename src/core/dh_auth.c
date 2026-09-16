@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus shared core — session keys, the frame tag, and the counter (#110).
  * See dh_auth.h. Layouts are docs/protocol.md v2; test-vectors/frames.txt is

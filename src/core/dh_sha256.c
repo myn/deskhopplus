@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus shared core — SHA-256, HMAC-SHA256 and HKDF-SHA256 (#110).
  * See dh_sha256.h. FIPS 180-4, RFC 2104 and RFC 5869; gated against those

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 #
 # The build, in one place, because none of its tools are on PATH on this
 # machine and every session was rediscovering that.

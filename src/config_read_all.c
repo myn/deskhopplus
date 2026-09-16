@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * deskhopplus — where a config Read All has got to. See
  * include/config_read_all.h for why this is not simply a loop in the handler.

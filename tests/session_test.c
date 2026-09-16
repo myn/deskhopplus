@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The board's side of the v2 session (#111, ADR-0008): the hello exchange, the
  * pairing exchange, per-frame authentication, liveness, and the listener alert.

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 """Where two disk images differ, as byte ranges.
 
 Diagnostic only. The config disk is not byte-reproducible across mtools

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /* Cursor crossing owner: movement, helper readback and switching completion.
  * Hardware adapters provide the lock, clock, channel and output effects.
  * Core 1 drives movement/completion; core 0 publishes readback under the lock.

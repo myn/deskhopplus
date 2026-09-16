@@ -7,7 +7,7 @@
  * the Free Software Foundation, version 3.
  *
  * See the file LICENSE for the full license text.
- * Modified by deskhopplus contributors to provide configurable hotkey defaults.
+ * Modified by Derek Reynolds, 2026, for deskhopplus.
  */
 #include "main.h"
 #include "core/dh_hotkey_defaults.h"

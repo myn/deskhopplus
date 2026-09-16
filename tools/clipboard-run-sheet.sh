@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 #
 # The clipboard's hardware run sheet (#56), because the last one was done by
 # hand and written up by hand, and both halves of that are avoidable.

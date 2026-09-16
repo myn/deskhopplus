@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Derek Reynolds
+
 #
 # build.sh's helper report must ask launchd whether the agent is up, not the
 # filesystem (#192): a job bootstrapped from a plist outside ~/Library/LaunchAgents

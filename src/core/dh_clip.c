@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * CLIP_* message payload codecs. Layouts: docs/protocol.md; the golden
  * vectors gate the bytes. Pure C11, no I/O, no platform dependencies.

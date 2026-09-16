@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The board's end of the helper channel (#45), its per-frame authentication
  * (#111) and its relay across the inter-board link (#47). See include/channel.h.

@@ -7,6 +7,7 @@
  * the Free Software Foundation, version 3.
  *
  * See the file LICENSE for the full license text.
+ * Modified by Derek Reynolds, 2026, for deskhopplus.
  */
 
 #ifndef USB_DESCRIPTORS_H_

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Whether a stored configuration is one this firmware may use, and how one is
  * made valid. Split out of load_config/save_config (#74).

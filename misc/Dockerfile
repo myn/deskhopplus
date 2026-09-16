@@ -1,3 +1,4 @@
+# Modified by Derek Reynolds, 2026, for deskhopplus.
 FROM alpine:3.21.2
 
 # mtools so the config disk image can be rebuilt here too — without it CMake

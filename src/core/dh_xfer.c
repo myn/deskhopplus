@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The chunked transfer state machine. Semantics: docs/protocol.md,
  * "Transfer semantics". Ported from mkroamer's clip-transfer core; the

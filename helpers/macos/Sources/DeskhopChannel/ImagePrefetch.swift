@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
 /*
  * Paste-side ownership of a large image while its bytes are prefetched.
  *

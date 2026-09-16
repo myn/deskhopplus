@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
 /*
  * When a pasteboard poll has actually seen a copy (#132 follow-up).
  *

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Tests for the transmit-queue overflow accounting (#43): a failed enqueue is
  * counted and reported to the caller; a successful one changes nothing.

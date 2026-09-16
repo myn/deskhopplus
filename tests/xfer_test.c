@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Tests for the chunked transfer state machine (#48), at the seam the spec
  * names: given an offer, chunk headers, data, CRCs, retransmit requests, and

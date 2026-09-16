@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /* Pure mouse-layout decisions shared by firmware and host tests (#24). */
 #pragma once
 

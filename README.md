@@ -10,7 +10,7 @@
 >
 > **When syncing stops.** Once the new layout model lands, `src/mouse.c` will have diverged past the point where upstream patches apply cleanly. At that point this fork stops tracking upstream and this section will say so plainly, rather than maintaining the appearance of a relationship that no longer functions.
 >
-> Licensed **GPLv3**, as upstream. All original copyright notices are retained; modified files carry an additional notice recording the change.
+> Licensed **GPLv3**, as upstream. All original copyright notices are retained; modified source and build files carry an additional notice recording the change (`Modified by Derek Reynolds, 2026, for deskhopplus.`). The four `webconfig/templates/` files do not, because their bytes ship inside the firmware's config page.
 >
 > **Vendored third-party code.** `pico-sdk/` and `Pico-PIO-USB/` as before, and now `src/core/micro-ecc/` — [micro-ecc](https://github.com/kmackay/micro-ecc), BSD 2-clause and so GPLv3-compatible, which supplies the P-256 the channel's identity keys need (ADR-0008). Vendored rather than fetched because no toolchain here has a package manager and the firmware build must not reach the network; see `src/core/micro-ecc/VENDOR.md` for the commit and what was left out.
 

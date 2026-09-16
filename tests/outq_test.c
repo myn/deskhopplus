@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * Outbound frame queue tests (#69, ADR-0005): the burst a slow drain creates,
  * the bound on it, the band discipline, and the sustained overrun that used to

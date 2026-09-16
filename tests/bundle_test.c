@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Copyright (c) 2026 Derek Reynolds */
+
 /*
  * The bundle a kind-3 CLIP_OFFER carries (#195): more than one representation
  * of one copy, so the pasting application picks the one it wants.
