@@ -108,8 +108,8 @@ build_fw() {
     before="$(uf2_stamp)"
     say "firmware → build/ (cmake)  [$(arm-none-eabi-gcc -dumpversion), $(cmake --version | head -1)]"
 
-    # Reconfigure every time. It is cheap, and a stale cache is exactly how a
-    # changed VERSION_MINOR fails to reach the compile flags.
+    # Reconfigure every time. It is cheap, and a stale cache has bitten before:
+    # a version bump that never reached the image.
     cmake -S . -B build >/dev/null
     cmake --build build -j"$(sysctl -n hw.ncpu)"
 }
@@ -170,13 +170,14 @@ report_fw() {
         v="$(python3 - "$crc" <<'PY'
 import struct, sys
 magic, version, crc = struct.unpack('<IHI', open(sys.argv[1], 'rb').read()[:10])
-print(f"{version}  (v{version // 1000}.{version % 1000 - 100}, crc {crc:#010x})")
+# Decoded the way the config page does it, webconfig/templates/script.js, so the two agree.
+print(f"{version}  (v{(version - 100) // 1000}.{(version - 100) % 1000}, crc {crc:#010x})")
 PY
 )"
         printf '  version   %s\n' "$v"
         printf '\n  Board B follows board A on a newer version, or on the %ssame%s version\n' "$bold" "$off"
         printf '  carrying a different image (#91) — so a rebuild propagates as it is.\n'
-        printf '  Bump VERSION_MINOR in CMakeLists.txt to flash something %solder%s onto\n' "$bold" "$off"
+        printf '  Bump DH_VERSION_MINOR in src/core/dh_version.h to flash something %solder%s onto\n' "$bold" "$off"
         printf '  the pair, and to move board A, which never follows B.\n'
     fi
 }

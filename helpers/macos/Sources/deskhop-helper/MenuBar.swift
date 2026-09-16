@@ -3,6 +3,7 @@
 
 import AppKit
 import CoreGraphics
+import DHCore
 import DeskhopChannel
 import Foundation
 
@@ -221,6 +222,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     // MARK: - The menu
 
+    /// The greyed first row: this helper's name and release, from the one
+    /// version the firmware and both helpers share (#199).
+    static let releaseRow = "deskhopplus helper \(DH_VERSION_MAJOR).\(DH_VERSION_MINOR)"
+
     static func title(for state: HelperState) -> String {
         switch state {
         case .quiet: return "deskhop"
@@ -255,6 +260,8 @@ final class MenuBar: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         menu.autoenablesItems = false
 
+        addWords(Self.releaseRow, to: menu)
+        menu.addItem(.separator())
         addWords(state.message ?? "Waiting for the device", to: menu)
         if let placementProblem {
             menu.addItem(.separator())

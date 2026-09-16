@@ -22,6 +22,7 @@ constexpr UINT kIdDeclineFiles = 7;
 constexpr UINT kIdProgress = 8;
 constexpr UINT kIdAbortTransfer = 9;
 constexpr UINT kIdAbortSend = 10;
+constexpr UINT kIdVersion = 11;
 
 std::wstring widen(const std::string &text) {
     if (text.empty()) return {};
@@ -170,6 +171,9 @@ void Tray::show_menu() {
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
+
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdVersion, widen(words::release_row()).c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     const std::string status = words::state_message(state_);
     AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdStatus,

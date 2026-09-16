@@ -6,7 +6,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 swift build
 bin="$(swift build --show-bin-path)"
-swiftc -I "$bin/Modules" -I "$bin/DHCore.build" \
+# The build's own module cache, not swiftc's default one: a header added to
+# src/core is invisible to a stale cached DHCore, and swift build keeps this
+# one current.
+swiftc -module-cache-path "$bin/ModuleCache" -I "$bin/Modules" -I "$bin/DHCore.build" \
     helpers/macos/Sources/deskhop-helper/MenuBar.swift \
     helpers/macos/Sources/deskhop-helper/LaunchAtLogin.swift \
     helpers/macos/Tests/menu-tests/main.swift \

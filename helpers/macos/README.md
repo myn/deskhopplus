@@ -282,7 +282,9 @@ Two limits, stated plainly, because a security note that only lists wins is not 
 ## Menu bar
 
 The item shows the helper name and connection state in words, including **paired**, **not paired**,
-**listener detected**, and **identity changed**. Open it for the full cause and remedy. Security
+**listener detected**, and **identity changed**. Open it for the full cause and remedy. The first
+row, greyed, is **deskhopplus helper** and the release number, from the one version the firmware
+and both helpers share (`src/core/dh_version.h`). It is not clickable. Security
 states retain their own wording even during a transfer or a placement failure. A brief config-mode
 round trip stays quiet. Placement failures remain in the menu until a placement succeeds.
 

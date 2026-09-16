@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "output_dispatch.h"
+#include "words.h"
 
 using namespace deskhop;
 
@@ -307,6 +308,14 @@ static void a_state_reaches_the_tray_in_words() {
     CHECK(recorder.logged("state: "), "the state is logged in this helper's own words");
     CHECK(!recorder.logged("the core reported state"),
           "a state this helper has words for is not reported as unknown");
+}
+
+/* The greyed first row of the tray menu (#199). The literal, not
+   DH_VERSION_MAJOR spelled back out: this is the release the helper claims to
+   be, and it moves with src/core/dh_version.h. */
+static void the_helper_names_its_release() {
+    CHECK(words::release_row() == "deskhopplus helper 1.0",
+          "the menu's first row names the helper and its release");
 }
 
 /* #119: a state added to the core and left out of words.h would otherwise be
@@ -643,6 +652,7 @@ int main() {
     a_sent_frame_charges_the_idle_timer();
     a_refused_frame_is_counted_and_said_out_loud();
     a_state_reaches_the_tray_in_words();
+    the_helper_names_its_release();
     a_state_with_no_words_says_so();
     a_clip_policy_reaches_the_service_and_its_reply_is_carried_out();
     a_retry_is_handed_to_the_run_loop();

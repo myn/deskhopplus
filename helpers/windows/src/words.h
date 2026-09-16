@@ -29,6 +29,10 @@
 
 namespace deskhop::words {
 
+/* The greyed first row of the tray menu: this helper's name and release, from
+   the one version the firmware and both helpers share (#199). */
+std::string release_row();
+
 /*
  * What the user is told, in words. Empty for DH_HELPER_QUIET, which shows
  * nothing at all: a device that disappears for a moment is ordinary, and

@@ -61,7 +61,7 @@ FLASH THIS  /path/to/deskhopplus/build/deskhop.uf2
   version  180  (v0.80, crc 0xd9981727)
 ```
 
-This matters because only board **A** is flashed directly; board B follows it over the inter-board link. B pulls when A reports a newer version, or — since the heartbeat began carrying the running image's checksum — when the version is equal and the image differs. So an ordinary rebuild reaches both boards on its own. **Bump `VERSION_MINOR` in `CMakeLists.txt` to put an *older* image on the pair**, which is never pulled whatever its checksum. A pair left split presents different USB descriptors to the two computers, so confirm both moved rather than assuming.
+This matters because only board **A** is flashed directly; board B follows it over the inter-board link. B pulls when A reports a newer version, or — since the heartbeat began carrying the running image's checksum — when the version is equal and the image differs. So an ordinary rebuild reaches both boards on its own. **Bump `DH_VERSION_MINOR` in `src/core/dh_version.h` to put an *older* image on the pair**, which is never pulled whatever its checksum. A pair left split presents different USB descriptors to the two computers, so confirm both moved rather than assuming.
 
 The timestamp is the artifact's mtime, so an incremental build with no changed inputs won't move it — the same bytes, the same file, correctly left alone. Because that looks identical to a build that never ran, the line says which happened:
 

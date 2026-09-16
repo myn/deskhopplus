@@ -6,8 +6,14 @@
 #include <cstdio>
 
 #include "dh_frame.h"
+#include "dh_version.h"
 
 namespace deskhop::words {
+
+std::string release_row() {
+    return "deskhopplus helper " + std::to_string(DH_VERSION_MAJOR) + "." +
+           std::to_string(DH_VERSION_MINOR);
+}
 
 namespace {
 

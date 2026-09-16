@@ -2,9 +2,18 @@
 cmake_minimum_required(VERSION 3.6)
 
 ## Version Configuration.
-## Define e.g. 0.72 as major 0 and minor 72
-set(VERSION_MAJOR 0)
-set(VERSION_MINOR 104)
+## One source, shared with both helpers (#199): src/core/dh_version.h holds
+## e.g. 1.0 as DH_VERSION_MAJOR 1 and DH_VERSION_MINOR 0, and is parsed here.
+set(DH_VERSION_H ${CMAKE_SOURCE_DIR}/src/core/dh_version.h)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${DH_VERSION_H})
+file(READ ${DH_VERSION_H} DH_VERSION_TEXT)
+string(REGEX MATCH "#define DH_VERSION_MAJOR ([0-9]+)" _ "${DH_VERSION_TEXT}")
+set(VERSION_MAJOR ${CMAKE_MATCH_1})
+string(REGEX MATCH "#define DH_VERSION_MINOR ([0-9]+)" _ "${DH_VERSION_TEXT}")
+set(VERSION_MINOR ${CMAKE_MATCH_1})
+if(NOT VERSION_MAJOR MATCHES "^[0-9]+$" OR NOT VERSION_MINOR MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "could not read DH_VERSION_MAJOR/MINOR from ${DH_VERSION_H}")
+endif()
 
 ## Release Type Selection
 option(DH_DEBUG "Build a debug version" OFF)
@@ -239,8 +248,6 @@ add_dependencies(${binary} config_disk)
 target_sources(${binary} PUBLIC ${COMMON_SOURCES})
 target_compile_definitions(${binary} 
     PRIVATE
-    VERSION_MAJOR=${VERSION_MAJOR}
-    VERSION_MINOR=${VERSION_MINOR}
     PIO_USB_USE_TINYUSB=${PIO_USE_TINYUSB}
     PIO_USB_DP_PIN_DEFAULT=${DP_PIN_DEFAULT}
     __disk_file_path__="${DISK_BIN}"
@@ -301,6 +308,10 @@ pico_set_linker_script(${binary} ${CMAKE_SOURCE_DIR}/misc/memory_map.ld)
 pico_add_extra_outputs(${binary})
 
 # For internal firmware use, to simplify comparison: 0.72 -> 172
+# A minor of 1000 would land on the next major's .0, so the encoding caps it.
+if(VERSION_MINOR GREATER 999)
+  message(FATAL_ERROR "DH_VERSION_MINOR ${VERSION_MINOR} does not fit the u16 version encoding (max 999)")
+endif()
 math(EXPR FIRMWARE_VERSION "${VERSION_MAJOR} * 1000 + ${VERSION_MINOR} + 100")
 
 ## Post-Build Commands

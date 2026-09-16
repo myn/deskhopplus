@@ -44,7 +44,12 @@ let menu = NSMenu()
 for state in HelperState.allCases {
     menuBar.show(state: state)
     menuBar.menuNeedsUpdate(menu)
-    let words = menu.items.prefix { !$0.isSeparatorItem }.map(\.title).joined(separator: " ")
+    // The literal, not DH_VERSION_MAJOR spelled back out: this is the release
+    // the helper claims to be, and it moves with src/core/dh_version.h (#199).
+    check(menu.items[0].title == "deskhopplus helper 1.0" && !menu.items[0].isEnabled,
+          "the first row names the helper and its release, greyed")
+    check(menu.items[1].isSeparatorItem, "the release row stands apart from the state")
+    let words = menu.items.dropFirst(2).prefix { !$0.isSeparatorItem }.map(\.title).joined(separator: " ")
     check(words == state.message ?? "Waiting for the device", "the menu must preserve the shared state's remedy")
     check(MenuBar.title(for: state).contains("deskhop"), "every idle title identifies the helper")
 }
@@ -80,7 +85,7 @@ check(unchanged == original, "a failed toggle does not damage registration")
 menuBar.show(placementProblem: "Cursor placement unavailable — check the display layout.")
 menuBar.menuNeedsUpdate(menu)
 check(menu.items.contains { $0.title.contains("Cursor placement unavailable") }, "placement degradation has a visible remedy")
-check(menu.items.first!.title.contains("Another program"), "placement status does not replace the listener remedy")
+check(menu.items[2].title.contains("Another program"), "placement status does not replace the listener remedy")
 menuBar.show(placementProblem: nil)
 menuBar.menuNeedsUpdate(menu)
 check(!menu.items.contains { $0.title.contains("Cursor placement unavailable") }, "successful placement clears its warning")

@@ -9,7 +9,9 @@ requirement rather than a convenience.
 Finds the board by its USB identifier and serial, takes exclusive hold of every channel, says
 hello, keeps the session alive, and reconnects on its own when the device goes away and comes
 back. It carries the clipboard — text, images and files — and places the cursor. It shows what it
-is doing in the notification area, and can be asked to start itself at logon.
+is doing in the notification area, and can be asked to start itself at logon. The tray menu's
+first row, greyed, is **deskhopplus helper** and the release number, from the one version the
+firmware and both helpers share (`src/core/dh_version.h`). It is not clickable.
 
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
