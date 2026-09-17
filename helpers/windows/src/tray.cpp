@@ -17,7 +17,6 @@ namespace {
 constexpr UINT kIconId = 1;
 constexpr UINT kIdStatus = 1;
 constexpr UINT kIdAutostart = 2;
-constexpr UINT kIdAutostartDetail = 3;
 constexpr UINT kIdQuit = 4;
 constexpr UINT kIdFileSummary = 5;
 constexpr UINT kIdAcceptFiles = 6;
@@ -364,11 +363,6 @@ void Tray::show_menu() {
 
     const bool enabled = callbacks_.autostart_enabled && callbacks_.autostart_enabled();
     AppendMenuW(menu, MF_STRING | (enabled ? MF_CHECKED : 0u), kIdAutostart, L"Start at logon");
-    if (callbacks_.autostart_detail) {
-        const std::string detail = callbacks_.autostart_detail();
-        if (!detail.empty())
-            AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdAutostartDetail, widen(detail).c_str());
-    }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kIdQuit, L"Quit deskhopplus helper");

@@ -108,8 +108,8 @@ Below the state the menu may also show:
 - **Quit deskhopplus helper**.
 
 **Start at login / Start at logon** makes the helper start when you log in. On macOS the change
-takes effect at the next login. On Windows the row under it says which method took and whether it
-has been seen to work yet; a managed laptop may refuse every method, and the helper says so.
+takes effect at the next login. On Windows a managed laptop may refuse every method the helper
+tries; the helper log says so, and the helper still works when you start it yourself.
 
 **Quit** stops the helper until you start it again or log in again. On macOS, double-click the
 helper file to start it again now. On Windows, run the exe again.

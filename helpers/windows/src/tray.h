@@ -54,9 +54,6 @@ class Tray {
         /* The tray menu is where autostart is turned on and off — an offer,
            never an assumption (#86). */
         std::function<bool()> autostart_enabled;
-        /* One line saying what autostart is actually doing, which is not the
-           same as whether it is switched on. */
-        std::function<std::string()> autostart_detail;
         std::function<void()> toggle_autostart;
         std::function<void()> quit;
 

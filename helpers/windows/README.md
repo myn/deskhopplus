@@ -121,10 +121,10 @@ logon task, a run-key entry, a shortcut in the Startup folder — and the first 
 recorded. A managed laptop can refuse any of them, and all three failing is logged and nothing
 more: the helper is an enhancement, never a dependency.
 
-"Enabled" is only claimed once two different things are true: the entry reads back, **and** a
-launch carrying the entry's own argument has actually been seen. Those are different claims, and
-a policy that leaves a run key sitting there while refusing to act on it satisfies the first and
-not the second. The tray menu says which of the two you have.
+The tick on **Start at logon** means you asked for it. Whether it actually fired is a different
+claim — a policy can leave a run key sitting there while refusing to act on it — and that proof
+is in the log: `autostart confirmed` is written the first time a launch carrying the entry's own
+argument is seen.
 
 The entry names wherever the exe currently is, and is rewritten when that stops matching. A
 portable exe moves, and this is what stops that silently breaking autostart.

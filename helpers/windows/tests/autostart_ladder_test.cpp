@@ -81,33 +81,24 @@ static void an_exhausted_ladder_registers_nothing() {
     CHECK(record.enabled, "the user's request is remembered even when nothing took");
     CHECK(record.mechanism == Mechanism::None, "no mechanism is claimed");
     CHECK(record.exe_path.empty(), "no path is recorded for an entry that was never written");
-    CHECK(verify(record, true) == Verification::NotRegistered,
-          "a readback cannot vouch for an entry that does not exist");
 }
 
-/* "The entry exists" and "the entry fired" are different claims. */
-static void verification_needs_both_halves() {
+/* "The entry exists" and "the entry fired" are different claims. The record
+   carries the second one, and only a launch with the entry's own argument
+   sets it. */
+static void only_a_launch_carrying_the_argument_confirms() {
     Record record = after_enabling({took(Mechanism::LogonTask)}, "C:\\tools\\deskhop-helper.exe");
 
-    CHECK(verify(record, true) == Verification::RegisteredNotYetProven,
-          "a fresh entry has never been seen to fire");
-    CHECK(verify(record, false) == Verification::NotRegistered,
-          "an entry that no longer reads back is not registered, whatever was recorded");
+    CHECK(!record.confirmed, "a fresh entry has never been seen to fire");
 
     /* A launch that did not carry the entry's argument is a double-click, and
        proves nothing about the mechanism. */
     record = note_launch(record, false);
-    CHECK(verify(record, true) == Verification::RegisteredNotYetProven,
-          "a manual launch is not evidence the entry fired");
+    CHECK(!record.confirmed, "a manual launch is not evidence the entry fired");
 
     record = note_launch(record, true);
-    CHECK(verify(record, true) == Verification::Confirmed,
+    CHECK(record.confirmed,
           "a launch carrying the entry's argument is the second half of the proof");
-
-    /* Even confirmed, a vanished entry is not registered — something removed
-       it since, and last month's proof does not cover that. */
-    CHECK(verify(record, false) == Verification::NotRegistered,
-          "proof does not survive the entry being removed");
 }
 
 static void a_launch_proves_nothing_when_nothing_is_registered() {
@@ -174,8 +165,6 @@ static void disabling_removes_exactly_what_took() {
     CHECK(after.mechanism == Mechanism::None, "disabling leaves no mechanism behind");
     CHECK(after.exe_path.empty(), "disabling leaves no path behind");
     CHECK(!after.confirmed, "disabling leaves no proof behind");
-    CHECK(verify(after, true) == Verification::NotEnabled,
-          "a readback of somebody else's entry does not re-enable ours");
 }
 
 /* Autostart is off until the user asks for it. A portable exe that silently
@@ -184,8 +173,6 @@ static void autostart_is_off_until_asked_for() {
     const Record fresh;
     CHECK(!fresh.enabled, "a fresh record is off");
     CHECK(fresh.mechanism == Mechanism::None, "a fresh record claims no mechanism");
-    CHECK(verify(fresh, true) == Verification::NotEnabled,
-          "an entry that happens to read back does not mean the user asked for one");
 }
 
 int main() {
@@ -193,7 +180,7 @@ int main() {
     ladder_is_attempted_in_order();
     the_first_success_wins();
     an_exhausted_ladder_registers_nothing();
-    verification_needs_both_halves();
+    only_a_launch_carrying_the_argument_confirms();
     a_launch_proves_nothing_when_nothing_is_registered();
     re_enabling_clears_the_proof();
     a_moved_exe_needs_the_entry_rewritten();

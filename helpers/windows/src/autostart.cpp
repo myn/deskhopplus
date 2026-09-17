@@ -222,11 +222,6 @@ void Autostart::start(bool launched_by_autostart) {
     }
 }
 
-autostart::Verification Autostart::status() const {
-    return autostart::verify(record_, record_.mechanism != Mechanism::None &&
-                                          reads_back(record_.mechanism));
-}
-
 void Autostart::enable() {
     std::vector<autostart::Attempt> attempts;
     std::vector<Mechanism> refused;

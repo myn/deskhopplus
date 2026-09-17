@@ -128,38 +128,12 @@ inline Record after_enabling(const std::vector<Attempt> &attempts, const std::st
  *
  * This is the second half of verification, and it can only ever be answered on
  * a *later* logon. "The entry exists" and "the entry fired" are different
- * claims, and only the second one is what "enabled" is supposed to mean.
+ * claims; the record's `enabled` is neither, it is what the user asked for.
  */
 inline Record note_launch(const Record &before, bool carried_autostart_argument) {
     Record record = before;
     if (carried_autostart_argument && record.mechanism != Mechanism::None) record.confirmed = true;
     return record;
-}
-
-enum class Verification {
-    /* The user has not asked for it. */
-    NotEnabled,
-    /* Asked for, and every rung refused. Logged; nothing is shown. */
-    NotRegistered,
-    /* An entry is there and reads back, but no autostarted launch has been
-       seen yet. This is the honest state on the day it is switched on. */
-    RegisteredNotYetProven,
-    /* Both halves: the entry reads back, and a launch carrying its argument
-       has been seen. */
-    Confirmed,
-};
-
-/*
- * Verification is two-part on purpose. A readback proves only that something
- * wrote a value; a managed laptop can leave a run key sitting there and
- * refuse to act on it at logon, which reads back perfectly and never starts
- * anything.
- */
-inline Verification verify(const Record &record, bool entry_reads_back) {
-    if (!record.enabled) return Verification::NotEnabled;
-    if (record.mechanism == Mechanism::None || !entry_reads_back)
-        return Verification::NotRegistered;
-    return record.confirmed ? Verification::Confirmed : Verification::RegisteredNotYetProven;
 }
 
 /*

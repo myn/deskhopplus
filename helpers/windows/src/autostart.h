@@ -47,7 +47,6 @@ class Autostart {
     void start(bool launched_by_autostart);
 
     const autostart::Record &record() const { return record_; }
-    autostart::Verification status() const;
 
     /* Run the ladder and record the first rung that took. Every rung refusing
        is logged and nothing more: the helper is an enhancement, never a

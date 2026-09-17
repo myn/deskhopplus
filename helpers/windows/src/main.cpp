@@ -220,7 +220,6 @@ class Helper : public HelperEffects {
      */
     uint32_t now_ms() const { return static_cast<uint32_t>(GetTickCount64()); }
 
-    std::string autostart_detail() const;
     Tray::Callbacks tray_callbacks();
 
     static Helper *instance_;
@@ -650,7 +649,6 @@ void Helper::abandon_prefetched_image() {
 Tray::Callbacks Helper::tray_callbacks() {
     return Tray::Callbacks{
         [this] { return autostart_->record().enabled; },
-        [this] { return autostart_detail(); },
         /* Opt-in, and opt back out. Never touched on first run: a portable exe
            that silently writes a logon task is a surprise nobody asked for. */
         [this] {
@@ -666,24 +664,6 @@ Tray::Callbacks Helper::tray_callbacks() {
         [this] { dispatch_.emit(clipboard_service_->abort_send()); },
         [this](const std::string &m) { log(m); },
     };
-}
-
-std::string Helper::autostart_detail() const {
-    switch (autostart_->status()) {
-    case autostart::Verification::NotEnabled:
-        return {};
-    case autostart::Verification::NotRegistered:
-        /* Logged, not shouted about. The helper is an enhancement, never a
-           dependency, and a manually-launched one is fully functional. */
-        return "  (this machine refused every method)";
-    case autostart::Verification::RegisteredNotYetProven:
-        return std::string("  (") + autostart::name(autostart_->record().mechanism) +
-               ", not yet seen to fire)";
-    case autostart::Verification::Confirmed:
-        return std::string("  (") + autostart::name(autostart_->record().mechanism) +
-               ", confirmed)";
-    }
-    return {};
 }
 
 LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
