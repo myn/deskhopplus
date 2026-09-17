@@ -185,9 +185,14 @@ and replug both boards: the keyboard and mouse always start on board A's compute
 
 ### Where the computers sit
 
+The **Layout** above the output columns pictures the monitors after **Connect** or **Read**.
+The closed **Advanced** panel in each output contains the layout fields and legacy seam values;
+changing them redraws the picture. Custom values that cannot be pictured exactly show a note.
+The picture is read-only for now.
+
 Each output has:
 
-- **Screen Count** — how many monitors that computer drives (1 to 3).
+- **Screen Count** — how many monitors that computer drives (1 to 7).
 - **Operating System** — set it. The lock-both-computers chord and the Cmd/Ctrl swap default
   depend on it.
 - **Border Direction** — where the *other* computer is: Left, Right, Top or Bottom.
@@ -210,7 +215,7 @@ With more than one monitor on each side, the board needs to know which monitor o
 which monitor on the other side, and where. That is the **Seam ranges** table on each output: four
 segments, each with a **Screen**, a **Start** and an **End**.
 
-- **Screen** is the monitor number, 1 to 3. 0 means the segment is unused.
+- **Screen** is the monitor number, 1 to 7. 0 means the segment is unused.
 - **Start** and **End** are positions along the seam, from 0 to 65535, on that monitor. The whole
   edge of a monitor is 0 to 65535.
 - **Segment 1 on A meets segment 1 on B**, segment 2 meets segment 2, and so on. The cursor

@@ -72,7 +72,7 @@
   {% elif item.get("elem") == "seam_range" %}
     <div class="clearfix seam-range">
       <span>Segment {{ item.segment }}</span>
-      <label>Screen {{ seam_input(item.screen_key, 'uint8', 0, 3) }}</label>
+      <label>Screen {{ seam_input(item.screen_key, 'uint8', 0, 7) }}</label>
       <label>Start {{ seam_input(item.start_key, 'uint16', 0, 65535) }}</label>
       <label>End {{ seam_input(item.end_key, 'uint16', 0, 65535) }}</label>
     </div>
@@ -100,7 +100,7 @@
 
   {% elif item["values"] %}
     {{ label(item, class='') }}
-    <select class="api" data-type="{{ item.type }}" data-key="{{ key }}" required>
+    <select class="api" data-type="{{ item.type }}" data-key="{{ key }}" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
     {% for k, v in item["values"].items() %}

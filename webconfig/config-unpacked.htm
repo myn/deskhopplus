@@ -695,6 +695,19 @@ img {
 /* A malformed hotkey table is refused as a unit; keep the reason beside the field. */
 .hotkey-error { color: #b42318; display: block; min-height: 1.4em; }
 .hotkey-text { margin-bottom: 0; }
+
+#layout { padding: 1rem; background: #f6f8fa; margin-bottom: 2rem; }
+#layout svg { display: block; width: 100%; margin: 1rem auto; }
+#layout text { text-anchor: middle; fill: #253440; font-size: 16px; }
+#layout .layout-os { font-size: 10px; }
+.layout-A { color: #245d8c; fill: #d7e5f0; }
+.layout-B { color: #35732e; fill: #e1f0d7; }
+.layout-monitor { stroke: currentColor; stroke-width: 1; }
+.layout-main { stroke-width: 5; }
+.layout-band { stroke: #7148a0; stroke-width: 9; }
+#layout .layout-band-number { fill: white; font-size: 13px; paint-order: stroke; stroke: #7148a0; stroke-width: 3; }
+.layout-legend { display: flex; justify-content: center; gap: 2rem; font-weight: bold; }
+summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
   </style>
 
   <title>DeskHop Config</title>
@@ -720,6 +733,11 @@ img {
           <h3>Desk<span style="color: #5e9f41;">Hop</span> Config</h3>
         </div>
       </div>
+
+      <section aria-labelledby="layout-title">
+        <h3 id="layout-title">Layout</h3>
+        <div id="layout">Connect to see your monitor layout.</div>
+      </section>
 
       <div class="column" style="border: 2px solid #d7e5f0; padding-right: 3em;">
 
@@ -765,36 +783,6 @@ img {
           </svg>
 
             <h3>Output A</h3>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Screen Count</label>
-
-    <select class="api" data-type="uint32" data-key="11" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">1</option>
-
-    <option value="2">2</option>
-
-    <option value="3">3</option>
-
-    </select><br />
-
-
 
 
 
@@ -882,55 +870,9 @@ img {
 
 
 
-<label class=""> Legacy seam start</label>
-
-
-<input class="api" type="text" name="name14" data-type="int32" data-key="14"
-  onchange="valueChangedHandler(this)"
-  />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Legacy seam end</label>
-
-
-<input class="api" type="text" name="name15" data-type="int32" data-key="15"
-  onchange="valueChangedHandler(this)"
-  />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <label class=""> Operating System</label>
 
-    <select class="api" data-type="uint8" data-key="16" required>
+    <select class="api" data-type="uint8" data-key="16" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -962,73 +904,9 @@ img {
 
 
 
-<label class=""> Border Direction</label>
-
-    <select class="api" data-type="uint8" data-key="17" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">Left</option>
-
-    <option value="2">Right</option>
-
-    <option value="4">Top</option>
-
-    <option value="5">Bottom</option>
-
-    </select><br />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Chain Direction</label>
-
-    <select class="api" data-type="uint8" data-key="98" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">Left</option>
-
-    <option value="2">Right</option>
-
-    <option value="4">Top</option>
-
-    <option value="5">Bottom</option>
-
-    </select><br />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <label class=""> Cursor Park Position</label>
 
-    <select class="api" data-type="uint8" data-key="18" required>
+    <select class="api" data-type="uint8" data-key="18" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1077,7 +955,7 @@ img {
 
 <label class=""> Mode</label>
 
-    <select class="api" data-type="uint8" data-key="19" required>
+    <select class="api" data-type="uint8" data-key="19" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1202,149 +1080,6 @@ img {
 
 
 
-
-<label class=""> Seam ranges</label>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 1</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="140"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="141"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="142"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 2</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="143"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="144"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="145"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 3</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="146"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="147"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="148"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 4</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="149"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="150"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="151"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     <div class="clearfix keymap-field" data-keymap-output="0"
          data-keymap-kind="overrides">
 
@@ -1383,18 +1118,8 @@ img {
 
 
 
-
-        </div>
-        <div class="column" style="padding-top: 2em;">
-
-          <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <rect x="5" y="5" width="90" height="70" stroke="black" stroke-width="2" fill="#beffa1" rx="10" ry="10" />
-            <line x1="50" y1="90" x2="50" y2="75" stroke="black" stroke-width="2" />
-            <rect x="30" y="90" width="40" height="3" stroke="black" stroke-width="2" fill="#d7e5f0" rx="5" ry="5" />
-          </svg>
-
-            <h3>Output B</h3>
-
+            <details id="advanced-A">
+              <summary>Advanced</summary>
 
 
 
@@ -1411,7 +1136,7 @@ img {
 
 <label class=""> Screen Count</label>
 
-    <select class="api" data-type="uint32" data-key="41" required>
+    <select class="api" data-type="uint32" data-key="11" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1421,9 +1146,284 @@ img {
 
     <option value="3">3</option>
 
+    <option value="4">4</option>
+
+    <option value="5">5</option>
+
+    <option value="6">6</option>
+
+    <option value="7">7</option>
+
     </select><br />
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Legacy seam start</label>
+
+
+<input class="api" type="text" name="name14" data-type="int32" data-key="14"
+  onchange="valueChangedHandler(this)"
+  />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Legacy seam end</label>
+
+
+<input class="api" type="text" name="name15" data-type="int32" data-key="15"
+  onchange="valueChangedHandler(this)"
+  />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Border Direction</label>
+
+    <select class="api" data-type="uint8" data-key="17" onchange="redrawLayout()" required>
+    <option disabled selected value></option>
+
+
+    <option value="1">Left</option>
+
+    <option value="2">Right</option>
+
+    <option value="4">Top</option>
+
+    <option value="5">Bottom</option>
+
+    </select><br />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Chain Direction</label>
+
+    <select class="api" data-type="uint8" data-key="98" onchange="redrawLayout()" required>
+    <option disabled selected value></option>
+
+
+    <option value="1">Left</option>
+
+    <option value="2">Right</option>
+
+    <option value="4">Top</option>
+
+    <option value="5">Bottom</option>
+
+    </select><br />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Seam ranges</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 1</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="140"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="141"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="142"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 2</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="143"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="144"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="145"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 3</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="146"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="147"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="148"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 4</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="149"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="150"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="151"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+            </details>
+
+        </div>
+        <div class="column" style="padding-top: 2em;">
+
+          <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="5" width="90" height="70" stroke="black" stroke-width="2" fill="#beffa1" rx="10" ry="10" />
+            <line x1="50" y1="90" x2="50" y2="75" stroke="black" stroke-width="2" />
+            <rect x="30" y="90" width="40" height="3" stroke="black" stroke-width="2" fill="#d7e5f0" rx="5" ry="5" />
+          </svg>
+
+            <h3>Output B</h3>
 
 
 
@@ -1511,55 +1511,9 @@ img {
 
 
 
-<label class=""> Legacy seam start</label>
-
-
-<input class="api" type="text" name="name44" data-type="int32" data-key="44"
-  onchange="valueChangedHandler(this)"
-  />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Legacy seam end</label>
-
-
-<input class="api" type="text" name="name45" data-type="int32" data-key="45"
-  onchange="valueChangedHandler(this)"
-  />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <label class=""> Operating System</label>
 
-    <select class="api" data-type="uint8" data-key="46" required>
+    <select class="api" data-type="uint8" data-key="46" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1591,73 +1545,9 @@ img {
 
 
 
-<label class=""> Border Direction</label>
-
-    <select class="api" data-type="uint8" data-key="47" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">Left</option>
-
-    <option value="2">Right</option>
-
-    <option value="4">Top</option>
-
-    <option value="5">Bottom</option>
-
-    </select><br />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Chain Direction</label>
-
-    <select class="api" data-type="uint8" data-key="99" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">Left</option>
-
-    <option value="2">Right</option>
-
-    <option value="4">Top</option>
-
-    <option value="5">Bottom</option>
-
-    </select><br />
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <label class=""> Cursor Park Position</label>
 
-    <select class="api" data-type="uint8" data-key="48" required>
+    <select class="api" data-type="uint8" data-key="48" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1706,7 +1596,7 @@ img {
 
 <label class=""> Mode</label>
 
-    <select class="api" data-type="uint8" data-key="49" required>
+    <select class="api" data-type="uint8" data-key="49" onchange="redrawLayout()" required>
     <option disabled selected value></option>
 
 
@@ -1831,149 +1721,6 @@ img {
 
 
 
-
-<label class=""> Seam ranges</label>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 1</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="152"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="153"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="154"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 2</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="155"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="156"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="157"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 3</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="158"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="159"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="160"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix seam-range">
-      <span>Segment 4</span>
-      <label>Screen
-<input class="api seam-input" type="number" data-type="uint8" data-key="161"
-  min="0" max="3" onchange="valueChangedHandler(this)" />
-</label>
-      <label>Start
-<input class="api seam-input" type="number" data-type="uint16" data-key="162"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-      <label>End
-<input class="api seam-input" type="number" data-type="uint16" data-key="163"
-  min="0" max="65535" onchange="valueChangedHandler(this)" />
-</label>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     <div class="clearfix keymap-field" data-keymap-output="1"
          data-keymap-kind="overrides">
 
@@ -2012,6 +1759,301 @@ img {
 
 
 
+            <details id="advanced-B">
+              <summary>Advanced</summary>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Screen Count</label>
+
+    <select class="api" data-type="uint32" data-key="41" onchange="redrawLayout()" required>
+    <option disabled selected value></option>
+
+
+    <option value="1">1</option>
+
+    <option value="2">2</option>
+
+    <option value="3">3</option>
+
+    <option value="4">4</option>
+
+    <option value="5">5</option>
+
+    <option value="6">6</option>
+
+    <option value="7">7</option>
+
+    </select><br />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Legacy seam start</label>
+
+
+<input class="api" type="text" name="name44" data-type="int32" data-key="44"
+  onchange="valueChangedHandler(this)"
+  />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Legacy seam end</label>
+
+
+<input class="api" type="text" name="name45" data-type="int32" data-key="45"
+  onchange="valueChangedHandler(this)"
+  />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Border Direction</label>
+
+    <select class="api" data-type="uint8" data-key="47" onchange="redrawLayout()" required>
+    <option disabled selected value></option>
+
+
+    <option value="1">Left</option>
+
+    <option value="2">Right</option>
+
+    <option value="4">Top</option>
+
+    <option value="5">Bottom</option>
+
+    </select><br />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Chain Direction</label>
+
+    <select class="api" data-type="uint8" data-key="99" onchange="redrawLayout()" required>
+    <option disabled selected value></option>
+
+
+    <option value="1">Left</option>
+
+    <option value="2">Right</option>
+
+    <option value="4">Top</option>
+
+    <option value="5">Bottom</option>
+
+    </select><br />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<label class=""> Seam ranges</label>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 1</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="152"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="153"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="154"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 2</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="155"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="156"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="157"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 3</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="158"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="159"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="160"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="clearfix seam-range">
+      <span>Segment 4</span>
+      <label>Screen
+<input class="api seam-input" type="number" data-type="uint8" data-key="161"
+  min="0" max="7" onchange="valueChangedHandler(this)" />
+</label>
+      <label>Start
+<input class="api seam-input" type="number" data-type="uint16" data-key="162"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+      <label>End
+<input class="api seam-input" type="number" data-type="uint16" data-key="163"
+  min="0" max="65535" onchange="valueChangedHandler(this)" />
+</label>
+    </div>
+
+
+
+
+            </details>
 
         </div>
 
@@ -3518,6 +3560,7 @@ async function handleInputReport(event) {
   var key = data[3];
 
   updateElement(key, event);
+  redrawLayout();
 }
 
 function signed16(lo, hi) {
@@ -3579,6 +3622,7 @@ async function enterBootloaderHandler() {
 }
 
 async function valueChangedHandler(element) {
+  redrawLayout();
   var key = element.getAttribute('data-key');
   var dataType = element.getAttribute('data-type');
 
@@ -3622,6 +3666,95 @@ async function saveHandler() {
 
 async function wipeConfigHandler() {
   await sendReport(packetType.wipeConfigMsg, [], true);
+}
+
+// Coordinates are monitor widths; half-widths are the layout grid.
+function layoutFromFields(fields) {
+  const vectors = {1:[-1,0], 2:[1,0], 4:[0,-1], 5:[0,1]};
+  const opposite = {1:2, 2:1, 4:5, 5:4};
+  const border = Number(fields[17]) || 2;
+  const normal = vectors[border] || vectors[2];
+  const tangent = normal[0] ? 1 : 0;
+  const outputs = [0,1].map(i => {
+    const base = i ? 40 : 10;
+    const chain = Number(fields[98+i]) || 2;
+    const direction = vectors[chain] || vectors[2];
+    const count = Math.max(1, Math.min(7, Number(fields[base+1]) || 1));
+    const monitors = Array.from({length:count}, (_, n) => ({
+      number:n+1, x:n*direction[0], y:n*direction[1],
+    }));
+    const minX = Math.min(...monitors.map(m => m.x));
+    const minY = Math.min(...monitors.map(m => m.y));
+    monitors.forEach(m => {m.x -= minX; m.y -= minY;});
+    return {letter:i ? 'B' : 'A', os:({1:'Linux',2:'MacOS',3:'Windows',4:'Android',255:'Other'})[fields[base+6]] || 'Other',
+      chain, border:Number(fields[base+7]) || opposite[border], monitors};
+  });
+  const segments = Array.from({length:4}, (_, n) => [140,152].map(base => ({
+    monitor:Number(fields[base+3*n]) || 0,
+    start:Number(fields[base+3*n+1]) || 0, end:Number(fields[base+3*n+2]) || 0,
+  })));
+  const empty = segments.every(pair => pair.every(s => !s.monitor));
+  let custom = !vectors[border] || outputs[1].border !== opposite[border] ||
+    outputs.some(o => o.chain === o.border);
+  const a = outputs[0].monitors, b = outputs[1].monitors;
+  // Start with left/top-aligned lines on the side selected by Output A.
+  let shift = normal.map((v, axis) => v > 0 ? Math.max(...a.map(m => axis ? m.y : m.x))+1 :
+    v < 0 ? -Math.max(...b.map(m => axis ? m.y : m.x))-1 : 0);
+  const edge = (m, side, fraction) => [m.x, m.y].map((v, axis) =>
+    v + (axis === tangent ? fraction : (side[axis] > 0 ? 1 : 0)));
+  const close = (x,y) => Math.abs(x-y) <= 1/65535;
+  let recovered = false;
+  const bands = [];
+  segments.forEach((pair, index) => {
+    if (pair.every(s => !s.monitor)) return;
+    if (pair.some((s,i) => !Number.isInteger(s.monitor) || s.monitor < 1 ||
+        s.monitor > outputs[i].monitors.length || s.start < 0 || s.end > 65535 || s.start >= s.end)) {
+      custom = true; return;
+    }
+    const points = pair.map((s,i) => [s.start,s.end].map(value =>
+      edge(outputs[i].monitors[s.monitor-1], normal.map(v => i ? -v : v), value/65535)));
+    const delta = points[0][0].map((v,axis) => v-points[1][0][axis]);
+    const snapped = delta.map(v => Math.round(v*2)/2);
+    const valid = delta.every((v,axis) => close(v,snapped[axis]) &&
+      close(points[0][1][axis]-points[1][1][axis],snapped[axis])) &&
+      pair.every(s => [s.start,s.end].every(v => close(v/65535, Math.round(v/65535*2)/2)));
+    const origins = pair.map((s,i) => {
+      const m = outputs[i].monitors[s.monitor-1];
+      return (tangent ? m.y : m.x) + (i ? snapped[tangent] : 0);
+    });
+    const overlapStart = Math.max(...origins), overlapEnd = Math.min(...origins)+1;
+    const collides = a.some(m => b.some(n =>
+      Math.abs(m.x-n.x-snapped[0])<1 && Math.abs(m.y-n.y-snapped[1])<1));
+    if (!valid || collides || !close(points[0][0][tangent], overlapStart) ||
+        !close(points[0][1][tangent], overlapEnd)) {custom = true; return;}
+    if (!recovered) {shift = snapped; recovered = true;}
+    if (!snapped.every((v,axis) => close(v,shift[axis]))) {custom = true; return;}
+    bands.push({number:index+1, start:points[0][0], end:points[0][1]});
+  });
+  b.forEach(m => {m.x += shift[0]; m.y += shift[1];});
+  if (a.some(m => b.some(n => Math.abs(m.x-n.x)<1 && Math.abs(m.y-n.y)<1))) custom = true;
+  const minX = Math.min(...a.concat(b).map(m => m.x));
+  const minY = Math.min(...a.concat(b).map(m => m.y));
+  a.concat(b).forEach(m => {m.x -= minX; m.y -= minY;});
+  bands.forEach(s => [s.start,s.end].forEach(p => {p[0] -= minX; p[1] -= minY;}));
+  return {outputs, bands, note:empty ? 'Segments are not set. Move a monitor to set them.' :
+    custom ? 'Custom values are set in Advanced. Moving a monitor here replaces them.' : ''};
+}
+
+function renderLayout(layout) {
+  if (!layout) return '<p>Connect to see your monitor layout.</p>';
+  const monitors = layout.outputs.flatMap(o => o.monitors);
+  const width = Math.max(...monitors.map(m => m.x))+1;
+  const height = Math.max(...monitors.map(m => m.y))+1;
+  const groups = layout.outputs.map(o => `<g class="layout-${o.letter}" aria-label="Output ${o.letter}: ${o.os}">${o.monitors.map(m =>
+    `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+4}" y="${m.y*100+4}" width="92" height="92" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+47}">${m.number === 1 ? 'Main' : m.number}</text><text class="layout-os" x="${m.x*100+50}" y="${m.y*100+68}">${o.letter} · ${o.os}</text>`).join('')}</g>`).join('');
+  const bands = layout.bands.map(s => `<g data-segment="${s.number}"><line class="layout-band" x1="${s.start[0]*100}" y1="${s.start[1]*100}" x2="${s.end[0]*100}" y2="${s.end[1]*100}"/><text class="layout-band-number" x="${(s.start[0]+s.end[0])*50}" y="${(s.start[1]+s.end[1])*50+5}">${s.number}</text></g>`).join('');
+  return `<div class="layout-legend">${layout.outputs.map(o => `<span class="layout-${o.letter}">Output ${o.letter} · ${o.os}</span>`).join('')}</div><svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced-A" onclick="document.getElementById('advanced-A').open = true; document.getElementById('advanced-B').open = true">Open Advanced</a></p>` : ''}`;
+}
+
+function redrawLayout() {
+  const fields = Object.fromEntries([...document.querySelectorAll('.api[data-key]')].map(e => [e.dataset.key, getValue(e)]));
+  document.getElementById('layout').innerHTML = renderLayout(device && device.opened ? layoutFromFields(fields) : null);
 }
   </script>
 </body>

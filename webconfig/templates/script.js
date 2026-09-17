@@ -465,6 +465,7 @@ async function handleInputReport(event) {
   var key = data[3];
 
   updateElement(key, event);
+  redrawLayout();
 }
 
 function signed16(lo, hi) {
@@ -526,6 +527,7 @@ async function enterBootloaderHandler() {
 }
 
 async function valueChangedHandler(element) {
+  redrawLayout();
   var key = element.getAttribute('data-key');
   var dataType = element.getAttribute('data-type');
 
@@ -570,3 +572,5 @@ async function saveHandler() {
 async function wipeConfigHandler() {
   await sendReport(packetType.wipeConfigMsg, [], true);
 }
+
+{% include "layout.js" %}

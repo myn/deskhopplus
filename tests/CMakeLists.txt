@@ -106,6 +106,13 @@ add_test(NAME webconfig_keymap_test COMMAND ${NODE_EXECUTABLE}
 add_test(NAME webconfig_layout_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_layout_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+add_test(NAME webconfig_picture_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_picture_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+add_test(NAME webconfig_chrome_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_chrome_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+set_tests_properties(webconfig_chrome_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
 add_test(NAME webconfig_cursor_trace_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_cursor_trace_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)

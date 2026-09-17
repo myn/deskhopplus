@@ -686,3 +686,16 @@ img {
 /* A malformed hotkey table is refused as a unit; keep the reason beside the field. */
 .hotkey-error { color: #b42318; display: block; min-height: 1.4em; }
 .hotkey-text { margin-bottom: 0; }
+
+#layout { padding: 1rem; background: #f6f8fa; margin-bottom: 2rem; }
+#layout svg { display: block; width: 100%; margin: 1rem auto; }
+#layout text { text-anchor: middle; fill: #253440; font-size: 16px; }
+#layout .layout-os { font-size: 10px; }
+.layout-A { color: #245d8c; fill: #d7e5f0; }
+.layout-B { color: #35732e; fill: #e1f0d7; }
+.layout-monitor { stroke: currentColor; stroke-width: 1; }
+.layout-main { stroke-width: 5; }
+.layout-band { stroke: #7148a0; stroke-width: 9; }
+#layout .layout-band-number { fill: white; font-size: 13px; paint-order: stroke; stroke: #7148a0; stroke-width: 3; }
+.layout-legend { display: flex; justify-content: center; gap: 2rem; font-weight: bold; }
+summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }

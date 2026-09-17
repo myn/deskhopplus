@@ -119,7 +119,7 @@ CONFIG_.extend(FormField(HOTKEY_FIELD_BASE + 2 * action, name.strip(), elem="hot
                for action, name in enumerate(HOTKEY_NAMES))
 
 OUTPUT_ = [
-    FormField(1, "Screen Count", 1, {1: "1", 2: "2", 3: "3"}, "uint32"),
+    FormField(1, "Screen Count", 1, {n: str(n) for n in range(1, 8)}, "uint32"),
     FormField(2, "Speed X", 16, {"min": 1, "max": 100}, "int32", "range"),
     FormField(3, "Speed Y", 16, {"min": 1, "max": 100}, "int32", "range"),
     FormField(4, "Legacy seam start", None, {}, "int32"),
@@ -153,6 +153,7 @@ def generate_output(base, data, output_index=None):
             key = SEAM_FIELD_BASES[output_index] + field.segment * 3
             output.append({
                 "elem": field.elem,
+                "advanced": True,
                 "segment": field.segment + 1,
                 "screen_key": key,
                 "start_key": key + 1,
@@ -161,6 +162,7 @@ def generate_output(base, data, output_index=None):
         else:
             output.append({
             "name": field.name,
+            "advanced": field.name in ("Screen Count", "Border Direction", "Chain Direction", "Seam ranges", "Legacy seam start", "Legacy seam end"),
             "key": field.output_keys[output_index] if field.output_keys else base + field.offset,
             "default": field.default,
             "values": field.values,

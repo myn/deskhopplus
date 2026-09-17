@@ -34,6 +34,11 @@
         </div>
       </div>
 
+      <section aria-labelledby="layout-title">
+        <h3 id="layout-title">Layout</h3>
+        <div id="layout">Connect to see your monitor layout.</div>
+      </section>
+
       <div class="column" style="border: 2px solid #d7e5f0; padding-right: 3em;">
 
 
@@ -79,9 +84,15 @@
 
             <h3>Output A</h3>
 
-            {% for item in screen_A %}
+            {% for item in screen_A if not item.advanced %}
               {% include "form.html" with context %}
             {% endfor %}
+            <details id="advanced-A">
+              <summary>Advanced</summary>
+              {% for item in screen_A if item.advanced %}
+                {% include "form.html" with context %}
+              {% endfor %}
+            </details>
 
         </div>
         <div class="column" style="padding-top: 2em;">
@@ -94,9 +105,15 @@
 
             <h3>Output B</h3>
 
-            {% for item in screen_B %}
+            {% for item in screen_B if not item.advanced %}
               {% include "form.html" with context %}
             {% endfor %}
+            <details id="advanced-B">
+              <summary>Advanced</summary>
+              {% for item in screen_B if item.advanced %}
+                {% include "form.html" with context %}
+              {% endfor %}
+            </details>
 
         </div>
 
