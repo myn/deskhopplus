@@ -186,3 +186,28 @@ _Avoid_: border (except in "border direction"), edge
 The two independent per-output facts replacing DeskHop's single `pos`: which way a computer's own
 monitors extend, and where the other computer is.
 _Avoid_: orientation, position
+
+**Monitor**:
+One display a computer drives. Monitors are numbered from the main monitor outward along the
+chain axis, so monitor 2 is the next one along and monitor 3 the one after. A computer's monitors
+always form one straight line.
+_Avoid_: screen (the firmware's word for the same thing; the page and the guide say monitor),
+display, output (an output is the computer)
+
+**Main monitor**:
+The monitor the computer's own operating system calls main. It is monitor 1, and the only one
+that can cross when the chain axis points at the other computer. The user does not choose it
+here; the layout only says where it sits.
+_Avoid_: primary, first screen, screen 1
+
+**Segment**:
+One pairing of a stretch of a monitor's edge on A with a stretch of a monitor's edge on B.
+Segment n on A meets segment n on B, and the cursor leaves at some fraction along one and
+arrives at the same fraction along the other. A monitor with no segment does not cross.
+_Avoid_: range (one side of a segment), pair, link, mapping
+
+**Layout**:
+The picture of both computers' monitors on the config page. Every fact the board needs — chain
+axis, border direction, monitor count and segments — is derived from where the boxes sit; the
+picture holds nothing of its own. **Advanced** is the same settings shown one field at a time.
+_Avoid_: arrangement, screen setup, map, grid (the grid is what the layout snaps to)
