@@ -297,14 +297,16 @@ Keypad: `kp0` to `kp9`, `kp_divide`, `kp_multiply`, `kp_minus`, `kp_plus`, `kp_e
 
 ### macOS will not open the helper
 
-macOS refuses an unsigned download the first time. Open **System Settings → Privacy & Security**,
-scroll down, click **Open Anyway**, then double-click the helper again. Or, in Terminal:
+macOS refuses an unsigned download the first time. If it says the app **cannot be verified**: open
+**System Settings → Privacy & Security**, scroll down, click **Open Anyway**, then double-click the
+helper again. If it says the app **is damaged**, there is no Open Anyway: in Terminal, run
 
 ```sh
-xattr -d com.apple.quarantine ~/Applications/deskhopplus-helper-macos
+xattr -dr com.apple.quarantine ~/Applications/deskhopplus-helper.app
 ```
 
-with the path you put it at. Then double-click it.
+with the path you put it at. Then double-click it. That command works in both cases: it removes
+the mark Safari puts on a download, which is what macOS checks.
 
 The helper needs macOS 13 or later on Apple Silicon, or an Intel Mac with the T2 chip. It keeps its
 key in the Secure Enclave, and an Intel Mac without T2 has none.
@@ -327,7 +329,7 @@ macOS: click **Quit deskhopplus helper** in the menu. In Terminal:
 rm ~/Library/Application\ Support/deskhopplus/board_key
 ```
 
-Then double-click the helper file, or log out and in.
+Then double-click the app, or log out and in.
 
 Windows: click **Quit deskhopplus helper** in the tray menu, delete
 `%LOCALAPPDATA%\deskhopplus\board_key`, run the exe again.
@@ -338,8 +340,10 @@ If you did **not** re-flash or swap anything, leave the chord alone and find out
 
 ### Where the logs are
 
-- macOS: `/tmp/deskhop-helper.log` when started at login. When started by double-clicking, the
-  log is the Terminal window that opened.
+- macOS: `/tmp/deskhop-helper.log` when started at login. When started by double-clicking, no
+  file gets the log. To watch one, quit the helper and start it from Terminal instead:
+  `~/Applications/deskhopplus-helper.app/Contents/MacOS/deskhopplus-helper`, with the path you put
+  it at. The log is that window.
 - Windows: `%LOCALAPPDATA%\deskhopplus\helper.log`.
 
 On macOS each line starts with the wall clock and the time since the helper started. On Windows

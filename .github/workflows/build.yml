@@ -266,6 +266,11 @@ jobs:
       shell: bash
       run: bash tools/macos-checks/build-report-tests.sh
 
+    # make-app-bundle.sh, against a stand-in binary (#206).
+    - name: Run app bundle tests
+      shell: bash
+      run: bash tools/macos-checks/app-bundle-tests.sh
+
     # The release build, universal (#203; #197 decision 6). The owner's desk
     # runs the x86_64 half daily and this runner tests only the arm64 half,
     # so the lipo check is the one look the x86_64 slice gets before it ships.
@@ -288,11 +293,21 @@ jobs:
         lipo -info .build/deskhop-helper
         lipo .build/deskhop-helper -verify_arch arm64 x86_64
 
+    # The .app around it, ad-hoc sealed, and the zip a user downloads (#206).
+    # Made here, on the one runner that has codesign, and zipped here because
+    # upload-artifact stores every file as 644: a zip made now keeps the
+    # execute bit through the artifact store, so the release job only moves it.
+    - name: Wrap the release helper in a .app and zip it
+      shell: bash
+      run: |
+        ./tools/make-app-bundle.sh .build/deskhop-helper .build/app
+        unzip -l .build/app/deskhopplus-helper-macos.zip
+
     - name: Publish the helper
       uses: actions/upload-artifact@v4
       with:
         name: deskhop-helper-macos-${{ github.run_number }}
-        path: .build/deskhop-helper
+        path: .build/app/deskhopplus-helper-macos.zip
 
   # The release (#203, #197). A pushed v* tag makes a GitHub release holding
   # the three files the README names, with no hand step. A push to main runs
@@ -300,7 +315,9 @@ jobs:
   # gh is on the runner and the release is one command.
   #
   # The files are renamed here and only here (#197 decision 4). Build targets,
-  # build.sh, the plist and the helper READMEs keep deskhop-helper.
+  # build.sh, the plist and the helper READMEs keep deskhop-helper. The one
+  # exception is the Mac zip, which arrives already named: the .app inside it
+  # carries the release name from make-app-bundle.sh (#206).
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, windows-helper, helper]
@@ -338,19 +355,13 @@ jobs:
         path: dist
         merge-multiple: true
 
-    # Artifacts drop file modes on the way through (upload-artifact stores
-    # every file as 644), so the execute bit goes back on before the zip
-    # records it. Info-ZIP keeps Unix modes, and both unzip and Archive
-    # Utility restore them, so the binary a user unzips is runnable.
     - name: Name the files as the README does
       shell: bash
       run: |
         mkdir release
         mv dist/deskhop.uf2 release/deskhopplus.uf2
         mv dist/deskhop-helper.exe release/deskhopplus-helper-windows.exe
-        mv dist/deskhop-helper dist/deskhopplus-helper-macos
-        chmod +x dist/deskhopplus-helper-macos
-        zip -j release/deskhopplus-helper-macos.zip dist/deskhopplus-helper-macos
+        mv dist/deskhopplus-helper-macos.zip release/
         ls -l release
 
     # --verify-tag: the tag must already be on the remote, which pushing it
