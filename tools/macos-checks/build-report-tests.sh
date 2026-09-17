@@ -59,6 +59,31 @@ reject 'not installed'
 reject 'foreground'
 reject 'ProgramArguments'
 
+# The state Quit leaves behind: the plist is installed, launchd has no job.
+# launchctl list exits 113 then, and under build.sh's set -e -o pipefail that
+# used to end the report (and build.sh) before the bootstrap remedy printed.
+cat >"$tmp/bin/launchctl" <<'EOF'
+#!/bin/sh
+echo 'Could not find service "com.deskhopplus.helper" in domain for user gui: 501' >&2
+exit 113
+EOF
+helper_plist_installed="$tmp/installed.plist"
+printf '<plist><dict><key>ProgramArguments</key><array><string>%s</string></array></dict></plist>\n' \
+    "$bin" >"$helper_plist_installed"
+# Not captured with $( ): this bash drops set -e inside a command
+# substitution, which would hide exactly the abort this guards against. A
+# plain call with the output in a file keeps errexit live, and the trap
+# names the failure before it ends the test.
+set -E   # so the trap sees a failure inside the function
+trap 'echo "FAIL: report_helper aborted with the job unloaded (exit $?)" >&2; trap - ERR' ERR
+report_helper >"$tmp/unloaded.txt"
+trap - ERR
+set +E
+out="$(cat "$tmp/unloaded.txt")"
+expect 'not running'
+expect "launchctl bootstrap gui/\$(id -u) $helper_plist_installed"
+reject 'kickstart'
+
 # The fake report only on failure: this also runs inside build.sh, whose real
 # report follows and must not be mistaken for it.
 if [ "$fail" = 1 ]; then printf '%s\n' "$out"; exit 1; fi

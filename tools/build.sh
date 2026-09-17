@@ -197,10 +197,12 @@ PY
 
 # One field of the loaded job, as launchd reports it: "path" is the plist it
 # was bootstrapped from, "program" the binary it runs. Empty when no job is
-# loaded. Anchored so that "stderr path =" does not match "path".
+# loaded. Anchored so that "stderr path =" does not match "path". The
+# `|| true` is what makes "empty" true: with no job, launchctl exits 113, and
+# under pipefail that status would end the report at the first assignment.
 agent_field() {
     launchctl print "gui/$(id -u)/com.deskhopplus.helper" 2>/dev/null \
-        | sed -n "s/^[[:space:]]*$1 = //p" | head -1
+        | sed -n "s/^[[:space:]]*$1 = //p" | head -1 || true
 }
 
 # The file launchd actually loaded wins, and only launchd knows which that is:
@@ -241,7 +243,7 @@ same_file() {
 # `ps -o ppid=` or `launchctl list`, not `pgrep` alone".
 agent_pid() {
     launchctl list com.deskhopplus.helper 2>/dev/null \
-        | sed -n 's/.*"PID" = \([0-9]*\);.*/\1/p' | head -1
+        | sed -n 's/.*"PID" = \([0-9]*\);.*/\1/p' | head -1 || true
 }
 
 # A plist sitting in ~/Library/LaunchAgents is not a bootstrapped job, and the

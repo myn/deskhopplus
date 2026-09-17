@@ -325,6 +325,13 @@ sudo cp .build/release/deskhop-helper /usr/local/bin/          # unless the plis
 launchctl kickstart -k gui/$(id -u)/com.deskhopplus.helper     # the step that is easy to forget
 ```
 
+Or, when the plist points at `.build/release/`, one command does the build and the restart, and
+picks `bootstrap` instead of `kickstart` when Quit has unloaded the job:
+
+```sh
+./tools/deploy-helper.sh
+```
+
 Skipping the last step is [#93](https://github.com/myn/deskhopplus/issues/93): an agent that started
 before a wire-format change ran against newer firmware for two days, failing every frame it received
 at roughly 1.4 teardowns a second, while every rebuild reported success. `./tools/build.sh helper`
