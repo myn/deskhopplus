@@ -26,8 +26,9 @@ struct LaunchAtLogin {
     /// message says the one a user can do without Terminal.
     struct Translocated: LocalizedError {
         var errorDescription: String? {
-            "macOS is running the app from a temporary copy. "
-            + "Move deskhopplus-helper.app with Finder, open it from there, and try again."
+            "macOS is running the app from a temporary copy. In Finder, move "
+            + "deskhopplus-helper.app to your Applications folder, open it from there, "
+            + "and click Start at login again."
         }
     }
 

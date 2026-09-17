@@ -109,6 +109,6 @@ let translocatedStartup = translocatedMenu.items.first { $0.title == "Start at l
 _ = (translocatedStartup.target as! NSObject).perform(translocatedStartup.action!)
 translocatedBar.menuNeedsUpdate(translocatedMenu)
 let translocatedWords = translocatedMenu.items.map(\.title).joined(separator: " ")
-check(translocatedWords.contains("Move deskhopplus-helper.app with Finder"), "the refusal names the remedy")
+check(translocatedWords.contains("In Finder, move deskhopplus-helper.app to your Applications folder"), "the refusal names the remedy")
 check(!translocatedWords.contains("LaunchAgents"), "the refusal does not send the user to the plist folder")
 print("Translocation refusal checks passed")
