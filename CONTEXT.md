@@ -19,6 +19,12 @@ The companion application on each computer (Swift on macOS, C++ on Windows) that
 the pasteboard and places the cursor. An enhancement, never a dependency.
 _Avoid_: agent, daemon, client, companion app
 
+**Presence**:
+The helper's permanent place in the menu bar or the tray: it carries the state in words, the file
+question and the progress, and is there whenever the helper runs. Its look changes with the state,
+and a look never replaces the words (#38).
+_Avoid_: icon, status item, menu-bar item, tray icon (each of those is one platform's half of it)
+
 **Link**:
 The physical USB attachment between a computer and its board. Losing it takes the connection and
 the session with it; neither of those falling over touches the link. The board-to-board one is
