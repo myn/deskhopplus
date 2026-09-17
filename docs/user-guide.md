@@ -77,7 +77,7 @@ On macOS the menu bar item is the icon alone, with a few characters beside it wh
 happening: **⬇ files?** when files are offered, **⬇ 42%** while they arrive, **⬆** while this
 computer is sending, and **⚠** when the menu holds a message for you. Hover for the words.
 
-On Windows the icon itself turns into the percent while a file arrives; hover for the rest. The
+On Windows the icon itself turns into the percent, e.g. **56%**, while a file arrives; hover for the rest. The
 helper asks Windows to keep the icon on the taskbar rather than behind the **^** overflow. If it
 still lands in the overflow, turn it on once by hand: **Settings › Personalization › Taskbar ›
 Other system tray icons › deskhopplus helper**. The helper asks again on every start, so the
