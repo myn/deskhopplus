@@ -130,6 +130,9 @@ HICON Tray::icon_for(words::Look look) {
 /*
  * The percent as two digits in place of the glyph, for as long as a file is
  * arriving — a tray icon has no text beside it, so the number goes inside.
+ * White on a blue tile, like the app icon: bare blue digits vanished on a
+ * dark-blue taskbar (#208's desk check), and the tile is the same colour
+ * whatever the taskbar is. No "%": two digits fill 16 px on their own.
  * GDI+ rather than GDI: text drawn with GDI into a 32-bit bitmap leaves the
  * alpha at zero, and the icon comes out as a black square. The codec was
  * started by the clipboard, before this is ever called.
@@ -140,9 +143,23 @@ HICON Tray::digits(unsigned percent) {
     if (bitmap.GetLastStatus() != Gdiplus::Ok) return nullptr;
     Gdiplus::Graphics canvas(&bitmap);
     canvas.Clear(Gdiplus::Color(0, 0, 0, 0));
+    canvas.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     canvas.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+
+    /* The tile: a rounded square, `blue` in helpers/icon/main.swift. */
+    const Gdiplus::REAL extent = static_cast<Gdiplus::REAL>(size);
+    const Gdiplus::REAL corner = extent * 0.44f; /* the arc's box: twice the radius */
+    const Gdiplus::REAL edge = extent - corner; /* windows.h defines `far` */
+    Gdiplus::GraphicsPath tile;
+    tile.AddArc(0.0f, 0.0f, corner, corner, 180.0f, 90.0f);
+    tile.AddArc(edge, 0.0f, corner, corner, 270.0f, 90.0f);
+    tile.AddArc(edge, edge, corner, corner, 0.0f, 90.0f);
+    tile.AddArc(0.0f, edge, corner, corner, 90.0f, 90.0f);
+    tile.CloseFigure();
+    Gdiplus::SolidBrush fill(Gdiplus::Color(255, 46, 112, 235));
+    canvas.FillPath(&fill, &tile);
     Gdiplus::FontFamily family(L"Segoe UI");
-    Gdiplus::Font font(&family, static_cast<Gdiplus::REAL>(size) * 0.72f, Gdiplus::FontStyleBold,
+    Gdiplus::Font font(&family, static_cast<Gdiplus::REAL>(size) * 0.65f, Gdiplus::FontStyleBold,
                        Gdiplus::UnitPixel);
     if (font.GetLastStatus() != Gdiplus::Ok) return nullptr;
     /* Typographic: the generic format pads each side, and two digits at this
@@ -150,10 +167,8 @@ HICON Tray::digits(unsigned percent) {
     Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
     format.SetAlignment(Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    /* `blue` in helpers/icon/main.swift, which paints paired.ico. */
-    Gdiplus::SolidBrush brush(Gdiplus::Color(255, 46, 112, 235));
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, 255, 255, 255));
     const std::wstring text = std::to_wstring(percent > 99u ? 99u : percent);
-    const Gdiplus::REAL extent = static_cast<Gdiplus::REAL>(size);
     canvas.DrawString(text.c_str(), -1, &font, Gdiplus::RectF(0, 0, extent, extent), &format,
                       &brush);
     HICON icon = nullptr;

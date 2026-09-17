@@ -313,21 +313,27 @@ bool Helper::start(HINSTANCE instance) {
     if (!RegisterClassW(&window_class)) return false;
 
     /*
-     * Message-only. There is no window worth showing: the helper's whole face
-     * is a notification-area icon, and a hidden top-level window would still
-     * appear in Alt-Tab and the taskbar on some shells.
+     * A top-level window that is never shown. There is no window worth
+     * showing: the helper's whole face is a notification-area icon. Until
+     * #208 this was a message-only window (HWND_MESSAGE), and that was the
+     * bug: a message-only window receives no broadcast at all, and
+     * TaskbarCreated — the message Explorer sends every top-level window when
+     * it restarts and has forgotten every tray icon — is a broadcast. So the
+     * re-add below never ran, and an Explorer restart left the helper running
+     * with no icon.
      *
-     * A message-only window does not receive broadcast WM_DEVICECHANGE, but it
-     * does receive the ones a RegisterDeviceNotification asks for — which is
-     * all this helper wants, and narrower than a broadcast besides.
+     * Never shown, so it is in neither Alt-Tab nor the taskbar; the tool-window
+     * style makes that so even if something ever showed it. The broadcast
+     * WM_DEVICECHANGE now arrives as well as the registered ones; the
+     * transport keeps only arrivals and removals, and a rescan is cheap.
      */
-    window_ = CreateWindowExW(0, kWindowClass, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                              instance, nullptr);
+    window_ = CreateWindowExW(WS_EX_TOOLWINDOW, kWindowClass, L"", WS_POPUP, 0, 0, 0, 0, nullptr,
+                              nullptr, instance, nullptr);
     if (!window_) return false;
 
     /* Explorer restarting takes every tray icon with it and then asks for them
-       back with this message. Without it the helper is invisible until its
-       next state change. */
+       back with this message. Without it the helper is invisible until it is
+       restarted. */
     taskbar_created_ = RegisterWindowMessageW(L"TaskbarCreated");
 
     SecretStore::Identity identity;
