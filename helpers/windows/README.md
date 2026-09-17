@@ -20,7 +20,7 @@ The icon is always there, with one of three looks — `words::look`: **paired**,
 for connected; **off**, the outlined glyph, for looking, absent and config mode; **attention**,
 the badge, for every state with a remedy, the reconnect rate, and a waiting file question — and
 the state words in the tooltip (`words::tooltip`), which a look never replaces (#38). While a
-file arrives it is the percent, the percent in white on a blue tile drawn with GDI+ at the taskbar's
+file arrives it is the percent, two white digits on a blue tile drawn with GDI+ at the taskbar's
 DPI (`Tray::digits`). The looks are `.ico` resources (`src/deskhop-helper.rc`, rendered by
 `helpers/icon/render.sh` from the Mac menu bar's glyph);
 the first of them, `IDI_APP`, is what Explorer shows for the exe.

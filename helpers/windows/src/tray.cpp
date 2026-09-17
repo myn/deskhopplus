@@ -128,12 +128,11 @@ HICON Tray::icon_for(words::Look look) {
 }
 
 /*
- * The percent, "56%", in place of the glyph, for as long as a file is
+ * The percent as two digits in place of the glyph, for as long as a file is
  * arriving — a tray icon has no text beside it, so the number goes inside.
  * White on a blue tile, like the app icon: bare blue digits vanished on a
  * dark-blue taskbar (#208's desk check), and the tile is the same colour
- * whatever the taskbar is. With a "%", at Derek's asking (#208): the font is
- * measured down until "99%" fits the tile.
+ * whatever the taskbar is. No "%": two digits fill 16 px on their own.
  * GDI+ rather than GDI: text drawn with GDI into a 32-bit bitmap leaves the
  * alpha at zero, and the icon comes out as a black square. The codec was
  * started by the clipboard, before this is ever called.
@@ -160,23 +159,16 @@ HICON Tray::digits(unsigned percent) {
     Gdiplus::SolidBrush fill(Gdiplus::Color(255, 46, 112, 235));
     canvas.FillPath(&fill, &tile);
     Gdiplus::FontFamily family(L"Segoe UI");
-    /* Typographic: the generic format pads each side, and three glyphs at
-       this size have no room to give. */
+    Gdiplus::Font font(&family, static_cast<Gdiplus::REAL>(size) * 0.65f, Gdiplus::FontStyleBold,
+                       Gdiplus::UnitPixel);
+    if (font.GetLastStatus() != Gdiplus::Ok) return nullptr;
+    /* Typographic: the generic format pads each side, and two digits at this
+       size have no room to give. */
     Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
     format.SetAlignment(Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-    const std::wstring text = std::to_wstring(percent > 99u ? 99u : percent) + L"%";
-    /* As big as fits: measured, then scaled down to the tile's width, so the
-       "%" costs exactly what it must at every DPI and nothing more. */
-    Gdiplus::REAL points = extent * 0.7f;
-    Gdiplus::Font trial(&family, points, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-    if (trial.GetLastStatus() != Gdiplus::Ok) return nullptr;
-    Gdiplus::RectF measured;
-    canvas.MeasureString(text.c_str(), -1, &trial, Gdiplus::PointF(0, 0), &format, &measured);
-    const Gdiplus::REAL room = extent * 0.92f;
-    if (measured.Width > room) points = points * room / measured.Width;
-    Gdiplus::Font font(&family, points, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
     Gdiplus::SolidBrush brush(Gdiplus::Color(255, 255, 255, 255));
+    const std::wstring text = std::to_wstring(percent > 99u ? 99u : percent);
     canvas.DrawString(text.c_str(), -1, &font, Gdiplus::RectF(0, 0, extent, extent), &format,
                       &brush);
     HICON icon = nullptr;
