@@ -51,12 +51,32 @@ for state in HelperState.allCases {
     check(menu.items[1].isSeparatorItem, "the release row stands apart from the state")
     let words = menu.items.dropFirst(2).prefix { !$0.isSeparatorItem }.map(\.title).joined(separator: " ")
     check(words == state.message ?? "Waiting for the device", "the menu must preserve the shared state's remedy")
-    check(MenuBar.title(for: state).contains("deskhop"), "every idle title identifies the helper")
+    check(MenuBar.tooltip(state: state, placementProblem: nil, notice: nil).hasPrefix("deskhopplus helper"),
+          "with an icon-only title, the tooltip is what names the helper")
+    check(MenuBar.tooltip(state: state, placementProblem: nil, notice: nil).contains(state.message ?? "Waiting for the device"),
+          "the words moved out of the title into the tooltip, not out of sight")
 }
-check(MenuBar.title(for: .connected).contains("paired"), "pairing confirmation is visible without a tooltip")
-check(MenuBar.title(for: .listenerDetected).contains("listener"), "listener detection is visible without a tooltip")
-check(MenuBar.title(for: .quiet) == "deskhop", "the config round trip stays quiet")
+// The three looks (#208): the shape carries the state, and the words stay one
+// hover away, so #38's "in words, not a colour" still holds.
+check(MenuBar.look(for: .connected, questionWaiting: false) == .paired, "paired is the solid glyph")
+for state in [HelperState.quiet, .deviceAbsent, .deviceInConfigMode] {
+    check(MenuBar.look(for: state, questionWaiting: false) == .off, "\(state) is off, not a fault")
+}
+for state in [HelperState.notPaired, .versionIncompatible, .listenerDetected, .boardIdentityChanged,
+              .reconnectingRepeatedly] {
+    check(MenuBar.look(for: state, questionWaiting: false) == .attention, "\(state) names something to do")
+}
+check(MenuBar.look(for: .connected, questionWaiting: true) == .attention, "a waiting file question is attention")
+check(MenuBar.look(for: .quiet, questionWaiting: true) == .attention, "a question outranks off")
 check(HelperState.versionIncompatible.message!.contains("update the helper"), "incompatible versions name the remedy")
+// The suffix beside the icon, by priority: the question, the receive, a
+// complaint, a send. Empty when nothing is happening.
+check(MenuBar.suffix(question: false, progress: nil, warning: false, sending: false) == "", "an idle title is the icon alone")
+check(MenuBar.suffix(question: true, progress: (25, 100), warning: true, sending: true) == "⬇ files?", "a question outranks everything")
+check(MenuBar.suffix(question: false, progress: (25, 100), warning: true, sending: true) == "⬇ 25%", "a receive shows its percent")
+check(MenuBar.suffix(question: false, progress: (0, 0), warning: false, sending: false) == "", "a zero total is not a receive")
+check(MenuBar.suffix(question: false, progress: nil, warning: true, sending: true) == "⚠", "a complaint outranks a send")
+check(MenuBar.suffix(question: false, progress: nil, warning: false, sending: true) == "⬆", "a send is visible while it runs")
 menuBar.show(state: .listenerDetected)
 menuBar.menuNeedsUpdate(menu)
 check(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.title.count <= 65 }, "long remedies wrap into readable lines")

@@ -131,7 +131,24 @@ else()
 endif()
 add_test(NAME output_dispatch COMMAND output_dispatch_test)
 
+# What the presence shows (#208): the look per state and the tooltip, with
+# the same host-side reasoning as output_dispatch above — words.cpp has no
+# Win32 in it, so the decisions are checked on any machine.
+add_executable(words_test tests/words_test.cpp src/words.cpp)
+target_link_libraries(words_test PRIVATE dhcore)
+target_include_directories(words_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(words_test PRIVATE /WX)
+else()
+  target_compile_options(words_test PRIVATE -Wall -Wextra -Werror=switch)
+endif()
+add_test(NAME words COMMAND words_test)
+
 if(WIN32)
+  # For the .rc below. Implicit with the Visual Studio generators, not with
+  # the others, and mingw needs CMAKE_RC_COMPILER pointed at windres.
+  enable_language(RC)
+
   add_executable(clipboard_image_test tests/clipboard_image_test.cpp
                  src/clipboard_image.cpp)
   target_include_directories(clipboard_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -202,7 +219,10 @@ if(WIN32)
     src/hid_transport.cpp
     src/autostart.cpp
     src/tray.cpp
-    src/app.manifest)
+    src/app.manifest
+    # The tray and Explorer icons (#208).
+    src/deskhop-helper.rc)
+  target_include_directories(deskhop-helper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../icon)
 
   target_link_libraries(deskhop-helper PRIVATE dhcore ladder
     # Inbox libraries only — anything not already on a stock Windows install is

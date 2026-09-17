@@ -3,9 +3,12 @@
 
 #include "tray.h"
 
+#include <algorithm>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <shellapi.h>
 
-#include "words.h"
+#include "resource.h"
 
 namespace deskhop {
 
@@ -50,30 +53,52 @@ NOTIFYICONDATAW base(HWND window) {
     return data;
 }
 
+/* The tray's icon size at this DPI: 16 px at 100 %, 24 at 150 %. The manifest
+   makes this process DPI-aware, so the device caps report the real value. */
+int small_icon_size() {
+    HDC screen = GetDC(nullptr);
+    const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSX) : 96;
+    if (screen) ReleaseDC(nullptr, screen);
+    return MulDiv(16, dpi > 0 ? dpi : 96, 96);
+}
+
 } // namespace
 
-Tray::~Tray() { detach(); }
+Tray::~Tray() {
+    detach();
+    for (HICON &look : looks_)
+        if (look) DestroyIcon(look);
+}
 
 void Tray::attach(HWND window, Callbacks callbacks) {
     window_ = window;
     callbacks_ = std::move(callbacks);
+    add_icon();
+    update();
 }
 
 void Tray::detach() {
     /* Removed explicitly on the way out. An icon left behind is an orphan the
        user cannot get rid of without hovering over it. */
     remove_icon();
+    if (digits_) DestroyIcon(digits_);
+    digits_ = nullptr;
+    if (window_) KillTimer(window_, kPromoteTimerId);
     window_ = nullptr;
 }
+
+void Tray::on_timer() { promote(); }
 
 void Tray::add_icon() {
     if (icon_shown_ || !window_) return;
     NOTIFYICONDATAW data = base(window_);
-    data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    data.uFlags = NIF_ICON | NIF_MESSAGE;
     data.uCallbackMessage = kCallbackMessage;
-    data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    copy_into(data.szTip, sizeof(data.szTip) / sizeof(wchar_t), L"deskhopplus helper");
+    data.hIcon = icon_for(words::look(state_, have_question_));
     icon_shown_ = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    /* Once per run: the record outlives an Explorer restart, which re-adds
+       the icon through here. */
+    if (icon_shown_ && !promoted_) promote();
 }
 
 void Tray::remove_icon() {
@@ -83,22 +108,144 @@ void Tray::remove_icon() {
     icon_shown_ = false;
 }
 
-void Tray::update_tooltip() {
+HICON Tray::icon_for(words::Look look) {
+    /* words::Look order, which is the order of looks_. */
+    static constexpr WORD ids[3] = {IDI_PAIRED, IDI_OFF, IDI_ATTENTION};
+    static_assert(static_cast<int>(words::Look::Paired) == 0 &&
+                      static_cast<int>(words::Look::Off) == 1 &&
+                      static_cast<int>(words::Look::Attention) == 2,
+                  "ids[] and looks_[] are indexed by words::Look");
+    HICON &slot = looks_[static_cast<int>(look)];
+    if (!slot) {
+        const int size = small_icon_size();
+        slot = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr),
+                                             MAKEINTRESOURCEW(ids[static_cast<int>(look)]),
+                                             IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
+        /* A build without the resources still gets an icon, just not ours. */
+        if (!slot) slot = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    return slot;
+}
+
+/*
+ * The percent as two digits in place of the glyph, for as long as a file is
+ * arriving — a tray icon has no text beside it, so the number goes inside.
+ * GDI+ rather than GDI: text drawn with GDI into a 32-bit bitmap leaves the
+ * alpha at zero, and the icon comes out as a black square. The codec was
+ * started by the clipboard, before this is ever called.
+ */
+HICON Tray::digits(unsigned percent) {
+    const int size = small_icon_size();
+    Gdiplus::Bitmap bitmap(size, size, PixelFormat32bppARGB);
+    if (bitmap.GetLastStatus() != Gdiplus::Ok) return nullptr;
+    Gdiplus::Graphics canvas(&bitmap);
+    canvas.Clear(Gdiplus::Color(0, 0, 0, 0));
+    canvas.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    Gdiplus::FontFamily family(L"Segoe UI");
+    Gdiplus::Font font(&family, static_cast<Gdiplus::REAL>(size) * 0.72f, Gdiplus::FontStyleBold,
+                       Gdiplus::UnitPixel);
+    if (font.GetLastStatus() != Gdiplus::Ok) return nullptr;
+    /* Typographic: the generic format pads each side, and two digits at this
+       size have no room to give. */
+    Gdiplus::StringFormat format(Gdiplus::StringFormat::GenericTypographic());
+    format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    /* `blue` in helpers/icon/main.swift, which paints paired.ico. */
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, 46, 112, 235));
+    const std::wstring text = std::to_wstring(percent > 99u ? 99u : percent);
+    const Gdiplus::REAL extent = static_cast<Gdiplus::REAL>(size);
+    canvas.DrawString(text.c_str(), -1, &font, Gdiplus::RectF(0, 0, extent, extent), &format,
+                      &brush);
+    HICON icon = nullptr;
+    return bitmap.GetHICON(&icon) == Gdiplus::Ok ? icon : nullptr;
+}
+
+void Tray::update() {
     if (!icon_shown_ || !window_) return;
     NOTIFYICONDATAW data = base(window_);
-    data.uFlags = NIF_TIP;
-    /* What is happening now takes precedence over what the device is doing:
-       a question waiting for an answer and a transfer under way are both
-       things the user is meant to act on, and the state is one hover away. */
-    std::string tip = words::state_message(state_);
-    if (have_question_) {
-        tip = "Files offered: " + summary(question_);
-    } else if (progress_total_ > 0) {
-        tip = "Receiving " + size_text(progress_received_) + " of " + size_text(progress_total_);
-    }
+    data.uFlags = NIF_ICON | NIF_TIP;
+    /* Digits while a file arrives, unless a question is waiting — the
+       question's badge outranks it, as it does on the Mac. The previous digit
+       icon goes only after the shell has copied the new one: a handle per
+       half second is how a helper runs out of GDI objects in an afternoon. */
+    HICON fresh = nullptr;
+    if (progress_total_ > 0 && !have_question_)
+        fresh = digits(static_cast<unsigned>(progress_received_ * 100u / progress_total_));
+    data.hIcon = fresh ? fresh : icon_for(words::look(state_, have_question_));
     copy_into(data.szTip, sizeof(data.szTip) / sizeof(wchar_t),
-              L"deskhopplus — " + widen(tip));
+              widen(words::tooltip(state_, have_question_ ? summary(question_) : std::string(),
+                                   progress_received_, progress_total_, sending_)));
     Shell_NotifyIconW(NIM_MODIFY, &data);
+    if (digits_) DestroyIcon(digits_);
+    digits_ = fresh;
+}
+
+/*
+ * Windows 11 starts every new icon in the taskbar overflow, behind the
+ * chevron, where a badge nobody sees is a question nobody answers (#208).
+ *
+ * The per-icon choice lives under HKCU\Control Panel\NotifyIconSettings,
+ * one subkey per icon Explorer has met, holding the exe path it came from and
+ * an IsPromoted flag. Undocumented, but per-user — no administrator, and no
+ * more than the autostart Run key already writes (ADR-0006 is about installs).
+ * Set on every start, so a moved exe heals itself. Where the key is absent,
+ * nothing breaks, and the README's one-time Settings toggle still works.
+ *
+ * Explorer writes the subkey some time after the first NIM_ADD, so a try that
+ * finds nothing arms a timer and tries again two seconds later, a few times,
+ * then gives up for this run. A timer rather than the next update: updates
+ * cluster in the first second after start and can then go quiet for hours.
+ */
+void Tray::promote() {
+    /* A WM_TIMER already queued when detach killed the timer still arrives;
+       with no window there is nothing to promote and no window to re-arm a
+       timer on — SetTimer with a null window would make one nobody stops. */
+    if (!window_) return;
+    ++promote_attempts_;
+    KillTimer(window_, kPromoteTimerId);
+    wchar_t self[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, self, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return;
+
+    HKEY root = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\NotifyIconSettings", 0, KEY_READ,
+                      &root) == ERROR_SUCCESS) {
+        for (DWORD i = 0; !promoted_; ++i) {
+            wchar_t name[256];
+            DWORD name_length = 256;
+            if (RegEnumKeyExW(root, i, name, &name_length, nullptr, nullptr, nullptr, nullptr) !=
+                ERROR_SUCCESS)
+                break;
+            HKEY entry = nullptr;
+            if (RegOpenKeyExW(root, name, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &entry) !=
+                ERROR_SUCCESS)
+                continue;
+            /* One slot spare, so a value stored without its terminator still
+               ends. */
+            wchar_t path[MAX_PATH + 1]{};
+            DWORD bytes = sizeof(wchar_t) * MAX_PATH;
+            DWORD type = 0;
+            if (RegQueryValueExW(entry, L"ExecutablePath", nullptr, &type,
+                                 reinterpret_cast<BYTE *>(path), &bytes) == ERROR_SUCCESS &&
+                type == REG_SZ && _wcsicmp(path, self) == 0) {
+                const DWORD one = 1;
+                promoted_ = RegSetValueExW(entry, L"IsPromoted", 0, REG_DWORD,
+                                           reinterpret_cast<const BYTE *>(&one),
+                                           sizeof one) == ERROR_SUCCESS;
+            }
+            RegCloseKey(entry);
+        }
+        RegCloseKey(root);
+    }
+
+    if (promoted_) {
+        if (callbacks_.log) callbacks_.log("tray icon promoted to the taskbar");
+    } else if (promote_attempts_ < kPromoteAttempts) {
+        SetTimer(window_, kPromoteTimerId, kPromoteRetryMs, nullptr);
+    } else if (callbacks_.log) {
+        callbacks_.log("could not promote the tray icon to the taskbar; it may sit in the "
+                       "overflow until it is turned on in Settings (see the README)");
+    }
 }
 
 void Tray::balloon(const std::string &message) {
@@ -116,23 +263,18 @@ void Tray::show(dh_helper_state state) {
     state_ = state;
     if (changed) announced_ = false;
 
-    /*
-     * The quiet state shows nothing at all — no icon, so nothing to hover
-     * over. Looking for the device, and a device briefly away, are the helper
-     * doing its job rather than something to report.
-     */
-    if (state_ == DH_HELPER_QUIET) {
-        remove_icon();
-        return;
-    }
-
-    add_icon();
-    update_tooltip();
+    update();
 
     if (!announced_ && words::state_names_a_remedy(state_)) {
         announced_ = true;
         balloon(words::state_message(state_));
     }
+}
+
+void Tray::show_sending(bool sending) {
+    if (sending == sending_) return;
+    sending_ = sending;
+    update();
 }
 
 void Tray::on_callback(LPARAM what) {
@@ -158,7 +300,7 @@ void Tray::on_callback(LPARAM what) {
         if (!have_question_) return;
         const uint32_t id = question_.id;
         have_question_ = false;
-        update_tooltip();
+        update();
         if (callbacks_.accept_files) callbacks_.accept_files(id);
         return;
     }
@@ -192,8 +334,8 @@ void Tray::show_menu() {
         const unsigned percent =
             static_cast<unsigned>(progress_received_ * 100u / progress_total_);
         AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress,
-                    widen("Receiving " + size_text(progress_received_) + " of " +
-                          size_text(progress_total_) + " \xe2\x80\x94 " +
+                    widen("Receiving " + words::size_text(progress_received_) + " of " +
+                          words::size_text(progress_total_) + " \xe2\x80\x94 " +
                           std::to_string(percent) + "%").c_str());
         AppendMenuW(menu, MF_STRING, kIdAbortTransfer, L"Cancel this transfer");
     }
@@ -231,12 +373,12 @@ void Tray::show_menu() {
     else if (chosen == kIdAcceptFiles && have_question_) {
         const uint32_t id = question_.id;
         have_question_ = false;
-        update_tooltip();
+        update();
         if (callbacks_.accept_files) callbacks_.accept_files(id);
     } else if (chosen == kIdDeclineFiles && have_question_) {
         const uint32_t id = question_.id;
         have_question_ = false;
-        update_tooltip();
+        update();
         if (callbacks_.decline_files) callbacks_.decline_files(id);
     } else if (chosen == kIdAbortTransfer && callbacks_.abort_transfer) {
         callbacks_.abort_transfer();
@@ -248,10 +390,7 @@ void Tray::show_menu() {
 void Tray::ask_about_files(const deskhop::FileOffer &offer) {
     question_ = offer;
     have_question_ = true;
-    /* The icon may not be showing: the quiet state hides it, and a question
-       the user cannot see is a transfer that never happens. */
-    add_icon();
-    update_tooltip();
+    update();
     balloon("Files from the other computer: " + summary(offer) +
             " Click this to accept, or use the deskhopplus icon to decline.");
 }
@@ -259,33 +398,21 @@ void Tray::ask_about_files(const deskhop::FileOffer &offer) {
 void Tray::withdraw_file_question(uint32_t id) {
     if (!have_question_ || question_.id != id) return;
     have_question_ = false;
-    update_tooltip();
+    update();
 }
 
 void Tray::show_progress(uint64_t received, uint64_t total) {
     progress_received_ = received;
     progress_total_ = total;
-    update_tooltip();
+    update();
 }
 
 std::string Tray::summary(const deskhop::FileOffer &offer) {
     const std::string what = offer.files.size() == 1
                                  ? offer.files.front().name
                                  : std::to_string(offer.files.size()) + " files";
-    return what + " \xe2\x80\x94 " + size_text(offer.total) + ", about " +
+    return what + " \xe2\x80\x94 " + words::size_text(offer.total) + ", about " +
            duration_text(offer.estimated_seconds()) + ".";
-}
-
-/* Integer arithmetic, and truncating rather than rounding — the same spelling
-   as `MenuBar.size` on the other computer, so the two ends quote one transfer
-   at one size. */
-std::string Tray::size_text(uint64_t bytes) {
-    if (bytes >= 1024u * 1024u) {
-        const uint64_t tenths = (bytes * 10u) / (1024u * 1024u);
-        return std::to_string(tenths / 10u) + "." + std::to_string(tenths % 10u) + " MB";
-    }
-    if (bytes >= 1024u) return std::to_string(bytes / 1024u) + " KB";
-    return std::to_string(bytes) + " bytes";
 }
 
 std::string Tray::duration_text(uint32_t seconds) {

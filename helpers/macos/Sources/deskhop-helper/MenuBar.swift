@@ -114,7 +114,6 @@ final class MenuBar: NSObject, NSMenuDelegate {
         }
         self.callbacks = callbacks
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = Self.title(for: state)
         /* One menu for the life of the item; its contents are filled in when it
            is about to open (`menuNeedsUpdate`), so nothing else here has to
            remember to rebuild it. */
@@ -178,15 +177,23 @@ final class MenuBar: NSObject, NSMenuDelegate {
         updateTitle()
     }
 
-    /// Drop a notice old enough to be confusing. Called from the same timer
-    /// that refreshes progress.
-    func expireNotice() {
-        guard notice != nil, let at = noticeAt, Date().timeIntervalSince(at) >= Self.noticeLifetime
-        else { return }
-        notice = nil
-        noticeAt = nil
+    /// Called from the same half-second timer that refreshes progress. Drops
+    /// a notice old enough to be confusing, and re-reads whether something is
+    /// on its way out — no event pushes that here, the menu only ever asked.
+    /// The one place `isSending` is read for the title; `updateTitle` shows
+    /// what this last saw, at most half a second old.
+    func tick() {
+        let expired = notice != nil && noticeAt.map { Date().timeIntervalSince($0) >= Self.noticeLifetime } == true
+        if expired {
+            notice = nil
+            noticeAt = nil
+        }
+        let sending = callbacks?.isSending() == true
+        guard expired || sending != shownSending else { return }
+        shownSending = sending
         updateTitle()
     }
+    private var shownSending = false
 
     /// How far the arriving transfer has got, or nil when nothing is arriving.
     func show(progress: (received: UInt64, total: UInt64)?) {
@@ -226,34 +233,117 @@ final class MenuBar: NSObject, NSMenuDelegate {
     /// version the firmware and both helpers share (#199).
     static let releaseRow = "deskhopplus helper \(DH_VERSION_MAJOR).\(DH_VERSION_MINOR)"
 
-    static func title(for state: HelperState) -> String {
+    /*
+     * The three looks the icon can take (#208). The shape carries the state
+     * and the words stay one hover away, so #38's "in words, not a colour to
+     * interpret" holds: a look never replaces the tooltip or the menu. The
+     * Windows tray keeps the same three, by the same rule (`words::look`).
+     *
+     *   paired     — the solid glyph. Connected.
+     *   off        — the outlined glyph. Looking, absent, or in config mode:
+     *                the device is not there to talk to, and none of it is a
+     *                fault, so the brief config round trip stays unalarming.
+     *   attention  — the glyph with a badge. Every state that names something
+     *                to go and do, the reconnect rate (check the link), and a
+     *                file question waiting on this computer's user.
+     */
+    enum Look: Hashable { case paired, off, attention }
+
+    static func look(for state: HelperState, questionWaiting: Bool) -> Look {
+        /* A question outranks every state: a transfer that can take minutes
+           must be agreed to, and a badge nobody sees is a transfer that never
+           happens (#56). */
+        if questionWaiting { return .attention }
         switch state {
-        case .quiet: return "deskhop"
-        case .connected: return "deskhop: paired"
-        case .reconnectingRepeatedly: return "deskhop: reconnecting"
-        case .notPaired: return "deskhop: not paired"
-        case .deviceInConfigMode: return "deskhop: config mode"
-        case .deviceAbsent: return "deskhop: disconnected"
-        case .versionIncompatible: return "deskhop: update helper"
-        case .listenerDetected: return "deskhop: listener detected"
-        case .boardIdentityChanged: return "deskhop: identity changed"
+        case .connected: return .paired
+        case .quiet, .deviceAbsent, .deviceInConfigMode: return .off
+        case .reconnectingRepeatedly, .notPaired, .versionIncompatible, .listenerDetected,
+             .boardIdentityChanged:
+            return .attention
         }
+    }
+
+    /// The words beside the icon, by priority: the question, the receive, a
+    /// complaint, a send. Empty when nothing is happening, which is most of
+    /// the time — the icon alone is the whole title then.
+    static func suffix(question: Bool, progress: (received: UInt64, total: UInt64)?,
+                       warning: Bool, sending: Bool) -> String {
+        if question { return "⬇ files?" }
+        if let progress, progress.total > 0 { return "⬇ \(percent(progress))%" }
+        /* In the title, not only in the menu. A message buried behind a click
+           is not much better than the silence it replaced. */
+        if warning { return "⚠" }
+        if sending { return "⬆" }
+        return ""
+    }
+
+    /// With an icon-only title, the tooltip is what names the helper.
+    static func tooltip(state: HelperState, placementProblem: String?, notice: String?) -> String {
+        [releaseRow, state.message ?? "Waiting for the device", placementProblem, notice]
+            .compactMap { $0 }.joined(separator: "\n")
     }
 
     private func updateTitle() {
         guard let button = item?.button else { return }
-        if question != nil {
-            button.title = Self.title(for: state) + " — ⬇ files?"
-        } else if let progress, progress.total > 0 {
-            button.title = Self.title(for: state) + " — ⬇ \(Self.percent(progress))%"
-        } else if notice != nil || placementProblem != nil {
-            /* In the title, not only in the menu. A message buried behind a
-               click is not much better than the silence it replaced. */
-            button.title = Self.title(for: state) + " ⚠"
-        } else {
-            button.title = Self.title(for: state)
+        button.image = Self.images[Self.look(for: state, questionWaiting: question != nil)]
+        let suffix = Self.suffix(question: question != nil, progress: progress,
+                                 warning: notice != nil || placementProblem != nil,
+                                 sending: shownSending)
+        button.title = suffix
+        button.imagePosition = suffix.isEmpty ? .imageOnly : .imageLeading
+        button.toolTip = Self.tooltip(state: state, placementProblem: placementProblem, notice: notice)
+    }
+
+    // MARK: - The glyph
+
+    /*
+     * Two screens, joined by a bar when paired: drawn here rather than shipped
+     * as a file, so the bare binary launchd runs from .build/release needs no
+     * resource bundle beside it. A template image, so macOS tints it for a
+     * light or dark menu bar and the drawing is black on clear.
+     *
+     * This drawing is the one geometry: `helpers/icon/render.sh` compiles
+     * this file into a renderer that tints it and packs the Windows tray
+     * icons, the exe icon and the .app icon from it. Change it here and run
+     * that script.
+     */
+    static let images: [Look: NSImage] = Dictionary(
+        uniqueKeysWithValues: [Look.paired, .off, .attention].map { ($0, image(for: $0)) })
+
+    /// The badge's disc, on the 16-unit grid (flipped: y runs down). Public
+    /// so the icon renderer can colour it differently from the rest.
+    static let badge = NSRect(x: 8, y: 0, width: 7, height: 7)
+
+    static func image(for look: Look) -> NSImage {
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
+            let screens = [NSRect(x: 1, y: 4, width: 6, height: 8), NSRect(x: 9, y: 4, width: 6, height: 8)]
+            NSColor.black.set()
+            switch look {
+            case .off:
+                /* Inset by half the line so the stroke sits on whole pixels. */
+                for screen in screens {
+                    NSBezierPath(roundedRect: screen.insetBy(dx: 0.5, dy: 0.5), xRadius: 1, yRadius: 1).stroke()
+                }
+            case .paired, .attention:
+                for screen in screens { NSBezierPath(roundedRect: screen, xRadius: 1, yRadius: 1).fill() }
+                NSBezierPath(rect: NSRect(x: 7, y: 7.25, width: 2, height: 1.5)).fill()
+            }
+            if look == .attention, let context = NSGraphicsContext.current {
+                /* A disc over the right screen's corner, with a clear halo so
+                   it reads as a badge and not a bump, and a "!" knocked out of
+                   it so the tint shows it whatever colour the bar is. */
+                context.compositingOperation = .destinationOut
+                NSBezierPath(ovalIn: badge.insetBy(dx: -1, dy: -1)).fill()
+                context.compositingOperation = .sourceOver
+                NSBezierPath(ovalIn: badge).fill()
+                context.compositingOperation = .destinationOut
+                NSBezierPath(rect: NSRect(x: badge.midX - 0.5, y: 1.5, width: 1, height: 2.5)).fill()
+                NSBezierPath(rect: NSRect(x: badge.midX - 0.5, y: 4.75, width: 1, height: 1)).fill()
+            }
+            return true
         }
-        button.toolTip = [state.message, placementProblem, notice].compactMap { $0 }.joined(separator: "\n")
+        image.isTemplate = true
+        return image
     }
 
     private func fill(_ menu: NSMenu) {

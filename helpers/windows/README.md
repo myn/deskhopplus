@@ -16,6 +16,20 @@ is doing in the notification area, and can be asked to start itself at logon. Th
 first row, greyed, is **deskhopplus helper** and the release number, from the one version the
 firmware and both helpers share (`src/core/dh_version.h`). It is not clickable.
 
+The icon is always there, with one of three looks — `words::look`: **paired**, the solid glyph,
+for connected; **off**, the outlined glyph, for looking, absent and config mode; **attention**,
+the badge, for every state with a remedy, the reconnect rate, and a waiting file question — and
+the state words in the tooltip (`words::tooltip`), which a look never replaces (#38). While a file arrives it is the percent, two
+digits drawn with GDI+ at the taskbar's DPI (`Tray::digits`). The looks are `.ico` resources
+(`src/deskhop-helper.rc`, rendered by `helpers/icon/render.sh` from the Mac menu bar's glyph);
+the first of them, `IDI_APP`, is what Explorer shows for the exe.
+
+Windows 11 puts a new icon behind the taskbar's **^** overflow. After the icon appears the helper
+sets `IsPromoted` on its own record under `HKCU\Control Panel\NotifyIconSettings` — undocumented,
+per-user, keyed by exe path — so it sits on the taskbar; it does so on every start, so a moved exe
+heals itself. If Windows ignores it, the one-time fallback is **Settings › Personalization ›
+Taskbar › Other system tray icons › deskhopplus helper › On** (#208).
+
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over
 1 MB waits in the notification area until it is accepted here, and only then does anything cross
@@ -41,8 +55,9 @@ The exe lands at `helpers/windows/build/Release/deskhop-helper.exe`. CI builds a
 on every push to `main`, which is what makes the no-install property something a user receives
 rather than something this file asserts.
 
-The tests cover four things: the autostart ladder's decisions, the clipboard path, the seal's
-cipher, and the shim's dispatch — which output reaches which effect. The ladder is the code most
+The tests cover five things: the autostart ladder's decisions, the clipboard path, the seal's
+cipher, the shim's dispatch — which output reaches which effect — and what the presence shows
+for a state (`words_test`: the look and the tooltip, #208). The ladder is the code most
 likely to be wrong on a managed laptop nobody can reproduce, and it needs no registry to be worth
 checking. The dispatch is the layer a service can emit the right output into and have nothing
 happen ([#152](https://github.com/myn/deskhopplus/issues/152)), which is #93 and #94's shape; it

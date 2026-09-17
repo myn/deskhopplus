@@ -12,19 +12,24 @@
  * all on the window thread, so there is nothing to marshal and nothing to
  * lock.
  *
- * Two rules the core does not carry, because they are presentation:
+ * Three rules the core does not carry, because they are presentation:
  *
- *   - **The quiet state shows no icon at all.** A device that disappears for a
- *     moment is ordinary USB noise, and config mode is something the user did
- *     on purpose. Neither is a fault worth putting an icon in the tray for.
+ *   - **The icon is always there** (#208, and #54's first criterion). It
+ *     takes one of three looks — paired, off, attention (`words::look`) — and
+ *     the quiet state is the *off* look, not a missing icon: a device that
+ *     disappears for a moment is ordinary USB noise, and config mode is
+ *     something the user did, so neither look is alarming. While a file
+ *     arrives the icon is the percent, drawn as two digits.
  *   - **A balloon fires only for a state that names a remedy.** Everything
  *     else changes the tooltip silently. Ordinary reconnection is not an event
  *     worth interrupting anyone for, and a balloon per reconnect is how a
  *     helper teaches its user to ignore it.
+ *   - **The icon asks to sit on the taskbar, not in the overflow.** See
+ *     `promote`.
  *
- * The wording is words.h's. What the *states* are, and whether the config
- * chord may be offered from one, are the shared core's and are called rather
- * than restated (#34).
+ * The wording and the look are words.h's. What the *states* are, and whether
+ * the config chord may be offered from one, are the shared core's and are
+ * called rather than restated (#34).
  */
 
 #include <windows.h>
@@ -34,6 +39,7 @@
 
 #include "clip_service.h"
 #include "dh_helper.h"
+#include "words.h"
 
 namespace deskhop {
 
@@ -41,6 +47,8 @@ class Tray {
   public:
     /* The window message the shell sends back for icon activity. */
     static constexpr UINT kCallbackMessage = WM_APP + 1;
+    /* The window timer `promote` retries on; main.cpp's beat timer is 1. */
+    static constexpr UINT_PTR kPromoteTimerId = 2;
 
     struct Callbacks {
         /* The tray menu is where autostart is turned on and off — an offer,
@@ -68,15 +76,23 @@ class Tray {
            opened, so it can simply look. */
         std::function<bool()> is_sending;
         std::function<void()> abort_send;
+        /* Diagnostics, never shown to the user. */
+        std::function<void(const std::string &)> log;
     };
 
     ~Tray();
 
+    /* Attaching shows the icon; detaching removes it. */
     void attach(HWND window, Callbacks callbacks);
     void detach();
 
-    /* Adds, updates or removes the icon to match the state. */
+    /* Updates the icon's look and words to match the state. */
     void show(dh_helper_state state);
+
+    /* Whether something is on its way out. The icon does not change for it;
+       the tooltip says so. Pushed from the tick, since nothing else here is
+       told when a send starts or ends. */
+    void show_sending(bool sending);
 
     /*
      * Files are being offered from the other computer (#56).
@@ -99,11 +115,13 @@ class Tray {
        tell anyone whether to wait (#39, #56). Static so a test can read it
        without a window. */
     static std::string summary(const deskhop::FileOffer &offer);
-    static std::string size_text(uint64_t bytes);
     static std::string duration_text(uint32_t seconds);
 
     /* A kCallbackMessage arrived. */
     void on_callback(LPARAM what);
+
+    /* A WM_TIMER for kPromoteTimerId arrived. */
+    void on_timer();
 
     /* Something the user did produced nothing, and only they can act on why —
        which is the bar this file sets for interrupting anyone. Public because
@@ -113,13 +131,30 @@ class Tray {
   private:
     void add_icon();
     void remove_icon();
-    void update_tooltip();
+    /* The icon and the tooltip, from the state, the question, the transfer
+       and the send — every path that changes one of those ends here. */
+    void update();
+    HICON icon_for(words::Look look);
+    HICON digits(unsigned percent);
+    void promote();
     void show_menu();
 
     HWND window_{nullptr};
     Callbacks callbacks_;
     bool icon_shown_{false};
     dh_helper_state state_{DH_HELPER_QUIET};
+    bool sending_{false};
+    /* The three looks, loaded from the exe's resources on first use, in
+       `words::Look` order. */
+    HICON looks_[3]{};
+    /* The digit icon of the moment, destroyed when the next one replaces it. */
+    HICON digits_{nullptr};
+    /* Whether the taskbar has been asked to keep the icon out of the
+       overflow, and how many times it has been asked. */
+    bool promoted_{false};
+    int promote_attempts_{0};
+    static constexpr int kPromoteAttempts = 5;
+    static constexpr UINT kPromoteRetryMs = 2000;
     /* The offer waiting on this computer's user, and the transfer running now.
        Both are what the menu grows extra entries for. */
     bool have_question_{false};

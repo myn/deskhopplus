@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Derek Reynolds
+
+// The icons (#208), rendered by helpers/icon/render.sh from the one glyph
+// the Mac menu bar draws in code. Found by name through the target's include
+// directories, which both rc.exe and windres search for these files.
+#include "resource.h"
+
+IDI_APP        ICON "app.ico"
+IDI_PAIRED     ICON "paired.ico"
+IDI_OFF        ICON "off.ico"
+IDI_ATTENTION  ICON "attention.ico"

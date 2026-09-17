@@ -335,8 +335,8 @@ final class HelperRuntime: HelperEffects {
     /// Push the arriving transfer's progress to the menu bar, and only when it
     /// has moved.
     private func refreshProgress() {
-        /* The same slow timer drops a notice old enough to confuse. */
-        menuBar.expireNotice()
+        /* The same slow timer drops a stale notice and re-reads the send. */
+        menuBar.tick()
         let arriving = clipboard.arriving
         let now = arriving.map { (received: $0.received, total: $0.total) }
         let changed = now?.received != shownProgress?.received

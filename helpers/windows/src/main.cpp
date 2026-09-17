@@ -260,6 +260,7 @@ class Helper : public HelperEffects {
        has actually moved. */
     uint64_t shown_received_{0};
     uint64_t shown_total_{0};
+    bool shown_sending_{false};
     uint32_t prefetched_image_id_{0};
     uint32_t prefetched_image_sequence_{0};
     std::optional<std::vector<uint8_t>> awaited_image_;
@@ -573,6 +574,12 @@ int Helper::run() {
                 shown_total_ = total;
                 tray_.show_progress(received, total);
             }
+            /* And the send, which the tooltip names (#208). */
+            const bool sending = clipboard_service_->awaiting_send();
+            if (sending != shown_sending_) {
+                shown_sending_ = sending;
+                tray_.show_sending(sending);
+            }
         }
     }
 }
@@ -651,6 +658,7 @@ Tray::Callbacks Helper::tray_callbacks() {
         [this] { dispatch_.emit(clipboard_service_->abort_receive()); },
         [this] { return clipboard_service_->awaiting_send(); },
         [this] { dispatch_.emit(clipboard_service_->abort_send()); },
+        [this](const std::string &m) { log(m); },
     };
 }
 
@@ -675,7 +683,7 @@ std::string Helper::autostart_detail() const {
 LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
     if (message == taskbar_created_ && taskbar_created_ != 0) {
         /* The shell forgot every icon. Re-assert whatever the current state
-           says should be showing — including nothing, for the quiet state. */
+           says should be showing. */
         tray_.detach();
         tray_.attach(window_, tray_callbacks());
         tray_.show(session_->state());
@@ -710,6 +718,10 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
             transport_.pump_reads();
             feed(session_->tick(now_ms()));
             in_beat_ = false;
+            return 0;
+        }
+        if (w == Tray::kPromoteTimerId) {
+            tray_.on_timer();
             return 0;
         }
         break;

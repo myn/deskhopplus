@@ -267,6 +267,14 @@ release row comes from the one version the firmware and both helpers share
 placement failure. A brief config-mode round trip stays quiet. Placement failures remain in the
 menu until a placement succeeds.
 
+The item is an icon with three looks — `MenuBar.look(for:questionWaiting:)`: **paired** for
+connected; **off** for quiet, absent and config mode; **attention** for every state that names a
+remedy, the reconnect rate, and a waiting file question — and a short suffix when something is
+happening (`MenuBar.suffix`: `⬇ files?`, `⬇ 42%`, `⚠`, `⬆`, in that priority). The state words
+are in the tooltip and the menu, never replaced by the look (#38). The glyph is drawn in code
+(`MenuBar.image(for:)`), so the binary needs no resource files beside it; `helpers/icon/render.sh`
+renders the Windows `.ico` files and the `.app`'s `.icns` from the same drawing (#208).
+
 **Start at login** installs a per-user LaunchAgent for the current executable. Turning it off moves
 the plist to `com.deskhopplus.helper.plist.disabled`; turning it back on restores it unchanged,
 including a custom executable path. The checkbox reports whether the plist is installed, not proof

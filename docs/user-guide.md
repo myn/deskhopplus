@@ -61,16 +61,34 @@ board is paired with something else, and a chord press moves it.
 ## What the menu bar or tray says
 
 The macOS helper is a menu bar item. The Windows helper is an icon in the notification area. Both
-show the same states; two rows are worded a little differently on Windows. On macOS the item is
-always there; on Windows the icon is hidden while the helper is only looking for the board, and
-appears when there is something to say.
+show the same states; two rows are worded a little differently on Windows. Both are always there
+while the helper runs.
+
+The icon is two screens. It has three looks, and the look tells you the state at a glance; the
+words are one hover or one click away, and they are what to act on:
+
+| The icon | Meaning |
+| --- | --- |
+| Two solid screens joined by a bar | Connected and paired. |
+| Two outlined screens | Looking for the board, board not connected, or config mode. Nothing to do unless it stays that way. |
+| A badge with **!** on the screens | Something to read: open the menu. Every state with a remedy, a reconnect storm, or files waiting for your answer. |
+
+On macOS the menu bar item is the icon alone, with a few characters beside it when something is
+happening: **⬇ files?** when files are offered, **⬇ 42%** while they arrive, **⬆** while this
+computer is sending, and **⚠** when the menu holds a message for you. Hover for the words.
+
+On Windows the icon itself turns into the percent while a file arrives; hover for the rest. The
+helper asks Windows to keep the icon on the taskbar rather than behind the **^** overflow. If it
+still lands in the overflow, turn it on once by hand: **Settings › Personalization › Taskbar ›
+Other system tray icons › deskhopplus helper**. The helper asks again on every start, so the
+setting follows the exe if you move it.
 
 The first row of the menu is greyed and shows the release, e.g. **deskhopplus helper 1.0**. The
 second row is the state.
 
 | Menu says | What it means | What to do |
 | --- | --- | --- |
-| **Waiting for the device** (macOS) or no icon (Windows) | The helper is looking for the board, or the board went away for a moment. | Wait a few seconds. If it stays, check the USB cable. |
+| **Waiting for the device** (macOS) or **Looking for the device** (Windows) | The helper is looking for the board, or the board went away for a moment. | Wait a few seconds. If it stays, check the USB cable. |
 | **Connected and paired** | Everything works. | Nothing. |
 | **Not paired — press the config chord on the device** | The board has no pairing for this helper. | [Pair a helper](#pair-a-helper). |
 | **Device in config mode** | You pressed the chord once. | Press it again, or wait five minutes. |

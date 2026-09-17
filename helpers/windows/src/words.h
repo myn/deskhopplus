@@ -55,6 +55,36 @@ bool state_is_known(dh_helper_state state);
  */
 bool state_names_a_remedy(dh_helper_state state);
 
+/*
+ * The three looks the presence's icon can take (#208). The shape carries the
+ * state and the words stay one hover away: #38's "in words, not a colour to
+ * interpret" holds because a look never replaces the tooltip.
+ *
+ *   Paired     — the solid glyph. Connected.
+ *   Off        — the outlined glyph. Looking, absent, or in config mode: the
+ *                device is not there to talk to, and none of it is a fault.
+ *   Attention  — the glyph with a badge. Every state that names something to
+ *                go and do, the reconnect rate (check the link), and a file
+ *                question waiting on this computer's user.
+ */
+enum class Look { Paired, Off, Attention };
+
+Look look(dh_helper_state state, bool question_waiting);
+
+/*
+ * The whole tooltip, by priority: a waiting question, then a receive with its
+ * percent, then a send, then the state. What the user can act on comes before
+ * what the device is doing. `question_summary` is empty when nothing is
+ * offered; `total` of zero means nothing is arriving.
+ */
+std::string tooltip(dh_helper_state state, const std::string &question_summary,
+                    uint64_t received, uint64_t total, bool sending);
+
+/* Integer arithmetic, and truncating rather than rounding — the same spelling
+   as `MenuBar.size` on the other computer, so the two ends quote one transfer
+   at one size. */
+std::string size_text(uint64_t bytes);
+
 /* One log line for one note. `transport_reason` is the platform's own
    description of a write that failed, which the core has no field for — it
    takes the failure, not the sentence. */

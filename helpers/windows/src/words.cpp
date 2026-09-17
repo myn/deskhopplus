@@ -127,6 +127,58 @@ std::string state_message(dh_helper_state state) {
     return {};
 }
 
+Look look(dh_helper_state state, bool question_waiting) {
+    /* A question is the one thing here that is not a state, and it outranks
+       every state: a transfer that can take minutes must be agreed to, and a
+       badge nobody sees is a transfer that never happens (#56). */
+    if (question_waiting) return Look::Attention;
+    switch (state) {
+    case DH_HELPER_CONNECTED:
+        return Look::Paired;
+    case DH_HELPER_QUIET:
+    case DH_HELPER_DEVICE_ABSENT:
+    case DH_HELPER_DEVICE_IN_CONFIG_MODE:
+        return Look::Off;
+    case DH_HELPER_RECONNECTING_REPEATEDLY:
+    case DH_HELPER_NOT_PAIRED:
+    case DH_HELPER_VERSION_INCOMPATIBLE:
+    case DH_HELPER_LISTENER_DETECTED:
+    case DH_HELPER_BOARD_IDENTITY_CHANGED:
+        return Look::Attention;
+    case DH_HELPER_STATE_COUNT:
+        break; /* a bound, never a state */
+    }
+    return Look::Off;
+}
+
+std::string tooltip(dh_helper_state state, const std::string &question_summary,
+                    uint64_t received, uint64_t total, bool sending) {
+    std::string tip;
+    if (!question_summary.empty()) {
+        tip = "Files offered: " + question_summary;
+    } else if (total > 0) {
+        tip = "Receiving " + size_text(received) + " of " + size_text(total) + " \xe2\x80\x94 " +
+              std::to_string(received * 100u / total) + "%";
+    } else if (sending) {
+        tip = "Sending";
+    } else {
+        tip = state_message(state);
+        /* The quiet state has no words of its own, and since #208 it has an
+           icon to hover over, so it borrows the menu's. */
+        if (tip.empty()) tip = "Looking for the device";
+    }
+    return "deskhopplus \xe2\x80\x94 " + tip;
+}
+
+std::string size_text(uint64_t bytes) {
+    if (bytes >= 1024u * 1024u) {
+        const uint64_t tenths = (bytes * 10u) / (1024u * 1024u);
+        return std::to_string(tenths / 10u) + "." + std::to_string(tenths % 10u) + " MB";
+    }
+    if (bytes >= 1024u) return std::to_string(bytes / 1024u) + " KB";
+    return std::to_string(bytes) + " bytes";
+}
+
 bool state_is_known(dh_helper_state state) {
     /* Quiet has no words on purpose, so an empty message cannot be the test.
        Everything else must have some. */
@@ -139,8 +191,10 @@ bool state_names_a_remedy(dh_helper_state state) {
      * chord, find the other program, update one end, or clear a pinned key.
      * (#49 asked for three, listing `channelHeld` — retired by #114 — and the
      * two measured states from #111 and #112 arrived after it was written.)
-     * The rest change the tooltip silently: ordinary reconnection is not worth
-     * interrupting anyone for, and the quiet state shows nothing at all.
+     * The rest change the tooltip and the look silently: ordinary
+     * reconnection is not worth interrupting anyone for, and the quiet state
+     * has no words of its own (#208 gave it the off look and a borrowed
+     * tooltip, not a balloon).
      *
      * This is presentation, which is why it lives here. The one predicate that
      * is *not* — whether the chord may be offered at all — is

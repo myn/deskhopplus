@@ -48,7 +48,12 @@ key CFBundlePackageType APPL
 # The literal on purpose, like the menu tests: it moves with dh_version.h.
 key CFBundleShortVersionString 1.0
 key LSUIElement true
-codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc' || { echo "FAIL: not ad-hoc signed"; fail=1; }
+# The icon Finder shows (#208): the plist names it, and the file is inside.
+key CFBundleIconFile deskhop
+check test -s "$app/Contents/Resources/deskhop.icns"
+# Not grep -q: it closes the pipe on the first match, codesign dies of SIGPIPE,
+# and pipefail turns a good seal into a failure now and then.
+codesign -dv "$app" 2>&1 | grep 'Signature=adhoc' >/dev/null || { echo "FAIL: not ad-hoc signed"; fail=1; }
 
 mkdir "$tmp/unzipped" && unzip -q "$tmp/out/deskhopplus-helper-macos.zip" -d "$tmp/unzipped"
 verify_app "$tmp/unzipped/deskhopplus-helper.app"

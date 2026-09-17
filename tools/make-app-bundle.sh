@@ -45,9 +45,13 @@ version="$major.$minor"
 app="$out/deskhopplus-helper.app"
 zip="$out/deskhopplus-helper-macos.zip"
 rm -rf "$app" "$zip"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/deskhopplus-helper"
 chmod +x "$app/Contents/MacOS/deskhopplus-helper"
+# The icon Finder shows (#208), rendered by helpers/icon/render.sh from the
+# menu bar's own glyph. The menu bar does not read it: that glyph is drawn in
+# code, so the bare binary needs nothing beside it.
+cp "$(dirname "${BASH_SOURCE[0]}")/../helpers/icon/deskhop.icns" "$app/Contents/Resources/deskhop.icns"
 
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -56,6 +60,8 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <dict>
 	<key>CFBundleExecutable</key>
 	<string>deskhopplus-helper</string>
+	<key>CFBundleIconFile</key>
+	<string>deskhop</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.deskhopplus.helper</string>
 	<key>CFBundleName</key>
