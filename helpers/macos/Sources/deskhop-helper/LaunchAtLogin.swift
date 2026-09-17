@@ -19,6 +19,18 @@ struct LaunchAtLogin {
     private var saved: URL { plist.appendingPathExtension("disabled") }
     var isEnabled: Bool { FileManager.default.fileExists(atPath: plist.path) }
 
+    /// macOS runs a downloaded .app that was never moved with Finder from a
+    /// hidden, randomised copy (App Translocation, #206). That copy is gone by
+    /// the next login, so a job pointing into it starts nothing. Only a Finder
+    /// move, or removing the quarantine mark, ends the translocation, and the
+    /// message says the one a user can do without Terminal.
+    struct Translocated: LocalizedError {
+        var errorDescription: String? {
+            "macOS is running the app from a temporary copy. "
+            + "Move deskhopplus-helper.app with Finder, open it from there, and try again."
+        }
+    }
+
     func setEnabled(_ enabled: Bool) throws {
         guard enabled != isEnabled else { return }
         let files = FileManager.default
@@ -28,6 +40,7 @@ struct LaunchAtLogin {
         } else if files.fileExists(atPath: saved.path) {
             try files.moveItem(at: saved, to: plist)
         } else {
+            guard !executable.contains("/AppTranslocation/") else { throw Translocated() }
             try files.createDirectory(at: plist.deletingLastPathComponent(),
                                       withIntermediateDirectories: true)
             let job: [String: Any] = [

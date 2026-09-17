@@ -47,7 +47,7 @@ Helpers exist for macOS and Windows. A Linux computer gets the keyboard and mous
 
 **macOS** — needs macOS 13 or later on Apple Silicon, or an Intel Mac with the T2 chip. The helper keeps its key in the Secure Enclave.
 
-1. Unzip `deskhopplus-helper-macos.zip`. Move `deskhopplus-helper.app` somewhere it can stay, such as `~/Applications`. It runs on Apple Silicon and Intel and is not signed.
+1. Unzip `deskhopplus-helper-macos.zip`. Move `deskhopplus-helper.app` **with Finder** somewhere it can stay, such as `~/Applications`. Finder, not Terminal: macOS runs a downloaded app that Finder never moved from a hidden temporary copy, and **Start at login** refuses to register that copy. The app runs on Apple Silicon and Intel and is not signed.
 2. Double-click it. macOS refuses to open it. If it says the app **cannot be verified**: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**, and double-click it again. If it says the app **is damaged**, or you would rather use Terminal: run `xattr -dr com.apple.quarantine ~/Applications/deskhopplus-helper.app` and then double-click it again.
 3. A menu bar item appears. Click it, then click **Start at login**. From the next login macOS starts the helper for you.
 

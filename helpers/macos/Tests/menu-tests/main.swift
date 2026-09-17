@@ -90,3 +90,25 @@ menuBar.show(placementProblem: nil)
 menuBar.menuNeedsUpdate(menu)
 check(!menu.items.contains { $0.title.contains("Cursor placement unavailable") }, "successful placement clears its warning")
 print("Login actions, failure preservation, and placement checks passed")
+
+// A downloaded .app never moved with Finder runs from a hidden, randomised
+// copy (App Translocation, #206). A job written with that path starts nothing
+// at the next login, so it is refused before anything is written, and the
+// menu says what to do instead of pointing at ~/Library/LaunchAgents.
+let translocatedPlist = directory.appendingPathComponent("translocated.plist")
+let translocated = LaunchAtLogin(
+    plist: translocatedPlist,
+    executable: "/private/var/folders/by/T/AppTranslocation/286E9AE6/d/deskhopplus-helper.app/Contents/MacOS/deskhopplus-helper")
+var refusedTranslocation = false
+do { try translocated.setEnabled(true) } catch is LaunchAtLogin.Translocated { refusedTranslocation = true }
+check(refusedTranslocation && !translocated.isEnabled, "a translocated app is refused a login job, and none is written")
+let translocatedMenu = NSMenu()
+let translocatedBar = MenuBar(login: translocated)
+translocatedBar.menuNeedsUpdate(translocatedMenu)
+let translocatedStartup = translocatedMenu.items.first { $0.title == "Start at login" }!
+_ = (translocatedStartup.target as! NSObject).perform(translocatedStartup.action!)
+translocatedBar.menuNeedsUpdate(translocatedMenu)
+let translocatedWords = translocatedMenu.items.map(\.title).joined(separator: " ")
+check(translocatedWords.contains("Move deskhopplus-helper.app with Finder"), "the refusal names the remedy")
+check(!translocatedWords.contains("LaunchAgents"), "the refusal does not send the user to the plist folder")
+print("Translocation refusal checks passed")

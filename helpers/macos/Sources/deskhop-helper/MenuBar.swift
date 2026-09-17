@@ -344,6 +344,8 @@ final class MenuBar: NSObject, NSMenuDelegate {
             show(notice: login.isEnabled
                 ? "Login item installed — takes effect at your next login."
                 : "Login item removed — takes effect at your next login.")
+        } catch let refusal as LaunchAtLogin.Translocated {
+            show(notice: refusal.localizedDescription)
         } catch {
             show(notice: "Could not change login startup: \(error.localizedDescription) "
                 + "Check the helper files in ~/Library/LaunchAgents and try again.")
