@@ -730,16 +730,18 @@ img {
 .hotkey-text { margin-bottom: 0; }
 
 #layout { padding: 1rem; background: #f6f8fa; margin-bottom: 2rem; }
-#layout svg { display: block; width: 100%; margin: 1rem auto; }
+#layout svg { display: block; width: 100%; margin: 1rem auto; touch-action: none; }
 #layout text { text-anchor: middle; fill: #253440; font-size: 16px; }
-#layout .layout-os { font-size: 10px; }
+.layout-handle { cursor: grab; user-select: none; }
+.layout-handle rect { fill: currentColor; }
+#layout .layout-handle text { fill: white; font-size: 11px; }
+#layout-refused { color: #a03030; min-height: 1.5em; }
 .layout-A { color: #245d8c; fill: #d7e5f0; }
 .layout-B { color: #35732e; fill: #e1f0d7; }
 .layout-monitor { stroke: currentColor; stroke-width: 1; }
 .layout-main { stroke-width: 5; }
 .layout-band { stroke: #7148a0; stroke-width: 9; }
 #layout .layout-band-number { fill: white; font-size: 13px; paint-order: stroke; stroke: #7148a0; stroke-width: 3; }
-.layout-legend { display: flex; justify-content: center; gap: 2rem; font-weight: bold; }
 summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 #advanced { padding: 1rem; }
@@ -798,6 +800,7 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
       <section aria-labelledby="layout-title">
         <h3 id="layout-title">Layout</h3>
         <div id="layout">Connect to see your monitor layout.</div>
+        <p id="layout-refused" aria-live="polite"></p>
       </section>
 
       <div style="border: 2px solid #d7e5f0; padding: 0 1em;">
@@ -3702,9 +3705,12 @@ async function wipeConfigHandler() {
 }
 
 // Coordinates are monitor widths; half-widths are the layout grid.
+// Directions are the board's: 1 Left, 2 Right, 4 Top, 5 Bottom.
+const vectors = {1:[-1,0], 2:[1,0], 4:[0,-1], 5:[0,1]};
+const opposite = {1:2, 2:1, 4:5, 5:4};
+const at = (m, axis) => axis ? m.y : m.x;
+
 function layoutFromFields(fields) {
-  const vectors = {1:[-1,0], 2:[1,0], 4:[0,-1], 5:[0,1]};
-  const opposite = {1:2, 2:1, 4:5, 5:4};
   const border = Number(fields[17]) || 2;
   const normal = vectors[border] || vectors[2];
   const tangent = normal[0] ? 1 : 0;
@@ -3728,11 +3734,11 @@ function layoutFromFields(fields) {
   })));
   const empty = segments.every(pair => pair.every(s => !s.monitor));
   let custom = !vectors[border] || outputs[1].border !== opposite[border] ||
-    outputs.some(o => o.chain === o.border);
+    outputs.some(o => o.monitors.length > 1 && o.chain === o.border);
   const a = outputs[0].monitors, b = outputs[1].monitors;
   // Start with left/top-aligned lines on the side selected by Output A.
-  let shift = normal.map((v, axis) => v > 0 ? Math.max(...a.map(m => axis ? m.y : m.x))+1 :
-    v < 0 ? -Math.max(...b.map(m => axis ? m.y : m.x))-1 : 0);
+  let shift = normal.map((v, axis) => v > 0 ? Math.max(...a.map(m => at(m, axis)))+1 :
+    v < 0 ? -Math.max(...b.map(m => at(m, axis)))-1 : 0);
   const edge = (m, side, fraction) => [m.x, m.y].map((v, axis) =>
     v + (axis === tangent ? fraction : (side[axis] > 0 ? 1 : 0)));
   const close = (x,y) => Math.abs(x-y) <= 1/65535;
@@ -3753,7 +3759,7 @@ function layoutFromFields(fields) {
       pair.every(s => [s.start,s.end].every(v => close(v/65535, Math.round(v/65535*2)/2)));
     const origins = pair.map((s,i) => {
       const m = outputs[i].monitors[s.monitor-1];
-      return (tangent ? m.y : m.x) + (i ? snapped[tangent] : 0);
+      return at(m, tangent) + (i ? snapped[tangent] : 0);
     });
     const overlapStart = Math.max(...origins), overlapEnd = Math.min(...origins)+1;
     const collides = a.some(m => b.some(n =>
@@ -3774,21 +3780,127 @@ function layoutFromFields(fields) {
     custom ? 'Custom values are set in Advanced. Moving a monitor here replaces them.' : ''};
 }
 
+// Derives every field the layout owns from where the boxes sit: counts, chain
+// and border directions, and the segments in seam order. Returns {fields}, or
+// {refused} with the one-line reason the board cannot run this layout.
+function fieldsFromLayout(layout) {
+  const [a, b] = layout.outputs.map(o => o.monitors);
+  // A straight line of equal boxes fills its bounding box, so the boxes are the box.
+  const bounds = ms => [0,1].map(axis => [Math.min(...ms.map(m => at(m, axis))), Math.max(...ms.map(m => at(m, axis)))+1]);
+  const [boxA, boxB] = [bounds(a), bounds(b)];
+  const overlap = [0,1].map(axis => Math.min(boxA[axis][1], boxB[axis][1]) - Math.max(boxA[axis][0], boxB[axis][0]));
+  if (overlap.some(v => v < 0)) return {refused:'There is a gap between the computers. Put them edge to edge.'};
+  if (overlap.every(v => v > 0)) return {refused:'The computers overlap. Put them edge to edge.'};
+  if (overlap.every(v => v === 0)) return {refused:'The computers touch only at a corner. Put an edge against an edge.'};
+  const normal = overlap[0] === 0 ? 0 : 1, tangent = 1-normal;
+  const forward = boxA[normal][1] === boxB[normal][0];
+  const seam = boxA[normal][forward ? 1 : 0];
+  const borders = [normal ? (forward ? 5 : 4) : (forward ? 2 : 1)];
+  borders.push(opposite[borders[0]]);
+  const fields = {};
+  for (const [i, o] of layout.outputs.entries()) {
+    const ms = o.monitors, base = i ? 40 : 10;
+    let chain = o.chain;
+    if (ms.length > 1) {
+      const dx = ms[1].x-ms[0].x, dy = ms[1].y-ms[0].y;
+      chain = dx < 0 ? 1 : dx > 0 ? 2 : dy < 0 ? 4 : 5;
+      // The board lets only Main cross when the line points at the other computer.
+      if (chain === borders[i]) return {refused:'Put the main monitor next to the other computer.'};
+    }
+    fields[base+1] = ms.length; fields[98+i] = chain; fields[base+7] = borders[i];
+  }
+  const facing = (ms, positive) => ms.filter(m => at(m, normal) + (positive ? 1 : 0) === seam);
+  const pairs = [];
+  for (const p of facing(a, forward)) for (const q of facing(b, !forward)) {
+    const start = Math.max(at(p, tangent), at(q, tangent)), end = Math.min(at(p, tangent), at(q, tangent))+1;
+    if (end > start) pairs.push({start, end, sides:[p, q]});
+  }
+  pairs.sort((u, v) => u.start-v.start);
+  if (pairs.length > 4) return {refused:`This layout needs ${pairs.length} segments; the board holds 4.`};
+  [140, 152].forEach((base, i) => {
+    for (let n = 0; n < 4; n++) {
+      const pair = pairs[n], m = pair && pair.sides[i];
+      fields[base+3*n] = pair ? m.number : 0;
+      fields[base+3*n+1] = pair ? Math.round((pair.start-at(m, tangent))*65535) : 0;
+      fields[base+3*n+2] = pair ? Math.round((pair.end-at(m, tangent))*65535) : 0;
+    }
+  });
+  return {fields};
+}
+
+// Applies one gesture. {output, dx, dy} moves that computer as a block by dx, dy
+// boxes. Returns {layout, fields} for a valid drop, or {layout, refused} with the
+// layout unchanged.
+function moveMonitor(layout, gesture) {
+  const outputs = layout.outputs.map(o => o.letter !== gesture.output ? o :
+    {...o, monitors:o.monitors.map(m => ({...m, x:m.x+gesture.dx, y:m.y+gesture.dy}))});
+  const result = fieldsFromLayout({outputs});
+  if (result.refused) return {layout, refused:result.refused};
+  const moved = layoutFromFields(result.fields);
+  moved.outputs.forEach((o, i) => {o.os = layout.outputs[i].os;});
+  return {layout:moved, fields:result.fields};
+}
+
 function renderLayout(layout) {
   if (!layout) return '<p>Connect to see your monitor layout.</p>';
   const monitors = layout.outputs.flatMap(o => o.monitors);
   const width = Math.max(...monitors.map(m => m.x))+1;
   const height = Math.max(...monitors.map(m => m.y))+1;
-  const groups = layout.outputs.map(o => `<g class="layout-${o.letter}" aria-label="Output ${o.letter}: ${o.os}">${o.monitors.map(m =>
-    `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+12}" y="${m.y*100+12}" width="76" height="76" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+47}">${m.number === 1 ? 'Main' : m.number}</text><text class="layout-os" x="${m.x*100+50}" y="${m.y*100+68}">${o.letter} · ${o.os}</text>`).join('')}</g>`).join('');
+  // Each cell is 100 units: the label bar sits in the top 18, then a gap, then
+  // the monitor box. The bar spans the block and is the handle that moves it.
+  const groups = layout.outputs.map(o => {
+    const left = Math.min(...o.monitors.map(m => m.x))*100+12, top = Math.min(...o.monitors.map(m => m.y))*100+12;
+    const right = Math.max(...o.monitors.map(m => m.x))*100+88;
+    return `<g class="layout-${o.letter}" aria-label="Output ${o.letter}: ${o.os}"><g class="layout-handle" data-output="${o.letter}"><rect x="${left}" y="${top}" width="${right-left}" height="18" rx="5"/><text x="${(left+right)/2}" y="${top+13}">${right-left > 76 ? 'Output ' : ''}${o.letter} · ${o.os}</text></g>${o.monitors.map(m =>
+      `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+12}" y="${m.y*100+36}" width="76" height="52" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+68}">${m.number === 1 ? 'Main' : m.number}</text>`).join('')}</g>`;
+  }).join('');
   const bands = layout.bands.map(s => `<g data-segment="${s.number}"><line class="layout-band" x1="${s.start[0]*100}" y1="${s.start[1]*100}" x2="${s.end[0]*100}" y2="${s.end[1]*100}"/><text class="layout-band-number" x="${(s.start[0]+s.end[0])*50}" y="${(s.start[1]+s.end[1])*50+5}">${s.number}</text></g>`).join('');
-  return `<div class="layout-legend">${layout.outputs.map(o => `<span class="layout-${o.letter}">Output ${o.letter} · ${o.os}</span>`).join('')}</div><svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
+  return `<svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
+}
+
+function readFields() {
+  return Object.fromEntries([...document.querySelectorAll('.api[data-key]')].map(e => [e.dataset.key, getValue(e)]));
 }
 
 function redrawLayout() {
-  const fields = Object.fromEntries([...document.querySelectorAll('.api[data-key]')].map(e => [e.dataset.key, getValue(e)]));
-  document.getElementById('layout').innerHTML = renderLayout(device && device.opened ? layoutFromFields(fields) : null);
+  document.getElementById('layout').innerHTML = renderLayout(device && device.opened ? layoutFromFields(readFields()) : null);
+  document.getElementById('layout-refused').textContent = '';
 }
+
+// A valid drop writes each changed field through the path a typed value takes,
+// so it reaches the board at once and Save keeps its meaning. A refused drop
+// shows its reason and touches nothing.
+async function dropLabel(gesture) {
+  const result = moveMonitor(layoutFromFields(readFields()), gesture);
+  if (result.refused) {document.getElementById('layout-refused').textContent = result.refused; return;}
+  for (const [key, value] of Object.entries(result.fields)) {
+    const element = document.querySelector(`.api[data-key="${key}"]`);
+    if (String(getValue(element)) === String(value)) continue;
+    element.value = value;
+    await valueChangedHandler(element);
+  }
+  redrawLayout();
+}
+
+// Pointer glue: the block follows the pointer, then snaps to the half-box grid
+// on release. A press is ignored while the last drop is still writing, so two
+// drops never interleave their writes.
+let dropping = null;
+document.getElementById('layout').addEventListener('pointerdown', event => {
+  const handle = event.target.closest('.layout-handle');
+  if (!handle || event.button !== 0 || !event.isPrimary || dropping) return;
+  event.preventDefault();
+  const group = handle.parentNode, scale = handle.ownerSVGElement.getScreenCTM().a;
+  const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => v/scale);
+  const follow = e => group.setAttribute('transform', `translate(${delta(e).join(' ')})`);
+  const drop = e => {
+    window.removeEventListener('pointermove', follow); window.removeEventListener('pointerup', drop);
+    group.removeAttribute('transform');
+    const [dx, dy] = delta(e).map(v => Math.round(v/50)/2);
+    dropping = dropLabel({output:handle.dataset.output, dx, dy}).finally(() => {dropping = null;});
+  };
+  window.addEventListener('pointermove', follow); window.addEventListener('pointerup', drop);
+});
   </script>
 </body>
 

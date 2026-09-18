@@ -18,7 +18,9 @@ html = html.replace('</body>', `<script>
     140:2,141:0,142:65535,143:1,144:0,145:65535,
     152:1,153:0,154:65535,155:2,156:0,157:65535};
   for (let key=140; key<164; key++) fields[key] ??= 0;
+  let sets = 0;
   device = {opened:true, async sendReport(id, report) {
+    if (report[2] === packetType.setValMsg) sets++;
     if (report[2] !== packetType.getValAllMsg) return;
     for (const [key,value] of Object.entries(fields)) {
       const data = new DataView(new ArrayBuffer(12));
@@ -92,6 +94,56 @@ html = html.replace('</body>', `<script>
   for (const key of [98,99])
     if (!document.querySelector('[data-key="'+key+'"]').checkVisibility())
       throw Error('Shared Advanced disclosure did not reveal both outputs');
+  // Drag B's label from below A to A's right: a valid drop writes both borders
+  // and the segments and sends them; a gap drop shows its reason and sends nothing.
+  const field = key => document.querySelector('[data-key="'+key+'"]');
+  const written = () => [17,47,140,143,152,155].map(key => field(key).value).join();
+  const pointer = (type, target, at, init = {}) => target.dispatchEvent(new PointerEvent(type,
+    {bubbles:true, isPrimary:true, clientX:at[0], clientY:at[1], ...init}));
+  function press(letter, dx, dy, init) {
+    const handle = layout.querySelector('.layout-handle[data-output="'+letter+'"]');
+    const scale = handle.ownerSVGElement.getScreenCTM().a, box = handle.getBoundingClientRect();
+    const from = [box.left+box.width/2, box.top+box.height/2], to = [from[0]+dx*100*scale, from[1]+dy*100*scale];
+    pointer('pointerdown', handle, from, init);
+    pointer('pointermove', window, to);
+    const followed = !!handle.parentNode.getAttribute('transform');
+    pointer('pointerup', window, to);
+    return followed;
+  }
+  const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+  async function drag(letter, dx, dy) {
+    if (!press(letter, dx, dy)) throw Error('Block did not follow the pointer');
+    await settle();
+  }
+  if (sets !== 0) throw Error('Read or a select change sent a value');
+  await drag('B', 2, -1);
+  if (written() !== '2,1,1,0,1,0' || sets === 0 || layout.querySelectorAll('[data-segment]').length !== 1)
+    throw Error('Drop to the right did not write borders and segments: '+written()+' sends '+sets);
+  const sentBefore = sets;
+  await drag('B', 1, 0);
+  if (!/gap/.test(document.getElementById('layout-refused').textContent) || sets !== sentBefore ||
+      written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
+    throw Error('Gap drop changed something: '+document.getElementById('layout-refused').textContent+' sends '+(sets-sentBefore));
+  // A right button or a second finger never starts a drag.
+  for (const init of [{button:2}, {isPrimary:false}])
+    if (press('B', 1, 0, init)) throw Error('A non-primary press started a drag');
+  await settle();
+  if (written() !== '2,1,1,0,1,0' || sets !== sentBefore) throw Error('A non-primary press dropped');
+  // A press while a drop is still writing is ignored, so two drops never interleave.
+  press('B', -2, 1); press('B', 0.5, 0);
+  await settle();
+  if (written() !== '5,4,2,1,1,2' || layout.querySelectorAll('[data-segment]').length !== 2)
+    throw Error('A second press interleaved with the first drop: '+written());
+  // The label bar holds its text, for a wide block and for a one-box block.
+  const labelFits = () => [...layout.querySelectorAll('.layout-handle')].every(handle => {
+    const bar = handle.querySelector('rect').getBBox(), text = handle.querySelector('text').getBBox();
+    return text.x >= bar.x+2 && text.x+text.width <= bar.x+bar.width-2;
+  });
+  if (!labelFits()) throw Error('Label bar text overflows a wide bar');
+  const count = field(41);
+  count.value = '1'; count.dispatchEvent(new Event('change', {bubbles:true}));
+  if (!labelFits()) throw Error('Label bar text overflows a one-box bar');
+  count.value = '2'; count.dispatchEvent(new Event('change', {bubbles:true}));
   document.body.dataset.viewport = innerWidth;
   document.body.dataset.layoutTest = 'passed';
 })().catch(error => {document.documentElement.dataset.error = String(error);});
@@ -121,7 +173,7 @@ fs.writeFileSync(file, html);
       });
       if (!dom.includes('data-viewport="'+width+'"') || !dom.includes('data-layout-test="passed"') || /<html[^>]*data-error=/.test(dom))
         throw Error('Chrome page checks failed: '+dom.match(/<html[^>]*>|<body[^>]*>/g));
-      console.log('webconfig_chrome_test: Read, shared Advanced, field fit and seam clearance passed at '+width+'px');
+      console.log('webconfig_chrome_test: Read, shared Advanced, field fit, seam clearance and label drag passed at '+width+'px');
     }
   } finally {
     if (process.argv.includes('--keep')) console.log(file);
