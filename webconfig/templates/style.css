@@ -175,8 +175,38 @@ input[type='submit'].button-clear[disabled]:hover {
   color: var(--highlight-color);
 }
 
-.button.button-shifted {
-  margin-left: 10%;
+/* Logo, title and the menu buttons in one bar across the top. */
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 1rem;
+  background-color: #d7e5f0;
+  padding: 0.5rem 1rem;
+  margin-bottom: 2rem;
+}
+
+.topbar h3 {
+  margin: 0;
+}
+
+#menu-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-left: auto;
+}
+
+#menu-buttons .button {
+  margin: 0;
+  padding: 0 1rem;
+}
+
+#menu-buttons hr {
+  height: 2.4rem;
+  border-top: 0;
+  border-left: 0.1rem dotted var(--highlight-color);
+  margin: 0 1rem;
 }
 
 code {
