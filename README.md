@@ -407,7 +407,7 @@ Repeat for the bottom border (if it's above the larger screen's border). This wi
 
 ### Multiple screens per output
 
-Windows and Mac have issues with multiple screens and absolute positioning, so workarounds are needed (still experimental). There is a better workaround under construction, but for now you have to set the operating system for each output and number of screens. **deskhopplus:** with the helper running, the cursor lands on any monitor, and the layout is set by *Border Direction*, *Chain Direction* and the seam map on the same page. Without a helper, this section still applies.
+Windows and Mac have issues with multiple screens and absolute positioning, so workarounds are needed (still experimental). There is a better workaround under construction, but for now you have to set the operating system for each output and number of screens. **deskhopplus:** with the helper running, the cursor lands on any monitor, and where the monitors sit is set by dragging them in the *Layout* at the top of the same page (see the [user guide](docs/user-guide.md#where-the-computers-sit)). Without a helper, this section still applies.
 
 Your main screens need to be in the middle, and secondary screen(s) on the edges. To configure the actual options, open the web configuration page for your device.
 

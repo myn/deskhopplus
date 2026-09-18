@@ -21,7 +21,21 @@ assert.deepEqual(JSON.parse(JSON.stringify(layout.outputs.map(o => o.monitors.ma
 const markup = context.renderLayout(layout);
 for (const label of ['Main', 'Output A', 'MacOS', 'Output B', 'Windows', 'data-segment="1"', 'data-segment="2"'])
   assert.ok(markup.includes(label), label);
+assert.ok(markup.startsWith('<svg role="group"'), 'focusable boxes are not hidden inside an image role');
 assert.ok(context.renderLayout(null).includes('Connect'));
+// Each box is a focusable group that names its output and number, so a drop
+// and an arrow key know what moved; a flip shows the renumbering.
+const boxLabels = m => [...m.matchAll(/<g class="layout-box[^>]*data-output="(\w)" data-monitor="(\d)" tabindex="0"[^>]*>[\s\S]*?<text[^>]*>([^<]*)</g)].map(x => x.slice(1).join(''));
+assert.deepEqual(boxLabels(markup), ['A1Main', 'A22', 'B1Main', 'B22']);
+const flipped = context.moveMonitor(layout, {output:'A', monitor:1, dx:-1, dy:0}).layout;
+const flippedMarkup = context.renderLayout(flipped);
+assert.deepEqual(boxLabels(flippedMarkup), ['A1Main', 'A22', 'B1Main', 'B22']);
+const boxX = (m, letter, n) => Number(m.match(new RegExp(`data-output="${letter}" data-monitor="${n}"[^>]*><rect[^>]* x="(\\d+)"`))[1]);
+assert.ok(boxX(markup, 'A', 1) > boxX(markup, 'A', 2), 'Main on the right before the flip');
+assert.ok(boxX(flippedMarkup, 'A', 1) < boxX(flippedMarkup, 'A', 2), 'Main on the left after the flip');
+for (const letter of ['A', 'B']) for (const add of [1, -1])
+  assert.ok(markup.includes(`onclick="applyGesture({output:'${letter}',add:${add}})"`), `${letter} ${add}`);
+
 const customNote = 'Custom values are set in Advanced. Moving a monitor here replaces them.';
 function expectCustom(fields) {
   const result = context.layoutFromFields(fields);

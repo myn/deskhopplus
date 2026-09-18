@@ -723,7 +723,11 @@ img {
 #layout { padding: 1rem; background: #f6f8fa; margin-bottom: 2rem; }
 #layout svg { display: block; width: 100%; margin: 1rem auto; touch-action: none; }
 #layout text { text-anchor: middle; fill: #253440; font-size: 16px; }
-.layout-handle { cursor: grab; user-select: none; }
+.layout-handle, .layout-box { cursor: grab; user-select: none; }
+.layout-box:focus { outline: none; }
+.layout-box:focus-visible .layout-monitor { stroke: #7148a0; stroke-dasharray: 6 4; }
+.layout-counts button { height: 2.4rem; line-height: 2.4rem; padding: 0 1rem; margin: 0 0.4rem; font-size: 1.4rem; }
+.layout-counts span { margin-right: 2rem; white-space: nowrap; }
 .layout-handle rect { fill: currentColor; }
 #layout .layout-handle text { fill: white; font-size: 11px; }
 #layout-refused { color: #a03030; min-height: 1.5em; }

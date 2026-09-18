@@ -185,21 +185,37 @@ and replug both boards: the keyboard and mouse always start on board A's compute
 
 ### Where the computers sit
 
-The **Layout** above the output columns pictures the monitors after **Connect** or **Read**.
-Drag a computer's label bar to move that computer as a block: to another side of the other
-computer, or along the seam in half-monitor steps. A drop fills in both Border Directions and the
-seam segments for you, the same as picking them by hand: **Save** sends them to the board, **Read**
-throws them away. A drop the board cannot run — a gap, an overlap, a corner-only touch, the main
-monitor away from the seam, or more than four segments — is not made; one line says why.
+The **Layout** above the output columns pictures both computers' monitors after **Connect** or
+**Read**. Each computer is a coloured block with a label bar; its boxes are numbered from **Main**,
+the monitor its operating system calls main, outward along the line. The purple bands on the seam
+are the segments: which monitor meets which, and in what order. Move things by dragging:
 
-One closed **Advanced** panel contains the layout fields and legacy seam values for both outputs;
-changing them redraws the picture. Custom values that cannot be pictured exactly show a note.
+- Drag a computer's **label bar** to move that computer as a block: to another side of the other
+  computer, or along the seam in half-monitor steps.
+- Drag **Main** onto the last box of its own line to flip the line. Main lands on the far end, the
+  other boxes stay put and are renumbered from Main, and Chain Direction flips with it. Main
+  dropped on an empty cell is not moved; drag the label to move the whole computer.
+- Drag **any other box** to a cell beside, above or below Main to turn the line that way; the rest
+  follow. So a row becomes a column by dragging monitor 2 under Main.
+- **+** under the picture adds a monitor at the end of the line, up to seven. **−** removes the
+  last one, never Main.
+- A one-monitor computer's only box moves the computer, the same as its label.
+- Keyboard: Tab to a box and press an arrow key. That is the same as dropping it one cell over.
 
-Each output has:
+A drop fills in the fields for you, the same as picking them by hand: **Save** sends them to the
+board, **Read** throws them away. A drop the board cannot run — a gap, an overlap, a corner-only
+touch, the main monitor away from the seam, or more than four segments — is not made; one line
+under the picture says why, and the picture stays as it was.
+
+Set **Operating System** on each output. The lock-both-computers chord and the Cmd/Ctrl swap
+default depend on it.
+
+### Advanced: the fields behind the picture
+
+One closed **Advanced** panel holds the fields the picture sets, for both outputs; changing one
+redraws the picture. Values the picture cannot draw exactly show a note. Each output has:
 
 - **Screen Count** — how many monitors that computer drives (1 to 7).
-- **Operating System** — set it. The lock-both-computers chord and the Cmd/Ctrl swap default
-  depend on it.
 - **Border Direction** — where the *other* computer is: Left, Right, Top or Bottom.
 - **Chain Direction** — which way this computer's own monitors run from its main monitor: Left,
   Right, Top or Bottom. Screen 1 is the main monitor; screen 2 is the next one along that

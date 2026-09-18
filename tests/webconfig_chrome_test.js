@@ -102,17 +102,38 @@ html = html.replace('</body>', `<script>
   const pending = () => [...document.querySelectorAll('.api')].filter(e => (e.dataset.key in fields) && e.getAttribute('fetched-value') != getValue(e)).map(e => e.dataset.key);
   const pointer = (type, target, at, init = {}) => target.dispatchEvent(new PointerEvent(type,
     {bubbles:true, isPrimary:true, clientX:at[0], clientY:at[1], ...init}));
-  function press(letter, dx, dy, init) {
-    const handle = layout.querySelector('.layout-handle[data-output="'+letter+'"]');
+  const boxOf = (letter, n) => layout.querySelector('.layout-box[data-output="'+letter+'"][data-monitor="'+n+'"]');
+  function press(letter, dx, dy, init, monitor) {
+    const handle = monitor ? boxOf(letter, monitor) : layout.querySelector('[data-output="'+letter+'"] .layout-handle');
     const scale = handle.ownerSVGElement.getScreenCTM().a, box = handle.getBoundingClientRect();
     const from = [box.left+box.width/2, box.top+box.height/2], to = [from[0]+dx*100*scale, from[1]+dy*100*scale];
     pointer('pointerdown', handle, from, init);
     pointer('pointermove', window, to);
-    const preview = handle.parentNode.getAttribute('transform');
+    const preview = (monitor ? handle : handle.parentNode).getAttribute('transform');
     pointer('pointerup', window, to);
     return preview;
   }
   if (sets !== 0 || pending().length) throw Error('Read left a value unsent or pending: '+pending());
+  // Once a primary drag starts, another finger cannot move or finish it.
+  let dragBox = boxOf('A', 2), dragRect = dragBox.getBoundingClientRect(), dragScale = dragBox.ownerSVGElement.getScreenCTM().a;
+  let dragFrom = [dragRect.left+dragRect.width/2, dragRect.top+dragRect.height/2];
+  pointer('pointerdown', dragBox, dragFrom, {pointerId:1});
+  pointer('pointermove', window, [dragFrom[0], dragFrom[1]-100*dragScale], {pointerId:2, isPrimary:false});
+  pointer('pointerup', window, [dragFrom[0], dragFrom[1]-100*dragScale], {pointerId:2, isPrimary:false});
+  if (pending().length || document.getElementById('layout-refused').textContent)
+    throw Error('A second pointer completed the primary drag');
+  pointer('pointerup', window, dragFrom, {pointerId:1});
+  // A canceled drag removes its preview and listeners without applying it.
+  dragBox = boxOf('A', 2); dragRect = dragBox.getBoundingClientRect(); dragScale = dragBox.ownerSVGElement.getScreenCTM().a;
+  dragFrom = [dragRect.left+dragRect.width/2, dragRect.top+dragRect.height/2];
+  const dragTo = [dragFrom[0], dragFrom[1]-100*dragScale];
+  pointer('pointerdown', dragBox, dragFrom, {pointerId:3});
+  pointer('pointermove', window, dragTo, {pointerId:3});
+  if (!dragBox.getAttribute('transform')) throw Error('Canceled-drag check did not create a preview');
+  pointer('pointercancel', window, dragTo, {pointerId:3});
+  pointer('pointerup', window, dragTo, {pointerId:3});
+  if (dragBox.getAttribute('transform') || pending().length)
+    throw Error('A canceled drag kept its preview or applied its gesture');
   if (press('B', 2.1, -0.9) !== 'translate(200 -100)') throw Error('Preview did not snap to the half-box grid');
   if (written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
     throw Error('Drop to the right did not fill in borders and segments: '+written());
@@ -137,9 +158,34 @@ html = html.replace('</body>', `<script>
   const count = field(41);
   count.value = '1'; count.dispatchEvent(new Event('change', {bubbles:true}));
   if (!labelFits()) throw Error('Label bar text overflows a one-box bar');
-  // Read throws the unsaved drop away.
+  // Box gestures (#213) go through the same path: fields fill in, nothing is sent.
   await readHandler();
-  if (written() !== '5,4,2,1,1,2' || count.value !== '2' || sets !== 0 || pending().length ||
+  const chainA = () => field(98).value, countA = () => field(11).value;
+  if (press('A', -1.4, 0.3, {}, 1) !== 'translate(-100 0)') throw Error('Box preview did not snap to whole boxes');
+  if (chainA() !== '2' || written() !== '5,4,1,2,1,2' || sets !== 0 || pending().sort().join() !== '140,143,98')
+    throw Error('Dragging Main onto box 2 did not flip A: chain '+chainA()+' fields '+written()+' pending '+pending());
+  press('A', 0, 0, {}, 2);
+  if (document.activeElement !== boxOf('A', 2) || document.getElementById('layout-refused').textContent)
+    throw Error('A click on a box did not focus it quietly');
+  boxOf('A', 1).focus();
+  boxOf('A', 1).dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true, cancelable:true}));
+  if (chainA() !== '1' || written() !== '5,4,2,1,1,2' || document.activeElement !== boxOf('A', 1))
+    throw Error('ArrowRight on Main did not flip A back and keep focus: chain '+chainA()+' fields '+written());
+  boxOf('A', 2).dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowUp', bubbles:true, cancelable:true}));
+  if (chainA() !== '4' || countA() !== '2' || layout.querySelectorAll('[data-segment]').length !== 1)
+    throw Error('ArrowUp on box 2 did not turn A into a column: chain '+chainA());
+  layout.querySelector('button[aria-label="Add a monitor to Output A"]').click();
+  if (countA() !== '3' || layout.querySelectorAll('[data-output="A"] .layout-box').length !== 3)
+    throw Error('+ did not add a third box to A: count '+countA());
+  layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
+  layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
+  layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
+  if (countA() !== '1' || !/^Not removed:/.test(document.getElementById('layout-refused').textContent))
+    throw Error('- did not stop at Main: count '+countA());
+  if (sets !== 0) throw Error('A box gesture sent '+sets+' values before Save');
+  // Read throws the unsaved gestures away.
+  await readHandler();
+  if (written() !== '5,4,2,1,1,2' || count.value !== '2' || countA() !== '2' || chainA() !== '1' || sets !== 0 || pending().length ||
       layout.querySelectorAll('[data-segment]').length !== 2)
     throw Error('Read did not restore the board values: '+written()+' pending '+pending());
   document.body.dataset.viewport = innerWidth;
@@ -171,7 +217,7 @@ fs.writeFileSync(file, html);
       });
       if (!dom.includes('data-viewport="'+width+'"') || !dom.includes('data-layout-test="passed"') || /<html[^>]*data-error=/.test(dom))
         throw Error('Chrome page checks failed: '+dom.match(/<html[^>]*>|<body[^>]*>/g));
-      console.log('webconfig_chrome_test: Read, shared Advanced, field fit, seam clearance and label drag passed at '+width+'px');
+      console.log('webconfig_chrome_test: Read, shared Advanced, field fit, seam clearance, label drag and box gestures passed at '+width+'px');
     }
   } finally {
     if (process.argv.includes('--keep')) console.log(file);

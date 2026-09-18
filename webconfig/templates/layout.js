@@ -122,12 +122,41 @@ function fieldsFromLayout(layout) {
   return {fields};
 }
 
-// Applies one gesture. {output, dx, dy} moves that computer as a block by dx, dy
-// boxes. Returns {layout, fields} for a valid drop, or {layout, refused} with the
-// layout unchanged.
+// Applies one gesture to one output and returns {layout, fields}, or
+// {layout, refused} with the layout unchanged. Gestures:
+//   {dx, dy}           move the computer as a block by dx, dy boxes;
+//   {monitor, dx, dy}  drop one box: Main onto its line's far end flips the line
+//                      (the boxes stay put, renumbered from Main); another
+//                      box turns the line to point from Main toward its cell;
+//                      the only box of a one-monitor computer moves the block;
+//   {add: 1 | -1}      append a box at the end of the line, or remove the last.
 function moveMonitor(layout, gesture) {
-  const outputs = layout.outputs.map(o => o.letter !== gesture.output ? o :
-    {...o, monitors:o.monitors.map(m => ({...m, x:m.x+gesture.dx, y:m.y+gesture.dy}))});
+  const o = layout.outputs.find(o => o.letter === gesture.output), ms = o.monitors;
+  const main = ms[0], last = ms[ms.length-1];
+  const dir = ms.length > 1 ? [Math.sign(ms[1].x-main.x), Math.sign(ms[1].y-main.y)] : vectors[o.chain] || [1,0];
+  const line = (from, [dx, dy], count) => Array.from({length:count}, (_, n) => ({number:n+1, x:from.x+n*dx, y:from.y+n*dy}));
+  let monitors;
+  if (gesture.add > 0) {
+    if (ms.length >= 7) return {layout, refused:'Not added: a computer holds at most 7 monitors.'};
+    monitors = line(main, dir, ms.length+1);
+  } else if (gesture.add < 0) {
+    if (ms.length < 2) return {layout, refused:'Not removed: a computer keeps its main monitor.'};
+    monitors = ms.slice(0, -1);
+  } else if (!gesture.monitor || ms.length < 2) {
+    monitors = ms.map(m => ({...m, x:m.x+gesture.dx, y:m.y+gesture.dy}));
+  } else if (gesture.monitor === 1) {
+    if (last.x !== main.x+gesture.dx || last.y !== main.y+gesture.dy)
+      return {layout, refused:'Not moved: drag the label to move the whole computer.'};
+    monitors = line(last, dir.map(v => -v), ms.length);
+  } else {
+    const m = ms[gesture.monitor-1];
+    const d = [m.x+gesture.dx-main.x, m.y+gesture.dy-main.y];
+    // A cell off the line turns the line across its axis; a cell on it turns it along.
+    const along = dir[0] ? 0 : 1, axis = d[1-along] ? 1-along : along;
+    if (!d[axis]) return {layout, refused:'Not moved: drop a monitor beside, above or below the main monitor.'};
+    monitors = line(main, axis ? [0, Math.sign(d[1])] : [Math.sign(d[0]), 0], ms.length);
+  }
+  const outputs = layout.outputs.map(p => p === o ? {...o, monitors} : p);
   const result = fieldsFromLayout({outputs});
   if (result.refused) return {layout, refused:result.refused};
   const moved = layoutFromFields(result.fields);
@@ -141,15 +170,17 @@ function renderLayout(layout) {
   const width = Math.max(...monitors.map(m => m.x))+1;
   const height = Math.max(...monitors.map(m => m.y))+1;
   // Each cell is 100 units: the label bar sits in the top 18, then a gap, then
-  // the monitor box. The bar spans the block and is the handle that moves it.
+  // the monitor box. The bar spans the block and is the handle that moves it;
+  // each box is a focusable handle of its own.
   const groups = layout.outputs.map(o => {
     const left = Math.min(...o.monitors.map(m => m.x))*100+12, top = Math.min(...o.monitors.map(m => m.y))*100+12;
     const right = Math.max(...o.monitors.map(m => m.x))*100+88;
-    return `<g class="layout-${o.letter}" aria-label="Output ${o.letter}: ${o.os}"><g class="layout-handle" data-output="${o.letter}"><rect x="${left}" y="${top}" width="${right-left}" height="18" rx="5"/><text x="${(left+right)/2}" y="${top+13}">${right-left > 76 ? 'Output ' : ''}${o.letter} · ${o.os}</text></g>${o.monitors.map(m =>
-      `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+12}" y="${m.y*100+36}" width="76" height="52" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+68}">${m.number === 1 ? 'Main' : m.number}</text>`).join('')}</g>`;
+    return `<g class="layout-${o.letter}" data-output="${o.letter}" aria-label="Output ${o.letter}: ${o.os}"><g class="layout-handle"><rect x="${left}" y="${top}" width="${right-left}" height="18" rx="5"/><text x="${(left+right)/2}" y="${top+13}">${right-left > 76 ? 'Output ' : ''}${o.letter} · ${o.os}</text></g>${o.monitors.map(m =>
+      `<g class="layout-box" data-output="${o.letter}" data-monitor="${m.number}" tabindex="0" aria-label="Output ${o.letter} ${m.number === 1 ? 'main monitor' : 'monitor '+m.number}"><rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+12}" y="${m.y*100+36}" width="76" height="52" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+68}">${m.number === 1 ? 'Main' : m.number}</text></g>`).join('')}</g>`;
   }).join('');
   const bands = layout.bands.map(s => `<g data-segment="${s.number}"><line class="layout-band" x1="${s.start[0]*100}" y1="${s.start[1]*100}" x2="${s.end[0]*100}" y2="${s.end[1]*100}"/><text class="layout-band-number" x="${(s.start[0]+s.end[0])*50}" y="${(s.start[1]+s.end[1])*50+5}">${s.number}</text></g>`).join('');
-  return `<svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
+  const counts = layout.outputs.map(o => `<span>Output ${o.letter}: <button type="button" aria-label="Remove a monitor from Output ${o.letter}" onclick="applyGesture({output:'${o.letter}',add:-1})">−</button> ${o.monitors.length} <button type="button" aria-label="Add a monitor to Output ${o.letter}" onclick="applyGesture({output:'${o.letter}',add:1})">+</button></span>`).join('');
+  return `<svg role="group" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg><p class="layout-counts">${counts}</p>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
 }
 
 function readFields() {
@@ -161,10 +192,10 @@ function redrawLayout() {
   document.getElementById('layout-refused').textContent = '';
 }
 
-// A valid drop writes the derived values into the Advanced fields, the same
-// as picking them by hand: Save sends them to the board, Read throws them
-// away. A refused drop shows its reason and touches nothing.
-function dropLabel(gesture) {
+// Every gesture ends here. A valid one writes the derived values into the
+// Advanced fields, the same as picking them by hand: Save sends them to the
+// board, Read throws them away. A refused one shows its reason and touches nothing.
+function applyGesture(gesture) {
   const result = moveMonitor(layoutFromFields(readFields()), gesture);
   if (result.refused) {document.getElementById('layout-refused').textContent = result.refused; return;}
   for (const [key, value] of Object.entries(result.fields))
@@ -172,21 +203,44 @@ function dropLabel(gesture) {
   redrawLayout();
 }
 
-// Pointer glue: the block follows the pointer in half-box steps, so it lands
-// where it is shown.
+// Pointer glue: a label bar drags the computer in half-box steps, a box drags
+// in whole boxes, so each lands where it is shown. The only box of a
+// one-monitor computer is its label.
 document.getElementById('layout').addEventListener('pointerdown', event => {
-  const handle = event.target.closest('.layout-handle');
-  if (!handle || event.button !== 0 || !event.isPrimary) return;
+  const target = event.target.closest('.layout-handle, .layout-box');
+  if (!target || event.button !== 0 || !event.isPrimary) return;
   event.preventDefault();
   document.getElementById('layout-refused').textContent = '';
-  const group = handle.parentNode, scale = handle.ownerSVGElement.getScreenCTM().a;
-  const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => Math.round(v/scale/50)/2);
-  const follow = e => group.setAttribute('transform', `translate(${delta(e).map(v => v*100).join(' ')})`);
-  const drop = e => {
+  const computer = target.parentNode, scale = target.ownerSVGElement.getScreenCTM().a;
+  const box = target.dataset.monitor && computer.querySelectorAll('.layout-box').length > 1 ? target : null;
+  const moving = box || computer, step = box ? 1 : 0.5;
+  const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => Math.round(v/scale/100/step)*step);
+  const samePointer = e => e.pointerId === event.pointerId;
+  const stop = () => {
     window.removeEventListener('pointermove', follow); window.removeEventListener('pointerup', drop);
-    group.removeAttribute('transform');
-    const [dx, dy] = delta(e);
-    dropLabel({output:handle.dataset.output, dx, dy});
+    window.removeEventListener('pointercancel', cancel); moving.removeAttribute('transform');
   };
+  const follow = e => {if (samePointer(e)) moving.setAttribute('transform', `translate(${delta(e).map(v => v*100).join(' ')})`);};
+  const drop = e => {
+    if (!samePointer(e)) return;
+    stop();
+    const [dx, dy] = delta(e);
+    // A click on a box only focuses it.
+    if (target.dataset.monitor && !dx && !dy) return target.focus();
+    applyGesture({output:computer.dataset.output, monitor:Number(target.dataset.monitor), dx, dy});
+  };
+  const cancel = e => {if (samePointer(e)) stop();};
   window.addEventListener('pointermove', follow); window.addEventListener('pointerup', drop);
+  window.addEventListener('pointercancel', cancel);
+});
+
+// Arrow keys on a focused box are a one-step drop; the box keeps focus.
+document.getElementById('layout').addEventListener('keydown', event => {
+  const box = event.target.closest('.layout-box');
+  const step = {ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1]}[event.key];
+  if (!box || !step) return;
+  event.preventDefault();
+  const {output, monitor} = box.dataset;
+  applyGesture({output, monitor:Number(monitor), dx:step[0], dy:step[1]});
+  document.querySelector(`.layout-box[data-output="${output}"][data-monitor="${monitor}"]`).focus();
 });
