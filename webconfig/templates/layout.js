@@ -77,9 +77,9 @@ function renderLayout(layout) {
   const width = Math.max(...monitors.map(m => m.x))+1;
   const height = Math.max(...monitors.map(m => m.y))+1;
   const groups = layout.outputs.map(o => `<g class="layout-${o.letter}" aria-label="Output ${o.letter}: ${o.os}">${o.monitors.map(m =>
-    `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+4}" y="${m.y*100+4}" width="92" height="92" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+47}">${m.number === 1 ? 'Main' : m.number}</text><text class="layout-os" x="${m.x*100+50}" y="${m.y*100+68}">${o.letter} · ${o.os}</text>`).join('')}</g>`).join('');
+    `<rect class="layout-monitor${m.number === 1 ? ' layout-main' : ''}" x="${m.x*100+12}" y="${m.y*100+12}" width="76" height="76" rx="5"/><text x="${m.x*100+50}" y="${m.y*100+47}">${m.number === 1 ? 'Main' : m.number}</text><text class="layout-os" x="${m.x*100+50}" y="${m.y*100+68}">${o.letter} · ${o.os}</text>`).join('')}</g>`).join('');
   const bands = layout.bands.map(s => `<g data-segment="${s.number}"><line class="layout-band" x1="${s.start[0]*100}" y1="${s.start[1]*100}" x2="${s.end[0]*100}" y2="${s.end[1]*100}"/><text class="layout-band-number" x="${(s.start[0]+s.end[0])*50}" y="${(s.start[1]+s.end[1])*50+5}">${s.number}</text></g>`).join('');
-  return `<div class="layout-legend">${layout.outputs.map(o => `<span class="layout-${o.letter}">Output ${o.letter} · ${o.os}</span>`).join('')}</div><svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced-A" onclick="document.getElementById('advanced-A').open = true; document.getElementById('advanced-B').open = true">Open Advanced</a></p>` : ''}`;
+  return `<div class="layout-legend">${layout.outputs.map(o => `<span class="layout-${o.letter}">Output ${o.letter} · ${o.os}</span>`).join('')}</div><svg role="img" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
 }
 
 function redrawLayout() {

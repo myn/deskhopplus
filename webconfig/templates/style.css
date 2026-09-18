@@ -9,7 +9,7 @@
 *,
 *:after,
 *:before {
-  box-sizing: inherit;
+  box-sizing: border-box;
 }
 
 :root {
@@ -228,7 +228,7 @@ select {
   border: 0.1rem solid #d1d1d1;
   border-radius: .4rem;
   box-shadow: none;
-  box-sizing: inherit;
+  box-sizing: border-box;
   height: 3.8rem;
   padding: .6rem 1.0rem .7rem;
   width: 100%;
@@ -666,10 +666,13 @@ img {
 
 .seam-range {
   display: grid;
-  grid-template-columns: 1fr repeat(3, minmax(8rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.8rem;
   align-items: end;
 }
+
+.seam-range > span { grid-column: 1 / -1; }
+.seam-range::after { content: none; }
 
 .seam-range label {
   margin: 0;
@@ -699,3 +702,10 @@ img {
 #layout .layout-band-number { fill: white; font-size: 13px; paint-order: stroke; stroke: #7148a0; stroke-width: 3; }
 .layout-legend { display: flex; justify-content: center; gap: 2rem; font-weight: bold; }
 summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
+
+#advanced { padding: 1rem; }
+#advanced .row { width: 100%; }
+.row .column { min-width: 0; }
+@media (max-width: 50rem) {
+  #advanced > .row { flex-direction: column; }
+}

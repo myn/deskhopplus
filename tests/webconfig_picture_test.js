@@ -59,9 +59,11 @@ assert.equal(result.note, 'Segments are not set. Move a monitor to set them.');
 assert.equal(Math.min(...result.outputs[0].monitors.map(m => m.x)), 0);
 assert.equal(Math.min(...result.outputs[1].monitors.map(m => m.x)), 0);
 assert.ok(context.renderLayout(result).includes('Open Advanced'));
+assert.ok(html.includes('<details id="advanced">'));
+assert.equal((html.match(/<summary>Advanced<\/summary>/g) || []).length, 1);
 for (const letter of ['A','B']) {
-  const panel = html.match(new RegExp(`<details id="advanced-${letter}">([\\s\\S]*?)</details>`));
-  assert.ok(panel, `closed Advanced ${letter}`);
+  const panel = html.match(new RegExp(`<section class="column" id="advanced-${letter}">([\\s\\S]*?)</section>`));
+  assert.ok(panel, `Advanced output ${letter}`);
   const keys = letter === 'A' ? [11,14,15,17,98] : [41,44,45,47,99];
   for (const key of keys) assert.ok(panel[1].includes(`data-key="${key}"`));
   const base = letter === 'A' ? 140 : 152;

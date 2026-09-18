@@ -87,12 +87,6 @@
             {% for item in screen_A if not item.advanced %}
               {% include "form.html" with context %}
             {% endfor %}
-            <details id="advanced-A">
-              <summary>Advanced</summary>
-              {% for item in screen_A if item.advanced %}
-                {% include "form.html" with context %}
-              {% endfor %}
-            </details>
 
         </div>
         <div class="column" style="padding-top: 2em;">
@@ -108,16 +102,24 @@
             {% for item in screen_B if not item.advanced %}
               {% include "form.html" with context %}
             {% endfor %}
-            <details id="advanced-B">
-              <summary>Advanced</summary>
-              {% for item in screen_B if item.advanced %}
-                {% include "form.html" with context %}
-              {% endfor %}
-            </details>
 
         </div>
 
       </div>
+
+      <details id="advanced">
+        <summary>Advanced</summary>
+        <div class="row">
+          {% for letter, fields in [('A', screen_A), ('B', screen_B)] %}
+          <section class="column" id="advanced-{{ letter }}">
+            <h4>Output {{ letter }}</h4>
+            {% for item in fields if item.advanced %}
+              {% include "form.html" with context %}
+            {% endfor %}
+          </section>
+          {% endfor %}
+        </div>
+      </details>
 
       <div class="row">
         <div class="column column-20" style="background-color: #d7e5f0; margin-right: 2em;">

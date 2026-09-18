@@ -186,7 +186,7 @@ and replug both boards: the keyboard and mouse always start on board A's compute
 ### Where the computers sit
 
 The **Layout** above the output columns pictures the monitors after **Connect** or **Read**.
-The closed **Advanced** panel in each output contains the layout fields and legacy seam values;
+One closed **Advanced** panel contains the layout fields and legacy seam values for both outputs;
 changing them redraws the picture. Custom values that cannot be pictured exactly show a note.
 The picture is read-only for now.
 
