@@ -146,7 +146,7 @@ function moveMonitor(layout, gesture) {
     monitors = ms.map(m => ({...m, x:m.x+gesture.dx, y:m.y+gesture.dy}));
   } else if (gesture.monitor === 1) {
     if (last.x !== main.x+gesture.dx || last.y !== main.y+gesture.dy)
-      return {layout, refused:'Not moved: drag the label to move the whole computer.'};
+      return {layout, refused:`Not moved: drop Main on monitor ${last.number} to flip it, or drag the label to move the whole computer.`};
     monitors = line(last, dir.map(v => -v), ms.length);
   } else {
     const m = ms[gesture.monitor-1];
@@ -187,9 +187,15 @@ function readFields() {
   return Object.fromEntries([...document.querySelectorAll('.api[data-key]')].map(e => [e.dataset.key, getValue(e)]));
 }
 
+function showLayoutStatus(message = '', ok = false) {
+  const status = document.getElementById('layout-status');
+  if (status.textContent !== message) status.textContent = message;
+  status.classList.toggle('layout-ok', ok);
+}
+
 function redrawLayout() {
   document.getElementById('layout').innerHTML = renderLayout(device && device.opened ? layoutFromFields(readFields()) : null);
-  document.getElementById('layout-refused').textContent = '';
+  showLayoutStatus();
 }
 
 // Every gesture ends here. A valid one writes the derived values into the
@@ -197,7 +203,7 @@ function redrawLayout() {
 // board, Read throws them away. A refused one shows its reason and touches nothing.
 function applyGesture(gesture) {
   const result = moveMonitor(layoutFromFields(readFields()), gesture);
-  if (result.refused) {document.getElementById('layout-refused').textContent = result.refused; return;}
+  if (result.refused) {showLayoutStatus(result.refused); return;}
   for (const [key, value] of Object.entries(result.fields))
     document.querySelector(`.api[data-key="${key}"]`).value = value;
   redrawLayout();
@@ -210,26 +216,34 @@ document.getElementById('layout').addEventListener('pointerdown', event => {
   const target = event.target.closest('.layout-handle, .layout-box');
   if (!target || event.button !== 0 || !event.isPrimary) return;
   event.preventDefault();
-  document.getElementById('layout-refused').textContent = '';
+  showLayoutStatus();
   const computer = target.parentNode, scale = target.ownerSVGElement.getScreenCTM().a;
   const box = target.dataset.monitor && computer.querySelectorAll('.layout-box').length > 1 ? target : null;
   const moving = box || computer, step = box ? 1 : 0.5;
   const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => Math.round(v/scale/100/step)*step);
+  const gesture = e => {const [dx, dy] = delta(e); return {output:computer.dataset.output, monitor:Number(target.dataset.monitor), dx, dy};};
   const samePointer = e => e.pointerId === event.pointerId;
   const stop = () => {
     window.removeEventListener('pointermove', follow); window.removeEventListener('pointerup', drop);
     window.removeEventListener('pointercancel', cancel); moving.removeAttribute('transform');
   };
-  const follow = e => {if (samePointer(e)) moving.setAttribute('transform', `translate(${delta(e).map(v => v*100).join(' ')})`);};
+  const follow = e => {
+    if (!samePointer(e)) return;
+    const current = gesture(e);
+    moving.setAttribute('transform', `translate(${[current.dx,current.dy].map(v => v*100).join(' ')})`);
+    if (!current.dx && !current.dy) return showLayoutStatus();
+    const result = moveMonitor(layoutFromFields(readFields()), current);
+    showLayoutStatus(result.refused || 'Release to apply.', !result.refused);
+  };
   const drop = e => {
     if (!samePointer(e)) return;
     stop();
-    const [dx, dy] = delta(e);
+    const current = gesture(e);
     // A click on a box only focuses it.
-    if (target.dataset.monitor && !dx && !dy) return target.focus();
-    applyGesture({output:computer.dataset.output, monitor:Number(target.dataset.monitor), dx, dy});
+    if (target.dataset.monitor && !current.dx && !current.dy) return target.focus();
+    applyGesture(current);
   };
-  const cancel = e => {if (samePointer(e)) stop();};
+  const cancel = e => {if (samePointer(e)) {stop(); showLayoutStatus();}};
   window.addEventListener('pointermove', follow); window.addEventListener('pointerup', drop);
   window.addEventListener('pointercancel', cancel);
 });

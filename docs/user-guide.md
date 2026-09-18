@@ -242,6 +242,9 @@ segments, each with a **Screen**, a **Start** and an **End**.
 - **Segment 1 on A meets segment 1 on B**, segment 2 meets segment 2, and so on. The cursor
   leaves at some fraction along A's segment and arrives at the same fraction along B's.
 
+An along-seam offset has no separate field. The Layout records it in these Segment **Start** and
+**End** values; for example, 32768 is approximately halfway along a monitor edge.
+
 Two monitors above two monitors, left above left and right above right, with the left monitor the
 main one on both computers:
 

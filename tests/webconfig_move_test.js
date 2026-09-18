@@ -101,7 +101,7 @@ result = move(threeLine, {output:'A', monitor:1, dx:-2, dy:0});
 assert.deepEqual({...result.fields}, threeFlipped, 'flip A on three boxes');
 assert.deepEqual(positions(result.layout), [[[0,0],[1,0],[2,0]], [[0,1],[1,1],[2,1]]]);
 // Main must reach the far end; an intermediate box is not a flip.
-refuse(threeLine, {output:'A', monitor:1, dx:-1, dy:0}, 'Not moved: drag the label to move the whole computer.');
+refuse(threeLine, {output:'A', monitor:1, dx:-1, dy:0}, 'Not moved: drop Main on monitor 3 to flip it, or drag the label to move the whole computer.');
 // Another box turns the line to point from Main toward its cell: a row becomes
 // a column and back, by box 2 and by box 3.
 const rowOverColumn = filled({11:2, 41:2, 17:5, 47:4, 98:2, 99:5, 140:1,141:0,142:65535, 152:1,153:0,154:65535});
@@ -153,12 +153,16 @@ refuse(desk(), {output:'B', dx:0, dy:1}, 'Not moved: that leaves a gap between t
 refuse(desk(), {output:'B', dx:0, dy:-1}, 'Not moved: the computers would overlap. Put them edge to edge.');
 refuse(desk(), {output:'B', dx:2, dy:0}, 'Not moved: the computers would touch only at a corner. Put an edge against an edge.');
 refuse(desk(), {output:'B', dx:-2, dy:-1}, 'Not moved: put the main monitor next to the other computer.');
+// Side by side, flipping Windows would leave its Main away from Mac's Main.
+const sideBySide = move(desk(), {output:'A', dx:-2, dy:1});
+assert.equal(sideBySide.refused, undefined);
+refuse(sideBySide.fields, {output:'B', monitor:1, dx:1, dy:0}, 'Not moved: put the main monitor next to the other computer.');
 // Four over three, centred, needs six segments.
 const fourOverThree = filled({11:4, 41:3, 17:5, 47:4, 98:2, 99:2,
   140:1,141:0,142:65535, 143:2,144:0,145:65535, 146:3,147:0,148:65535,
   152:1,153:0,154:65535, 155:2,156:0,157:65535, 158:3,159:0,160:65535});
 refuse(fourOverThree, {output:'B', dx:0.5, dy:0}, 'Not moved: that layout needs 6 segments; the board holds 4.');
-refuse(desk(), {output:'A', monitor:1, dx:0, dy:-1}, 'Not moved: drag the label to move the whole computer.');
+refuse(desk(), {output:'A', monitor:1, dx:0, dy:-1}, 'Not moved: drop Main on monitor 2 to flip it, or drag the label to move the whole computer.');
 refuse(desk(), {output:'A', monitor:2, dx:1, dy:0}, 'Not moved: drop a monitor beside, above or below the main monitor.');
 refuse(desk(), {output:'A', monitor:2, dx:0, dy:1}, 'Not moved: the computers would overlap. Put them edge to edge.');
 refuse(seven, {output:'B', add:1}, 'Not added: a computer holds at most 7 monitors.');

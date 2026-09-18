@@ -114,13 +114,28 @@ html = html.replace('</body>', `<script>
     return preview;
   }
   if (sets !== 0 || pending().length) throw Error('Read left a value unsent or pending: '+pending());
+  // Drag feedback is live: before release it says whether the snapped drop can apply.
+  const feedbackBox = boxOf('A', 1), feedbackRect = feedbackBox.getBoundingClientRect();
+  const feedbackScale = feedbackBox.ownerSVGElement.getScreenCTM().a;
+  const feedbackFrom = [feedbackRect.left+feedbackRect.width/2, feedbackRect.top+feedbackRect.height/2];
+  pointer('pointerdown', feedbackBox, feedbackFrom, {pointerId:20});
+  pointer('pointermove', window, [feedbackFrom[0], feedbackFrom[1]-100*feedbackScale], {pointerId:20});
+  if (document.getElementById('layout-status').textContent !== 'Not moved: drop Main on monitor 2 to flip it, or drag the label to move the whole computer.')
+    throw Error('Invalid Main drop had no useful live feedback');
+  pointer('pointercancel', window, feedbackFrom, {pointerId:20});
+  pointer('pointerdown', feedbackBox, feedbackFrom, {pointerId:21});
+  pointer('pointermove', window, [feedbackFrom[0]-100*feedbackScale, feedbackFrom[1]], {pointerId:21});
+  if (document.getElementById('layout-status').textContent !== 'Release to apply.' ||
+      !document.getElementById('layout-status').classList.contains('layout-ok'))
+    throw Error('Valid Main drop had no useful live feedback');
+  pointer('pointercancel', window, feedbackFrom, {pointerId:21});
   // Once a primary drag starts, another finger cannot move or finish it.
   let dragBox = boxOf('A', 2), dragRect = dragBox.getBoundingClientRect(), dragScale = dragBox.ownerSVGElement.getScreenCTM().a;
   let dragFrom = [dragRect.left+dragRect.width/2, dragRect.top+dragRect.height/2];
   pointer('pointerdown', dragBox, dragFrom, {pointerId:1});
   pointer('pointermove', window, [dragFrom[0], dragFrom[1]-100*dragScale], {pointerId:2, isPrimary:false});
   pointer('pointerup', window, [dragFrom[0], dragFrom[1]-100*dragScale], {pointerId:2, isPrimary:false});
-  if (pending().length || document.getElementById('layout-refused').textContent)
+  if (pending().length || document.getElementById('layout-status').textContent)
     throw Error('A second pointer completed the primary drag');
   pointer('pointerup', window, dragFrom, {pointerId:1});
   // A canceled drag removes its preview and listeners without applying it.
@@ -140,15 +155,15 @@ html = html.replace('</body>', `<script>
   if (sets !== 0 || pending().sort().join() !== '140,143,145,155,157,17,47')
     throw Error('Drop must wait for Save: sent '+sets+', pending '+pending());
   press('B', 1, 0);
-  const reason = document.getElementById('layout-refused').textContent;
+  const reason = document.getElementById('layout-status').textContent;
   if (!/^Not moved: .*gap/.test(reason) || written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
     throw Error('Gap drop changed something: '+reason);
   // A right button or a second finger never starts a drag; the next press clears the reason.
   for (const init of [{button:2}, {isPrimary:false}])
     if (press('B', 1, 0, init)) throw Error('A non-primary press started a drag');
-  if (document.getElementById('layout-refused').textContent !== reason) throw Error('A non-primary press cleared the reason');
+  if (document.getElementById('layout-status').textContent !== reason) throw Error('A non-primary press cleared the reason');
   press('B', 0, 0);
-  if (document.getElementById('layout-refused').textContent) throw Error('A new drag did not clear the reason');
+  if (document.getElementById('layout-status').textContent) throw Error('A new drag did not clear the reason');
   // The label bar holds its text, for a wide block and for a one-box block.
   const labelFits = () => [...layout.querySelectorAll('.layout-handle')].every(handle => {
     const bar = handle.querySelector('rect').getBBox(), text = handle.querySelector('text').getBBox();
@@ -165,7 +180,7 @@ html = html.replace('</body>', `<script>
   if (chainA() !== '2' || written() !== '5,4,1,2,1,2' || sets !== 0 || pending().sort().join() !== '140,143,98')
     throw Error('Dragging Main onto box 2 did not flip A: chain '+chainA()+' fields '+written()+' pending '+pending());
   press('A', 0, 0, {}, 2);
-  if (document.activeElement !== boxOf('A', 2) || document.getElementById('layout-refused').textContent)
+  if (document.activeElement !== boxOf('A', 2) || document.getElementById('layout-status').textContent)
     throw Error('A click on a box did not focus it quietly');
   boxOf('A', 1).focus();
   boxOf('A', 1).dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight', bubbles:true, cancelable:true}));
@@ -180,7 +195,7 @@ html = html.replace('</body>', `<script>
   layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
   layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
   layout.querySelector('button[aria-label="Remove a monitor from Output A"]').click();
-  if (countA() !== '1' || !/^Not removed:/.test(document.getElementById('layout-refused').textContent))
+  if (countA() !== '1' || !/^Not removed:/.test(document.getElementById('layout-status').textContent))
     throw Error('- did not stop at Main: count '+countA());
   if (sets !== 0) throw Error('A box gesture sent '+sets+' values before Save');
   // Read throws the unsaved gestures away.

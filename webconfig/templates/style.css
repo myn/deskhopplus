@@ -730,7 +730,8 @@ img {
 .layout-counts span { margin-right: 2rem; white-space: nowrap; }
 .layout-handle rect { fill: currentColor; }
 #layout .layout-handle text { fill: white; font-size: 11px; }
-#layout-refused { color: #a03030; min-height: 1.5em; }
+#layout-status { color: #a03030; min-height: 1.5em; }
+#layout-status.layout-ok { color: #35732e; }
 .layout-A { color: #245d8c; fill: #d7e5f0; }
 .layout-B { color: #35732e; fill: #e1f0d7; }
 .layout-monitor { stroke: currentColor; stroke-width: 1; }
