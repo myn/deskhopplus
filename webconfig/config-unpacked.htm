@@ -3789,9 +3789,9 @@ function fieldsFromLayout(layout) {
   const bounds = ms => [0,1].map(axis => [Math.min(...ms.map(m => at(m, axis))), Math.max(...ms.map(m => at(m, axis)))+1]);
   const [boxA, boxB] = [bounds(a), bounds(b)];
   const overlap = [0,1].map(axis => Math.min(boxA[axis][1], boxB[axis][1]) - Math.max(boxA[axis][0], boxB[axis][0]));
-  if (overlap.some(v => v < 0)) return {refused:'There is a gap between the computers. Put them edge to edge.'};
-  if (overlap.every(v => v > 0)) return {refused:'The computers overlap. Put them edge to edge.'};
-  if (overlap.every(v => v === 0)) return {refused:'The computers touch only at a corner. Put an edge against an edge.'};
+  if (overlap.some(v => v < 0)) return {refused:'Not moved: that leaves a gap between the computers. Put them edge to edge.'};
+  if (overlap.every(v => v > 0)) return {refused:'Not moved: the computers would overlap. Put them edge to edge.'};
+  if (overlap.every(v => v === 0)) return {refused:'Not moved: the computers would touch only at a corner. Put an edge against an edge.'};
   const normal = overlap[0] === 0 ? 0 : 1, tangent = 1-normal;
   const forward = boxA[normal][1] === boxB[normal][0];
   const seam = boxA[normal][forward ? 1 : 0];
@@ -3805,7 +3805,7 @@ function fieldsFromLayout(layout) {
       const dx = ms[1].x-ms[0].x, dy = ms[1].y-ms[0].y;
       chain = dx < 0 ? 1 : dx > 0 ? 2 : dy < 0 ? 4 : 5;
       // The board lets only Main cross when the line points at the other computer.
-      if (chain === borders[i]) return {refused:'Put the main monitor next to the other computer.'};
+      if (chain === borders[i]) return {refused:'Not moved: put the main monitor next to the other computer.'};
     }
     fields[base+1] = ms.length; fields[98+i] = chain; fields[base+7] = borders[i];
   }
@@ -3816,7 +3816,7 @@ function fieldsFromLayout(layout) {
     if (end > start) pairs.push({start, end, sides:[p, q]});
   }
   pairs.sort((u, v) => u.start-v.start);
-  if (pairs.length > 4) return {refused:`This layout needs ${pairs.length} segments; the board holds 4.`};
+  if (pairs.length > 4) return {refused:`Not moved: that layout needs ${pairs.length} segments; the board holds 4.`};
   [140, 152].forEach((base, i) => {
     for (let n = 0; n < 4; n++) {
       const pair = pairs[n], m = pair && pair.sides[i];
@@ -3867,37 +3867,32 @@ function redrawLayout() {
   document.getElementById('layout-refused').textContent = '';
 }
 
-// A valid drop writes each changed field through the path a typed value takes,
-// so it reaches the board at once and Save keeps its meaning. A refused drop
-// shows its reason and touches nothing.
-async function dropLabel(gesture) {
+// A valid drop writes the derived values into the Advanced fields, the same
+// as picking them by hand: Save sends them to the board, Read throws them
+// away. A refused drop shows its reason and touches nothing.
+function dropLabel(gesture) {
   const result = moveMonitor(layoutFromFields(readFields()), gesture);
   if (result.refused) {document.getElementById('layout-refused').textContent = result.refused; return;}
-  for (const [key, value] of Object.entries(result.fields)) {
-    const element = document.querySelector(`.api[data-key="${key}"]`);
-    if (String(getValue(element)) === String(value)) continue;
-    element.value = value;
-    await valueChangedHandler(element);
-  }
+  for (const [key, value] of Object.entries(result.fields))
+    document.querySelector(`.api[data-key="${key}"]`).value = value;
   redrawLayout();
 }
 
-// Pointer glue: the block follows the pointer, then snaps to the half-box grid
-// on release. A press is ignored while the last drop is still writing, so two
-// drops never interleave their writes.
-let dropping = null;
+// Pointer glue: the block follows the pointer in half-box steps, so it lands
+// where it is shown.
 document.getElementById('layout').addEventListener('pointerdown', event => {
   const handle = event.target.closest('.layout-handle');
-  if (!handle || event.button !== 0 || !event.isPrimary || dropping) return;
+  if (!handle || event.button !== 0 || !event.isPrimary) return;
   event.preventDefault();
+  document.getElementById('layout-refused').textContent = '';
   const group = handle.parentNode, scale = handle.ownerSVGElement.getScreenCTM().a;
-  const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => v/scale);
-  const follow = e => group.setAttribute('transform', `translate(${delta(e).join(' ')})`);
+  const delta = e => [e.clientX-event.clientX, e.clientY-event.clientY].map(v => Math.round(v/scale/50)/2);
+  const follow = e => group.setAttribute('transform', `translate(${delta(e).map(v => v*100).join(' ')})`);
   const drop = e => {
     window.removeEventListener('pointermove', follow); window.removeEventListener('pointerup', drop);
     group.removeAttribute('transform');
-    const [dx, dy] = delta(e).map(v => Math.round(v/50)/2);
-    dropping = dropLabel({output:handle.dataset.output, dx, dy}).finally(() => {dropping = null;});
+    const [dx, dy] = delta(e);
+    dropLabel({output:handle.dataset.output, dx, dy});
   };
   window.addEventListener('pointermove', follow); window.addEventListener('pointerup', drop);
 });

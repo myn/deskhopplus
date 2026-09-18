@@ -95,13 +95,13 @@ function refuse(fields, gesture, message) {
   assert.equal(result.layout, layout);
   assert.equal(JSON.stringify(layout), before);
 }
-refuse(desk(), {output:'B', dx:0, dy:1}, 'There is a gap between the computers. Put them edge to edge.');
-refuse(desk(), {output:'B', dx:0, dy:-1}, 'The computers overlap. Put them edge to edge.');
-refuse(desk(), {output:'B', dx:2, dy:0}, 'The computers touch only at a corner. Put an edge against an edge.');
-refuse(desk(), {output:'B', dx:-2, dy:-1}, 'Put the main monitor next to the other computer.');
+refuse(desk(), {output:'B', dx:0, dy:1}, 'Not moved: that leaves a gap between the computers. Put them edge to edge.');
+refuse(desk(), {output:'B', dx:0, dy:-1}, 'Not moved: the computers would overlap. Put them edge to edge.');
+refuse(desk(), {output:'B', dx:2, dy:0}, 'Not moved: the computers would touch only at a corner. Put an edge against an edge.');
+refuse(desk(), {output:'B', dx:-2, dy:-1}, 'Not moved: put the main monitor next to the other computer.');
 // Four over three, centred, needs six segments.
 const fourOverThree = filled({11:4, 41:3, 17:5, 47:4, 98:2, 99:2,
   140:1,141:0,142:65535, 143:2,144:0,145:65535, 146:3,147:0,148:65535,
   152:1,153:0,154:65535, 155:2,156:0,157:65535, 158:3,159:0,160:65535});
-refuse(fourOverThree, {output:'B', dx:0.5, dy:0}, 'This layout needs 6 segments; the board holds 4.');
+refuse(fourOverThree, {output:'B', dx:0.5, dy:0}, 'Not moved: that layout needs 6 segments; the board holds 4.');
 console.log('webconfig_move_test: passed');

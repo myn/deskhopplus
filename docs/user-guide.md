@@ -187,10 +187,10 @@ and replug both boards: the keyboard and mouse always start on board A's compute
 
 The **Layout** above the output columns pictures the monitors after **Connect** or **Read**.
 Drag a computer's label bar to move that computer as a block: to another side of the other
-computer, or along the seam in half-monitor steps. A drop writes both Border Directions and the
-seam segments for you and sends them to the board; **Save** keeps them. A drop the board cannot
-run — a gap, an overlap, a corner-only touch, the main monitor away from the seam, or more than
-four segments — is refused with one line saying why, and nothing changes.
+computer, or along the seam in half-monitor steps. A drop fills in both Border Directions and the
+seam segments for you, the same as picking them by hand: **Save** sends them to the board, **Read**
+throws them away. A drop the board cannot run — a gap, an overlap, a corner-only touch, the main
+monitor away from the seam, or more than four segments — is not made; one line says why.
 
 One closed **Advanced** panel contains the layout fields and legacy seam values for both outputs;
 changing them redraws the picture. Custom values that cannot be pictured exactly show a note.

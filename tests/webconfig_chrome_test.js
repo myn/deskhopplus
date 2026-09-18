@@ -94,10 +94,12 @@ html = html.replace('</body>', `<script>
   for (const key of [98,99])
     if (!document.querySelector('[data-key="'+key+'"]').checkVisibility())
       throw Error('Shared Advanced disclosure did not reveal both outputs');
-  // Drag B's label from below A to A's right: a valid drop writes both borders
-  // and the segments and sends them; a gap drop shows its reason and sends nothing.
+  // Drag B's label from below A to A's right: a valid drop fills in both
+  // borders and the segments but sends nothing until Save; a gap drop shows
+  // its reason and changes nothing; Read puts the board's values back.
   const field = key => document.querySelector('[data-key="'+key+'"]');
   const written = () => [17,47,140,143,152,155].map(key => field(key).value).join();
+  const pending = () => [...document.querySelectorAll('.api')].filter(e => (e.dataset.key in fields) && e.getAttribute('fetched-value') != getValue(e)).map(e => e.dataset.key);
   const pointer = (type, target, at, init = {}) => target.dispatchEvent(new PointerEvent(type,
     {bubbles:true, isPrimary:true, clientX:at[0], clientY:at[1], ...init}));
   function press(letter, dx, dy, init) {
@@ -106,34 +108,26 @@ html = html.replace('</body>', `<script>
     const from = [box.left+box.width/2, box.top+box.height/2], to = [from[0]+dx*100*scale, from[1]+dy*100*scale];
     pointer('pointerdown', handle, from, init);
     pointer('pointermove', window, to);
-    const followed = !!handle.parentNode.getAttribute('transform');
+    const preview = handle.parentNode.getAttribute('transform');
     pointer('pointerup', window, to);
-    return followed;
+    return preview;
   }
-  const settle = () => new Promise(resolve => setTimeout(resolve, 50));
-  async function drag(letter, dx, dy) {
-    if (!press(letter, dx, dy)) throw Error('Block did not follow the pointer');
-    await settle();
-  }
-  if (sets !== 0) throw Error('Read or a select change sent a value');
-  await drag('B', 2, -1);
-  if (written() !== '2,1,1,0,1,0' || sets === 0 || layout.querySelectorAll('[data-segment]').length !== 1)
-    throw Error('Drop to the right did not write borders and segments: '+written()+' sends '+sets);
-  const sentBefore = sets;
-  await drag('B', 1, 0);
-  if (!/gap/.test(document.getElementById('layout-refused').textContent) || sets !== sentBefore ||
-      written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
-    throw Error('Gap drop changed something: '+document.getElementById('layout-refused').textContent+' sends '+(sets-sentBefore));
-  // A right button or a second finger never starts a drag.
+  if (sets !== 0 || pending().length) throw Error('Read left a value unsent or pending: '+pending());
+  if (press('B', 2.1, -0.9) !== 'translate(200 -100)') throw Error('Preview did not snap to the half-box grid');
+  if (written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
+    throw Error('Drop to the right did not fill in borders and segments: '+written());
+  if (sets !== 0 || pending().sort().join() !== '140,143,145,155,157,17,47')
+    throw Error('Drop must wait for Save: sent '+sets+', pending '+pending());
+  press('B', 1, 0);
+  const reason = document.getElementById('layout-refused').textContent;
+  if (!/^Not moved: .*gap/.test(reason) || written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)
+    throw Error('Gap drop changed something: '+reason);
+  // A right button or a second finger never starts a drag; the next press clears the reason.
   for (const init of [{button:2}, {isPrimary:false}])
     if (press('B', 1, 0, init)) throw Error('A non-primary press started a drag');
-  await settle();
-  if (written() !== '2,1,1,0,1,0' || sets !== sentBefore) throw Error('A non-primary press dropped');
-  // A press while a drop is still writing is ignored, so two drops never interleave.
-  press('B', -2, 1); press('B', 0.5, 0);
-  await settle();
-  if (written() !== '5,4,2,1,1,2' || layout.querySelectorAll('[data-segment]').length !== 2)
-    throw Error('A second press interleaved with the first drop: '+written());
+  if (document.getElementById('layout-refused').textContent !== reason) throw Error('A non-primary press cleared the reason');
+  press('B', 0, 0);
+  if (document.getElementById('layout-refused').textContent) throw Error('A new drag did not clear the reason');
   // The label bar holds its text, for a wide block and for a one-box block.
   const labelFits = () => [...layout.querySelectorAll('.layout-handle')].every(handle => {
     const bar = handle.querySelector('rect').getBBox(), text = handle.querySelector('text').getBBox();
@@ -143,7 +137,11 @@ html = html.replace('</body>', `<script>
   const count = field(41);
   count.value = '1'; count.dispatchEvent(new Event('change', {bubbles:true}));
   if (!labelFits()) throw Error('Label bar text overflows a one-box bar');
-  count.value = '2'; count.dispatchEvent(new Event('change', {bubbles:true}));
+  // Read throws the unsaved drop away.
+  await readHandler();
+  if (written() !== '5,4,2,1,1,2' || count.value !== '2' || sets !== 0 || pending().length ||
+      layout.querySelectorAll('[data-segment]').length !== 2)
+    throw Error('Read did not restore the board values: '+written()+' pending '+pending());
   document.body.dataset.viewport = innerWidth;
   document.body.dataset.layoutTest = 'passed';
 })().catch(error => {document.documentElement.dataset.error = String(error);});
