@@ -122,8 +122,8 @@ OUTPUT_ = [
     FormField(1, "Screen Count", 1, {n: str(n) for n in range(1, 8)}, "uint32"),
     FormField(2, "Speed X", 16, {"min": 1, "max": 100}, "int32", "range"),
     FormField(3, "Speed Y", 16, {"min": 1, "max": 100}, "int32", "range"),
-    FormField(4, "Legacy seam start", None, {}, "int32"),
-    FormField(5, "Legacy seam end", None, {}, "int32"),
+    FormField(4, "Legacy seam fallback start (not layout offset)", None, {}, "int32"),
+    FormField(5, "Legacy seam fallback end (not layout offset)", None, {}, "int32"),
     FormField(6, "Operating System", 1, {1: "Linux", 2: "MacOS", 3: "Windows", 4: "Android", 255: "Other"}, "uint8"),
     FormField(7, "Border Direction", 1,
               {1: "Left", 2: "Right", 4: "Top", 5: "Bottom"}, "uint8"),
@@ -137,7 +137,7 @@ OUTPUT_ = [
     FormField(11, "Idle Time (μs)", None, {}, "uint64"),
     FormField(12, "Max Time (μs)", None, {}, "uint64"),
     FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
-    FormField(1007, "Seam ranges", elem="label"),
+    FormField(1007, "Seam ranges — Start/End show layout offset", elem="label"),
     SeamRangeRow(0),
     SeamRangeRow(1),
     SeamRangeRow(2),
@@ -162,7 +162,12 @@ def generate_output(base, data, output_index=None):
         else:
             output.append({
             "name": field.name,
-            "advanced": field.name in ("Screen Count", "Border Direction", "Chain Direction", "Seam ranges", "Legacy seam start", "Legacy seam end"),
+            "advanced": field.name in (
+                "Screen Count", "Border Direction", "Chain Direction",
+                "Seam ranges — Start/End show layout offset",
+                "Legacy seam fallback start (not layout offset)",
+                "Legacy seam fallback end (not layout offset)",
+            ),
             "key": field.output_keys[output_index] if field.output_keys else base + field.offset,
             "default": field.default,
             "values": field.values,
