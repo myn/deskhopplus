@@ -83,6 +83,7 @@ typedef enum {
 
 typedef enum {
     CURSOR_CROSSING_SOURCE_REANCHOR = 0,
+    CURSOR_CROSSING_CHAIN_REANCHOR,
     CURSOR_CROSSING_MACOS_PLACEMENT,
 } cursor_crossing_kind_t;
 

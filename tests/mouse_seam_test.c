@@ -774,6 +774,101 @@ static void test_virtual_desktops_remain_local(void) {
           "do_screen_switch did not return locally to the border-adjacent monitor");
 }
 
+static void test_windows_chain_back_waits_for_the_os_cursor_edge(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    state.pointer_x = 2; /* firmware estimate has run ahead of Windows */
+    global_state = state;
+    source_query_available = true;
+    source_queries = 0;
+    mouse_values_t movement = {.move_x = -12};
+
+    const enum screen_pos_e direction = update_mouse_position(&state, &movement);
+    CHECK(direction == LEFT, "stale Windows estimate did not reach the chain seam");
+    do_screen_switch(&state, direction);
+    CHECK(state.config.output[0].screen_index == 2 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && source_queries == 1,
+          "Windows chain-back crossed before checking the OS cursor");
+
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 5000, 100, source_query_id),
+          "Windows cursor readback inside monitor 2 was refused");
+    mouse_crossing_task(&state, 1);
+    CHECK(state.config.output[0].screen_index == 2 && state.pointer_x == 5000 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "Windows chain-back jumped while the OS cursor was inside monitor 2");
+
+    state.config.jump_threshold = 100;
+    state.pointer_x = 2;
+    do_screen_switch(&state, LEFT);
+    CHECK(apply_helper_cursor_position(&state, 0, 2, 50, 100, source_query_id),
+          "near-edge Windows cursor readback was refused");
+    mouse_crossing_task(&state, 2);
+    CHECK(state.config.output[0].screen_index == 2,
+          "output jump threshold caused an early Windows monitor-chain crossing");
+
+    state.pointer_x = 2;
+    do_screen_switch(&state, LEFT);
+    CHECK(apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 100,
+                                       source_query_id),
+          "Windows cursor readback at the edge was refused");
+    mouse_crossing_task(&state, 3);
+    CHECK(state.config.output[0].screen_index == 1 &&
+              state.pointer_x == MAX_SCREEN_COORD && !state.relative_mouse,
+          "confirmed Windows chain-back did not land at the adjacent main-monitor edge");
+
+    source_queries = 0;
+    do_screen_switch(&state, RIGHT);
+    CHECK(state.config.output[0].screen_index == 2 && state.relative_mouse &&
+              source_queries == 0,
+          "Windows main-to-non-main crossing changed or queried unnecessarily");
+
+    do_screen_switch(&state, LEFT);
+    CHECK(apply_helper_cursor_position(&state, 0, 1, MAX_SCREEN_COORD, 100,
+                                       source_query_id),
+          "Windows cursor readback after natural crossing was refused");
+    mouse_crossing_task(&state, 4);
+    CHECK(state.active_output == 0 && state.config.output[0].screen_index == 1 &&
+              state.pointer_x == MAX_SCREEN_COORD && !state.relative_mouse,
+          "Windows cursor already on the main monitor caused a second crossing");
+    source_query_available = false;
+}
+
+static void test_windows_chain_readback_timeout_does_not_force_a_crossing(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    state.pointer_x = 2;
+    source_query_available = true;
+    do_screen_switch(&state, LEFT);
+    const uint8_t query_id = state.cursor_crossing.query_id;
+
+    mouse_crossing_task(&state, 30000);
+    CHECK(state.config.output[0].screen_index == 2 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "timed-out Windows readback forced an unconfirmed chain crossing");
+    CHECK(!apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 100, query_id),
+          "late Windows readback changed the expired crossing");
+    source_query_available = false;
+}
+
+static void test_windows_chain_without_helper_keeps_firmware_fallback(void) {
+    device_t state = side_by_side_state();
+    state.config.output[0].os = WINDOWS;
+    state.config.output[0].screen_index = 2;
+    state.relative_mouse = true;
+    source_query_available = true;
+    do_screen_switch(&state, LEFT);
+    mouse_crossing_query_unavailable(&state, 0, state.cursor_crossing.query_id);
+    mouse_crossing_task(&state, 1);
+    CHECK(state.config.output[0].screen_index == 1 &&
+              state.cursor_crossing.phase == CURSOR_CROSSING_IDLE,
+          "Windows chain without a helper did not take its firmware fallback");
+    source_query_available = false;
+}
+
 static void test_confirmed_macos_chain_forward_uses_only_helper_placement(void) {
     device_t state = side_by_side_state();
     state.active_output = 0;
@@ -1091,6 +1186,9 @@ int main(void) {
     test_crossing_emits_source_park_and_maps_legacy_entry();
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();
+    test_windows_chain_back_waits_for_the_os_cursor_edge();
+    test_windows_chain_readback_timeout_does_not_force_a_crossing();
+    test_windows_chain_without_helper_keeps_firmware_fallback();
     test_confirmed_macos_chain_forward_uses_only_helper_placement();
     test_confirmed_macos_chain_back_uses_only_helper_placement();
     test_macos_chain_fallbacks_once();
