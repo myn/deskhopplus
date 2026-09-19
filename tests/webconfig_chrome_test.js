@@ -154,6 +154,28 @@ html = html.replace('</body>', `<script>
     throw Error('Drop to the right did not fill in borders and segments: '+written());
   if (sets !== 0 || pending().sort().join() !== '140,143,145,155,157,17,47')
     throw Error('Drop must wait for Save: sent '+sets+', pending '+pending());
+  // A horizontal layout leaves a visible snapped row above and below for stacking.
+  const horizontalSvg = layout.querySelector('svg').getBoundingClientRect();
+  const horizontalLabel = layout.querySelector('.layout-B .layout-handle');
+  const labelRect = horizontalLabel.getBoundingClientRect();
+  const labelY = labelRect.top+labelRect.height/2, rowHeight = 100*horizontalLabel.ownerSVGElement.getScreenCTM().a;
+  if (labelY-rowHeight < horizontalSvg.top || labelY+rowHeight > horizontalSvg.bottom)
+    throw Error('Horizontal Layout has no in-canvas row above and below');
+  press('B', 0, -0.5);
+  const offsetSvg = layout.querySelector('svg').getBoundingClientRect();
+  for (const handle of layout.querySelectorAll('.layout-handle')) {
+    const rect = handle.getBoundingClientRect(), y = rect.top+rect.height/2;
+    const row = 100*handle.ownerSVGElement.getScreenCTM().a;
+    if (y-row < offsetSvg.top || y+row > offsetSvg.bottom)
+      throw Error('Offset horizontal Layout has no in-canvas row above and below');
+  }
+  press('B', 0, 0.5);
+  if (press('B', -2, 1) !== 'translate(-200 100)' || written() !== '5,4,2,1,1,2')
+    throw Error('In-canvas downward label drag did not stack the computers: '+written());
+  press('B', 2, -1);
+  if (press('B', -2, -1) !== 'translate(-200 -100)' || written() !== '4,5,2,1,1,2')
+    throw Error('In-canvas upward label drag did not stack the computers: '+written());
+  press('B', 2, 1);
   press('B', 1, 0);
   const reason = document.getElementById('layout-status').textContent;
   if (!/^Not moved: .*gap/.test(reason) || written() !== '2,1,1,0,1,0' || layout.querySelectorAll('[data-segment]').length !== 1)

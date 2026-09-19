@@ -3883,6 +3883,8 @@ function renderLayout(layout) {
   const monitors = layout.outputs.flatMap(o => o.monitors);
   const width = Math.max(...monitors.map(m => m.x))+1;
   const height = Math.max(...monitors.map(m => m.y))+1;
+  const spareRow = height < 2 ? 1 : 0;
+  const canvasHeight = (height+2*spareRow)*100+20;
   // Each cell is 100 units: the label bar sits in the top 18, then a gap, then
   // the monitor box. The bar spans the block and is the handle that moves it;
   // each box is a focusable handle of its own.
@@ -3894,7 +3896,7 @@ function renderLayout(layout) {
   }).join('');
   const bands = layout.bands.map(s => `<g data-segment="${s.number}"><line class="layout-band" x1="${s.start[0]*100}" y1="${s.start[1]*100}" x2="${s.end[0]*100}" y2="${s.end[1]*100}"/><text class="layout-band-number" x="${(s.start[0]+s.end[0])*50}" y="${(s.start[1]+s.end[1])*50+5}">${s.number}</text></g>`).join('');
   const counts = layout.outputs.map(o => `<span>Output ${o.letter}: <button type="button" aria-label="Remove a monitor from Output ${o.letter}" onclick="applyGesture({output:'${o.letter}',add:-1})">−</button> ${o.monitors.length} <button type="button" aria-label="Add a monitor to Output ${o.letter}" onclick="applyGesture({output:'${o.letter}',add:1})">+</button></span>`).join('');
-  return `<svg role="group" aria-label="Monitor layout" viewBox="-10 -10 ${width*100+20} ${height*100+20}" style="max-height:${height*100+20}px">${groups}${bands}</svg><p class="layout-counts">${counts}</p>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
+  return `<svg role="group" aria-label="Monitor layout" viewBox="-10 ${-10-spareRow*100} ${width*100+20} ${canvasHeight}" style="max-height:${canvasHeight}px">${groups}${bands}</svg><p class="layout-counts">${counts}</p>${layout.note ? `<p>${layout.note} <a href="#advanced" onclick="document.getElementById('advanced').open = true">Open Advanced</a></p>` : ''}`;
 }
 
 function readFields() {
