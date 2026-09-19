@@ -12,7 +12,8 @@
 #define MACOS_SWITCH_MOVE_COUNT 5
 
 static bool position_is_at_pending_edge(const device_t *state, int16_t x, int16_t y) {
-    const int threshold = state->config.jump_threshold;
+    const int threshold = state->cursor_crossing.kind == CURSOR_CROSSING_CHAIN_REANCHOR
+                              ? 0 : state->config.jump_threshold;
     switch (state->cursor_crossing.direction) {
         case LEFT: return x <= MIN_SCREEN_COORD + threshold;
         case RIGHT: return x >= MAX_SCREEN_COORD - threshold;
@@ -91,7 +92,9 @@ bool apply_helper_cursor_position(device_t *state, uint8_t output, uint8_t scree
     const uint8_t direction = crossing->direction;
     if (crossing->phase == CURSOR_CROSSING_WAITING && crossing->output == output) {
         if (crossing->kind == CURSOR_CROSSING_MACOS_PLACEMENT ||
-            (crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR &&
+            ((crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR ||
+              (crossing->kind == CURSOR_CROSSING_CHAIN_REANCHOR &&
+               screen == crossing->target_screen)) &&
              position_is_at_pending_edge(state, x, y))) {
             crossing->phase = CURSOR_CROSSING_REANCHORED;
         } else {
@@ -260,6 +263,44 @@ static uint8_t next_cursor_query_id(device_t *state) {
     if (++state->next_cursor_query_id == 0)
         ++state->next_cursor_query_id;
     return state->next_cursor_query_id;
+}
+
+static bool query_source_cursor(device_t *state, int direction,
+                                dh_mouse_transition_t transition,
+                                cursor_crossing_kind_t kind) {
+    const uint8_t query_id = next_cursor_query_id(state);
+    cursor_crossing_enter();
+    state->cursor_crossing = (cursor_crossing_t){
+        .phase = CURSOR_CROSSING_WAITING,
+        .kind = kind,
+        .direction = (uint8_t)direction,
+        .output = state->active_output,
+        .query_id = query_id,
+        .target_screen = (uint8_t)state->config.output[state->active_output].screen_index,
+        .started_us = time_us_32(),
+    };
+    cursor_crossing_exit();
+    cursor_trace_event(state, DH_CURSOR_TRACE_QUERY, query_id, 0, 0,
+                       (uint8_t)direction, (uint8_t)transition);
+    const cursor_query_result_t result = channel_query_cursor(state->active_output, query_id);
+    if (result != CURSOR_QUERY_UNAVAILABLE) {
+        if (result == CURSOR_QUERY_SENT) {
+            cursor_crossing_enter();
+            if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+                state->cursor_crossing.query_id == query_id)
+                state->cursor_crossing.query_sent = true;
+            cursor_crossing_exit();
+        }
+        return true;
+    }
+    cursor_crossing_enter();
+    if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
+        state->cursor_crossing.query_id == query_id)
+        cursor_crossing_clear(state);
+    cursor_crossing_exit();
+    cursor_trace_event(state, DH_CURSOR_TRACE_CANCEL, query_id, 0, 0,
+                       (uint8_t)direction, (uint8_t)transition);
+    return false;
 }
 
 static screen_boundary_crossing_t screen_boundary_crossing(
@@ -450,38 +491,10 @@ static void cross_screen(device_t *state, int direction, bool source_resolved) {
                 /* Windows secondary monitors are relative, so their stored
                    coordinate is only an estimate. Resolve the seam only after
                    the source helper has reported the OS cursor position. */
-                if (state->relative_mouse && !source_resolved) {
-                    const uint8_t query_id = next_cursor_query_id(state);
-                    cursor_crossing_enter();
-                    state->cursor_crossing.direction = (uint8_t)direction;
-                    state->cursor_crossing.output = state->active_output;
-                    state->cursor_crossing.query_id = query_id;
-                    state->cursor_crossing.kind = CURSOR_CROSSING_SOURCE_REANCHOR;
-                    state->cursor_crossing.started_us = time_us_32();
-                    state->cursor_crossing.phase = CURSOR_CROSSING_WAITING;
-                    cursor_crossing_exit();
-                    cursor_trace_event(state, DH_CURSOR_TRACE_QUERY, query_id, 0, 0,
-                                       (uint8_t)direction, (uint8_t)transition);
-                    const cursor_query_result_t query_result =
-                        channel_query_cursor(state->active_output, query_id);
-                    if (query_result != CURSOR_QUERY_UNAVAILABLE) {
-                        if (query_result == CURSOR_QUERY_SENT) {
-                            cursor_crossing_enter();
-                            if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
-                                state->cursor_crossing.query_id == query_id)
-                                state->cursor_crossing.query_sent = true;
-                            cursor_crossing_exit();
-                        }
-                        break;
-                    }
-                    cursor_crossing_enter();
-                    if (state->cursor_crossing.phase == CURSOR_CROSSING_WAITING &&
-                        state->cursor_crossing.query_id == query_id)
-                        cursor_crossing_clear(state);
-                    cursor_crossing_exit();
-                    cursor_trace_event(state, DH_CURSOR_TRACE_CANCEL, query_id, 0, 0,
-                                       (uint8_t)direction, (uint8_t)transition);
-                }
+                if (state->relative_mouse && !source_resolved &&
+                    query_source_cursor(state, direction, transition,
+                                        CURSOR_CROSSING_SOURCE_REANCHOR))
+                    break;
                 output_t *target = &state->config.output[1 - state->active_output];
                 const int along = dh_mouse_along_seam(
                     (dh_direction_t)direction,
@@ -532,6 +545,10 @@ static void cross_screen(device_t *state, int direction, bool source_resolved) {
             break;
         case DH_MOUSE_TRANSITION_CHAIN_BACK:
         case DH_MOUSE_TRANSITION_CHAIN_FORWARD:
+            if (output->os == WINDOWS && state->relative_mouse && !source_resolved &&
+                query_source_cursor(state, direction, transition,
+                                    CURSOR_CROSSING_CHAIN_REANCHOR))
+                break;
             if (output->os == MACOS) {
                 const uint8_t target_screen = dh_mouse_next_screen_index(
                     transition, output->screen_index);
@@ -608,7 +625,8 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         return;
     }
     if (crossing->phase == CURSOR_CROSSING_WAITING &&
-        crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR &&
+        (crossing->kind == CURSOR_CROSSING_SOURCE_REANCHOR ||
+         crossing->kind == CURSOR_CROSSING_CHAIN_REANCHOR) &&
         !crossing->query_sent) {
         const uint8_t retry_output = crossing->output;
         const uint8_t retry_query_id = crossing->query_id;
@@ -618,7 +636,8 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         cursor_crossing_enter();
         crossing = &state->cursor_crossing;
         if (crossing->phase != CURSOR_CROSSING_WAITING ||
-            crossing->kind != CURSOR_CROSSING_SOURCE_REANCHOR ||
+            (crossing->kind != CURSOR_CROSSING_SOURCE_REANCHOR &&
+             crossing->kind != CURSOR_CROSSING_CHAIN_REANCHOR) ||
             crossing->output != retry_output || crossing->query_id != retry_query_id) {
             cursor_crossing_exit();
             return;
@@ -648,6 +667,7 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     const uint8_t direction = crossing->direction;
     const cursor_crossing_kind_t kind = crossing->kind;
     const uint8_t target_screen = crossing->target_screen;
+    const bool unconfirmed_chain = kind == CURSOR_CROSSING_CHAIN_REANCHOR && timed_out;
     if (kind == CURSOR_CROSSING_MACOS_PLACEMENT &&
         crossing->phase == CURSOR_CROSSING_REANCHORED) {
         cursor_crossing_clear(state);
@@ -660,7 +680,14 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     cursor_crossing_exit();
     if (timed_out)
         cursor_trace_event(state, DH_CURSOR_TRACE_TIMEOUT, timeout_query_id, 0, 0,
-                           timeout_direction, DH_MOUSE_TRANSITION_OUTPUT);
+                           timeout_direction,
+                           kind == CURSOR_CROSSING_CHAIN_REANCHOR
+                               ? (uint8_t)actionable_transition_for(
+                                     state, &state->config.output[state->active_output],
+                                     (enum screen_pos_e)direction, state->mouse_buttons)
+                               : DH_MOUSE_TRANSITION_OUTPUT);
+    if (unconfirmed_chain)
+        return;
     if (kind == CURSOR_CROSSING_MACOS_PLACEMENT) {
         output_t *output = &state->config.output[state->active_output];
         switch_virtual_desktop(state, output, target_screen, direction);
