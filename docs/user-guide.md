@@ -178,6 +178,8 @@ Nothing crosses without a paired helper at each end, so a computer with no helpe
 All of this is on the config page. To open it: press the chord, open the `DESKHOP` drive, open
 `config.htm` in Chrome or another Chromium browser (Firefox has no WebHID), click **Connect**.
 Change what you want, click **Save**, then click **Exit** to leave config mode.
+The helper is unavailable in config mode, so a hop to a multi-monitor computer can land on the
+wrong monitor. Save and Exit before trying the layout.
 
 The page has **Output A** and **Output B**, one per computer, then **Common Config**. Output A is
 the computer on board A, Output B the computer on board B. Not sure which board is which? Unplug
