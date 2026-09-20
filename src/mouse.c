@@ -56,27 +56,6 @@ void extract_report_values(uint8_t *raw_report, int len, device_t *state, mouse_
     }
 }
 
-mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
-    mouse_report_t mouse_report = {
-        .buttons = values->buttons,
-        .x       = state->pointer_x,
-        .y       = state->pointer_y,
-        .wheel   = values->wheel,
-        .pan     = values->pan,
-        .mode    = ABSOLUTE,
-    };
-
-    /* Windows secondary monitors need relative HID reports. macOS crosses its
-       monitor chain with the absolute edge-and-nudge path above. */
-    if (dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
-        mouse_report.x = values->move_x;
-        mouse_report.y = values->move_y;
-        mouse_report.mode = RELATIVE;
-    }
-
-    return mouse_report;
-}
-
 void process_mouse_report(uint8_t *raw_report, int len, uint8_t itf, hid_interface_t *iface) {
     mouse_values_t values = {0};
     device_t *state = &global_state;
@@ -84,28 +63,7 @@ void process_mouse_report(uint8_t *raw_report, int len, uint8_t itf, hid_interfa
     /* Interpret the mouse HID report, extract and save values we need. */
     extract_report_values(raw_report, len, state, &values, iface);
 
-    /* If nothing changed, don't send a report. This prevents composite keyboards
-       (e.g. QMK) that expose a mouse HID interface from generating spurious
-       absolute position reports when they send zero-movement mouse reports during
-       keyboard events. */
-    if (values.move_x == 0 && values.move_y == 0 &&
-        values.wheel == 0 && values.pan == 0 &&
-        values.buttons == state->mouse_buttons) {
-        return;
-    }
-
-    /* Calculate and update mouse pointer movement. */
-    enum screen_pos_e switch_direction = update_mouse_position(state, &values);
-
-    /* Create the report for the output PC based on the updated values */
-    mouse_report_t report = create_mouse_report(state, &values);
-
-    /* Move the mouse, depending where the output is supposed to go */
-    output_mouse_report(&report, state);
-
-    /* We use the mouse to switch outputs, if switch_direction is LEFT or RIGHT */
-    if (switch_direction != NONE)
-        do_screen_switch(state, switch_direction);
+    process_mouse_values(state, &values);
 }
 
 /* ==================================================== *
