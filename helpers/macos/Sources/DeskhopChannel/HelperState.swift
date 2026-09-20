@@ -60,6 +60,7 @@ public enum HelperState: UInt32, CaseIterable, Equatable {
      * board would be accepted (#112).
      */
     case boardIdentityChanged = 8
+    case connectedConfigMode = 9
 
     /* The raw values above are `dh_helper_state`'s, so the two conversions are
        arithmetic rather than a switch a new state could be left out of. The
@@ -71,6 +72,7 @@ public enum HelperState: UInt32, CaseIterable, Equatable {
         switch self {
         case .quiet: return nil
         case .connected: return "Connected and paired"
+        case .connectedConfigMode: return "Connected and paired — config mode"
         case .reconnectingRepeatedly:
             return "Reconnecting repeatedly — check the link, and that the helper is up to date"
         case .notPaired: return "Not paired — press the config chord on the device"

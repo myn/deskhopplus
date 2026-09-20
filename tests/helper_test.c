@@ -754,6 +754,8 @@ static void test_a_cold_start_in_config_mode_says_config_mode(void) {
     dh_helper_init(&h, &identity, board_public);
     dh_helper_outputs_reset(&out);
     dh_helper_device_appeared(&h, DH_DEVICE_CONFIG_MODE, 0, &out);
+    CHECK(first_of(&out, DH_HELPER_OUT_OPEN_CHANNELS) != NULL, name,
+          "the config-mode channel was not acquired");
 
     bool said_absent = false;
     for (uint32_t t = 1000; t <= 3 * DH_HELPER_SILENCE_MS; t += 1000) {
@@ -774,6 +776,47 @@ static void test_a_cold_start_in_config_mode_says_config_mode(void) {
     CHECK(saw_state(&out, DH_HELPER_QUIET), name, "the stale message was not cleared");
     CHECK(first_of(&out, DH_HELPER_OUT_OPEN_CHANNELS) != NULL, name, "the channel was not reopened");
     no_overflow(name);
+}
+
+static void test_config_mode_has_a_live_one_channel_session(void) {
+    const char *name = "config mode has a live one-channel session";
+    an_identity();
+    a_paired_board();
+    reset_entropy();
+    script_draw(published_helper_nonce, DH_NONCE_SIZE);
+    dh_helper h;
+    dh_helper_init(&h, &identity, board_public);
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_CONFIG_MODE, 0, &out);
+    dh_helper_channels_acquired(&h, 1, 0, &out);
+    const dh_helper_output *hello_output = first_of(&out, DH_HELPER_OUT_SEND);
+    CHECK(hello_output != NULL, name, "one channel did not send HELLO");
+    if (hello_output == NULL) return;
+    dh_hello hello;
+    CHECK(dh_hello_decode(hello_output->bytes + DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE,
+                          hello_output->len - DH_FRAME_HEADER_SIZE - DH_FRAME_AUTH_PREFIX_SIZE,
+                          &hello), name, "HELLO body did not decode");
+    CHECK(hello.channel_count == 1, name, "config mode requested two channels");
+
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 0, &out);
+    CHECK(h.state == DH_HELPER_CONNECTED_CONFIG_MODE, name, "config session was not reported live");
+    CHECK(h.negotiated.channel_count == 1, name, "config session negotiated the wrong count");
+    CHECK(dh_helper_can_send_bulk(&h), name, "config session refused clipboard sharing");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 2000, &out);
+    CHECK(!h.have_negotiated, name, "config session survived the normal-mode appearance");
+    CHECK(h.state == DH_HELPER_QUIET, name, "the old config status survived normal-mode appearance");
+    dh_helper_channels_acquired(&h, 2, 2000, &out);
+    hello_output = first_of(&out, DH_HELPER_OUT_SEND);
+    CHECK(hello_output != NULL, name, "normal mode did not send HELLO");
+    if (hello_output == NULL) return;
+    CHECK(dh_hello_decode(hello_output->bytes + DH_FRAME_HEADER_SIZE + DH_FRAME_AUTH_PREFIX_SIZE,
+                          hello_output->len - DH_FRAME_HEADER_SIZE - DH_FRAME_AUTH_PREFIX_SIZE,
+                          &hello) && hello.channel_count == 2,
+          name, "normal mode did not request two channels");
 }
 
 /* Nothing has ever attached — the other half of the same reporting, and the
@@ -1710,6 +1753,7 @@ static void test_the_policy_predicates_are_decided_once(void) {
         {DH_HELPER_VERSION_INCOMPATIBLE, false, false},
         {DH_HELPER_LISTENER_DETECTED, false, true},
         {DH_HELPER_BOARD_IDENTITY_CHANGED, false, false},
+        {DH_HELPER_CONNECTED_CONFIG_MODE, false, true},
     };
 
     /* The table is written by hand, so it can only guard what it lists. The
@@ -2710,6 +2754,7 @@ int main(int argc, char **argv) {
     test_a_refused_open_is_an_unusable_device();
     test_a_partial_acquisition_that_completes_is_silent();
     test_a_cold_start_in_config_mode_says_config_mode();
+    test_config_mode_has_a_live_one_channel_session();
     test_a_helper_that_never_sees_a_device_says_so();
     test_a_brief_disappearance_is_silent();
     test_the_backoff_caps_and_resets();

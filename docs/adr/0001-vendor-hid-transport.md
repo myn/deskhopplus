@@ -9,8 +9,15 @@
 ## Decision
 
 The helper↔firmware channel is a **vendor-defined HID interface** — usage page `0xFF00`+ — on both
-boards, present in the **normal-mode descriptor only**, and declared as its **own USB HID interface**
+boards, declared as its **own USB HID interface**
 with a report descriptor containing only vendor-page collections.
+
+**Amended 2026-09-20 (#222):** Both USB identities expose the channel. Normal mode has two
+channel interfaces; config mode has one separate channel interface alongside its unchanged WebHID
+config API and DESKHOP disk. A paired macOS helper reconnects after the config-mode reboot,
+negotiates one channel, and retains the full authenticated session, including placement and
+clipboard sharing. The next reboot back to normal mode creates a fresh two-channel session.
+Config mode still exits after five minutes or Exit; an unpaired helper still pairs after Exit.
 
 USB CDC is retained as a documented fallback, not as the primary.
 
@@ -132,8 +139,8 @@ a transport discriminator, and it is the real residual risk on either transport.
   BIOS/UEFI tolerance question that carries. **CDC would have required the same change** — neither
   transport is present in the normal-mode descriptor today.
 - Helpers still locate the device by identifier + serial, never by port name or device path.
-- Config mode still reboots under a different USB identity, so the interface vanishes and returns
-  across a config-mode round trip.
+- Config mode still reboots under a different USB identity. Each reboot ends the old session and
+  the helper opens the channel offered by the new identity.
 - The framing, priority discipline and chunking design in #37 are transport-agnostic and carry over.
 
 ### Changed elsewhere
@@ -208,7 +215,7 @@ regression caused by the added interface cannot be fully excluded there. Tracked
 | --- | --- |
 | **USB CDC** | Retained as fallback. Costs the unresolved `usbser.sys` device-installation question and sits on a class carrying a live Trellix filter. Otherwise sound: driverless, and permission-free on macOS. |
 | **WinUSB** | Still rejected, but ~~requires a driver association and administrator rights~~ — that rationale was stale: with MS OS 2.0 descriptors WinUSB binds in-box with no admin, and #7 had already found Windows parity, rejecting it as "strictly more work on both sides". The reasons that hold today: extra descriptor work in firmware, IOKit/libusb work on macOS where HID is free, and — decisive on this ADR's own evidence — WinUSB devices land in the **USBDevice** class, where `hdlpdbk` is a registered filter, while HIDClass carries none. Its bulk endpoints (~1 MB/s at full speed) would have removed the throughput ceiling ADR-0002 exists to mitigate; that forgone bandwidth is a real cost of choosing HID and is recorded here. |
-| **Reusing the existing config-mode vendor HID interface** | It exists only in the config-mode descriptor, alongside the MSC ramdisk — so the clipboard would work only in config mode, which also mounts mass storage and raises a Trellix justification prompt (#58). |
+| **Reusing the existing config-mode vendor HID interface** | It is the WebHID config API (usage `0x10`), with a different report format and access policy. The config-mode helper channel uses its own interface (usage `0x20`). |
 | **Appending the vendor collection to the keyboard interface** | Cheaper descriptor change, but acquires the macOS Input Monitoring requirement via `conformsTo`. Rejected on the constraint above. |
 
 ## A note on how this decision was reached

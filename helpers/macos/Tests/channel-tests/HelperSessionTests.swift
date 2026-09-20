@@ -55,6 +55,8 @@ let helperSessionTests: [(String, () throws -> Void)] = [
     ("config mode is distinct from an absent device", testConfigModeIsDistinct),
     ("starting while the device is in config mode keeps saying config mode",
      testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode),
+    ("config mode negotiates one live channel", testConfigModeNegotiatesOneLiveChannel),
+    ("config mode without a channel stays in config mode", testConfigModeWithoutChannel),
     ("a config-mode round trip reconnects by itself", testConfigModeRoundTrip),
     ("the channels are released when the device goes", testChannelsReleasedOnDeparture),
     ("a granted board key is pinned and pairs the helper", testPairingRoundTrip),
@@ -903,6 +905,52 @@ private func testStartingWhileTheDeviceIsInConfigModeKeepsSayingConfigMode() thr
                 "the user was told the device was not connected while it sat in config mode")
 }
 
+private func testConfigModeNegotiatesOneLiveChannel() throws {
+    let f = Fixture()
+    Check.that(f.send(.deviceAppeared(.configMode)).contains(.openChannels),
+               "config mode did not request its helper channel")
+    let frames = try f.sentFrames(f.send(.channelsAcquired(count: 1)))
+    let hello = try Hello.decode(body: unverifiedBody(frames[0]))
+    Check.equal(hello.channelCount, 1, "config mode requested more than its one channel")
+    Check.equal(f.states(f.send(try f.ack(channels: 1))), [.connectedConfigMode],
+                "the live config-mode session was not reported")
+    Check.equal(f.session.negotiated?.channelCount, 1, "config mode did not negotiate one channel")
+    Check.that(f.session.canSendBulk, "config mode lost clipboard sharing")
+    Check.that(!f.send(.deviceAppeared(.configMode)).contains(.closeChannels),
+               "the config API arriving after the channel tore down the live session")
+    Check.equal(f.session.state, .connectedConfigMode,
+                "a second config collection erased the live status")
+
+    f.send(.deviceDisappeared)
+    Check.that(f.session.negotiated == nil, "the config session survived a reboot")
+    Check.that(f.send(.deviceAppeared(.normal)).contains(.openChannels),
+               "normal mode did not reacquire")
+    f.send(.channelsAcquired(count: 2))
+    Check.equal(f.session.state, .quiet,
+                "the transition retained the old config-mode status before HELLO_ACK")
+    Check.equal(f.states(f.send(try f.ack(channels: 2))), [.connected],
+                "normal mode did not restore its ordinary state")
+    Check.equal(f.session.negotiated?.channelCount, 2,
+                "normal mode did not restore two channels")
+}
+
+private func testConfigModeWithoutChannel() throws {
+    let f = Fixture()
+    f.send(.deviceAppeared(.configMode))
+    f.send(.acquisitionRefused(acquired: 0, of: 1))
+    Check.equal(f.states(f.advance(HelperSession.silenceWindow)), [.deviceInConfigMode],
+                "a config board without a usable channel was reported as paired or absent")
+
+    let lost = Fixture()
+    lost.send(.deviceAppeared(.configMode))
+    lost.send(.channelsAcquired(count: 1))
+    lost.send(try lost.ack(channels: 1))
+    lost.send(.transportFailed("channel removed"))
+    Check.that(!lost.session.canSendBulk, "clipboard survived the config channel's loss")
+    Check.equal(lost.states(lost.advance(HelperSession.silenceWindow)), [.deviceInConfigMode],
+                "a lost config session kept claiming to be connected")
+}
+
 private func testConfigModeRoundTrip() throws {
     let f = Fixture()
     try f.establishSession()
@@ -1355,6 +1403,7 @@ private func testEveryStateCrossesTheSeamIntact() throws {
         (.versionIncompatible, DH_HELPER_VERSION_INCOMPATIBLE),
         (.listenerDetected, DH_HELPER_LISTENER_DETECTED),
         (.boardIdentityChanged, DH_HELPER_BOARD_IDENTITY_CHANGED),
+        (.connectedConfigMode, DH_HELPER_CONNECTED_CONFIG_MODE),
     ]
     Check.equal(pairing.count, HelperState.allCases.count,
                 "a state was added without being paired with the core's")

@@ -192,6 +192,7 @@ typedef enum {
      * or swapped (#112).
      */
     DH_HELPER_BOARD_IDENTITY_CHANGED = 8,
+    DH_HELPER_CONNECTED_CONFIG_MODE = 9,
 
     /*
      * A bound, not a state: never passed to anything that takes a
@@ -236,7 +237,8 @@ static inline bool dh_helper_prompts_config_chord(dh_helper_state s) {
  * This must keep agreeing with dh_helper_can_send_bulk, the seam #52 consumes.
  */
 static inline bool dh_helper_allows_bulk(dh_helper_state s) {
-    return s == DH_HELPER_CONNECTED || s == DH_HELPER_RECONNECTING_REPEATEDLY ||
+    return s == DH_HELPER_CONNECTED || s == DH_HELPER_CONNECTED_CONFIG_MODE ||
+           s == DH_HELPER_RECONNECTING_REPEATEDLY ||
            s == DH_HELPER_LISTENER_DETECTED;
 }
 
@@ -608,6 +610,7 @@ typedef struct {
     bool have_device_beat;
     bool beat_quiet_noted;
     bool holding_channels;
+    bool config_mode;
 
     /* The last few drops, oldest first — a rate, not an event. */
     uint32_t recent_drops[DH_HELPER_RECONNECT_LIMIT];

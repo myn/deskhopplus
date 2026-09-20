@@ -173,10 +173,9 @@ void disable_screensaver_hotkey_handler(device_t *state, hid_keyboard_report_t *
 void config_enable_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     /*
      * Entering or leaving config mode opens a pairing window (#46). Both are
-     * this chord, and both are recorded the same way: config mode has no
-     * channel interface, so the window is honoured on the next normal-mode
-     * boot rather than immediately. Physical-chord-gated is the whole
-     * security property — no remote or background process can press it.
+     * this chord, and both are recorded the same way: pairing is still
+     * honoured on the next normal-mode boot, after Exit. Physical-chord-gated
+     * is the whole security property — no remote process can press it.
      */
     watchdog_hw->scratch[3] = MAGIC_WORD_PAIR;
 

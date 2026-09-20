@@ -6,6 +6,11 @@ document rather than a one-off checklist because the descriptor is touched again
 [#58](https://github.com/myn/deskhopplus/issues/58) (web config off mass storage), and every
 descriptor change has to answer the same questions on the same hardware.
 
+**Historical baseline:** The byte counts below describe #25. Issue #222 adds a separate
+config-mode helper channel, so the config-mode descriptor is no longer byte-for-byte identical.
+Its new interface, WebHID coexistence, DESKHOP disk, and both board roles require fresh hardware
+verification before #222 is closed.
+
 **Why hardware.** Enumeration and descriptors are outside the host test seams by decision
 (#15, *Explicitly not tested at a seam*). The specific unknown is #59's finding U2: DeskHop's
 keyboard interface is declared `HID_ITF_PROTOCOL_NONE` yet works at BIOS and disk-encryption
@@ -13,7 +18,28 @@ prompts, so the risk of adding an interface is not boot-protocol negotiation but
 firmware that tolerates the current descriptor tolerates a longer one with a higher interface
 count**. That is not answerable from source.
 
-## What changed, so a failure can be attributed
+## #222 config-mode validation (pending on real boards)
+
+Flash the same candidate firmware on both boards and run the matching macOS helper. Repeat with
+the config chord on board A and on board B while the peer board stays in normal mode. Record each
+result on #222; a check not run is not a pass.
+
+- [ ] Normal mode still exposes two helper channels and reaches **Connected and paired**.
+- [ ] Config mode exposes the WebHID config API (usage `0x10`), DESKHOP disk, and a separate
+      helper channel (usage `0x20`) without an Input Monitoring prompt.
+- [ ] The helper reconnects with one channel and shows **Connected and paired — config mode**;
+      unplugging it or denying its channel shows **Device in config mode** after the silence window.
+- [ ] Save a multi-monitor Layout and cross in both directions while the page remains connected;
+      verify the correct monitor, cursor query, and placement on each computer.
+- [ ] Clipboard sharing works through the one-channel session while the peer board is in normal mode.
+- [ ] The DESKHOP disk still accepts a firmware upgrade, and Exit and the five-minute timeout both
+      reboot back to a fresh normal-mode session. A new helper can still pair after Exit.
+- [ ] Keyboard and mouse still work in config mode on both boards and at the pre-boot prompts
+      used in the #25 checklist below, because this descriptor gained an interface.
+
+## Historical #25 checklist
+
+### What changed, so a failure can be attributed
 
 Verified by decoding both descriptors out of the built ELF and diffing against a build of the
 previous commit:
@@ -32,12 +58,12 @@ under test.
 The new interface: number 2, class HID, its own report descriptor of vendor-page collections
 only, interrupt OUT `0x03` and interrupt IN `0x83`, both 64 bytes at 1 ms.
 
-## Recording results
+### Recording results
 
 Copy the checklist into the issue and fill it in. A check that cannot be run is recorded as
 **not run**, never as a pass.
 
-### 1. macOS — driverless, and free of TCC
+#### 1. macOS — driverless, and free of TCC
 
 ```
 python3 tools/macos-checks/confirm_hid_tcc.py
@@ -55,7 +81,7 @@ Baseline on stock firmware for comparison: two nodes, both flagged, and the scri
 - [ ] Script prints PASS — the ADR-0001 confirmation
 - [ ] Serial number is reported and matches the board
 
-### 2. Windows 11 — driverless, no administrator rights
+#### 2. Windows 11 — driverless, no administrator rights
 
 ```
 powershell -ExecutionPolicy Bypass -File tools\windows-checks\Confirm-HidExclusivity.ps1 `
@@ -81,7 +107,7 @@ before recording anything below.
       the second ADR-0001 confirmation
 - [ ] Existing keyboard and mouse function normally on this machine
 
-### 3. The one that cannot be answered from source
+#### 3. The one that cannot be answered from source
 
 **Normal mode only.** #25 originally asked for both descriptor variants, but the config-mode
 descriptor was shown to be byte-for-byte identical to its predecessor, so its pre-boot
@@ -102,7 +128,7 @@ exactly like a keyboard failure and is the easiest way to record a false negativ
 If any of these fail, the interface count is the cause and the finding belongs in the issue
 before anything else is built on the channel.
 
-### 4. Nothing else regressed
+#### 4. Nothing else regressed
 
 - [ ] Keyboard, mouse, consumer and system control all work on both computers
 - [ ] Switching between computers works
@@ -110,7 +136,7 @@ before anything else is built on the channel.
 - [ ] The web config page loads and reads values
 - [ ] Firmware upgrade through config mode still works
 
-## Confirm both boards moved, whether or not the version did
+### Confirm both boards moved, whether or not the version did
 
 Since [#91](https://github.com/myn/deskhopplus/issues/91) the heartbeat carries the running
 image's checksum beside its version, and `handle_heartbeat_msg` asks
@@ -128,7 +154,7 @@ one whose board was flashed directly. Two cases still need the number moved: put
 *older* image on the pair, and moving board **A**, which never follows B — see
 `docs/verification/helper-channel.md`.
 
-## Do not flash from macOS if it can be avoided
+### Do not flash from macOS if it can be avoided
 
 The config-mode `DESKHOP` volume is not a general-purpose drive — it is a small FAT image
 served by the firmware. macOS writes `.fseventsd`, and often `._` resource-fork files, onto any
@@ -144,7 +170,7 @@ board never upgraded.
 Prefer flashing from Windows, or use the ROM bootloader below. If a flash from macOS appears to
 do nothing, assume it was rejected rather than that it succeeded.
 
-## Recovery
+### Recovery
 
 The ROM bootloader is always reachable: hold the on-board button while connecting the Pico and
 copy any `.uf2` to the `RPI-RP2` drive that appears. This works regardless of device state, so
