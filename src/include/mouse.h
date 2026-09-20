@@ -25,7 +25,6 @@ void      parse_report_descriptor(hid_interface_t *, uint8_t const *, int);
  *  Mouse Report Handling
  *==============================================================================*/
 void process_mouse_report(uint8_t *, int, uint8_t, hid_interface_t *);
-void process_mouse_values(device_t *, mouse_values_t *);
 enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
 void mouse_crossing_task(device_t *, uint32_t now_us);

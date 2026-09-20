@@ -96,7 +96,6 @@ typedef struct {
     uint8_t target_screen;
     uint16_t target_position;
     bool query_sent;
-    bool input_traced;
     uint32_t started_us;
 } cursor_crossing_t;
 

@@ -189,12 +189,10 @@ static void switch_virtual_desktop_macos(device_t *state, int direction) {
         output_mouse_report(&move_relative_one, state);
 }
 
-static void switch_virtual_desktop(device_t *state, output_t *output, int new_index,
-                                   int direction, bool emit_macos_walk) {
+static void switch_virtual_desktop(device_t *state, output_t *output, int new_index, int direction) {
     switch (output->os) {
         case MACOS:
-            if (emit_macos_walk)
-                switch_virtual_desktop_macos(state, direction);
+            switch_virtual_desktop_macos(state, direction);
             break;
 
         case WINDOWS:
@@ -220,7 +218,6 @@ static void switch_virtual_desktop(device_t *state, output_t *output, int new_in
 
 #define ACCEL_POINTS 7
 #define CURSOR_REANCHOR_TIMEOUT_US 30000u
-#define MACOS_PLACEMENT_TIMEOUT_US 250000u
 
 static uint32_t unsigned_magnitude(int32_t value) {
     return value < 0 ? 0u - (uint32_t)value : (uint32_t)value;
@@ -384,17 +381,11 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
         state->cursor_crossing.phase != CURSOR_CROSSING_IDLE;
     const uint8_t pending_query_id = state->cursor_crossing.query_id;
     const uint8_t pending_direction = state->cursor_crossing.direction;
-    const bool trace_pending_input =
-        state->cursor_crossing.kind != CURSOR_CROSSING_MACOS_PLACEMENT ||
-        !state->cursor_crossing.input_traced;
-    if (crossing_pending && state->cursor_crossing.kind == CURSOR_CROSSING_MACOS_PLACEMENT)
-        state->cursor_crossing.input_traced = true;
     cursor_crossing_exit();
     if (crossing_pending) {
-        if (trace_pending_input)
-            cursor_trace_event(state, DH_CURSOR_TRACE_INPUT, pending_query_id,
-                               values->move_x, values->move_y, pending_direction,
-                               DH_MOUSE_TRANSITION_OUTPUT);
+        cursor_trace_event(state, DH_CURSOR_TRACE_INPUT, pending_query_id,
+                           values->move_x, values->move_y, pending_direction,
+                           DH_MOUSE_TRANSITION_OUTPUT);
         values->move_x = 0;
         values->move_y = 0;
         state->mouse_buttons = values->buttons;
@@ -489,74 +480,6 @@ enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values)
         state->pointer_y = move_and_keep_on_screen(state->pointer_y, offset_y);
     state->mouse_buttons = values->buttons;
     return direction;
-}
-
-static mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
-    mouse_report_t report = {
-        .buttons = values->buttons,
-        .x = state->pointer_x,
-        .y = state->pointer_y,
-        .wheel = values->wheel,
-        .pan = values->pan,
-        .mode = ABSOLUTE,
-    };
-
-    /* Windows secondary monitors need relative HID reports. macOS crosses its
-       monitor chain with the absolute edge-and-nudge path above. */
-    if (dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
-        report.x = values->move_x;
-        report.y = values->move_y;
-        report.mode = RELATIVE;
-    }
-
-    return report;
-}
-
-void process_mouse_values(device_t *state, mouse_values_t *values) {
-    /* Composite keyboards can expose a mouse interface whose reports contain
-       no mouse change. Do not emit an absolute report for those. */
-    if (values->move_x == 0 && values->move_y == 0 &&
-        values->wheel == 0 && values->pan == 0 &&
-        values->buttons == state->mouse_buttons)
-        return;
-
-    const int previous_buttons = state->mouse_buttons;
-    const enum screen_pos_e direction = update_mouse_position(state, values);
-    const output_t *output = &state->config.output[state->active_output];
-    const dh_mouse_transition_t transition = actionable_transition_for(
-        state, output, direction, values->buttons);
-    const bool macos_chain = output->os == MACOS &&
-        (transition == DH_MOUSE_TRANSITION_CHAIN_BACK ||
-         transition == DH_MOUSE_TRANSITION_CHAIN_FORWARD);
-    /* A source-edge report queued now can drain after the helper's warp and
-       land on the new monitor. The helper path needs no source HID report;
-       the unavailable path emits its own edge and nudges. */
-    if (macos_chain)
-        do_screen_switch(state, direction);
-    cursor_crossing_enter();
-    const cursor_crossing_t crossing = state->cursor_crossing;
-    cursor_crossing_exit();
-    if ((macos_chain || (crossing.phase != CURSOR_CROSSING_IDLE &&
-                         crossing.kind == CURSOR_CROSSING_MACOS_PLACEMENT)) &&
-        values->buttons == previous_buttons && values->wheel == 0 && values->pan == 0)
-        return;
-
-    mouse_report_t report = create_mouse_report(state, values);
-    if (crossing.phase == CURSOR_CROSSING_WAITING &&
-        crossing.kind == CURSOR_CROSSING_MACOS_PLACEMENT) {
-        /* Button and wheel changes must use the absolute HID interface so a
-           held drag is not duplicated on the relative interface. Point those
-           reports at the requested entry, never the old monitor's position. */
-        const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
-            (dh_direction_t)crossing.direction,
-            (dh_mouse_coordinates_t){.x = state->pointer_x, .y = state->pointer_y},
-            MIN_SCREEN_COORD, MAX_SCREEN_COORD);
-        report.x = (int16_t)entry.x;
-        report.y = (int16_t)entry.y;
-    }
-    output_mouse_report(&report, state);
-    if (direction != NONE && !macos_chain)
-        do_screen_switch(state, direction);
 }
 
 static void cross_screen(device_t *state, int direction, bool source_resolved) {
@@ -662,7 +585,7 @@ static void cross_screen(device_t *state, int direction, bool source_resolved) {
             }
             switch_virtual_desktop(state, output,
                                   dh_mouse_next_screen_index(transition, output->screen_index),
-                                  direction, true);
+                                  direction);
             cursor_trace_event(state, DH_CURSOR_TRACE_SWITCH, 0, 0, 0,
                                (uint8_t)direction, (uint8_t)transition);
             break;
@@ -729,11 +652,8 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
     bool timed_out = false;
     uint8_t timeout_query_id = 0;
     uint8_t timeout_direction = NONE;
-    const uint32_t timeout_us = crossing->kind == CURSOR_CROSSING_MACOS_PLACEMENT
-                                    ? MACOS_PLACEMENT_TIMEOUT_US
-                                    : CURSOR_REANCHOR_TIMEOUT_US;
     if (crossing->phase == CURSOR_CROSSING_WAITING &&
-        (uint32_t)(now_us - crossing->started_us) >= timeout_us) {
+        (uint32_t)(now_us - crossing->started_us) >= CURSOR_REANCHOR_TIMEOUT_US) {
         crossing->phase = CURSOR_CROSSING_FALLBACK;
         timed_out = true;
         timeout_query_id = crossing->query_id;
@@ -770,9 +690,7 @@ void mouse_crossing_task(device_t *state, uint32_t now_us) {
         return;
     if (kind == CURSOR_CROSSING_MACOS_PLACEMENT) {
         output_t *output = &state->config.output[state->active_output];
-        /* A queued placement may have warped even if its readback was lost.
-           Only an explicit unavailable result proves the helper did not get it. */
-        switch_virtual_desktop(state, output, target_screen, direction, !timed_out);
+        switch_virtual_desktop(state, output, target_screen, direction);
     } else {
         cross_screen(state, direction, true);
     }

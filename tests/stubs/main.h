@@ -54,7 +54,6 @@ typedef struct {
     uint8_t target_screen;
     uint16_t target_position;
     bool query_sent;
-    bool input_traced;
     uint32_t started_us;
 } cursor_crossing_t;
 
@@ -123,4 +122,3 @@ typedef struct {
 } mouse_report_t;
 void output_mouse_report(mouse_report_t *, device_t *);
 void set_active_output(device_t *, uint8_t);
-void do_screen_switch(device_t *, int);

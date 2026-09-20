@@ -24,7 +24,6 @@ static uint8_t placement_query_id;
 static mouse_report_t emitted_reports[32];
 static uint8_t emitted_outputs[32];
 static int emitted_count;
-extern int cursor_trace_input_count;
 
 void output_mouse_report(mouse_report_t *report, device_t *state) {
     if (emitted_count < 32) {
@@ -35,7 +34,6 @@ void output_mouse_report(mouse_report_t *report, device_t *state) {
 }
 
 enum screen_pos_e update_mouse_position(device_t *, mouse_values_t *);
-void process_mouse_values(device_t *, mouse_values_t *);
 void do_screen_switch(device_t *, int);
 
 void set_active_output(device_t *state, uint8_t output) {
@@ -965,16 +963,12 @@ static void test_macos_chain_fallbacks_once(void) {
     do_screen_switch(&state, RIGHT);
     const uint8_t timed_out_id = state.cursor_crossing.query_id;
     mouse_crossing_task(&state, 30000);
-    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && emitted_count == 0,
-          "Mac placement timed out at the single-hop re-anchor deadline");
-    mouse_crossing_task(&state, 250000);
-    mouse_crossing_task(&state, 250001);
-    CHECK(emitted_count == 0 && state.config.output[0].screen_index == 2 &&
-              state.pointer_x == MIN_SCREEN_COORD && state.pointer_y == 100,
-          "timed-out Mac placement walked after a possible helper warp");
+    mouse_crossing_task(&state, 30001);
+    CHECK(emitted_count == 6 && state.config.output[0].screen_index == 2,
+          "timed-out Mac placement did not run the legacy fallback exactly once");
     CHECK(!apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 100,
-                                        timed_out_id) && emitted_count == 0,
-          "late Mac placement response was accepted after timeout");
+                                        timed_out_id) && emitted_count == 6,
+          "late Mac placement response was accepted after fallback");
     placement_query_available = false;
 }
 
@@ -995,91 +989,6 @@ static void test_macos_chain_holds_only_position_while_pending(void) {
     placement_query_available = false;
 }
 
-static void test_macos_placement_holds_old_absolute_reports_but_forwards_buttons_and_wheel(void) {
-    device_t state = side_by_side_state();
-    state.config.output[0].os = MACOS;
-    state.pointer_x = MAX_SCREEN_COORD;
-    state.pointer_y = 12345;
-    placement_query_available = true;
-    emitted_count = 0;
-    do_screen_switch(&state, RIGHT);
-
-    mouse_values_t movement = {.move_x = 40, .move_y = -30};
-    process_mouse_values(&state, &movement);
-    CHECK(emitted_count == 0,
-          "pending Mac placement sent old-monitor absolute coordinates for motion");
-
-    mouse_values_t click_and_scroll = {
-        .move_x = 40, .buttons = 1, .wheel = 2, .pan = -3,
-    };
-    process_mouse_values(&state, &click_and_scroll);
-    CHECK(emitted_count == 1 && emitted_reports[0].mode == ABSOLUTE &&
-              emitted_reports[0].x == MIN_SCREEN_COORD &&
-              emitted_reports[0].y == 12345 && emitted_reports[0].buttons == 1 &&
-              emitted_reports[0].wheel == 2 && emitted_reports[0].pan == -3,
-          "pending Mac placement lost button/wheel input or sent old coordinates");
-
-    CHECK(apply_helper_cursor_position(&state, 0, 2, MIN_SCREEN_COORD, 12345,
-                                       placement_query_id),
-          "Mac placement confirmation was refused after held input");
-    mouse_crossing_task(&state, 1);
-    mouse_values_t continued = {.move_x = 5, .buttons = 1};
-    process_mouse_values(&state, &continued);
-    CHECK(emitted_count == 2 && emitted_reports[1].mode == ABSOLUTE &&
-              emitted_reports[1].x == 5 && state.config.output[0].screen_index == 2,
-          "motion did not resume on the placed Mac monitor");
-    placement_query_available = false;
-}
-
-static void test_macos_placement_does_not_queue_its_source_edge_report(void) {
-    device_t state = side_by_side_state();
-    state.config.output[0].os = MACOS;
-    state.pointer_x = MAX_SCREEN_COORD - 2;
-    state.pointer_y = 12345;
-    placement_query_available = true;
-    emitted_count = 0;
-    mouse_values_t crossing = {.move_x = 40};
-
-    process_mouse_values(&state, &crossing);
-
-    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && emitted_count == 0,
-          "Mac chain crossing queued an old-screen report before helper placement");
-
-    state = side_by_side_state();
-    state.config.output[0].os = MACOS;
-    state.pointer_x = MAX_SCREEN_COORD - 2;
-    state.pointer_y = 12345;
-    emitted_count = 0;
-    mouse_values_t click_and_scroll = {.move_x = 40, .buttons = 1, .wheel = 2};
-    process_mouse_values(&state, &click_and_scroll);
-    CHECK(state.cursor_crossing.phase == CURSOR_CROSSING_WAITING && emitted_count == 1 &&
-              emitted_reports[0].mode == ABSOLUTE &&
-              emitted_reports[0].x == MIN_SCREEN_COORD &&
-              emitted_reports[0].y == 12345 && emitted_reports[0].buttons == 1 &&
-              emitted_reports[0].wheel == 2,
-          "Mac crossing lost button/wheel input or queued source coordinates");
-    placement_query_available = false;
-}
-
-static void test_macos_placement_trace_keeps_crossing_decision_under_held_input(void) {
-    device_t state = side_by_side_state();
-    state.config.output[0].os = MACOS;
-    state.pointer_x = MAX_SCREEN_COORD - 2;
-    placement_query_available = true;
-    cursor_trace_input_count = 0;
-    mouse_values_t crossing = {.move_x = 40};
-    process_mouse_values(&state, &crossing);
-
-    for (int i = 0; i < 80; i++) {
-        mouse_values_t movement = {.move_x = 1};
-        update_mouse_position(&state, &movement);
-    }
-
-    CHECK(cursor_trace_input_count == 1,
-          "held Mac input flooded the 64-record crossing trace before completion");
-    placement_query_available = false;
-}
-
 static void test_macos_chain_requires_the_requested_placement_coordinate(void) {
     device_t state = side_by_side_state();
     state.config.output[0].os = MACOS;
@@ -1091,9 +1000,9 @@ static void test_macos_chain_requires_the_requested_placement_coordinate(void) {
                                         placement_query_id) &&
               state.cursor_crossing.phase == CURSOR_CROSSING_WAITING,
           "target-screen response falsely confirmed a refused Mac placement");
-    mouse_crossing_task(&state, 250000);
-    CHECK(emitted_count == 0 && state.config.output[0].screen_index == 2,
-          "unconfirmed Mac placement walked after a possible helper warp");
+    mouse_crossing_task(&state, 30000);
+    CHECK(emitted_count == 6,
+          "unconfirmed Mac placement did not reach the bounded legacy fallback");
     placement_query_available = false;
 }
 
@@ -1284,9 +1193,6 @@ int main(void) {
     test_confirmed_macos_chain_back_uses_only_helper_placement();
     test_macos_chain_fallbacks_once();
     test_macos_chain_holds_only_position_while_pending();
-    test_macos_placement_holds_old_absolute_reports_but_forwards_buttons_and_wheel();
-    test_macos_placement_does_not_queue_its_source_edge_report();
-    test_macos_placement_trace_keeps_crossing_decision_under_held_input();
     test_macos_chain_requires_the_requested_placement_coordinate();
     test_fast_diagonal_macos_chain_uses_correlated_placement();
     test_output_arrival_ignores_reverse_jitter_until_motion_turns_inward();

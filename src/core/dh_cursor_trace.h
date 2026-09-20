@@ -8,9 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Covers the complete 30 ms re-anchor window at the 2 kHz mouse task rate.
-   Longer macOS placements record only the first held input so the crossing
-   decision survives in this ring until completion. */
+/* Covers the complete 30 ms re-anchor window at the 2 kHz mouse task rate,
+   plus the query and terminal lifecycle records that bracket it. */
 #define DH_CURSOR_TRACE_CAPACITY 64u
 #define DH_CURSOR_TRACE_MAGIC 0x44544331u /* "DTC1" */
 
