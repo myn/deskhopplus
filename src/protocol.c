@@ -255,8 +255,8 @@ bool _queue_packet(uint8_t *payload, device_t *state, uint8_t type, uint8_t len,
 
 bool queue_cfg_packet(uart_packet_t *packet, device_t *state) {
     /*
-     * The config API and the helper channel share an interface slot, one per
-     * mode. Outside config mode that slot is the channel, whose descriptor
+     * The config API occupies the normal mode's channel-0 interface slot.
+     * Outside config mode that slot is a channel whose descriptor
      * declares no report ID — so sending this would put REPORT_ID_VENDOR on
      * the wire as the first byte of the helper's frame stream, which reads it
      * as an unknown message type and drops the connection. Reachable without

@@ -467,12 +467,12 @@ bool channel_lifecycle_send_relay(const dh_relay_packet *packet) {
 
 /* One report's worth of whatever is owed to this board's helper. */
 static void channel_pump_out(uint8_t index) {
-    if (global_state.config_mode_active)
+    if (global_state.config_mode_active && index != 0)
         return;
 
-    /* The channel occupies the vendor interface slot in normal mode, with no
-       report ID: a report is exactly one packet the framing layer owns. */
-    if (!tud_hid_n_ready(ITF_NUM_HID_VENDOR + index))
+    const uint8_t instance = global_state.config_mode_active ? ITF_NUM_HID_CHANNEL_1
+                                                              : ITF_NUM_HID_VENDOR + index;
+    if (!tud_hid_n_ready(instance))
         return;
 
     uint8_t report[CHANNEL_REPORT_SIZE];
@@ -501,7 +501,7 @@ static void channel_pump_out(uint8_t index) {
        the other core can still queue a frame here. Advancing the band the peek
        named — not whatever is owed by the time we return — is what makes that
        gap safe; a frame that arrived meanwhile simply waits its turn. */
-    if (!tud_hid_n_report(ITF_NUM_HID_VENDOR + index, 0, report, CHANNEL_REPORT_SIZE))
+    if (!tud_hid_n_report(instance, 0, report, CHANNEL_REPORT_SIZE))
         return; /* refused: the bytes stay owed rather than being lost */
 
     critical_section_enter_blocking(&channel.out_lock);

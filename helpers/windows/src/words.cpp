@@ -106,6 +106,8 @@ std::string state_message(dh_helper_state state) {
         return {};
     case DH_HELPER_CONNECTED:
         return "Connected and paired";
+    case DH_HELPER_CONNECTED_CONFIG_MODE:
+        return "Connected and paired — config mode";
     case DH_HELPER_RECONNECTING_REPEATEDLY:
         return "Reconnecting repeatedly — check the cable, and that the helper is up to date";
     case DH_HELPER_NOT_PAIRED:
@@ -134,6 +136,7 @@ Look look(dh_helper_state state, bool question_waiting) {
     if (question_waiting) return Look::Attention;
     switch (state) {
     case DH_HELPER_CONNECTED:
+    case DH_HELPER_CONNECTED_CONFIG_MODE:
         return Look::Paired;
     case DH_HELPER_QUIET:
     case DH_HELPER_DEVICE_ABSENT:

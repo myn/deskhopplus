@@ -276,7 +276,7 @@ static void drop_connection(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o,
     forget_session(h);
     h->holding_channels = false;
     h->have_deferred = true;
-    h->deferred_state = DH_HELPER_DEVICE_ABSENT;
+    h->deferred_state = h->config_mode ? DH_HELPER_DEVICE_IN_CONFIG_MODE : DH_HELPER_DEVICE_ABSENT;
     h->deferred_at = now_ms;
 
     put_note(o, note, a, b);
@@ -285,7 +285,9 @@ static void drop_connection(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o,
     /* Only these two are falsified by the rate. A helper already reporting
        something specific — not paired, version incompatible — is not made more
        accurate by being told the link flaps as well. */
-    const bool falsified = h->state == DH_HELPER_CONNECTED || h->state == DH_HELPER_QUIET;
+    const bool falsified = h->state == DH_HELPER_CONNECTED ||
+                           h->state == DH_HELPER_CONNECTED_CONFIG_MODE ||
+                           h->state == DH_HELPER_QUIET;
     if (falsified && reconnecting_repeatedly(h, now_ms)) report_repeated_reconnection(h, now_ms, o);
 
     put_retry(o, backoff_next(h));
@@ -345,7 +347,7 @@ static bool build_hello(dh_helper *h, uint8_t *out, size_t cap, size_t *out_len,
         .proto_version = DH_PROTO_VERSION,
         .os = h->identity->os,
         .build_type = h->identity->build_type,
-        .channel_count = DH_SESSION_CHANNEL_COUNT,
+        .channel_count = h->config_mode ? 1 : DH_SESSION_CHANNEL_COUNT,
         .max_chunk = DH_SESSION_MAX_CHUNK,
         .correlation = h->hello_correlation,
     };
@@ -457,14 +459,23 @@ void dh_helper_device_appeared(dh_helper *h, dh_device_identity which, uint32_t 
      */
     h->ever_saw_device = true;
 
-    if (which == DH_DEVICE_CONFIG_MODE) {
+    if (which == DH_DEVICE_CONFIG_MODE && h->config_mode && h->holding_channels)
+        return;
+
+    if (which == DH_DEVICE_CONFIG_MODE || h->config_mode)
         device_left(h, DH_HELPER_DEVICE_IN_CONFIG_MODE, now_ms, o);
+    h->config_mode = which == DH_DEVICE_CONFIG_MODE;
+
+    if (h->config_mode) {
+        backoff_reset(h);
+        put(o, DH_HELPER_OUT_OPEN_CHANNELS);
         return;
     }
 
     h->have_deferred = false;
     backoff_reset(h);
-    if (h->state == DH_HELPER_DEVICE_ABSENT || h->state == DH_HELPER_DEVICE_IN_CONFIG_MODE)
+    if (h->state == DH_HELPER_DEVICE_ABSENT || h->state == DH_HELPER_DEVICE_IN_CONFIG_MODE ||
+        h->state == DH_HELPER_CONNECTED_CONFIG_MODE)
         set_state(h, o, DH_HELPER_QUIET);
     put(o, DH_HELPER_OUT_OPEN_CHANNELS);
 }
@@ -472,6 +483,7 @@ void dh_helper_device_appeared(dh_helper *h, dh_device_identity which, uint32_t 
 void dh_helper_device_disappeared(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     note_started(h, now_ms);
     device_left(h, DH_HELPER_DEVICE_ABSENT, now_ms, o);
+    h->config_mode = false;
 }
 
 /* --------------------------------------------------------------- acquisition */
@@ -581,7 +593,7 @@ void dh_helper_acquisition_refused(dh_helper *h, uint8_t acquired, uint8_t of, u
     h->holding_channels = false;
     if (!h->have_deferred) {
         h->have_deferred = true;
-        h->deferred_state = DH_HELPER_DEVICE_ABSENT;
+        h->deferred_state = h->config_mode ? DH_HELPER_DEVICE_IN_CONFIG_MODE : DH_HELPER_DEVICE_ABSENT;
         h->deferred_at = now_ms;
     }
 
@@ -694,7 +706,7 @@ static void on_hello_ack(dh_helper *h, const dh_frame_view *f, uint32_t now_ms,
     if (reconnecting_repeatedly(h, now_ms))
         report_repeated_reconnection(h, now_ms, o);
     else
-        set_state(h, o, DH_HELPER_CONNECTED);
+        set_state(h, o, h->config_mode ? DH_HELPER_CONNECTED_CONFIG_MODE : DH_HELPER_CONNECTED);
 }
 
 static void on_hello_refused(dh_helper *h, const dh_frame_view *f, uint32_t now_ms,
@@ -1253,13 +1265,13 @@ void dh_helper_tick(dh_helper *h, uint32_t now_ms, dh_helper_outputs *o) {
     /* The repeated reconnection aged out — the link is holding. */
     if (h->state == DH_HELPER_RECONNECTING_REPEATEDLY && h->have_negotiated &&
         !reconnecting_repeatedly(h, now_ms))
-        set_state(h, o, DH_HELPER_CONNECTED);
+        set_state(h, o, h->config_mode ? DH_HELPER_CONNECTED_CONFIG_MODE : DH_HELPER_CONNECTED);
 
     /* The listener alert aged out — nothing further was refused. */
     if (h->state == DH_HELPER_LISTENER_DETECTED && h->have_negotiated && h->listener_alert_live &&
         elapsed(now_ms, h->listener_alert_at, h->listener_alert_window_ms)) {
         h->listener_alert_live = false;
-        set_state(h, o, DH_HELPER_CONNECTED);
+        set_state(h, o, h->config_mode ? DH_HELPER_CONNECTED_CONFIG_MODE : DH_HELPER_CONNECTED);
     }
 
     /* The beat stopped while the session did not. Scoped to a session for the

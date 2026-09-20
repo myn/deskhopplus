@@ -44,7 +44,7 @@ final class ChannelTransport {
 
     private let manager: IOHIDManager
     private var channels: [Channel] = []
-    private var configModeNodes = 0
+    private var configModeNodes: [IOHIDDevice] = []
     private var nextStriped = 0
 
     /*
@@ -67,9 +67,8 @@ final class ChannelTransport {
          * trigger an Input Monitoring prompt — the mistake behind most public
          * claims that HID access requires one (ADR-0001).
          *
-         * The config-mode identity is matched too, on its own vendor
-         * collection: seeing it is how the helper knows the device rebooted
-         * into config mode rather than being unplugged.
+         * The config-mode identity also matches its config API (usage 0x10)
+         * for presence, and its separate helper channel (usage 0x20).
          */
         let normal: [String: Any] = [
             kIOHIDVendorIDKey: ChannelIdentity.vendorID,
@@ -114,12 +113,7 @@ final class ChannelTransport {
     }
 
     private func matched(_ device: IOHIDDevice) {
-        guard identity(of: device) == .normal else {
-            configModeNodes += 1
-            onEvent?(.deviceAppeared(.configMode))
-            return
-        }
-
+        let mode = identity(of: device)
         let deviceSerial = property(device, kIOHIDSerialNumberKey) as? String
         if let known = serial, let deviceSerial, known != deviceSerial {
             /* Behaviour with more than one device attached is out of scope
@@ -128,38 +122,49 @@ final class ChannelTransport {
             log?("ignoring a second device with serial \(deviceSerial); holding \(known)")
             return
         }
+        if let first = channels.first, identity(of: first.device) != mode {
+            release()
+            channels.removeAll()
+            serial = nil
+        }
         serial = deviceSerial ?? serial
+
+        if mode == .configMode && !configModeNodes.contains(device) {
+            configModeNodes.append(device)
+        }
 
         /* `DeviceUsage` is a *matching* key only; as a property it reads nil
            on every macOS tested, which silently dropped every channel (#176).
            The value lives under `PrimaryUsage`. */
         guard !channels.contains(where: { $0.device == device }),
               let usage = property(device, kIOHIDPrimaryUsageKey) as? Int,
-              (ChannelIdentity.usage...ChannelIdentity.usage + 1).contains(usage) else { return }
+              (mode == .configMode ? usage == ChannelIdentity.usage
+                                   : (ChannelIdentity.usage...ChannelIdentity.usage + 1).contains(usage)) else {
+            if mode == .configMode { onEvent?(.deviceAppeared(.configMode)) }
+            return
+        }
         if isHoldingChannels {
             release()
             onEvent?(.transportFailed("channel set changed"))
         }
-        channels.append(Channel(device: device, index: UInt8(usage - ChannelIdentity.usage),
+        channels.append(Channel(device: device,
+                                index: mode == .configMode ? 0 : UInt8(usage - ChannelIdentity.usage),
                                 transport: self))
         channels.sort { $0.index < $1.index }
         log?("channel found on serial \(serial ?? "(none exposed)"): \(channels.count) so far")
-        onEvent?(.deviceAppeared(.normal))
+        onEvent?(.deviceAppeared(mode == .configMode ? .configMode : .normal))
     }
 
     private func removed(_ device: IOHIDDevice) {
         if identity(of: device) == .configMode {
-            configModeNodes = max(0, configModeNodes - 1)
-            /* Unplugged while in config mode: the device is now absent, not
-               configuring, and saying nothing would leave "Device in config
-               mode" showing for as long as it stays unplugged. */
-            if configModeNodes == 0 && channels.isEmpty {
-                onEvent?(.deviceDisappeared)
-            }
-            return
+            guard configModeNodes.contains(device) else { return }
+            configModeNodes.removeAll { $0 == device }
         }
 
-        guard channels.contains(where: { $0.device == device }) else { return }
+        guard channels.contains(where: { $0.device == device }) else {
+            if configModeNodes.isEmpty && channels.isEmpty { onEvent?(.deviceDisappeared) }
+            return
+        }
         release()
         onEvent?(.transportFailed("channel removed"))
         /* Unregister before the channel is dropped: the callback holds the
@@ -169,7 +174,7 @@ final class ChannelTransport {
         }
         channels.removeAll { $0.device == device }
 
-        if channels.isEmpty {
+        if channels.isEmpty && configModeNodes.isEmpty {
             serial = nil
             onEvent?(.deviceDisappeared)
         }

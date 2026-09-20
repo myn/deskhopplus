@@ -59,6 +59,8 @@ for state in HelperState.allCases {
 // The three looks (#208): the shape carries the state, and the words stay one
 // hover away, so #38's "in words, not a colour" still holds.
 check(MenuBar.look(for: .connected, questionWaiting: false) == .paired, "paired is the solid glyph")
+check(MenuBar.look(for: .connectedConfigMode, questionWaiting: false) == .paired,
+      "a live config-mode session is paired")
 for state in [HelperState.quiet, .deviceAbsent, .deviceInConfigMode] {
     check(MenuBar.look(for: state, questionWaiting: false) == .off, "\(state) is off, not a fault")
 }

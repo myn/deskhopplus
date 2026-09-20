@@ -255,7 +255,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
            happens (#56). */
         if questionWaiting { return .attention }
         switch state {
-        case .connected: return .paired
+        case .connected, .connectedConfigMode: return .paired
         case .quiet, .deviceAbsent, .deviceInConfigMode: return .off
         case .reconnectingRepeatedly, .notPaired, .versionIncompatible, .listenerDetected,
              .boardIdentityChanged:

@@ -49,7 +49,7 @@ uint8_t const desc_hid_report_relmouse[] = {TUD_HID_REPORT_DESC_MOUSEHELP(HID_RE
 
 uint8_t const desc_hid_report_vendor[] = {TUD_HID_REPORT_DESC_VENDOR_CTRL(HID_REPORT_ID(REPORT_ID_VENDOR))};
 
-/* The always-on channel. No report ID, so a report is exactly one
+/* The helper channel. No report ID, so a report is exactly one
    CHANNEL_REPORT_SIZE packet carried opaquely. */
 uint8_t const desc_hid_report_channel[] = {TUD_HID_REPORT_DESC_CHANNEL(DH_CHANNEL_USAGE)};
 uint8_t const desc_hid_report_channel_1[] = {TUD_HID_REPORT_DESC_CHANNEL(DH_CHANNEL_USAGE + 1)};
@@ -65,13 +65,12 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
         case ITF_NUM_HID_REL_M:
             return desc_hid_report_relmouse;
         case ITF_NUM_HID_VENDOR:
-            /* One interface slot, a different purpose in each mode: the config
-               API in config mode, the channel in normal mode. The two never
-               coexist - config mode reboots under a different identity. */
+            /* The config API retains its own HID interface in config mode. */
             return global_state.config_mode_active ? desc_hid_report_vendor
                                                    : desc_hid_report_channel;
         case ITF_NUM_HID_CHANNEL_1:
-            return desc_hid_report_channel_1;
+            return global_state.config_mode_active ? desc_hid_report_channel
+                                                   : desc_hid_report_channel_1;
         default:
             return desc_hid_report;
     }
@@ -190,25 +189,27 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 
 #define EPNUM_MSC_OUT    0x04
 #define EPNUM_MSC_IN     0x84
+#define EPNUM_CONFIG_CHANNEL_OUT 0x07
+#define EPNUM_CONFIG_CHANNEL_IN  0x87
 
 #ifndef DH_DEBUG
 
 #define ITF_NUM_TOTAL 4
-#define ITF_NUM_TOTAL_CONFIG 4
+#define ITF_NUM_TOTAL_CONFIG 5
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + 2 * TUD_HID_INOUT_DESC_LEN)
-#define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN)
+#define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 
 #else
 /* CDC uses 2 interfaces (control + data). In normal mode, place it right after
    the 4 HID interfaces (at 4, 5). In config mode, place it after HID_VENDOR (2)
-   and MSC (3), so at 4, 5. */
+   and MSC (3) and the config channel (4), so at 5, 6. */
 #define ITF_NUM_CDC 4
-#define ITF_NUM_CDC_CONFIG 4
+#define ITF_NUM_CDC_CONFIG 5
 #define ITF_NUM_TOTAL 6
-#define ITF_NUM_TOTAL_CONFIG 6
+#define ITF_NUM_TOTAL_CONFIG 7
 
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + 2 * TUD_HID_INOUT_DESC_LEN + TUD_CDC_DESC_LEN)
-#define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN_CFG (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_INOUT_DESC_LEN + TUD_CDC_DESC_LEN)
 
 #define EPNUM_CDC_NOTIF  0x85
 #define EPNUM_CDC_OUT    0x06
@@ -296,6 +297,14 @@ uint8_t const desc_configuration_config[] = {
                        EPNUM_MSC_OUT,
                        EPNUM_MSC_IN,
                        64),
+
+    /* HID instance 3 is interface 4 here: MSC occupies interface 3 but is
+       not an HID instance. Keep WebHID config on instance 2 and the disk. */
+    TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_HID_CONFIG_CHANNEL,
+                             STRID_CHANNEL, HID_ITF_PROTOCOL_NONE,
+                             sizeof(desc_hid_report_channel),
+                             EPNUM_CONFIG_CHANNEL_OUT, EPNUM_CONFIG_CHANNEL_IN,
+                             CHANNEL_REPORT_SIZE, 1),
 #ifdef DH_DEBUG
     // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
     TUD_CDC_DESCRIPTOR(

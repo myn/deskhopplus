@@ -45,12 +45,14 @@ void tud_hid_set_report_cb(uint8_t instance,
                            uint8_t const *buffer,
                            uint16_t bufsize) {
 
-    /* The helper channel occupies the vendor interface slot in normal mode and
-       declares no report ID, so a report is 64 bytes the framing layer owns
-       end to end (#45). */
-    if ((instance == ITF_NUM_HID_VENDOR || instance == ITF_NUM_HID_CHANNEL_1) && report_id == 0 && !global_state.config_mode_active) {
+    /* In config mode HID instance 3 is the separate helper channel after MSC;
+       in normal mode instances 2 and 3 are the two helper channels. */
+    if (report_id == 0 && (global_state.config_mode_active
+                              ? instance == ITF_NUM_HID_CHANNEL_1
+                              : (instance == ITF_NUM_HID_VENDOR || instance == ITF_NUM_HID_CHANNEL_1))) {
         if (report_type == HID_REPORT_TYPE_OUTPUT)
-            channel_receive_report(instance - ITF_NUM_HID_VENDOR, buffer, bufsize);
+            channel_receive_report(global_state.config_mode_active ? 0 : instance - ITF_NUM_HID_VENDOR,
+                                   buffer, bufsize);
         return;
     }
 

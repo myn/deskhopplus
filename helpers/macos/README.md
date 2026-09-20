@@ -98,9 +98,10 @@ cmake -S tests -B tests/build && cmake --build tests/build && ctest --test-dir t
 
 ## What the helper does
 
-1. **Finds the device** by USB identifier, serial, usage page and usage — never by a device path.
-   Matching is narrow on purpose: a helper that matches broadly opens a keyboard and triggers an
-   Input Monitoring prompt, which is the mistake behind most public claims that HID access needs
+1. **Finds the device** by USB identifier, serial and vendor usage page, then opens only channel
+   usage `0x20` (and `0x21` in normal mode). It also observes the config API's `0x10` collection
+   to report config-mode presence, without opening it. Matching is narrow on purpose: opening a
+   keyboard triggers an Input Monitoring prompt, the mistake behind most claims that HID access needs
    one ([ADR-0001](../../docs/adr/0001-vendor-hid-transport.md)).
 2. **Seizes every channel or none.** `kIOHIDOptionsTypeSeizeDevice` on each, rolled back and
    reported as a refusal if any one is refused. Partial acquisition is worse than outright

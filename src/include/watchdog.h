@@ -19,9 +19,8 @@
 
 #define MAGIC_WORD_1 0xdeadf00f // When these are set, we'll boot to configuration mode
 /* Set by the config chord and consumed on the next normal-mode boot: a
-   pairing window is owed (#46). Config mode has no channel interface, so the
-   window can only be honoured once the device is back in normal mode - which
-   means the flag has to survive a boot it is not consumed on. It lives in
+   pairing window is owed (#46). Pairing still waits until Exit, so the flag
+   has to survive a boot it is not consumed on. It lives in
    scratch[3] for that reason: the SDK's own watchdog_enable() overwrites
    scratch[4] on every boot, and watchdog_reboot() writes 5, 6 and 7, so a
    flag in any of those is erased before the boot that would have used it. */
