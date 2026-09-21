@@ -1,0 +1,6 @@
+{
+  "files": ["webconfig/config-unpacked.htm"],
+  "insertBefore": "</body>",
+  "commentSyntax": "html",
+  "cspChecked": true
+}
