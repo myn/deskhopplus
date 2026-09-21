@@ -358,7 +358,8 @@ pre {
 
 .layout-handle rect { fill: var(--handle); }
 
-.layout-handle text { fill: #fff; font-size: 11px; font-weight: 600; text-anchor: middle; pointer-events: none; }
+/* 10px regular: a one-monitor bar must still hold "B · Windows" in Linux Chrome's wider fonts (CI). */
+.layout-handle text { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; }
 
 .layout-box { cursor: grab; outline: none; }
 
