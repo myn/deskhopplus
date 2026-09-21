@@ -457,7 +457,9 @@ void dh_helper_device_appeared(dh_helper *h, dh_device_identity which, uint32_t 
      * in 61e9127 and carried down here rather than re-derived, in one place
      * precisely so a third identity cannot reintroduce it by omission.
      */
+    const bool mode_changed = h->ever_saw_device && h->last_device_identity != which;
     h->ever_saw_device = true;
+    h->last_device_identity = which;
 
     if (which == DH_DEVICE_CONFIG_MODE && h->config_mode && h->holding_channels)
         return;
@@ -465,6 +467,11 @@ void dh_helper_device_appeared(dh_helper *h, dh_device_identity which, uint32_t 
     if (which == DH_DEVICE_CONFIG_MODE || h->config_mode)
         device_left(h, DH_HELPER_DEVICE_IN_CONFIG_MODE, now_ms, o);
     h->config_mode = which == DH_DEVICE_CONFIG_MODE;
+    /* A normal/config identity change is a deliberate reboot, not evidence of
+       a flapping link. Windows can retry the retiring HID node several times
+       before its removal notification arrives; none of those failures may
+       survive the identity change and report a flapping link (#223). */
+    if (mode_changed) h->drop_count = 0;
 
     if (h->config_mode) {
         backoff_reset(h);

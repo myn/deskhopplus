@@ -819,6 +819,50 @@ static void test_config_mode_has_a_live_one_channel_session(void) {
           name, "normal mode did not request two channels");
 }
 
+/* Windows keeps the retiring config HID node visible briefly after Exit. Its
+ * writes fail while the helper retries, then normal mode's two collections
+ * arrive one at a time. These are one intentional mode change, not a link
+ * flapping four times. Captured on hardware in #223. */
+static void test_config_exit_does_not_report_repeated_reconnection(void) {
+    const char *name = "config exit does not report repeated reconnection";
+    an_identity();
+    a_paired_board();
+    reset_entropy();
+    script_draw(published_helper_nonce, DH_NONCE_SIZE);
+    dh_helper h;
+    dh_helper_init(&h, &identity, board_public);
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_appeared(&h, DH_DEVICE_CONFIG_MODE, 0, &out);
+    dh_helper_channels_acquired(&h, 1, 0, &out);
+    dh_helper_outputs acquired = out;
+    dh_helper_outputs_reset(&out);
+    answer_all(&h, &acquired, 0, &out);
+    CHECK(h.state == DH_HELPER_CONNECTED_CONFIG_MODE, name, "config session was not live");
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_transport_failed(&h, 1000, &out);
+    const uint32_t stale_retries[] = {1406, 1906, 2906};
+    for (size_t i = 0; i < sizeof stale_retries / sizeof stale_retries[0]; i++) {
+        dh_helper_outputs_reset(&out);
+        dh_helper_channels_acquired(&h, 1, stale_retries[i], &out);
+        dh_helper_transport_failed(&h, stale_retries[i], &out);
+    }
+
+    dh_helper_outputs_reset(&out);
+    dh_helper_device_disappeared(&h, 3219, &out);
+    CHECK(h.drop_count == 3, name,
+          "a disappearance erased failures before an identity change was known");
+    dh_helper_device_appeared(&h, DH_DEVICE_NORMAL, 3984, &out);
+    dh_helper_channels_acquired(&h, 1, 4094, &out);
+    dh_helper_outputs_reset(&out);
+    dh_helper_transport_failed(&h, 4109, &out);
+
+    CHECK(h.state != DH_HELPER_RECONNECTING_REPEATEDLY, name,
+          "an intentional config exit was reported as a flapping link");
+    CHECK(!saw_note(&out, DH_NOTE_RECONNECTION_RATE), name,
+          "an intentional config exit emitted a reconnection rate");
+}
+
 /* Nothing has ever attached — the other half of the same reporting, and the
    one the config-mode flag must not swallow. */
 static void test_a_helper_that_never_sees_a_device_says_so(void) {
@@ -2755,6 +2799,7 @@ int main(int argc, char **argv) {
     test_a_partial_acquisition_that_completes_is_silent();
     test_a_cold_start_in_config_mode_says_config_mode();
     test_config_mode_has_a_live_one_channel_session();
+    test_config_exit_does_not_report_repeated_reconnection();
     test_a_helper_that_never_sees_a_device_says_so();
     test_a_brief_disappearance_is_silent();
     test_the_backoff_caps_and_resets();

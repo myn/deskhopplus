@@ -639,6 +639,7 @@ typedef struct {
     uint32_t started_at;
     bool started;
     bool ever_saw_device;
+    dh_device_identity last_device_identity;
 
     /*
      * The board's identity key, pinned at pairing. Deliberately **not**
