@@ -94,12 +94,15 @@ async function connectHandler() {
     filters: [{ vendorId: 0x2e8a, productId: 0x107c, usagePage: 0xff00, usage: 0x10 }]
   });
 
+  /* No board chosen: the prompt was cancelled or listed nothing. */
+  if (!devices.length)
+    throw Error('No board chosen.');
+
   device = devices[0];
-  device.open().then(async () => {
-    device.addEventListener('inputreport', handleInputReport);
-    setConnected(true);
-    await readHandler();
-  });
+  await device.open();
+  device.addEventListener('inputreport', handleInputReport);
+  setConnected(true);
+  await readHandler();
 }
 
 async function blinkHandler() {
@@ -463,7 +466,6 @@ async function handleInputReport(event) {
 
   updateElement(key, event);
   redrawLayout();
-  refresh();
 }
 
 function signed16(lo, hi) {

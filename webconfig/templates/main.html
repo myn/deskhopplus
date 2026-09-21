@@ -22,16 +22,34 @@
 {% set sections = [('desk', 'Desk'), ('keyboard', 'Keyboard & Mouse'), ('hotkeys', 'Hotkeys'),
                    ('clipboard', 'Clipboard'), ('status', 'Status'), ('service', 'Service')] %}
 
-{# The common config list is flat, with label items as group headings. Render
-   the groups a section owns, in their order, without touching form.py. #}
-{% macro common(groups, headings=True) %}
-  {% set ns = namespace(group='') %}
-  {% for item in config %}
-    {% if item.elem == 'label' %}{% set ns.group = item.name %}{% endif %}
-    {% if ns.group in groups and (headings or item.elem != 'label') %}
+{# Field lists are flat, with label items as headings. A label starts a new
+   grouped box with the label as its title, the way the OS groups its rows;
+   fields before the first label form an untitled box. #}
+{% macro grouped(fields) %}
+  {% set ns = namespace(open=False) %}
+  {% for item in fields %}
+    {% if item.elem == 'label' %}
+      {% if ns.open %}</div>{% endif %}
+      <h3 class="sub">{{ item.name }}</h3>
+      <div class="group">{% set ns.open = True %}
+    {% else %}
+      {% if not ns.open %}<div class="group">{% set ns.open = True %}{% endif %}
       {% include "form.html" with context %}
     {% endif %}
   {% endfor %}
+  {% if ns.open %}</div>{% endif %}
+{% endmacro %}
+
+{# The common config list's groups a section owns, in their order. #}
+{% macro common(groups, headings=True) %}
+  {% set ns = namespace(group='', items=[]) %}
+  {% for item in config %}
+    {% if item.elem == 'label' %}{% set ns.group = item.name %}{% endif %}
+    {% if ns.group in groups and (headings or item.elem != 'label') %}
+      {% set ns.items = ns.items + [item] %}
+    {% endif %}
+  {% endfor %}
+  {{ grouped(ns.items) }}
 {% endmacro %}
 
 {# The strips' mark: an exclamation in a ring, drawn once. #}
@@ -81,21 +99,15 @@
         {% for letter, fields in [('A', screen_A), ('B', screen_B)] %}
         <div class="computer" data-computer="{{ letter }}"{% if not loop.first %} hidden{% endif %}>
           <h3>Output {{ letter }}<span data-os-of="{{ letter }}"></span></h3>
-          <div class="group">
-            {% for item in fields if not item.advanced %}
-              {% include "form.html" with context %}
-            {% endfor %}
-          </div>
+          {{ grouped(fields | rejectattr('advanced') | list) }}
         </div>
         {% endfor %}
 
-        <details id="advanced" class="group">
+        <details id="advanced">
           <summary>Advanced</summary>
           {% for letter, fields in [('A', screen_A), ('B', screen_B)] %}
           <div class="computer" data-computer="{{ letter }}" id="advanced-{{ letter }}"{% if not loop.first %} hidden{% endif %}>
-            {% for item in fields if item.advanced %}
-              {% include "form.html" with context %}
-            {% endfor %}
+            {{ grouped(fields | selectattr('advanced') | list) }}
           </div>
           {% endfor %}
         </details>
@@ -103,27 +115,23 @@
 
       <section data-section="keyboard" aria-labelledby="keyboard-title" hidden>
         <h2 id="keyboard-title">Keyboard &amp; Mouse</h2>
-        <div class="group">{{ common(['Mouse', 'Keyboard']) }}</div>
+        {{ common(['Mouse', 'Keyboard']) }}
       </section>
 
       <section data-section="hotkeys" aria-labelledby="hotkeys-title" hidden>
         <h2 id="hotkeys-title">Hotkeys</h2>
         <p class="hint">Key names joined with +, for example lctrl+rshift+c+o.</p>
-        <div class="group">{{ common(['Hotkeys'], headings=False) }}</div>
+        {{ common(['Hotkeys'], headings=False) }}
       </section>
 
       <section data-section="clipboard" aria-labelledby="clipboard-title" hidden>
         <h2 id="clipboard-title">Clipboard</h2>
-        <div class="group">{{ common(['Clipboard'], headings=False) }}</div>
+        {{ common(['Clipboard'], headings=False) }}
       </section>
 
       <section data-section="status" aria-labelledby="status-title" hidden>
         <h2 id="status-title">Status</h2>
-        <div class="group">
-          {% for item in status %}
-            {% include "form.html" with context %}
-          {% endfor %}
-        </div>
+        {{ grouped(status) }}
         <h3>Cursor transition trace</h3>
         <div class="group">
           <div class="row"><button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button></div>

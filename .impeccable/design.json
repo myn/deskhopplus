@@ -291,7 +291,7 @@
       },
       "label": {
         "displayName": "Label",
-        "purpose": "Uppercase sub-heading inside a grouped box (h3.sub). Heads the rows beneath it; never above a title."
+        "purpose": "Uppercase group title above its grouped box (h3.sub); every label in a field list starts a new box. Never above a section title."
       },
       "hint": {
         "displayName": "Hint",

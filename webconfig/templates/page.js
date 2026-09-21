@@ -39,8 +39,21 @@ for (const type of ['pointerdown', 'focusin', 'keydown'])
     if (computer) selectComputer(computer.dataset.output);
   });
 
+// Every gesture ends in a redraw of the picture, and a drop writes its fields
+// without an event, so the redraw is where the unsaved count follows a drop.
+// The same pass keeps a wide desk (up to seven monitors a side) readable: at
+// least 0.9px per picture unit, and the picture scrolls inside the well
+// instead of shrinking to a strip.
+new MutationObserver(() => {
+  const svg = document.querySelector('#layout svg');
+  if (svg) svg.style.minWidth = Math.round(svg.viewBox.baseVal.width * 0.9) + 'px';
+  refresh();
+}).observe(document.getElementById('layout'), {childList: true});
+
 // Connect flips every board-facing control on; the words in the toolbar say
 // so. The markup starts disabled, so nothing runs at load.
+const connected = () => document.getElementById('connection').dataset.on === '1';
+
 function setConnected(on) {
   const words = document.getElementById('connection');
   words.textContent = on ? 'Connected — config mode' : 'Not connected';
@@ -83,20 +96,35 @@ document.getElementById('main').addEventListener('input', event => {
 });
 document.getElementById('main').addEventListener('change', refresh);
 
-// Exit reboots the board, which drops the device: the toolbar says so.
+// Exit reboots the board, which drops the device: the toolbar says so. A
+// page that already reported why (an action threw first) keeps its reason.
 navigator.hid?.addEventListener('disconnect', event => {
-  if (event.device === device) setConnected(false);
+  if (event.device === device && connected()) setConnected(false);
 });
 
-// Toolbar actions run, then the counts follow. A refused Save bands the top of
-// the window with the fields that need a fix.
+// Toolbar actions run one at a time: the toolbar is disabled while one runs,
+// so a second click on Save cannot start a second Save loop. A refused Save
+// bands the top of the window with the fields that need a fix. An action that
+// throws means the board is gone or was never chosen: the page says so and
+// keeps the user's values for a later Read or Save.
 document.getElementById('menu-buttons').addEventListener('click', async event => {
   const handler = event.target.closest('button')?.dataset.handler;
   if (!handler) return;
-  const result = await window[handler]();
-  if (handler === 'saveHandler') showRefusal(result === false);
-  // Read replaces the values the last Save refused, so its errors go too.
-  if (handler === 'readHandler') clearErrors();
+  const buttons = [...document.querySelectorAll('#menu-buttons button')];
+  buttons.forEach(b => {b.disabled = true;});
+  try {
+    const result = await window[handler]();
+    // Back to the rule, not to a snapshot: Connect may just have turned the page on.
+    buttons.forEach(b => {b.disabled = b.classList.contains('online') && !connected();});
+    if (handler === 'saveHandler') showRefusal(result === false);
+    // Read replaces the values the last Save refused, so its errors go too.
+    if (handler === 'readHandler') clearErrors();
+  } catch (error) {
+    console.error(error);
+    setConnected(false);
+    document.querySelector('[data-handler="connectHandler"]').disabled = false;
+    document.getElementById('connection').textContent = 'Not connected — ' + (error.message || error);
+  }
   refresh();
 });
 

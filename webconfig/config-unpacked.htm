@@ -206,7 +206,10 @@ h2 { margin: 20px 0 12px; font-size: 20px; font-weight: 600; letter-spacing: -0.
 
 h3 { margin: 24px 0 8px; font-size: 13px; font-weight: 600; }
 
-h3.sub { margin: 0; padding: 12px 14px 4px; font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+/* A group title sits above its box, as the OS sets them. */
+h3.sub { margin: 18px 0 6px 14px; font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+
+h3.sub:first-child { margin-top: 8px; }
 
 .hint { margin: 8px 0 0; max-width: 72ch; color: var(--ink-2); font-size: 12px; }
 
@@ -229,7 +232,9 @@ h3.sub { margin: 0; padding: 12px 14px 4px; font-size: 11px; color: var(--ink-2)
   margin: 0;
 }
 
-.row + .row, .sub + .row, .row + .sub { border-top: 1px solid var(--line); }
+.row + .row { border-top: 1px solid var(--line); }
+
+.group + .group { margin-top: 12px; }
 
 .row > label, .row > span:first-child { flex: 1 1 160px; }
 
@@ -243,7 +248,8 @@ h3.sub { margin: 0; padding: 12px 14px 4px; font-size: 11px; color: var(--ink-2)
   min-width: 0;
 }
 
-.row input[type="text"] { width: 220px; }
+/* Wide enough for a six-key chord such as lctrl+rshift+lalt+ralt+capslock+f12. */
+.row input[type="text"] { width: 260px; }
 
 .row input[type="number"] { width: 100px; }
 
@@ -312,12 +318,10 @@ h3.sub { margin: 0; padding: 12px 14px 4px; font-size: 11px; color: var(--ink-2)
 
 .seam-inputs input { width: 72px; }
 
-/* Advanced */
-details.group { margin-top: 12px; }
+/* Advanced: a disclosure line; its content is titled boxes like the rest. */
+#advanced { margin-top: 18px; }
 
-summary { padding: 10px 14px; cursor: pointer; font-weight: 600; }
-
-details[open] summary { border-bottom: 1px solid var(--line); }
+summary { padding: 6px 0; cursor: pointer; font-weight: 600; width: max-content; }
 
 pre {
   margin: 0;
@@ -331,19 +335,24 @@ pre {
 
 /* The layout well and the picture in it */
 
+/* The well is the page's peak: the desk fills it, everything else is quiet. */
 .well {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 460px;
+  padding: 24px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--well);
   text-align: center;
 }
 
-#layout { min-height: 80px; color: var(--ink-2); }
+#layout { color: var(--ink-2); overflow-x: auto; }
 
 /* layout.js caps the height inline at the canvas size; the well overrides
-   that so the desk is drawn at settings-pane scale, not a thumbnail. */
-#layout svg { display: block; margin: 0 auto; width: 100%; max-width: 100%; max-height: 360px !important; }
+   that so the desk is drawn at hero scale, not as a thumbnail. */
+#layout svg { display: block; margin: 0 auto; width: 100%; max-width: 100%; max-height: 380px !important; }
 
 #layout-status { margin: 8px 0 0; min-height: 1.45em; color: var(--bad); }
 
@@ -351,15 +360,15 @@ pre {
 
 #layout-status:empty { margin: 0; min-height: 0; }
 
-.layout-counts { margin: 10px 0 0; display: flex; justify-content: center; gap: 24px; color: var(--ink); }
+.layout-counts { margin: 16px 0 0; display: flex; justify-content: center; gap: 32px; color: var(--ink); }
 
-.layout-counts button { padding: 0 8px; line-height: 20px; }
+.layout-counts button { padding: 0 12px; line-height: 26px; font-size: 15px; }
 
 .layout-handle { cursor: grab; }
 
 .layout-handle rect { fill: var(--handle); }
 
-.layout-handle text { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; }
+.layout-handle text { fill: #fff; font-size: 11px; font-weight: 600; text-anchor: middle; pointer-events: none; }
 
 .layout-box { cursor: grab; outline: none; }
 
@@ -384,9 +393,9 @@ pre {
 #layout[data-selected="B"] .layout-B .layout-handle rect { fill: var(--accent); }
 
 /* Segments: ink bands with well-coloured numbers, so both schemes stay in the one-accent palette. */
-.layout-band { stroke: var(--monitor-ink); stroke-width: 6; stroke-linecap: round; }
+.layout-band { stroke: var(--monitor-ink); stroke-width: 8; stroke-linecap: round; }
 
-.layout-band-number { fill: var(--well); paint-order: stroke; stroke: var(--monitor-ink); stroke-width: 3px; font-size: 9px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+.layout-band-number { fill: var(--well); paint-order: stroke; stroke: var(--monitor-ink); stroke-width: 4px; font-size: 12px; font-weight: 700; text-anchor: middle; pointer-events: none; }
 
 /* Narrow window: the sidebar folds into a row of section names. */
 @media (max-width: 800px) {
@@ -417,6 +426,9 @@ pre {
 </head>
 
 <body>
+
+
+
 
 
 
@@ -481,8 +493,11 @@ pre {
 
         <div class="computer" data-computer="A">
           <h3>Output A<span data-os-of="A"></span></h3>
-          <div class="group">
 
+
+
+
+      <div class="group">
 
 
 
@@ -534,6 +549,9 @@ pre {
 
 
 
+
+
+
     <form class="row">
 
 <label for="f13">Speed Y</label>
@@ -551,6 +569,9 @@ pre {
           min="1" max="100" oninput="this.form.aInput13.value=this.value" />
       </span>
     </form>
+
+
+
 
 
 
@@ -608,6 +629,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f18">Cursor Park Position</label>
@@ -629,20 +653,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Screensaver</h3>
+      </div>
+      <h3 class="sub">Screensaver</h3>
+      <div class="group">
 
 
 
@@ -696,6 +709,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f20">Only If Inactive</label>
@@ -705,6 +721,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f20" />
     </div>
+
+
+
 
 
 
@@ -752,6 +771,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f22">Max Time (μs)</label>
@@ -761,6 +783,15 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f22" />
     </div>
+
+
+
+
+
+
+      </div>
+      <h3 class="sub">Key mapping</h3>
+      <div class="group">
 
 
 
@@ -808,6 +839,9 @@ pre {
 
 
 
+
+
+
     <div class="row keymap-field" data-keymap-output="0"
          data-keymap-kind="overrides">
       <label for="k0overrides">Key overrides</label>
@@ -815,6 +849,9 @@ pre {
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
+
+
+
 
 
 
@@ -845,13 +882,18 @@ pre {
 
 
 
-          </div>
+
+  </div>
+
         </div>
 
         <div class="computer" data-computer="B" hidden>
           <h3>Output B<span data-os-of="B"></span></h3>
-          <div class="group">
 
+
+
+
+      <div class="group">
 
 
 
@@ -903,6 +945,9 @@ pre {
 
 
 
+
+
+
     <form class="row">
 
 <label for="f43">Speed Y</label>
@@ -920,6 +965,9 @@ pre {
           min="1" max="100" oninput="this.form.aInput43.value=this.value" />
       </span>
     </form>
+
+
+
 
 
 
@@ -977,6 +1025,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f48">Cursor Park Position</label>
@@ -998,20 +1049,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Screensaver</h3>
+      </div>
+      <h3 class="sub">Screensaver</h3>
+      <div class="group">
 
 
 
@@ -1065,6 +1105,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f50">Only If Inactive</label>
@@ -1074,6 +1117,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f50" />
     </div>
+
+
+
 
 
 
@@ -1121,6 +1167,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f52">Max Time (μs)</label>
@@ -1130,6 +1179,15 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f52" />
     </div>
+
+
+
+
+
+
+      </div>
+      <h3 class="sub">Key mapping</h3>
+      <div class="group">
 
 
 
@@ -1177,6 +1235,9 @@ pre {
 
 
 
+
+
+
     <div class="row keymap-field" data-keymap-output="1"
          data-keymap-kind="overrides">
       <label for="k1overrides">Key overrides</label>
@@ -1184,6 +1245,9 @@ pre {
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
+
+
+
 
 
 
@@ -1214,15 +1278,21 @@ pre {
 
 
 
-          </div>
+
+  </div>
+
         </div>
 
 
-        <details id="advanced" class="group">
+        <details id="advanced">
           <summary>Advanced</summary>
 
           <div class="computer" data-computer="A" id="advanced-A">
 
+
+
+
+      <div class="group">
 
 
 
@@ -1280,6 +1350,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f14">Legacy seam fallback start (not layout offset)</label>
@@ -1308,6 +1381,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f15">Legacy seam fallback end (not layout offset)</label>
@@ -1317,6 +1393,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f15" />
     </div>
+
+
+
 
 
 
@@ -1372,6 +1451,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f98">Chain Direction</label>
@@ -1395,20 +1477,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
+      </div>
+      <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
+      <div class="group">
 
 
 
@@ -1464,6 +1535,9 @@ pre {
 
 
 
+
+
+
     <div class="row seam-range">
       <span>Segment 2</span>
       <span class="seam-inputs">
@@ -1481,6 +1555,9 @@ pre {
 </label>
       </span>
     </div>
+
+
+
 
 
 
@@ -1536,6 +1613,9 @@ pre {
 
 
 
+
+
+
     <div class="row seam-range">
       <span>Segment 4</span>
       <span class="seam-inputs">
@@ -1557,10 +1637,17 @@ pre {
 
 
 
+
+  </div>
+
           </div>
 
           <div class="computer" data-computer="B" id="advanced-B" hidden>
 
+
+
+
+      <div class="group">
 
 
 
@@ -1618,6 +1705,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f44">Legacy seam fallback start (not layout offset)</label>
@@ -1646,6 +1736,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f45">Legacy seam fallback end (not layout offset)</label>
@@ -1655,6 +1748,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f45" />
     </div>
+
+
+
 
 
 
@@ -1710,6 +1806,9 @@ pre {
 
 
 
+
+
+
     <div class="row">
 
 <label for="f99">Chain Direction</label>
@@ -1733,20 +1832,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
+      </div>
+      <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
+      <div class="group">
 
 
 
@@ -1802,6 +1890,9 @@ pre {
 
 
 
+
+
+
     <div class="row seam-range">
       <span>Segment 2</span>
       <span class="seam-inputs">
@@ -1819,6 +1910,9 @@ pre {
 </label>
       </span>
     </div>
+
+
+
 
 
 
@@ -1874,6 +1968,9 @@ pre {
 
 
 
+
+
+
     <div class="row seam-range">
       <span>Segment 4</span>
       <span class="seam-inputs">
@@ -1895,6 +1992,9 @@ pre {
 
 
 
+
+  </div>
+
           </div>
 
         </details>
@@ -1902,7 +2002,6 @@ pre {
 
       <section data-section="keyboard" aria-labelledby="keyboard-title" hidden>
         <h2 id="keyboard-title">Keyboard &amp; Mouse</h2>
-        <div class="group">
 
 
 
@@ -1922,10 +2021,91 @@ pre {
 
 
 
-    <h3 class="sub">Mouse</h3>
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <h3 class="sub">Mouse</h3>
+      <div class="group">
 
 
 
@@ -2030,26 +2210,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Keyboard</h3>
-
-
-
+      </div>
+      <h3 class="sub">Keyboard</h3>
+      <div class="group">
 
 
 
@@ -2145,67 +2308,14 @@ pre {
 
 
 
+  </div>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-</div>
       </section>
 
       <section data-section="hotkeys" aria-labelledby="hotkeys-title" hidden>
         <h2 id="hotkeys-title">Hotkeys</h2>
         <p class="hint">Key names joined with +, for example lctrl+rshift+c+o.</p>
-        <div class="group">
 
 
 
@@ -2249,6 +2359,75 @@ pre {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="group">
 
 
 
@@ -2611,12 +2790,13 @@ pre {
 
 
 
-</div>
+  </div>
+
+
       </section>
 
       <section data-section="clipboard" aria-labelledby="clipboard-title" hidden>
         <h2 id="clipboard-title">Clipboard</h2>
-        <div class="group">
 
 
 
@@ -2648,6 +2828,67 @@ pre {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      <div class="group">
 
 
 
@@ -2747,55 +2988,18 @@ pre {
 
 
 
+  </div>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-</div>
       </section>
 
       <section data-section="status" aria-labelledby="status-title" hidden>
         <h2 id="status-title">Status</h2>
-        <div class="group">
 
+
+
+
+      <div class="group">
 
 
 
@@ -2821,6 +3025,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f78" data-fw-ver readonly />
 </div>
+
+
+
 
 
 
@@ -2872,6 +3079,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f79">Running FW checksum</label>
@@ -2902,6 +3112,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f85">Other board FW checksum</label>
@@ -2911,6 +3124,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f85" data-peer-fw-crc readonly />
 </div>
+
+
+
 
 
 
@@ -2963,9 +3179,15 @@ pre {
 
 
 
+
+
+
 <input class="api" type="hidden" name="name86" data-type="uint32" data-key="86"
   onchange="valueChangedHandler(this)"
  data-helper-key-lo readonly />
+
+
+
 
 
 
@@ -3009,6 +3231,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f88">Paired helper</label>
@@ -3025,20 +3250,9 @@ pre {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <h3 class="sub">Channel drops (since this boot)</h3>
+      </div>
+      <h3 class="sub">Channel drops (since this boot)</h3>
+      <div class="group">
 
 
 
@@ -3068,6 +3282,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f91" data-hex readonly />
 </div>
+
+
+
 
 
 
@@ -3119,6 +3336,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f93">Outbound refused</label>
@@ -3128,6 +3348,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f93" data-hex readonly />
 </div>
+
+
+
 
 
 
@@ -3179,6 +3402,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f95">Peer orphan packets</label>
@@ -3188,6 +3414,9 @@ pre {
   onchange="valueChangedHandler(this)"
  id="f95" data-hex readonly />
 </div>
+
+
+
 
 
 
@@ -3239,6 +3468,9 @@ pre {
 
 
 
+
+
+
 <div class="row">
 
 <label for="f97">Relay queue refused</label>
@@ -3253,7 +3485,9 @@ pre {
 
 
 
-        </div>
+
+  </div>
+
         <h3>Cursor transition trace</h3>
         <div class="group">
           <div class="row"><button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button></div>
@@ -3372,12 +3606,15 @@ async function connectHandler() {
     filters: [{ vendorId: 0x2e8a, productId: 0x107c, usagePage: 0xff00, usage: 0x10 }]
   });
 
+  /* No board chosen: the prompt was cancelled or listed nothing. */
+  if (!devices.length)
+    throw Error('No board chosen.');
+
   device = devices[0];
-  device.open().then(async () => {
-    device.addEventListener('inputreport', handleInputReport);
-    setConnected(true);
-    await readHandler();
-  });
+  await device.open();
+  device.addEventListener('inputreport', handleInputReport);
+  setConnected(true);
+  await readHandler();
 }
 
 async function blinkHandler() {
@@ -3741,7 +3978,6 @@ async function handleInputReport(event) {
 
   updateElement(key, event);
   redrawLayout();
-  refresh();
 }
 
 function signed16(lo, hi) {
@@ -4156,8 +4392,21 @@ for (const type of ['pointerdown', 'focusin', 'keydown'])
     if (computer) selectComputer(computer.dataset.output);
   });
 
+// Every gesture ends in a redraw of the picture, and a drop writes its fields
+// without an event, so the redraw is where the unsaved count follows a drop.
+// The same pass keeps a wide desk (up to seven monitors a side) readable: at
+// least 0.9px per picture unit, and the picture scrolls inside the well
+// instead of shrinking to a strip.
+new MutationObserver(() => {
+  const svg = document.querySelector('#layout svg');
+  if (svg) svg.style.minWidth = Math.round(svg.viewBox.baseVal.width * 0.9) + 'px';
+  refresh();
+}).observe(document.getElementById('layout'), {childList: true});
+
 // Connect flips every board-facing control on; the words in the toolbar say
 // so. The markup starts disabled, so nothing runs at load.
+const connected = () => document.getElementById('connection').dataset.on === '1';
+
 function setConnected(on) {
   const words = document.getElementById('connection');
   words.textContent = on ? 'Connected — config mode' : 'Not connected';
@@ -4200,20 +4449,35 @@ document.getElementById('main').addEventListener('input', event => {
 });
 document.getElementById('main').addEventListener('change', refresh);
 
-// Exit reboots the board, which drops the device: the toolbar says so.
+// Exit reboots the board, which drops the device: the toolbar says so. A
+// page that already reported why (an action threw first) keeps its reason.
 navigator.hid?.addEventListener('disconnect', event => {
-  if (event.device === device) setConnected(false);
+  if (event.device === device && connected()) setConnected(false);
 });
 
-// Toolbar actions run, then the counts follow. A refused Save bands the top of
-// the window with the fields that need a fix.
+// Toolbar actions run one at a time: the toolbar is disabled while one runs,
+// so a second click on Save cannot start a second Save loop. A refused Save
+// bands the top of the window with the fields that need a fix. An action that
+// throws means the board is gone or was never chosen: the page says so and
+// keeps the user's values for a later Read or Save.
 document.getElementById('menu-buttons').addEventListener('click', async event => {
   const handler = event.target.closest('button')?.dataset.handler;
   if (!handler) return;
-  const result = await window[handler]();
-  if (handler === 'saveHandler') showRefusal(result === false);
-  // Read replaces the values the last Save refused, so its errors go too.
-  if (handler === 'readHandler') clearErrors();
+  const buttons = [...document.querySelectorAll('#menu-buttons button')];
+  buttons.forEach(b => {b.disabled = true;});
+  try {
+    const result = await window[handler]();
+    // Back to the rule, not to a snapshot: Connect may just have turned the page on.
+    buttons.forEach(b => {b.disabled = b.classList.contains('online') && !connected();});
+    if (handler === 'saveHandler') showRefusal(result === false);
+    // Read replaces the values the last Save refused, so its errors go too.
+    if (handler === 'readHandler') clearErrors();
+  } catch (error) {
+    console.error(error);
+    setConnected(false);
+    document.querySelector('[data-handler="connectHandler"]').disabled = false;
+    document.getElementById('connection').textContent = 'Not connected — ' + (error.message || error);
+  }
   refresh();
 });
 

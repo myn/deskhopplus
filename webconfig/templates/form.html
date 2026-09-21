@@ -52,7 +52,7 @@
     {{ reading(item, 'data-helper-paired', hex=True) }}
 
   {% elif item.get("elem") == "label" %}
-    <h3 class="sub">{{ item.name }}</h3>
+    {# A label starts a titled box; main.html's grouped() renders it. #}
 
   {% elif item.get("elem") == "hotkey" %}
     <div class="row hotkey-field" data-hotkey-action="{{ item.action }}">

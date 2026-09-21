@@ -18,8 +18,9 @@ html = html.replace('</body>', `<script>
     140:2,141:0,142:65535,143:1,144:0,145:65535,
     152:1,153:0,154:65535,155:2,156:0,157:65535};
   for (let key=140; key<164; key++) fields[key] ??= 0;
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   let sets = 0, saves = 0, wipes = 0;
-  device = {opened:true, async sendReport(id, report) {
+  device = {opened:true, async open() {this.opened = true;}, addEventListener() {}, async sendReport(id, report) {
     if (report[2] === packetType.setValMsg) sets++;
     if (report[2] === packetType.saveConfigMsg) saves++;
     if (report[2] === packetType.wipeConfigMsg) wipes++;
@@ -56,6 +57,13 @@ html = html.replace('</body>', `<script>
     throw Error('A strip is shown with nothing to say');
   if (document.querySelector('.computer[data-computer="A"] h3').textContent !== 'Output A · MacOS')
     throw Error('Read did not put the OS in the group title');
+  // #227: every label starts its own box. The key mapping rows are not screensaver rows.
+  const keymapBox = document.querySelector('.computer[data-computer="A"] .keymap-field').closest('.group');
+  const boxTitle = box => box.previousElementSibling && box.previousElementSibling.matches('h3.sub') ? box.previousElementSibling.textContent : '';
+  const byKey = key => document.querySelector('[data-key="'+key+'"]');
+  if (boxTitle(keymapBox) !== 'Key mapping' || !keymapBox.contains(byKey(23)) ||
+      boxTitle(byKey(19).closest('.group')) !== 'Screensaver' || keymapBox.contains(byKey(19)))
+    throw Error('Key mapping rows are not in their own titled box: "'+boxTitle(keymapBox)+'"');
   const layout = document.getElementById('layout');
   if (layout.querySelectorAll('.layout-monitor').length !== 4 ||
       layout.querySelectorAll('[data-segment]').length !== 2 ||
@@ -195,6 +203,10 @@ html = html.replace('</body>', `<script>
     throw Error('Drop to the right did not fill in borders and segments: '+written());
   if (sets !== 0 || pending().sort().join() !== '140,143,145,155,157,17,47')
     throw Error('Drop must wait for Save: sent '+sets+', pending '+pending());
+  // #227: a drop counts as unsaved on the Save button, like a typed edit.
+  await tick();
+  if (document.getElementById('unsaved').hidden || document.getElementById('unsaved').textContent !== String(pending().length))
+    throw Error('A drop did not show the unsaved count: "'+document.getElementById('unsaved').textContent+'" for '+pending().length);
   // A horizontal layout leaves a visible snapped row above and below for stacking.
   const horizontalSvg = layout.querySelector('svg').getBoundingClientRect();
   const horizontalLabel = layout.querySelector('.layout-B .layout-handle');
@@ -266,8 +278,17 @@ html = html.replace('</body>', `<script>
   if (written() !== '5,4,2,1,1,2' || count.value !== '2' || countA() !== '2' || chainA() !== '1' || sets !== 0 || pending().length ||
       layout.querySelectorAll('[data-segment]').length !== 2)
     throw Error('Read did not restore the board values: '+written()+' pending '+pending());
+  // #227: the widest desk the board allows, seven a side (12 boxes across on this desk),
+  // keeps a readable scale and scrolls in the well instead of shrinking to a strip.
+  for (let n = 0; n < 5; n++) for (const letter of ['A', 'B'])
+    layout.querySelector('button[aria-label="Add a monitor to Output '+letter+'"]').click();
+  await tick();
+  const wideSvg = layout.querySelector('svg'), wideUnits = wideSvg.viewBox.baseVal.width;
+  if (layout.querySelectorAll('.layout-box').length !== 14 || wideUnits < 1200 ||
+      wideSvg.getBoundingClientRect().width < wideUnits*0.9-1 || layout.scrollWidth <= layout.clientWidth)
+    throw Error('A seven-monitor desk shrank instead of scrolling: '+wideSvg.getBoundingClientRect().width+' of '+wideUnits);
+  await readHandler();
   // #225: the unsaved count follows edits and Read.
-  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
   const unsaved = document.getElementById('unsaved'), saveButton = document.querySelector('[data-handler="saveHandler"]');
   if (!unsaved.hidden) throw Error('Unsaved count shown with nothing changed');
   const os = field(46);
@@ -311,6 +332,37 @@ html = html.replace('</body>', `<script>
   saveButton.click(); await tick();
   // The fake board never sent some fields, so this Save fills them in; only the save message is counted.
   if (!strip.hidden || saves !== 1 || !unsaved.hidden) throw Error('A passing Save did not clear the strip and send the save message: '+saves+' strip '+strip.hidden+' unsaved '+unsaved.hidden);
+  // #227: two clicks on Save send one save message; the toolbar is disabled while an action runs.
+  saveButton.click(); saveButton.click(); await tick();
+  if (saves !== 2) throw Error('Two clicks on Save sent '+(saves-1)+' save messages');
+  // A board lost mid-action: the page says so and keeps the user's values.
+  const send = device.sendReport;
+  device.sendReport = async () => {throw new DOMException('The device is not opened.', 'InvalidStateError');};
+  os.value = '2'; os.dispatchEvent(new Event('change', {bubbles:true}));
+  saveButton.click(); await tick();
+  if (document.getElementById('connection').textContent !== 'Not connected — The device is not opened.' ||
+      !saveButton.disabled || os.value !== '2')
+    throw Error('A lost board was not reported: "'+document.getElementById('connection').textContent+'"');
+  if (document.querySelector('[data-handler="connectHandler"]').disabled) throw Error('Connect is disabled after a lost board');
+  device.sendReport = send;
+  // A cancelled WebHID prompt leaves the page not connected and says why.
+  navigator.hid.requestDevice = async () => [];
+  device.opened = false;
+  document.querySelector('[data-handler="connectHandler"]').click(); await tick();
+  if (document.getElementById('connection').textContent !== 'Not connected — No board chosen.' || !saveButton.disabled)
+    throw Error('A cancelled Connect was not reported: "'+document.getElementById('connection').textContent+'"');
+  // A good Connect from the toolbar turns the page on and leaves Read, Save and Exit enabled.
+  navigator.hid.requestDevice = async () => [device];
+  document.querySelector('[data-handler="connectHandler"]').click(); await tick();
+  if (document.getElementById('connection').textContent !== 'Connected — config mode' || saveButton.disabled ||
+      document.querySelector('[data-handler="readHandler"]').disabled || document.querySelector('[data-handler="rebootHandler"]').disabled)
+    throw Error('Connect left the toolbar off: "'+document.getElementById('connection').textContent+'" save '+saveButton.disabled);
+  // A disconnect event after a reported failure keeps the reason on the page.
+  device.sendReport = async () => {throw new DOMException('The device is not opened.', 'InvalidStateError');};
+  saveButton.click(); await tick();
+  device.opened = false; navigator.hid.dispatchEvent(Object.assign(new Event('disconnect'), {device}));
+  if (!/^Not connected — /.test(document.getElementById('connection').textContent)) throw Error('The disconnect event erased the reason');
+  device.sendReport = send; device.opened = true; setConnected(true); await readHandler();
   // Service: Wipe Config takes two clicks; any other click disarms it.
   sidebar[5].click();
   const wipe = document.querySelector('[data-handler="wipeConfigHandler"]');

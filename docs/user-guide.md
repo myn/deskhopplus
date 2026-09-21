@@ -286,7 +286,7 @@ DeskHop: park the mouse where the smaller monitor's edge is and press it.
 
 ### Cmd and Ctrl swap
 
-Each output has **Swap Ctrl and Cmd**. When ticked, Ctrl and Cmd (the Windows key) change places
+Each output has **Swap Ctrl and Cmd**, under **Key mapping**. When on, Ctrl and Cmd (the Windows key) change places
 on keys going to that computer, left and right both. `Ctrl+C` on the keyboard becomes `Cmd+C` on
 the Mac. It is on by default for an output whose Operating System is MacOS and off for the others.
 
@@ -295,7 +295,7 @@ fingering on both computers.
 
 ### Key overrides and passthrough
 
-Each output has two text boxes.
+Each output has two text boxes under **Key mapping**.
 
 **Key overrides** — one `from=to` per line. Keys going to that computer are changed on the way.
 Modifiers and ordinary keys mix freely:

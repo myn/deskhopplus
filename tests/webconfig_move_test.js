@@ -9,7 +9,7 @@ const assert = require('assert/strict');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const inert = {addEventListener() {}, style: {}, dataset: {}};
 const context = {console, Uint8Array, ArrayBuffer, DataView, Event: function() {},
-  navigator: {}, window: {addEventListener() {}}, document: {
+  navigator: {}, window: {addEventListener() {}}, MutationObserver: class {observe() {}}, document: {
     getElementById() { return inert; }, querySelector() { return null; }, querySelectorAll() { return []; },
   }};
 vm.createContext(context);

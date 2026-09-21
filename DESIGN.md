@@ -250,7 +250,7 @@ Three literal colours sit outside the token set and are the same in both schemes
 - **Title** (600, 15px, -0.01em): the window title "deskhopplus" at the top of the sidebar.
 - **Subtitle** (600, 13px): a group title above a grouped box ("Output A · MacOS", "Cursor transition trace"), the Advanced summary, and the Save button's label.
 - **Body** (400, 13px, 1.45): every row label, every control, every button, the sidebar items, the toolbar words.
-- **Label** (600, 11px, 0.04em, uppercase, Ink 2): the sub-heading inside a grouped box (`h3.sub`), such as "SCREENSAVER". It heads the rows beneath it. It never sits above a title.
+- **Label** (600, 11px, 0.04em, uppercase, Ink 2): a group title above its grouped box (`h3.sub`), such as "SCREENSAVER" or "KEY MAPPING", set 18px above the box and 14px in from its edge, as the OS sets them. Every label in a field list starts a new box. It never sits above a section title.
 - **Hint** (400, 12px, Ink 2, max 72ch): the paragraphs under a section title or the well. Error lines and seam input labels share the size.
 - **Mono** (400, 12px, tabular): hex readings and the keymap text areas.
 - **Trace** (400, 11px, 1.5): the cursor transition trace in `pre`, wrapped, in Ink 2.
@@ -266,7 +266,7 @@ The window is a flex row: a 220px sidebar (`ground`, 1px right hairline, padding
 
 One section is visible at a time. The others are hidden, not removed, so every field stays in the document. The section title has 20px above and 12px below. A group title (`h3`) has 24px above and 8px below. A hint has 8px above. The Advanced disclosure box has 12px above.
 
-Inside a grouped box, rows stack with a hairline between them. A row is a wrapping flex line: min-height 40px, padding 6px 14px, gap 8px vertical and 16px horizontal, label left (`flex: 1 1 160px`) and control right. An error line (`small`) takes the full width under them. The layout well has 16px padding; the picture's SVG is centred, full width, capped at 360px tall; the +/- counts sit 10px under it with a 24px gap between computers.
+Inside a grouped box, rows stack with a hairline between them. A row is a wrapping flex line: min-height 40px, padding 6px 14px, gap 8px vertical and 16px horizontal, label left (`flex: 1 1 160px`) and control right. An error line (`small`) takes the full width under them. The layout well is the page's peak: at least 460px tall, 24px 16px padding, the picture centred in it vertically. The picture's SVG is full width, capped at 380px tall, and never under 0.9px per picture unit: a desk wider than the well scrolls inside it instead of shrinking. The +/- counts sit 16px under it with a 32px gap between computers; their steppers are 26px tall at 15px.
 
 The spacing scale is 4px-based: 4, 8, 12, 16, 24, 40. Row padding (6px 14px), strip padding (10px 14px) and button padding (4px 12px) are the exceptions and are recorded on their components.
 
@@ -322,7 +322,7 @@ Character: a full-width band the user must read before going on.
 - **Background:** `box`.
 - **Shadow Strategy:** none; see Elevation.
 - **Border:** 1px `line`; rows inside are separated by 1px `line` top borders.
-- **Internal Padding:** rows are 6px 14px with min-height 40px; a sub-heading is 12px 14px 4px.
+- **Internal Padding:** rows are 6px 14px with min-height 40px; boxes in one list are 12px apart; a group title has 18px above and 6px below.
 - **Advanced:** a `details` styled as a group. The summary is 10px 14px, weight 600; when open it gains a bottom hairline.
 
 ### Inputs / Fields
@@ -345,8 +345,8 @@ Three 72px number inputs (Screen, Start, End) with 12px Ink 2 labels, 8px apart,
 ### Trace
 A `pre` inside a grouped box: 11px/1.5 mono, Ink 2, wrapped, padding 10px 14px, top hairline.
 
-### Arrangement well and picture (signature)
-The well is a recessed box (`well` fill, 10px radius, 16px padding, centred). The picture is layout.js's SVG, drawn at pane scale (max 360px tall). Each computer has a label bar handle ("Output A · MacOS") and its monitors below. Unselected: handle in `handle`, monitors in `monitor` with `monitor-ink` 1.5px strokes and 13px 600 labels; Main has a 3px stroke. Selected (`data-selected`): handle and monitors turn accent, labels and Main's stroke turn on-accent, in 120ms. The seam between the computers is a row of `monitor-ink` bands, 6px round-capped, with 9px 700 digits filled `well` and haloed by a 3px `monitor-ink` stroke. A refused drop writes one Error Red line under the picture; an accepted one writes Ink 2. A focused monitor box gets an accent stroke. Click, focus or key on a computer selects it and swaps the rows beneath with no animation.
+### Layout well and picture (signature)
+The well is a recessed box (`well` fill, 10px radius, 24px 16px padding, at least 460px tall, the picture centred in it). The picture is layout.js's SVG, drawn at hero scale (max 380px tall, at least 0.9px per unit, scrolling when wider than the well). Each computer has a label bar handle ("Output A · MacOS") and its monitors below. Unselected: handle in `handle`, monitors in `monitor` with `monitor-ink` 1.5px strokes and 13px 600 labels; Main has a 3px stroke. Selected (`data-selected`): handle and monitors turn accent, labels and Main's stroke turn on-accent, in 120ms. The seam between the computers is a row of `monitor-ink` bands, 8px round-capped, with 12px 700 digits filled `well` and haloed by a 4px `monitor-ink` stroke; the label bars carry 11px 600 text. A refused drop writes one Error Red line under the picture; an accepted one writes Ink 2. A focused monitor box gets an accent stroke. Click, focus or key on a computer selects it and swaps the rows beneath with no animation.
 
 ## Do's and Don'ts
 

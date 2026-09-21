@@ -13,7 +13,7 @@ const context = {
   DataView,
   Event: function Event() {},
   navigator: {},
-  window: {addEventListener() {}},
+  window: {addEventListener() {}}, MutationObserver: class {observe() {}},
   document: {
     getElementById() { return inert; },
     querySelector() { return null; },

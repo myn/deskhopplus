@@ -136,6 +136,7 @@ OUTPUT_ = [
     FormField(10, "Only If Inactive", None, {}, "uint8", "checkbox"),
     FormField(11, "Idle Time (μs)", None, {}, "uint64"),
     FormField(12, "Max Time (μs)", None, {}, "uint64"),
+    FormField(1008, "Key mapping", elem="label"),
     FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
     FormField(1007, "Seam ranges — Start/End show layout offset", elem="label"),
     SeamRangeRow(0),

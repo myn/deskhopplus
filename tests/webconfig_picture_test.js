@@ -4,7 +4,7 @@ const assert = require('assert/strict');
 const html = fs.readFileSync(process.argv[2], 'utf8');
 const inert = {addEventListener() {}, style: {}, dataset: {}};
 const context = {console, Uint8Array, ArrayBuffer, DataView, Event: function() {},
-  navigator: {}, window: {addEventListener() {}}, document: {
+  navigator: {}, window: {addEventListener() {}}, MutationObserver: class {observe() {}}, document: {
     getElementById() { return inert; }, querySelector() { return null; }, querySelectorAll() { return []; },
   }};
 vm.createContext(context);
@@ -73,7 +73,7 @@ assert.equal(result.note, 'Segments are not set. Move a monitor to set them.');
 assert.equal(Math.min(...result.outputs[0].monitors.map(m => m.x)), 0);
 assert.equal(Math.min(...result.outputs[1].monitors.map(m => m.x)), 0);
 assert.ok(context.renderLayout(result).includes('Open Advanced'));
-assert.ok(html.includes('<details id="advanced" class="group">'));
+assert.ok(html.includes('<details id="advanced">'));
 assert.equal((html.match(/<summary>Advanced<\/summary>/g) || []).length, 1);
 for (const letter of ['A','B']) {
   // One disclosure holds both computers' panels; the page shows the selected one.
