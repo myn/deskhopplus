@@ -84,10 +84,15 @@ it, do not copy it.
 **The fields are the truth.** The Advanced inputs are the settings. The layout
 is a view of them, drawn by pure functions; it stores nothing of its own.
 
-**Size.** The page must fit the 64 kB config disk the firmware stores.
-`disk/capacity.py` turns an overflow into a build failure. Today
-`config.htm` is 30 336 bytes, a self-extracting DEFLATE bundle of one HTML file
-with its CSS and JS inline (`webconfig/render.py`). Everything the page needs
+**Size.** The page must fit the 64 kB config disk the firmware stores. The
+file may use 59 392 bytes of it (the rest is FAT overhead); `disk/capacity.py`
+turns an overflow into a build failure. Today `config.htm` is 30 336 bytes
+(51%), a self-extracting DEFLATE bundle of one HTML file with its CSS and JS
+inline (`webconfig/render.py`). A second cap sits in the browser, not the
+board: `packer.j2` inflates into a 100 000-byte buffer, and the unpacked page
+is 85 328 bytes today; that number can grow at no cost to the board. Design
+budget for the packed page (set 2026-09-21): at most 40 960 bytes, so 18 kB
+stays free for future fields. Everything the page needs
 must be inline: it opens from a drive, with no network, so no CDN, no web fonts,
 no external images. Rendering the templates needs Python 3.10+ and Jinja2;
 `webconfig/config.htm` and `disk/disk.img` are committed and CI regenerates and
