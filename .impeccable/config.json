@@ -1,0 +1,35 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "webconfig/templates/main.html"
+        ],
+        "createdAt": "2026-09-21T16:34:00.959Z",
+        "reason": "Claude: main.html is a Jinja template whose CSS arrives via {% include \"style.css\" %}, so the detector sees no sizes there; the rendered page (webconfig/config-unpacked.htm: body 13px, h2 20px, 1.54x) returns 0 findings"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "10px",
+        "files": [
+          "webconfig/config-unpacked.htm"
+        ],
+        "createdAt": "2026-09-21T16:56:38.544Z",
+        "reason": "Claude: SVG text in the desk picture, in viewBox units drawn by layout.js and scaled ~1.6x on screen (renders 14-16px); not a CSS ramp step"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "9px",
+        "files": [
+          "webconfig/config-unpacked.htm"
+        ],
+        "createdAt": "2026-09-21T16:56:38.581Z",
+        "reason": "Claude: SVG text in the desk picture, in viewBox units drawn by layout.js and scaled ~1.6x on screen (renders 14-16px); not a CSS ramp step"
+      }
+    ]
+  }
+}

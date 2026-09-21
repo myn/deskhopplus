@@ -50,7 +50,7 @@ window still opens on the way back.
 ### Which helper is a board paired with?
 
 Open the config page: press the chord, open the `DESKHOP` drive, open `config.htm` in Chrome, click
-**Connect**. Under **Device Status**, **Paired helper** shows an id of sixteen hex characters, or
+**Connect**. Under **Status**, **Paired helper** shows an id of sixteen hex characters, or
 *none — press the config chord to pair a helper*.
 
 Each helper writes its own id, `helper key id: …`, as the first line every time it starts. Look
@@ -159,7 +159,7 @@ you copied it. A file that shrinks fails the transfer.
 ### The size cap
 
 The board holds the largest clipboard it will carry: **10 MB** by default, up to **64 MB**. It is
-on the config page under **Common Config → Clipboard size cap (MB)**. The same cap applies to both
+on the config page under **Clipboard → Clipboard size cap (MB)**. The same cap applies to both
 directions and both helpers.
 
 When something too big is copied, nothing happens on the copy side. When you cross to the paste
@@ -168,7 +168,7 @@ brought over. Raise the limit on the board's config page.*
 
 ### Turning a direction off
 
-On the config page under **Common Config → Clipboard** are **Block clipboard A to B** and
+On the config page under **Clipboard** are **Block clipboard A to B** and
 **Block clipboard B to A**. Tick one to stop copies crossing that way. The board is the only place
 this is set; the helpers follow it.
 
@@ -184,15 +184,29 @@ config mode** means there is no usable helper channel; multi-monitor hops may th
 monitor. Click **Exit** when finished, or the board leaves config mode after five minutes. Each
 entry and exit reboots the board and starts a fresh helper session. Pair a new helper after Exit.
 
-The page has **Output A** and **Output B**, one per computer, then **Common Config**. Output A is
-the computer on board A, Output B the computer on board B. Not sure which board is which? Unplug
-and replug both boards: the keyboard and mouse always start on board A's computer.
+The page is one settings window. The sidebar on the left has six sections, shown one at a time:
+**Desk**, **Keyboard & Mouse**, **Hotkeys**, **Clipboard**, **Status** and **Service**. The
+toolbar at the top says in words whether the page is connected and holds **Connect**, **Read**,
+**Save** and **Exit**. Save shows how many fields you have changed and not yet saved; a section
+holding unsaved changes carries a dot in the sidebar. Read throws unsaved changes away.
+
+**Desk** is the picture of both computers' monitors, with the selected computer's settings under
+it: click a computer in the picture, **Output A** or **Output B**, to see its settings. Output A
+is the computer on board A, Output B the computer on board B. Not sure which board is which?
+Unplug and replug both boards: the keyboard and mouse always start on board A's computer.
+
+**Service** holds the maintenance buttons: **Blink**, **Blink both**, **Bootloader** and
+**Wipe Config**. Bootloader and Wipe Config need two clicks; the first arms the button and says so.
+
+When Save finds a field it cannot send — a hotkey or key name the board does not know — nothing
+is sent. A yellow strip at the top of the window says how many fields need a fix and names each
+one with its section; click a name to land on the field. Fix them and Save again.
 
 ### Where the computers sit
 
-The **Layout** above the output columns pictures both computers' monitors after **Connect** or
-**Read**. Each computer is a coloured block with a label bar; its boxes are numbered from **Main**,
-the monitor its operating system calls main, outward along the line. The purple bands on the seam
+The picture in **Desk** shows both computers' monitors after **Connect** or **Read**. Each
+computer is a block with a label bar, the selected one in blue; its boxes are numbered from **Main**,
+the monitor its operating system calls main, outward along the line. The bands on the seam
 are the segments: which monitor meets which, and in what order. Move things by dragging:
 
 - Drag a computer's **label bar** to move that computer as a block: to another side of the other
@@ -217,7 +231,8 @@ default depend on it.
 
 ### Advanced: the fields behind the picture
 
-One closed **Advanced** panel holds the fields the picture sets, for both outputs; changing one
+One closed **Advanced** panel under the selected computer's settings holds the fields the picture
+sets for that computer; click the other computer in the picture to see its fields. Changing one
 redraws the picture. Values the picture cannot draw exactly show a note. Each output has:
 
 - **Screen Count** — how many monitors that computer drives (1 to 7).
@@ -303,7 +318,7 @@ Up to 16 per output. Order of precedence: passthrough first, then overrides, the
 
 ### Hotkeys
 
-**Common Config → Hotkeys** has one box per action. Write the keys joined by `+`, up to six keys:
+**Hotkeys** has one box per action. Write the keys joined by `+`, up to six keys:
 
 ```
 lctrl+capslock

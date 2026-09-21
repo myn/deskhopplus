@@ -119,6 +119,12 @@ set_tests_properties(webconfig_chrome_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOU
 add_test(NAME webconfig_cursor_trace_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_cursor_trace_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+# The packed page's design budget (#225, PRODUCT.md): 40 960 of the 59 392
+# bytes the config disk can hold, so future fields have room. The disk's own
+# hard limit is checked by disk/capacity.py at build time.
+add_test(NAME webconfig_size_test COMMAND ${NODE_EXECUTABLE} -e
+         "const s = require('fs').statSync(process.argv[1]).size; console.log('config.htm: ' + s + ' of 40960 bytes'); process.exit(s > 40960 ? 1 : 0)"
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config.htm)
 
 add_executable(frame_test frame_test.c ${CORE}/dh_frame.c)
 target_include_directories(frame_test PRIVATE ${CORE})

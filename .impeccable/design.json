@@ -1,0 +1,476 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-21T16:55:10Z",
+  "title": "Design System: deskhopplus config page",
+  "scope": "The config page only (webconfig/templates/ rendered to webconfig/config.htm). Helper menus are out of scope.",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Selection Blue",
+        "canonical": "oklch(56% 0.25 262)",
+        "dark": "accent-dark",
+        "tonalRamp": [
+          "oklch(18% 0.113 262)",
+          "oklch(28% 0.163 262)",
+          "oklch(38% 0.212 262)",
+          "oklch(48% 0.25 262)",
+          "oklch(58% 0.25 262)",
+          "oklch(70% 0.2 262)",
+          "oklch(84% 0.125 262)",
+          "oklch(95% 0.05 262)"
+        ]
+      },
+      "on-accent": {
+        "role": "primary",
+        "displayName": "On Accent",
+        "canonical": "oklch(100% 0 0)",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Ring",
+        "canonical": "oklch(56% 0.25 262 / 0.4)",
+        "dark": "focus-dark",
+        "tonalRamp": [
+          "oklch(18% 0.113 262)",
+          "oklch(28% 0.163 262)",
+          "oklch(38% 0.212 262)",
+          "oklch(48% 0.25 262)",
+          "oklch(58% 0.25 262)",
+          "oklch(70% 0.2 262)",
+          "oklch(84% 0.125 262)",
+          "oklch(95% 0.05 262)"
+        ]
+      },
+      "warn": {
+        "role": "secondary",
+        "displayName": "Refusal Yellow",
+        "canonical": "oklch(88% 0.18 95)",
+        "tonalRamp": [
+          "oklch(18% 0.081 95)",
+          "oklch(28% 0.117 95)",
+          "oklch(38% 0.153 95)",
+          "oklch(48% 0.18 95)",
+          "oklch(58% 0.18 95)",
+          "oklch(70% 0.144 95)",
+          "oklch(84% 0.09 95)",
+          "oklch(95% 0.036 95)"
+        ]
+      },
+      "warn-ink": {
+        "role": "secondary",
+        "displayName": "Refusal Ink",
+        "canonical": "oklch(22% 0.004 270)",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "bad": {
+        "role": "tertiary",
+        "displayName": "Error Red",
+        "canonical": "oklch(55% 0.23 27)",
+        "dark": "bad-dark",
+        "tonalRamp": [
+          "oklch(18% 0.104 27)",
+          "oklch(28% 0.15 27)",
+          "oklch(38% 0.196 27)",
+          "oklch(48% 0.23 27)",
+          "oklch(58% 0.23 27)",
+          "oklch(70% 0.184 27)",
+          "oklch(84% 0.115 27)",
+          "oklch(95% 0.046 27)"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Ground",
+        "canonical": "oklch(94% 0 0)",
+        "dark": "ground-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "pane": {
+        "role": "neutral",
+        "displayName": "Pane",
+        "canonical": "oklch(97% 0.002 270)",
+        "dark": "pane-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "box": {
+        "role": "neutral",
+        "displayName": "Box",
+        "canonical": "oklch(100% 0 0)",
+        "dark": "box-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "oklch(91% 0.004 270)",
+        "dark": "well-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "canonical": "oklch(86% 0.004 270)",
+        "dark": "line-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(22% 0.004 270)",
+        "dark": "ink-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink 2",
+        "canonical": "oklch(53% 0.006 270)",
+        "dark": "ink-2-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "monitor": {
+        "role": "neutral",
+        "displayName": "Monitor",
+        "canonical": "oklch(83% 0.004 270)",
+        "dark": "monitor-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "monitor-ink": {
+        "role": "neutral",
+        "displayName": "Monitor Ink",
+        "canonical": "oklch(33% 0.004 270)",
+        "dark": "monitor-ink-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      },
+      "handle": {
+        "role": "neutral",
+        "displayName": "Handle",
+        "canonical": "oklch(38% 0.006 270)",
+        "dark": "handle-dark",
+        "tonalRamp": [
+          "oklch(18% 0.003 270)",
+          "oklch(28% 0.004 270)",
+          "oklch(38% 0.005 270)",
+          "oklch(48% 0.006 270)",
+          "oklch(58% 0.006 270)",
+          "oklch(70% 0.005 270)",
+          "oklch(84% 0.003 270)",
+          "oklch(95% 0.001 270)"
+        ]
+      }
+    },
+    "darkScheme": "Under @media (prefers-color-scheme: dark) the :root tokens are redeclared with the -dark frontmatter values; components never redefine a colour. warn, warn-ink and on-accent are the same in both schemes.",
+    "literalColors": [
+      {
+        "value": "#888",
+        "where": "select chevron data-URI stroke",
+        "note": "same in both schemes"
+      },
+      {
+        "value": "#fff",
+        "where": "switch thumb and handle label text",
+        "note": "use on-accent for new white-on-fill text"
+      }
+    ],
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The section title (h2), one per section."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "The window title \"deskhopplus\" at the top of the sidebar."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "Group titles above a grouped box, the Advanced summary, the Save label."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Every row label, control, button, sidebar item and toolbar word."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase sub-heading inside a grouped box (h3.sub). Heads the rows beneath it; never above a title."
+      },
+      "hint": {
+        "displayName": "Hint",
+        "purpose": "Explanatory paragraphs (max 72ch), error lines, seam input labels."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Hex readings and keymap text areas; tabular numerals."
+      },
+      "trace": {
+        "displayName": "Trace",
+        "purpose": "The cursor transition trace in pre, wrapped."
+      }
+    },
+    "shadows": [
+      {
+        "name": "thumb-lift",
+        "value": "0 1px 2px rgba(0,0,0,0.3)",
+        "purpose": "Under the switch thumb only. The one shadow in the page."
+      }
+    ],
+    "motion": [
+      {
+        "name": "quick",
+        "value": "120ms ease-out",
+        "purpose": "Switch background and thumb; monitor fill on selection. Removed under prefers-reduced-motion. Section switches, row swaps and strips are instant."
+      }
+    ],
+    "focusRing": {
+      "value": "outline: 3px solid var(--focus); outline-offset: 1px",
+      "purpose": "Every :focus-visible. A focused monitor box in the picture gets an accent stroke instead."
+    },
+    "selection": {
+      "value": "::selection { background: var(--accent); color: var(--on-accent) }"
+    },
+    "breakpoints": [
+      {
+        "name": "fold",
+        "value": "800px",
+        "purpose": "Sidebar folds into a wrapping row; toolbar unsticks; content padding 16px; text inputs full width."
+      },
+      {
+        "name": "phone",
+        "value": "480px",
+        "purpose": "Slider and seam inputs wrap onto their own line; number inputs 80px."
+      }
+    ],
+    "constraints": [
+      "Ships inline on the board's 64 kB DESKHOP disk with no network: no web fonts, no images, no icon library, no CDN.",
+      "Packed config.htm budget: at most 40 960 bytes (disk/capacity.py is the build gate).",
+      "Icons are few-path inline SVG: a chevron data-URI on selects and a ring-and-exclamation in the strips.",
+      "Chromium only (WebHID); the page shows the no-WebHID strip elsewhere."
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default toolbar, row and service button. Disabled until Connect.",
+      "html": "<button class=\"ds-btn\">Read</button> <button class=\"ds-btn\" disabled>Exit</button>",
+      "css": ".ds-btn{font:13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;padding:4px 12px;border:1px solid var(--line,#d2d2d7);border-radius:6px;background:var(--box,#fff);color:var(--ink,#1d1d1f);cursor:pointer}.ds-btn:hover{background:color-mix(in srgb,var(--box,#fff) 85%,var(--ink,#1d1d1f))}.ds-btn:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}.ds-btn:disabled{opacity:.45;cursor:default}.ds-btn:disabled:hover{background:var(--box,#fff)}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Save: the one filled button. Carries the unsaved count as a badge; the badge is hidden at zero.",
+      "html": "<button class=\"ds-btn-primary\">Save<span class=\"ds-count\">2</span></button>",
+      "css": ".ds-btn-primary{font:600 13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;padding:4px 12px;border:1px solid var(--accent,#0a60ff);border-radius:6px;background:var(--accent,#0a60ff);color:var(--on-accent,#fff);cursor:pointer}.ds-btn-primary:hover{background:color-mix(in srgb,var(--accent,#0a60ff) 85%,black)}.ds-btn-primary:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}.ds-btn-primary:disabled{opacity:.45;cursor:default}.ds-btn-primary:disabled:hover{background:var(--accent,#0a60ff)}.ds-count{margin-left:6px;padding:0 6px;border-radius:8px;background:var(--on-accent,#fff);color:var(--accent,#0a60ff);font-size:11px;font-weight:400}"
+    },
+    {
+      "name": "Armed Button",
+      "kind": "button",
+      "refersTo": "button-armed",
+      "description": "A service button after its first click. Yellow, relabelled \"Click again to …\"; a click anywhere else disarms it.",
+      "html": "<button class=\"ds-btn-armed\">Click again to wipe</button>",
+      "css": ".ds-btn-armed{font:13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;padding:4px 12px;border:1px solid var(--warn,#ffd60a);border-radius:6px;background:var(--warn,#ffd60a);color:var(--warn-ink,#1d1d1f);cursor:pointer}.ds-btn-armed:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}"
+    },
+    {
+      "name": "Sidebar",
+      "kind": "nav",
+      "refersTo": "sidebar",
+      "description": "The section list. Current item is accent-filled; a section with unsaved or invalid fields carries a dot.",
+      "html": "<nav class=\"ds-sidebar\" aria-label=\"Sections\"><h1>deskhopplus</h1><button aria-current=\"page\">Desk</button><button>Keyboard &amp; Mouse</button><button data-unsaved>Hotkeys</button><button>Clipboard</button><button>Status</button><button>Service</button></nav>",
+      "css": ".ds-sidebar{display:flex;flex-direction:column;gap:2px;width:220px;padding:16px 12px;background:var(--ground,#ececec);border-right:1px solid var(--line,#d2d2d7);font:13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;color:var(--ink,#1d1d1f)}.ds-sidebar h1{margin:0 8px 14px;font-size:15px;font-weight:600;letter-spacing:-.01em}.ds-sidebar button{position:relative;text-align:left;padding:6px 10px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer}.ds-sidebar button:hover{background:color-mix(in srgb,var(--ink,#1d1d1f) 8%,transparent)}.ds-sidebar button[aria-current=\"page\"]{background:var(--accent,#0a60ff);color:var(--on-accent,#fff)}.ds-sidebar button[data-unsaved]::after{content:\"\";position:absolute;right:10px;top:50%;width:7px;height:7px;margin-top:-4px;border-radius:50%;background:currentColor}.ds-sidebar button:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}"
+    },
+    {
+      "name": "Grouped Rows",
+      "kind": "card",
+      "refersTo": "group",
+      "description": "A grouped box of label-left control-right rows: slider with readout, select with chevron, uppercase sub-heading, switch, and an invalid text input with its error line.",
+      "html": "<h3 class=\"ds-group-title\">Output A · MacOS</h3><div class=\"ds-group\"><div class=\"ds-row\"><label for=\"ds-speed\">Speed X</label><span class=\"ds-slider\"><input class=\"ds-readout\" type=\"number\" value=\"16\" readonly tabindex=\"-1\"><input class=\"ds-range\" type=\"range\" min=\"1\" max=\"32\" value=\"16\" id=\"ds-speed\"></span></div><div class=\"ds-row\"><label for=\"ds-os\">Operating System</label><select class=\"ds-select\" id=\"ds-os\"><option>MacOS</option><option>Windows</option><option>Linux</option></select></div><h3 class=\"ds-sub\">Screensaver</h3><div class=\"ds-row\"><label for=\"ds-sw\">Only If Inactive</label><input class=\"ds-switch\" type=\"checkbox\" id=\"ds-sw\" checked></div><div class=\"ds-row\"><label for=\"ds-hk\">output_toggle</label><input class=\"ds-input\" type=\"text\" id=\"ds-hk\" value=\"lctrl+nope\" aria-invalid=\"true\"><small class=\"ds-error\">Line 1, column 7, token “nope”: unknown key name</small></div></div>",
+      "css": ".ds-group-title{margin:24px 0 8px;font:600 13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;color:var(--ink,#1d1d1f)}.ds-group{border:1px solid var(--line,#d2d2d7);border-radius:10px;background:var(--box,#fff);font:13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif;color:var(--ink,#1d1d1f);accent-color:var(--accent,#0a60ff)}.ds-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;min-height:40px;padding:6px 14px}.ds-row+.ds-row,.ds-sub+.ds-row,.ds-row+.ds-sub{border-top:1px solid var(--line,#d2d2d7)}.ds-row>label{flex:1 1 160px}.ds-row>small{flex-basis:100%}.ds-sub{margin:0;padding:12px 14px 4px;font-size:11px;font-weight:600;color:var(--ink-2,#6e6e73);text-transform:uppercase;letter-spacing:.04em}.ds-input,.ds-select{font:inherit;color:inherit;padding:4px 8px;border:1px solid var(--line,#d2d2d7);border-radius:6px;background:var(--pane,#f5f5f7);min-width:0}.ds-input{width:220px}.ds-input[aria-invalid]{border-color:var(--bad,#d70015)}.ds-error{color:var(--bad,#d70015);font-size:12px}.ds-select{appearance:none;padding-right:24px;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 8px center}.ds-slider{display:flex;align-items:center;gap:10px}.ds-readout{width:48px;text-align:right;border:0;background:transparent;padding:0;font:inherit;color:var(--ink-2,#6e6e73);font-variant-numeric:tabular-nums}.ds-range{width:160px;margin:0}.ds-switch{appearance:none;width:34px;height:20px;margin:0;border-radius:10px;background:var(--monitor,#c7c7cc);position:relative;cursor:pointer;transition:background 120ms ease-out}.ds-switch::after{content:\"\";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:left 120ms ease-out}.ds-switch:checked{background:var(--accent,#0a60ff)}.ds-switch:checked::after{left:16px}.ds-input:focus-visible,.ds-select:focus-visible,.ds-range:focus-visible,.ds-switch:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}@media (prefers-reduced-motion:reduce){.ds-switch,.ds-switch::after{transition:none}}"
+    },
+    {
+      "name": "Refusal Strip",
+      "kind": "custom",
+      "refersTo": "strip",
+      "description": "The yellow band at the top after a refused Save or in a browser with no WebHID. The glyph is the page's one inline icon.",
+      "html": "<div class=\"ds-strip\" role=\"alert\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" aria-hidden=\"true\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M8 4.5v4.2M8 11.6v.2\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/></svg><div><strong>Save refused.</strong> 2 fields need a fix; nothing was sent.<ul><li><a href=\"#\">Hotkeys › output_toggle</a>: Line 1, column 7, token “nope”: unknown key name</li><li><a href=\"#\">Hotkeys › firmware_upgrade_b</a>: Line 1, column 14, token “f13”: unknown key name</li></ul></div></div>",
+      "css": ".ds-strip{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border-radius:8px;background:var(--warn,#ffd60a);color:var(--warn-ink,#1d1d1f);font:13px/1.45 -apple-system, \"Segoe UI\", system-ui, sans-serif}.ds-strip svg{flex:none;margin-top:2px}.ds-strip strong{font-weight:600}.ds-strip ul{margin:6px 0 0;padding-left:18px}.ds-strip a{color:inherit;font-weight:600}.ds-strip a:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}"
+    },
+    {
+      "name": "Arrangement Well",
+      "kind": "custom",
+      "refersTo": "well",
+      "description": "The recessed well with the desk picture. Output A is selected (accent); B is grey. The seam is a row of ink bands with well-coloured digits.",
+      "html": "<div class=\"ds-well\"><svg viewBox=\"0 0 320 216\" width=\"320\" height=\"216\" aria-label=\"Desk picture\"><g class=\"ds-computer ds-selected\"><rect class=\"ds-handle\" x=\"40\" y=\"8\" width=\"240\" height=\"24\" rx=\"6\"/><text class=\"ds-handle-text\" x=\"160\" y=\"24\">Output A · MacOS</text><rect class=\"ds-monitor\" x=\"40\" y=\"40\" width=\"110\" height=\"70\" rx=\"6\"/><text class=\"ds-monitor-text\" x=\"95\" y=\"80\">2</text><rect class=\"ds-monitor ds-main\" x=\"170\" y=\"40\" width=\"110\" height=\"70\" rx=\"6\"/><text class=\"ds-monitor-text\" x=\"225\" y=\"80\">Main</text></g><line class=\"ds-band\" x1=\"44\" y1=\"120\" x2=\"276\" y2=\"120\"/><text class=\"ds-band-number\" x=\"95\" y=\"123\">1</text><text class=\"ds-band-number\" x=\"225\" y=\"123\">2</text><g class=\"ds-computer\"><rect class=\"ds-handle\" x=\"40\" y=\"130\" width=\"240\" height=\"24\" rx=\"6\"/><text class=\"ds-handle-text\" x=\"160\" y=\"146\">Output B · Windows</text><rect class=\"ds-monitor ds-main\" x=\"40\" y=\"162\" width=\"110\" height=\"44\" rx=\"6\"/><text class=\"ds-monitor-text\" x=\"95\" y=\"189\">Main</text><rect class=\"ds-monitor\" x=\"170\" y=\"162\" width=\"110\" height=\"44\" rx=\"6\"/><text class=\"ds-monitor-text\" x=\"225\" y=\"189\">2</text></g></svg></div>",
+      "css": ".ds-well{padding:16px;border:1px solid var(--line,#d2d2d7);border-radius:10px;background:var(--well,#e4e4e8);text-align:center}.ds-well svg{display:block;margin:0 auto;max-width:100%;font-family:-apple-system, \"Segoe UI\", system-ui, sans-serif}.ds-handle{fill:var(--handle,#4a4a4e);cursor:grab}.ds-handle-text{fill:#fff;font-size:10px;text-anchor:middle;pointer-events:none}.ds-monitor{fill:var(--monitor,#c7c7cc);stroke:var(--monitor-ink,#3a3a3c);stroke-width:1.5;transition:fill 120ms ease-out;cursor:grab}.ds-main{stroke-width:3}.ds-monitor-text{fill:var(--monitor-ink,#3a3a3c);font-size:13px;font-weight:600;text-anchor:middle;pointer-events:none}.ds-selected .ds-handle,.ds-selected .ds-monitor{fill:var(--accent,#0a60ff);stroke:var(--accent,#0a60ff)}.ds-selected .ds-main{stroke:var(--on-accent,#fff)}.ds-selected .ds-monitor-text{fill:var(--on-accent,#fff)}.ds-band{stroke:var(--monitor-ink,#3a3a3c);stroke-width:6;stroke-linecap:round}.ds-band-number{fill:var(--well,#e4e4e8);paint-order:stroke;stroke:var(--monitor-ink,#3a3a3c);stroke-width:3px;font-size:9px;font-weight:700;text-anchor:middle}@media (prefers-reduced-motion:reduce){.ds-monitor{transition:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Display-Arrangement Pane",
+    "overview": "The page looks like the OS's own display settings, stretched over two computers. It is one settings window: a grey sidebar of section names on the left, a toolbar with the connection words and four buttons, and a content column of grouped boxes. The picture of the desk sits in a recessed well at the top of the Desk section. Click a computer in the picture and its rows appear under it. The page refuses the category default: a long two-column admin form with a picture bolted on.\n\nThe material is flat. Depth comes from tonal steps (sidebar darker than content, boxes lighter, the well recessed) and 1px hairlines, not shadows. Type is the system face at 13px in every row. One accent, system selection blue, marks what is selected or what acts: the current section, the chosen computer, the Save button, switches that are on, the range thumb, the focus ring. Yellow is the only other fill and it means \"stop and read\": the refusal strip and an armed service button.\n\nThe page ships inline on a 64 kB disk with no network. That is a design fact, not a limit to work around. No web fonts, no images, no icon library. Icons are few-path inline SVG, and there are two of them.",
+    "keyCharacteristics": [
+      "One window: 220px sidebar, 44px sticky toolbar, 760px content column.",
+      "Grouped boxes with 10px corners, hairline row separators, label left and control right.",
+      "One accent hue. Grey does the rest.",
+      "Flat: tonal layers and hairlines; one 1px shadow under the switch thumb.",
+      "System type only: 13px body, 20px section titles.",
+      "Dark scheme follows the OS through `color-scheme: light dark`.",
+      "Motion is 120ms ease-out on the switch and the monitor fill, nothing else."
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "Blue means selected or primary. It appears on the current section, the chosen computer, Save, switches that are on, the range, focus and selection, and on nothing else. A second hue never enters the picture; the seam bands are ink, not colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The Yellow Means Stop Rule",
+        "body": "Yellow fills only a strip the user must read (a refusal, a missing WebHID) and a service button waiting for its second click. Red never fills; it strokes an invalid input and colours the line that says why.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tonal Step Rule",
+        "body": "Surfaces are told apart by lightness, not by shadow: ground under pane, pane under box, well recessed below pane. In dark mode the order flips so box is the lightest layer.",
+        "section": "colors"
+      },
+      {
+        "name": "The System Face Rule",
+        "body": "No font file is ever shipped or fetched. The two stacks above are the whole type system.",
+        "section": "typography"
+      },
+      {
+        "name": "The 13px Row Rule",
+        "body": "A row's label and its control are both 13px. Only the section title (20px) and the window title (15px) are larger. Smaller sizes (12px, 11px) exist only for secondary text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Hairline Rule",
+        "body": "Every boundary is a 1px `line` border. Boxes, rows, inputs, the sidebar edge and the toolbar edge share it. Nothing is separated by space alone or by a shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Shadow Rule",
+        "body": "The switch thumb carries the only shadow. Nothing else lifts.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do put every setting in a grouped box row: label left, control right, hairline between rows.",
+      "Do use the accent only for what is selected or primary, and grey for the rest.",
+      "Do keep the two schemes on the same tokens; dark redefines `:root`, never a component.",
+      "Do draw any new icon as a few-path inline SVG in `currentColor` or a data-URI, at 16px or less.",
+      "Do keep the packed `config.htm` at or under 40 960 bytes; `disk/capacity.py` is the hard gate.",
+      "Do make a refusal a yellow strip at the top with the field names as links, and mark the field red at the same time.",
+      "Do keep an action that reboots or wipes behind a second click, shown in yellow.",
+      "Do make a hover a colour mix (8% ink on transparent, 15% ink on `box`, 15% black on accent), not a new colour."
+    ],
+    "donts": [
+      "Don't load a font, an image, an icon set or anything else over the network. The page opens from a drive.",
+      "Don't add a shadow beyond the switch thumb's 1px lift, or a gradient anywhere.",
+      "Don't introduce a second hue. Bands, handles and unselected monitors stay in the grey ramp.",
+      "Don't fill anything red; red is a border and a line of text.",
+      "Don't animate a section switch, a row swap or a strip. Only the switch and the monitor fill move, and only for 120ms.",
+      "Don't let a corner exceed 10px or drop below 6px, except the pill switch and the dots.",
+      "Don't widen the content column past 760px or add a second column."
+    ]
+  }
+}

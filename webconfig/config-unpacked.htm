@@ -6,827 +6,482 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <style>
-    /*!
-  * Milligram v1.4.1
-  * https://milligram.io
-  *
-  * Copyright (c) 2020 CJ Patoilo
-  * Licensed under the MIT license
- */
-
-*,
-*:after,
-*:before {
-  box-sizing: border-box;
-}
+    /* The config page as a settings window: sidebar, toolbar, grouped rows.
+   Tokens first; dark follows the OS. Everything is inline and hand-written
+   because the page ships on a 64 kB disk with no network (PRODUCT.md). */
 
 :root {
-  --highlight-color: #384955;
-  --font-color: #384955;
-  --highlight-color2: #5e9f41;
+  --ground: #ececec;
+  --pane: #f5f5f7;
+  --box: #ffffff;
+  --well: #e4e4e8;
+  --line: #d2d2d7;
+  --ink: #1d1d1f;
+  --ink-2: #6e6e73;
+  --accent: #0a60ff;
+  --on-accent: #ffffff;
+  --monitor: #c7c7cc;
+  --monitor-ink: #3a3a3c;
+  --handle: #4a4a4e;
+  --warn: #ffd60a;
+  --warn-ink: #1d1d1f;
+  --bad: #d70015;
+  --focus: #0a60ff66;
+  color-scheme: light dark;
 }
 
-html {
-  box-sizing: border-box;
-  font-size: 62.5%;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #1e1e1e;
+    --pane: #2a2a2c;
+    --box: #353538;
+    --well: #232325;
+    --line: #48484c;
+    --ink: #f2f2f7;
+    --ink-2: #a1a1a6;
+    --accent: #2f6fe0;
+    --monitor: #5a5a5f;
+    --monitor-ink: #f2f2f7;
+    --handle: #5a5a5f;
+    --warn: #ffd60a;
+    --warn-ink: #1d1d1f;
+    --bad: #ff6961;
+    --focus: #2f6fe080;
+  }
 }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { height: 100%; }
 
 body {
-  color: var(--font-color);
-  font-family: 'Roboto', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
-  font-size: 1.6em;
-  font-weight: 300;
-  letter-spacing: .01em;
-  line-height: 1.6;
-}
-
-blockquote {
-  border-left: 0.3rem solid #384955;
-  margin-left: 0;
-  margin-right: 0;
-  padding: 1rem 1.5rem;
-}
-
-blockquote *:last-child {
-  margin-bottom: 0;
-}
-
-.button,
-button,
-input[type='button'],
-input[type='reset'],
-input[type='submit'] {
-  background-color: var(--highlight-color);
-  border: 0.1rem solid var(--highlight-color);
-  border-radius: .4rem;
-  color: #fff;
-  cursor: pointer;
-  display: inline-block;
-  font-size: 1.1rem;
-  font-weight: 700;
-  height: 3.8rem;
-  letter-spacing: .1rem;
-  line-height: 3.8rem;
-  padding: 0.0rem 2.0rem;
-  text-align: center;
-  text-decoration: none;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.button:focus, .button:hover,
-button:focus,
-button:hover,
-input[type='button']:focus,
-input[type='button']:hover,
-input[type='reset']:focus,
-input[type='reset']:hover,
-input[type='submit']:focus,
-input[type='submit']:hover {
-  background-color: var(--highlight-color2);
-  border-color: var(--highlight-color2);
-  color: #fff;
-  outline: 0;
-}
-
-.button[disabled],
-button[disabled],
-input[type='button'][disabled],
-input[type='reset'][disabled],
-input[type='submit'][disabled] {
-  cursor: default;
-  opacity: .5;
-}
-
-.button[disabled]:focus, .button[disabled]:hover,
-button[disabled]:focus,
-button[disabled]:hover,
-input[type='button'][disabled]:focus,
-input[type='button'][disabled]:hover,
-input[type='reset'][disabled]:focus,
-input[type='reset'][disabled]:hover,
-input[type='submit'][disabled]:focus,
-input[type='submit'][disabled]:hover {
-  background-color: var(--highlight-color);
-  border-color: var(--highlight-color);
-}
-
-.button.button-outline,
-button.button-outline,
-input[type='button'].button-outline,
-input[type='reset'].button-outline,
-input[type='submit'].button-outline {
-  background-color: transparent;
-  color: var(--highlight-color);
-}
-
-.button.button-outline:focus, .button.button-outline:hover,
-button.button-outline:focus,
-button.button-outline:hover,
-input[type='button'].button-outline:focus,
-input[type='button'].button-outline:hover,
-input[type='reset'].button-outline:focus,
-input[type='reset'].button-outline:hover,
-input[type='submit'].button-outline:focus,
-input[type='submit'].button-outline:hover {
-  background-color: transparent;
-  border-color: var(--highlight-color2);
-  color: var(--highlight-color2);
-}
-
-.button.button-outline[disabled]:focus, .button.button-outline[disabled]:hover,
-button.button-outline[disabled]:focus,
-button.button-outline[disabled]:hover,
-input[type='button'].button-outline[disabled]:focus,
-input[type='button'].button-outline[disabled]:hover,
-input[type='reset'].button-outline[disabled]:focus,
-input[type='reset'].button-outline[disabled]:hover,
-input[type='submit'].button-outline[disabled]:focus,
-input[type='submit'].button-outline[disabled]:hover {
-  border-color: inherit;
-  color: var(--highlight-color);
-}
-
-.button.button-clear,
-button.button-clear,
-input[type='button'].button-clear,
-input[type='reset'].button-clear,
-input[type='submit'].button-clear {
-  background-color: transparent;
-  border-color: transparent;
-  color: var(--highlight-color);
-}
-
-.button.button-clear:focus, .button.button-clear:hover,
-button.button-clear:focus,
-button.button-clear:hover,
-input[type='button'].button-clear:focus,
-input[type='button'].button-clear:hover,
-input[type='reset'].button-clear:focus,
-input[type='reset'].button-clear:hover,
-input[type='submit'].button-clear:focus,
-input[type='submit'].button-clear:hover {
-  background-color: transparent;
-  border-color: transparent;
-  color: var(--highlight-color2);
-}
-
-.button.button-clear[disabled]:focus, .button.button-clear[disabled]:hover,
-button.button-clear[disabled]:focus,
-button.button-clear[disabled]:hover,
-input[type='button'].button-clear[disabled]:focus,
-input[type='button'].button-clear[disabled]:hover,
-input[type='reset'].button-clear[disabled]:focus,
-input[type='reset'].button-clear[disabled]:hover,
-input[type='submit'].button-clear[disabled]:focus,
-input[type='submit'].button-clear[disabled]:hover {
-  color: var(--highlight-color);
-}
-
-/* Logo, title and the menu buttons in one bar across the top. */
-.topbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 1rem;
-  background-color: #d7e5f0;
-  padding: 0.5rem 1rem;
-  margin-bottom: 2rem;
-}
-
-.topbar h3 {
   margin: 0;
+  min-height: 100%;
+  background: var(--pane);
+  color: var(--ink);
+  font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+  accent-color: var(--accent);
 }
 
-#menu-buttons {
+::selection { background: var(--accent); color: var(--on-accent); }
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+
+/* Window: sidebar and pane */
+
+.window { display: flex; min-height: 100vh; }
+
+.sidebar {
+  flex: 0 0 220px;
+  padding: 16px 12px;
+  background: var(--ground);
+  border-right: 1px solid var(--line);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  margin-left: auto;
+  flex-direction: column;
+  gap: 2px;
 }
 
-#menu-buttons .button {
-  margin: 0;
-  padding: 0 1rem;
+.sidebar h1 {
+  margin: 0 8px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-#menu-buttons hr {
-  height: 2.4rem;
-  border-top: 0;
-  border-left: 0.1rem dotted var(--highlight-color);
-  margin: 0 1rem;
-}
-
-code {
-  background: #f4f5f6;
-  border-radius: .4rem;
-  font-size: 86%;
-  margin: 0 .2rem;
-  padding: .2rem .5rem;
-  white-space: nowrap;
-}
-
-pre {
-  background: #f4f5f6;
-  border-left: 0.3rem solid var(--highlight-color);
-  overflow-y: hidden;
-}
-
-pre > code {
-  border-radius: 0;
-  display: block;
-  padding: 1rem 1.5rem;
-  white-space: pre;
-}
-
-hr {
+.sidebar button {
+  text-align: left;
+  padding: 6px 10px;
   border: 0;
-  border-top: 0.1rem dotted lightblue;
-  margin: 1.0rem 3.0rem;
-}
-
-input[type='color'],
-input[type='date'],
-input[type='datetime'],
-input[type='datetime-local'],
-input[type='email'],
-input[type='month'],
-input[type='password'],
-input[type='search'],
-input[type='number'],
-input[type='tel'],
-input[type='text'],
-input[type='url'],
-input[type='week'],
-input:not([type]),
-textarea,
-select {
-  -webkit-appearance: none;
-  background-color: transparent;
-  border: 0.1rem solid #d1d1d1;
-  border-radius: .4rem;
-  box-shadow: none;
-  box-sizing: border-box;
-  height: 3.8rem;
-  padding: .6rem 1.0rem .7rem;
-  width: 100%;
-}
-
-input[type='color']:focus,
-input[type='date']:focus,
-input[type='datetime']:focus,
-input[type='datetime-local']:focus,
-input[type='email']:focus,
-input[type='month']:focus,
-input[type='number']:focus,
-input[type='password']:focus,
-input[type='search']:focus,
-input[type='tel']:focus,
-input[type='text']:focus,
-input[type='url']:focus,
-input[type='week']:focus,
-input:not([type]):focus,
-textarea:focus,
-select:focus {
-  border-color: var(--highlight-color);
-  outline: 0;
-}
-
-select {
-  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 8" width="30"><path fill="%23d1d1d1" d="M0,0l6,8l6-8"/></svg>') center right no-repeat;
-  padding-right: 3.0rem;
-}
-
-select:focus {
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 8" width="30"><path fill="%239b4dca" d="M0,0l6,8l6-8"/></svg>');
-}
-
-select[multiple] {
-  background: none;
-  height: auto;
-}
-
-textarea {
-  min-height: 6.5rem;
-}
-
-label,
-legend {
-  display: block;
-  font-size: 1.6rem;
-  font-weight: 700;
-  margin-bottom: .5rem;
-}
-
-fieldset {
-  border-width: 0;
-  padding: 0;
-}
-
-input[type='checkbox'],
-input[type='radio'] {
-  display: inline;
-}
-
-.label-inline {
-  display: inline-block;
-  font-weight: normal;
-  margin-left: .5rem;
-}
-
-.label-inline-bold {
-  display: inline-block;
-  font-size: 1.6rem;
-  font-weight: 700;
-}
-
-input[type='range'].input-inline,
-input[type='number'].input-inline {
-  display: inline-block;
-  font-weight: normal;
-  border: none;
-  width: 20%;
-}
-
-.range {
-  width: 100%;
-}
-
-.container {
-  margin: 0 auto;
-  max-width: 112.0rem;
-  padding: 0 2.0rem;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
   position: relative;
-  width: 100%;
+}
+
+.sidebar button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
+.sidebar button[aria-current="page"] { background: var(--accent); color: var(--on-accent); }
+
+/* A section holding unsaved changes or an invalid field says so with a dot. */
+.sidebar button[data-unsaved]::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pane { flex: 1 1 auto; min-width: 0; }
+
+main { padding: 8px 24px 40px; max-width: 760px; }
+
+#fields { margin: 0; padding: 0; border: 0; min-width: 0; }
+
+section[data-section][hidden] { display: none; }
+
+/* Toolbar */
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 44px;
+  padding: 0 24px;
+  background: var(--pane);
+  border-bottom: 1px solid var(--line);
+}
+
+.toolbar p { margin: 0; color: var(--ink-2); }
+
+#connection[data-on="1"] { color: var(--ink); }
+
+#menu-buttons { display: flex; gap: 8px; }
+
+button, select, input, textarea { font: inherit; color: inherit; }
+
+.toolbar button, #service-buttons button, .layout-counts button, .row button {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--box);
+  cursor: pointer;
+}
+
+.toolbar button:hover, #service-buttons button:hover, .layout-counts button:hover, .row button:hover {
+  background: color-mix(in srgb, var(--box) 85%, var(--ink));
+}
+
+.toolbar button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+
+.toolbar button.primary:hover { background: color-mix(in srgb, var(--accent) 85%, black); }
+
+button:disabled { opacity: 0.45; cursor: default; }
+
+button:disabled:hover { background: var(--box); }
+
+.toolbar button.primary:disabled:hover { background: var(--accent); }
+
+#unsaved { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: var(--on-accent); color: var(--accent); font-size: 11px; }
+
+#service-buttons button[data-armed] { background: var(--warn); border-color: var(--warn); color: var(--warn-ink); }
+
+/* Refusal and browser warning strips */
+
+.strip {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 16px 24px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--warn);
+  color: var(--warn-ink);
+}
+
+.strip[hidden] { display: none; }
+
+.strip svg { flex: none; margin-top: 2px; }
+
+.strip strong { font-weight: 600; }
+
+.strip ul { margin: 6px 0 0; padding-left: 18px; }
+
+.strip a { color: inherit; font-weight: 600; }
+
+/* Sections and rows */
+
+h2 { margin: 20px 0 12px; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+
+h3 { margin: 24px 0 8px; font-size: 13px; font-weight: 600; }
+
+h3.sub { margin: 0; padding: 12px 14px 4px; font-size: 11px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.hint { margin: 8px 0 0; max-width: 72ch; color: var(--ink-2); font-size: 12px; }
+
+.group {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--box);
 }
 
 .row {
   display: flex;
-  flex-direction: column;
-  padding: 0;
-  width: 100%;
-}
-
-.row.row-no-padding {
-  padding: 0;
-}
-
-.row.row-no-padding > .column {
-  padding: 0;
-}
-
-.row.row-wrap {
   flex-wrap: wrap;
-}
-
-.row.row-top {
-  align-items: flex-start;
-}
-
-.row.row-bottom {
-  align-items: flex-end;
-}
-
-.row.row-center {
   align-items: center;
-}
-
-.row.row-stretch {
-  align-items: stretch;
-}
-
-.row.row-baseline {
-  align-items: baseline;
-}
-
-.row .column {
-  display: block;
-  flex: 1 1 auto;
-  margin-left: 0;
-  max-width: 100%;
-  width: 100%;
-}
-
-.row .column.column-offset-10 {
-  margin-left: 10%;
-}
-
-.row .column.column-offset-20 {
-  margin-left: 20%;
-}
-
-.row .column.column-offset-25 {
-  margin-left: 25%;
-}
-
-.row .column.column-offset-33, .row .column.column-offset-34 {
-  margin-left: 33.3333%;
-}
-
-.row .column.column-offset-40 {
-  margin-left: 40%;
-}
-
-.row .column.column-offset-50 {
-  margin-left: 50%;
-}
-
-.row .column.column-offset-60 {
-  margin-left: 60%;
-}
-
-.row .column.column-offset-66, .row .column.column-offset-67 {
-  margin-left: 66.6666%;
-}
-
-.row .column.column-offset-75 {
-  margin-left: 75%;
-}
-
-.row .column.column-offset-80 {
-  margin-left: 80%;
-}
-
-.row .column.column-offset-90 {
-  margin-left: 90%;
-}
-
-.row .column.column-10 {
-  flex: 0 0 10%;
-  max-width: 10%;
-}
-
-.row .column.column-20 {
-  flex: 0 0 20%;
-  max-width: 20%;
-}
-
-.row .column.column-25 {
-  flex: 0 0 25%;
-  max-width: 25%;
-}
-
-.row .column.column-33, .row .column.column-34 {
-  flex: 0 0 33.3333%;
-  max-width: 33.3333%;
-}
-
-.row .column.column-40 {
-  flex: 0 0 40%;
-  max-width: 40%;
-}
-
-.row .column.column-50 {
-  flex: 0 0 50%;
-  max-width: 50%;
-}
-
-.row .column.column-60 {
-  flex: 0 0 60%;
-  max-width: 60%;
-}
-
-.row .column.column-66, .row .column.column-67 {
-  flex: 0 0 66.6666%;
-  max-width: 66.6666%;
-}
-
-.row .column.column-75 {
-  flex: 0 0 75%;
-  max-width: 75%;
-}
-
-.row .column.column-80 {
-  flex: 0 0 80%;
-  max-width: 80%;
-}
-
-.row .column.column-90 {
-  flex: 0 0 90%;
-  max-width: 90%;
-}
-
-.row .column .column-top {
-  align-self: flex-start;
-}
-
-.row .column .column-bottom {
-  align-self: flex-end;
-}
-
-.row .column .column-center {
-  align-self: center;
-}
-
-@media (min-width: 40rem) {
-  .row {
-    flex-direction: row;
-
-    width: calc(100% + 2.0rem);
-  }
-  .row .column {
-    margin-bottom: inherit;
-    padding: 0 1.0rem;
-  }
-}
-
-a {
-  color: var(--highlight-color);
-  text-decoration: none;
-}
-
-a:focus, a:hover {
-  color: var(--highlight-color2);
-}
-
-dl,
-ol,
-ul {
-  list-style: none;
-  margin-top: 0;
-  padding-left: 0;
-}
-
-dl dl,
-dl ol,
-dl ul,
-ol dl,
-ol ol,
-ol ul,
-ul dl,
-ul ol,
-ul ul {
-  font-size: 90%;
-  margin: 1.5rem 0 1.5rem 3.0rem;
-}
-
-ol {
-  list-style: decimal inside;
-}
-
-ul {
-  list-style: circle inside;
-}
-
-.button,
-button,
-dd,
-dt,
-li {
-  margin-bottom: 1.0rem;
-}
-
-fieldset,
-input,
-select,
-textarea {
-  margin-bottom: 1.5rem;
-}
-
-blockquote,
-dl,
-figure,
-form,
-ol,
-p,
-pre,
-table,
-ul {
-  margin-bottom: 2.5rem;
-}
-
-table {
-  border-spacing: 0;
-  display: block;
-  overflow-x: auto;
-  text-align: left;
-  width: 100%;
-}
-
-td,
-th {
-  border-bottom: 0.1rem solid #e1e1e1;
-  padding: 1.2rem 1.5rem;
-}
-
-td:first-child,
-th:first-child {
-  padding-left: 0;
-}
-
-td:last-child,
-th:last-child {
-  padding-right: 0;
-}
-
-@media (min-width: 40rem) {
-  table {
-    display: table;
-    overflow-x: initial;
-  }
-}
-
-b,
-strong {
-  font-weight: bold;
-}
-
-p {
-  margin-top: 0;
-}
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-weight: 300;
-  letter-spacing: -.1rem;
-  margin-bottom: 2.0rem;
-  margin-top: 0;
-}
-
-h1 {
-  font-size: 4.6rem;
-  line-height: 1.2;
-}
-
-h2 {
-  font-size: 3.6rem;
-  line-height: 1.25;
-}
-
-h3 {
-  font-size: 2.8rem;
-  line-height: 1.3;
-}
-
-h4 {
-  font-size: 2.2rem;
-  letter-spacing: -.08rem;
-  line-height: 1.35;
-}
-
-h5 {
-  font-size: 1.8rem;
-  letter-spacing: -.05rem;
-  line-height: 1.5;
-}
-
-h6 {
-  font-size: 1.6rem;
-  letter-spacing: 0;
-  line-height: 1.4;
-}
-
-img {
-  max-width: 100%;
-}
-
-.clearfix:after {
-  clear: both;
-  content: ' ';
-  display: table;
-}
-
-.float-left {
-  float: left;
-}
-
-.float-right {
-  float: right;
-}
-
-.online {
-  opacity: 0.5;
-}
-
-.seam-range {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.8rem;
-  align-items: end;
-}
-
-.seam-range > span { grid-column: 1 / -1; }
-.seam-range::after { content: none; }
-
-.seam-range label {
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 40px;
+  padding: 6px 14px;
   margin: 0;
 }
 
-.seam-range .seam-input {
-  width: 100%;
+.row + .row, .sub + .row, .row + .sub { border-top: 1px solid var(--line); }
+
+.row > label, .row > span:first-child { flex: 1 1 160px; }
+
+.row > small { flex-basis: 100%; }
+
+.row input[type="text"], .row input[type="number"], .row textarea, .row select {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--pane);
+  min-width: 0;
 }
 
-.dev-warning {
-  color: #b0342b;
-  font-weight: bold;
+.row input[type="text"] { width: 220px; }
+
+.row input[type="number"] { width: 100px; }
+
+.row input[readonly] { background: transparent; border-color: transparent; text-align: right; color: var(--ink-2); }
+
+.row input[readonly].content { font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.row input[readonly].dev-warning { color: var(--bad); }
+
+.row textarea { width: 280px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+
+.row select {
+  appearance: none;
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
 }
-/* A malformed hotkey table is refused as a unit; keep the reason beside the field. */
-.hotkey-error { color: #b42318; display: block; min-height: 1.4em; }
-.hotkey-text { margin-bottom: 0; }
 
-#layout { padding: 1rem; background: #f6f8fa; margin-bottom: 2rem; }
-#layout svg { display: block; width: 100%; margin: 1rem auto; touch-action: none; }
-#layout text { text-anchor: middle; fill: #253440; font-size: 16px; }
-.layout-handle, .layout-box { cursor: grab; user-select: none; }
-.layout-box:focus { outline: none; }
-.layout-box:focus-visible .layout-monitor { stroke: #7148a0; stroke-dasharray: 6 4; }
-.layout-counts button { height: 2.4rem; line-height: 2.4rem; padding: 0 1rem; margin: 0 0.4rem; font-size: 1.4rem; }
-.layout-counts span { margin-right: 2rem; white-space: nowrap; }
-.layout-handle rect { fill: currentColor; }
-#layout .layout-handle text { fill: white; font-size: 11px; }
-#layout-status { color: #a03030; min-height: 1.5em; }
-#layout-status.layout-ok { color: #35732e; }
-.layout-A { color: #245d8c; fill: #d7e5f0; }
-.layout-B { color: #35732e; fill: #e1f0d7; }
-.layout-monitor { stroke: currentColor; stroke-width: 1; }
-.layout-main { stroke-width: 5; }
-.layout-band { stroke: #7148a0; stroke-width: 9; }
-#layout .layout-band-number { fill: white; font-size: 13px; paint-order: stroke; stroke: #7148a0; stroke-width: 3; }
-summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
+.row input[aria-invalid], .row textarea[aria-invalid] { border-color: var(--bad); }
 
-#advanced { padding: 1rem; }
-#advanced .row { width: 100%; }
-.row .column { min-width: 0; }
-@media (max-width: 50rem) {
-  #advanced > .row { flex-direction: column; }
+.hotkey-error, .keymap-error { color: var(--bad); font-size: 12px; }
+
+.hotkey-error:empty, .keymap-error:empty { display: none; }
+
+/* Switch: a checkbox drawn as the OS draws one. */
+.switch {
+  appearance: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 10px;
+  background: var(--monitor);
+  position: relative;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  transition: left 120ms ease-out;
+}
+
+.switch:checked { background: var(--accent); }
+
+.switch:checked::after { left: 16px; }
+
+/* Slider with its readout */
+.slider { display: flex; align-items: center; gap: 10px; }
+
+.slider .readout { width: 48px; text-align: right; border: 0; background: transparent; padding: 0; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.slider .range { width: 160px; margin: 0; }
+
+.seam-inputs { display: flex; gap: 8px; }
+
+.seam-inputs label { display: flex; align-items: center; gap: 4px; color: var(--ink-2); font-size: 12px; }
+
+.seam-inputs input { width: 72px; }
+
+/* Advanced */
+details.group { margin-top: 12px; }
+
+summary { padding: 10px 14px; cursor: pointer; font-weight: 600; }
+
+details[open] summary { border-bottom: 1px solid var(--line); }
+
+pre {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+
+/* The layout well and the picture in it */
+
+.well {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--well);
+  text-align: center;
+}
+
+#layout { min-height: 80px; color: var(--ink-2); }
+
+/* layout.js caps the height inline at the canvas size; the well overrides
+   that so the desk is drawn at settings-pane scale, not a thumbnail. */
+#layout svg { display: block; margin: 0 auto; width: 100%; max-width: 100%; max-height: 360px !important; }
+
+#layout-status { margin: 8px 0 0; min-height: 1.45em; color: var(--bad); }
+
+#layout-status.layout-ok { color: var(--ink-2); }
+
+#layout-status:empty { margin: 0; min-height: 0; }
+
+.layout-counts { margin: 10px 0 0; display: flex; justify-content: center; gap: 24px; color: var(--ink); }
+
+.layout-counts button { padding: 0 8px; line-height: 20px; }
+
+.layout-handle { cursor: grab; }
+
+.layout-handle rect { fill: var(--handle); }
+
+.layout-handle text { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; }
+
+.layout-box { cursor: grab; outline: none; }
+
+.layout-monitor { fill: var(--monitor); stroke: var(--monitor-ink); stroke-width: 1.5; transition: fill 120ms ease-out; }
+
+.layout-main { stroke-width: 3; }
+
+.layout-box text { fill: var(--monitor-ink); font-size: 13px; font-weight: 600; text-anchor: middle; pointer-events: none; }
+
+.layout-box:focus-visible .layout-monitor { stroke: var(--accent); }
+
+#layout[data-selected="A"] .layout-A .layout-monitor,
+#layout[data-selected="B"] .layout-B .layout-monitor { fill: var(--accent); stroke: var(--accent); }
+
+#layout[data-selected="A"] .layout-A .layout-main,
+#layout[data-selected="B"] .layout-B .layout-main { stroke: var(--on-accent); }
+
+#layout[data-selected="A"] .layout-A text,
+#layout[data-selected="B"] .layout-B text { fill: var(--on-accent); }
+
+#layout[data-selected="A"] .layout-A .layout-handle rect,
+#layout[data-selected="B"] .layout-B .layout-handle rect { fill: var(--accent); }
+
+/* Segments: ink bands with well-coloured numbers, so both schemes stay in the one-accent palette. */
+.layout-band { stroke: var(--monitor-ink); stroke-width: 6; stroke-linecap: round; }
+
+.layout-band-number { fill: var(--well); paint-order: stroke; stroke: var(--monitor-ink); stroke-width: 3px; font-size: 9px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+
+/* Narrow window: the sidebar folds into a row of section names. */
+@media (max-width: 800px) {
+  .window { flex-direction: column; }
+  .sidebar { flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .sidebar h1 { flex-basis: 100%; margin: 0 8px 6px; }
+  .toolbar { position: static; flex-wrap: wrap; height: auto; min-height: 44px; padding: 6px 16px; }
+  main { padding: 8px 16px 40px; }
+  .strip { margin: 12px 16px 0; }
+  .row input[type="text"], .row textarea { width: 100%; }
+  .slider .range { width: 120px; }
+  .layout-counts { flex-wrap: wrap; gap: 12px; }
+}
+
+/* Phone width: nothing in a row is wider than the row. */
+@media (max-width: 480px) {
+  .slider, .seam-inputs { flex: 1 1 100%; flex-wrap: wrap; }
+  .slider .range { flex: 1 1 120px; }
+  .row input[type="number"] { width: 80px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch::after, .layout-monitor { transition: none; }
 }
   </style>
 
-  <title>DeskHop Config</title>
+  <title>deskhopplus</title>
 </head>
 
 <body>
 
-  <main class="wrapper">
 
-    <section class="container">
 
-      <div class="row" id="warning" style="display: none;">
-        <blockquote>
-          <h3> Oh, no! </h3>
-          Unfortunately, your browser does not support WebHID or the Permissions Policy is blocking its usage. Please try Chromium <br />
-          (or Chrome if you have to). Apologies for the inconvenience, hopefully a cross-browser solution happens soon.
-        </blockquote>
+
+
+
+
+
+
+
+<div class="window">
+  <nav class="sidebar" id="sidebar" aria-label="Sections">
+    <h1>deskhopplus</h1>
+
+    <button type="button" data-section="desk" aria-current="page">Desk</button>
+
+    <button type="button" data-section="keyboard">Keyboard & Mouse</button>
+
+    <button type="button" data-section="hotkeys">Hotkeys</button>
+
+    <button type="button" data-section="clipboard">Clipboard</button>
+
+    <button type="button" data-section="status">Status</button>
+
+    <button type="button" data-section="service">Service</button>
+
+  </nav>
+
+  <div class="pane">
+    <header class="toolbar">
+      <p id="connection" aria-live="polite">Not connected</p>
+      <div id="menu-buttons">
+        <button type="button" data-handler="connectHandler">Connect</button>
+        <button type="button" data-handler="readHandler" class="online" disabled>Read</button>
+        <button type="button" data-handler="saveHandler" class="online primary" disabled>Save<span id="unsaved" hidden></span></button>
+        <button type="button" data-handler="rebootHandler" class="online" disabled>Exit</button>
       </div>
+    </header>
 
-      <header class="topbar">
-        <svg style="width:90px; height:55px; stroke:#384955; stroke-width:2px; fill:white">
-          <g transform="translate(-67.5, -95)">
-            <path d="m 88.742006,98.633938 c -0.12648,0.0838 -0.252994,0.223292 -0.309214,0.320992 -0.0984,0.223308 0.337328,26.23798 0.44977,26.53106 0.0984,0.2512 0.42166,0.41868 0.74493,0.41868 0.309218,0 0.224886,0.0838 3.837102,-3.37742 l 1.672582,-1.56312 0.210828,0.43264 c 0.11244,0.23728 1.236868,2.5261 2.473736,5.09408 1.9818,4.11712 2.27696,4.68934 2.47373,4.81496 0.16868,0.1116 0.28111,0.1396 0.44977,0.1256 0.16868,-0.014 5.34102,-2.42842 6.21245,-2.88898 0.253,-0.1396 0.42166,-0.4187 0.42166,-0.68386 0,-0.1814 -0.59032,-1.4654 -2.44562,-5.28946 -1.33526,-2.77734 -2.43157,-5.06616 -2.40346,-5.09408 0.0281,-0.0278 1.57419,-0.23728 3.4295,-0.47452 1.8553,-0.23724 3.47166,-0.47452 3.5841,-0.5164 0.23894,-0.1116 0.46383,-0.43262 0.46383,-0.6699 0,-0.0838 -0.0562,-0.25122 -0.11244,-0.36286 -0.0703,-0.1256 -1.02604,-0.963 -2.41752,-2.09346 -1.26498,-1.03276 -5.80484,-4.75912 -10.077656,-8.29008 -4.272816,-3.53096 -7.842866,-6.447844 -7.941254,-6.489712 -0.23894,-0.12554 -0.47788,-0.11164 -0.71682,0.0558 z" />
-            <path d="m 112.69484,105.14605 a 1.8639801,1.8639801 0 0 0 -1.86328,1.86328 1.8639801,1.8639801 0 0 0 1.86328,1.86328 h 17.58204 a 1.8639801,1.8639801 0 0 0 1.86328,-1.86328 1.8639801,1.8639801 0 0 0 -1.86328,-1.86328 z" />
-            <path d="m 136.31594,110.95075 a 1.8639801,1.8639801 0 0 0 -1.86328,1.86328 1.8639801,1.8639801 0 0 0 1.86328,1.86328 h 2.71874 a 1.8639801,1.8639801 0 0 0 1.8672,-1.86328 1.8639801,1.8639801 0 0 0 -1.8672,-1.86328 z" />
-            <path d="m 121.55422,128.36481 a 1.8639801,1.8639801 0 0 0 -1.86328,1.86328 1.8639801,1.8639801 0 0 0 1.86328,1.86328 h 2.72266 a 1.8639801,1.8639801 0 0 0 1.86328,-1.86328 1.8639801,1.8639801 0 0 0 -1.86328,-1.86328 z" />
-            <path d="m 121.55812,110.83355 a 1.8639801,1.8639801 0 0 0 -1.86328,1.8672 1.8639801,1.8639801 0 0 0 1.86328,1.86328 h 4.15626 a 1.8639801,1.8639801 0 0 0 1.86328,-1.86328 1.8639801,1.8639801 0 0 0 -1.86328,-1.8672 z" />
-            <path d="m 118.64406,116.75543 a 1.8639801,1.8639801 0 0 0 -1.86328,1.86328 1.8639801,1.8639801 0 0 0 1.86328,1.86328 h 24.70704 a 1.8639801,1.8639801 0 0 0 1.86718,-1.86328 1.8639801,1.8639801 0 0 0 -1.86718,-1.86328 z" />
-            <path d="m 129.55812,122.56011 a 1.8639801,1.8639801 0 0 0 -1.86328,1.86328 1.8639801,1.8639801 0 0 0 1.86328,1.8633 h 10.6836 a 1.8639801,1.8639801 0 0 0 1.86328,-1.8633 1.8639801,1.8639801 0 0 0 -1.86328,-1.86328 z" />
-            <path d="m 104.01516,99.341366 a 1.8639801,1.8639801 0 0 0 -1.86329,1.863284 1.8639801,1.8639801 0 0 0 1.86329,1.86328 h 27.4375 a 1.8639801,1.8639801 0 0 0 1.86718,-1.86328 1.8639801,1.8639801 0 0 0 -1.86718,-1.863284 z" />
-          </g>
-        </svg>
-        <h3>Desk<span style="color: #5e9f41;">Hop</span> Config</h3>
+    <div id="warning" class="strip" role="alert" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5v4.2M8 11.6v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><div>
+      <strong>This browser has no WebHID.</strong> Open this page in Chrome or another
+      Chromium browser to connect to the board.
+    </div></div>
+    <div id="refusal" class="strip" role="alert" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.5v4.2M8 11.6v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><div></div></div>
 
-        <div id="menu-buttons">
-          <button data-handler="connectHandler" class="button button-clear">Connect</button>
-          <button data-handler="readHandler" class="button button-clear online">Read</button>
-          <button data-handler="saveHandler" class="button button-clear online">Save</button>
-          <button data-handler="rebootHandler" class="button button-clear online">Exit</button>
-          <hr />
-          <button data-handler="blinkHandler" class="button button-clear online">Blink</button>
-          <button data-handler="blinkBothHandler" class="button button-clear online">Blink both</button>
-          <button data-handler="enterBootloaderHandler" class="button button-clear online">Bootloader</button>
-          <button data-handler="wipeConfigHandler" class="button button-clear online">Wipe Config</button>
+    <main id="main">
+      <fieldset id="fields" disabled>
+      <section data-section="desk" aria-labelledby="desk-title">
+        <h2 id="desk-title">Desk</h2>
+        <div class="well">
+          <div id="layout" data-selected="A">Connect to see your monitor layout.</div>
+          <p id="layout-status" aria-live="polite"></p>
         </div>
-      </header>
-
-      <section aria-labelledby="layout-title">
-        <h3 id="layout-title">Layout</h3>
-        <div id="layout">Connect to see your monitor layout.</div>
-        <p>Drag a label to move a computer; drag Main onto its last numbered monitor to flip it.
-          The snapped drop is checked while you drag. Along-seam offsets are stored in the
-          Segment Start and End values under Advanced.</p>
-        <p>Save, then try the layout while this page stays connected. Wait for the helper
+        <p class="hint">Drag a label to move a computer; drag Main onto its last numbered monitor to flip it.
+          The snapped drop is checked while you drag. Click a computer to see its settings below.
+          Along-seam offsets are stored in the Segment Start and End values under Advanced.</p>
+        <p class="hint">Save, then try the layout while this page stays connected. Wait for the helper
           to say “Connected and paired — config mode” for correct multi-monitor hops. If it says
           “Device in config mode”, Exit before testing multi-monitor hops. Config mode reboots on
           entry and Exit, and ends automatically after five minutes.</p>
-        <p id="layout-status" aria-live="polite"></p>
-      </section>
 
-      <div style="border: 2px solid #d7e5f0; padding: 0 1em;">
 
-      <div class="row">
-        <div class="column">
-
-          <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <rect x="5" y="5" width="90" height="70" stroke="black" stroke-width="2" fill="#beffa1" rx="10" ry="10" />
-            <line x1="50" y1="90" x2="50" y2="75" stroke="black" stroke-width="2" />
-            <rect x="30" y="90" width="40" height="3" stroke="black" stroke-width="2" fill="#d7e5f0" rx="5" ry="5" />
-          </svg>
-
-            <h3>Output A</h3>
+        <div class="computer" data-computer="A">
+          <h3>Output A<span data-os-of="A"></span></h3>
+          <div class="group">
 
 
 
@@ -841,26 +496,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Speed X=</label>
 
 
+    <form class="row">
 
-<input class="input-inline" type="number" name="aInput12" data-type="int32" data-key="12"
+<label for="f12">Speed X</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput12" data-type="int32" data-key="12"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange12.value=this.value" />
-
+          readonly oninput="this.form.aRange12.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange12" data-type="int32" data-key="12"
   onchange="valueChangedHandler(this)"
-
-        min="1" max="100" oninput="this.form.aInput12.value=this.value" />
+ id="f12"
+          min="1" max="100" oninput="this.form.aInput12.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -877,26 +532,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Speed Y=</label>
 
 
+    <form class="row">
 
-<input class="input-inline" type="number" name="aInput13" data-type="int32" data-key="13"
+<label for="f13">Speed Y</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput13" data-type="int32" data-key="13"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange13.value=this.value" />
-
+          readonly oninput="this.form.aRange13.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange13" data-type="int32" data-key="13"
   onchange="valueChangedHandler(this)"
-
-        min="1" max="100" oninput="this.form.aInput13.value=this.value" />
+ id="f13"
+          min="1" max="100" oninput="this.form.aInput13.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -914,24 +569,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Operating System</label>
 
-    <select class="api" data-type="uint8" data-key="16" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
+    <div class="row">
 
+<label for="f16">Operating System</label>
 
-    <option value="1">Linux</option>
+      <select class="api" data-type="uint8" data-key="16" id="f16" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    <option value="2">MacOS</option>
+      <option value="1">Linux</option>
 
-    <option value="3">Windows</option>
+      <option value="2">MacOS</option>
 
-    <option value="4">Android</option>
+      <option value="3">Windows</option>
 
-    <option value="255">Other</option>
+      <option value="4">Android</option>
 
-    </select><br />
+      <option value="255">Other</option>
 
+      </select>
+    </div>
 
 
 
@@ -948,22 +605,24 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Cursor Park Position</label>
 
-    <select class="api" data-type="uint8" data-key="18" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="0">Top</option>
+    <div class="row">
 
-    <option value="1">Bottom</option>
+<label for="f18">Cursor Park Position</label>
 
-    <option value="3">Previous</option>
+      <select class="api" data-type="uint8" data-key="18" id="f18" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    </select><br />
+      <option value="0">Top</option>
 
+      <option value="1">Bottom</option>
 
+      <option value="3">Previous</option>
 
+      </select>
+    </div>
 
 
 
@@ -978,12 +637,12 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Screensaver</label>
 
 
 
 
 
+    <h3 class="sub">Screensaver</h3>
 
 
 
@@ -997,25 +656,27 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Mode</label>
 
-    <select class="api" data-type="uint8" data-key="19" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="0">Disabled</option>
 
-    <option value="1">Pong</option>
 
-    <option value="2">Jitter</option>
 
-    </select><br />
+    <div class="row">
 
+<label for="f19">Mode</label>
 
+      <select class="api" data-type="uint8" data-key="19" id="f19" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
+      <option value="0">Disabled</option>
 
+      <option value="1">Pong</option>
 
+      <option value="2">Jitter</option>
 
+      </select>
+    </div>
 
 
 
@@ -1026,17 +687,24 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
 
-<label class="label-inline"> Only If Inactive</label>
 
 
-<input class="api" type="checkbox" name="name20" data-type="uint8" data-key="20"
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f20">Only If Inactive</label>
+
+
+<input class="api switch" type="checkbox" name="name20" data-type="uint8" data-key="20"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f20" />
+    </div>
 
 
 
@@ -1053,12 +721,18 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Idle Time (μs)</label>
+
+
+
+    <div class="row">
+
+<label for="f21">Idle Time (μs)</label>
 
 
 <input class="api" type="text" name="name21" data-type="uint64" data-key="21"
   onchange="valueChangedHandler(this)"
-  />
+ id="f21" />
+    </div>
 
 
 
@@ -1076,12 +750,17 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Max Time (μs)</label>
+
+
+    <div class="row">
+
+<label for="f22">Max Time (μs)</label>
 
 
 <input class="api" type="text" name="name22" data-type="uint64" data-key="22"
   onchange="valueChangedHandler(this)"
-  />
+ id="f22" />
+    </div>
 
 
 
@@ -1098,17 +777,18 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Swap Ctrl and Cmd</label>
 
 
-<input class="api" type="checkbox" name="name23" data-type="uint8" data-key="23"
+
+    <div class="row">
+
+<label for="f23">Swap Ctrl and Cmd</label>
+
+
+<input class="api switch" type="checkbox" name="name23" data-type="uint8" data-key="23"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f23" />
+    </div>
 
 
 
@@ -1124,12 +804,14 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix keymap-field" data-keymap-output="0"
+
+
+
+
+    <div class="row keymap-field" data-keymap-output="0"
          data-keymap-kind="overrides">
-
-<label class=""> Key overrides</label>
-
-      <textarea class="keymap-text" rows="4" autocomplete="off"
+      <label for="k0overrides">Key overrides</label>
+      <textarea id="k0overrides" class="keymap-text" rows="3" autocomplete="off" spellcheck="false"
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
@@ -1149,12 +831,13 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix keymap-field" data-keymap-output="0"
+
+
+
+    <div class="row keymap-field" data-keymap-output="0"
          data-keymap-kind="passthrough">
-
-<label class=""> Passthrough keys</label>
-
-      <textarea class="keymap-text" rows="4" autocomplete="off"
+      <label for="k0passthrough">Passthrough keys</label>
+      <textarea id="k0passthrough" class="keymap-text" rows="3" autocomplete="off" spellcheck="false"
                 placeholder="capslock, f1"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
@@ -1162,17 +845,12 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-
+          </div>
         </div>
-        <div class="column">
 
-          <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <rect x="5" y="5" width="90" height="70" stroke="black" stroke-width="2" fill="#beffa1" rx="10" ry="10" />
-            <line x1="50" y1="90" x2="50" y2="75" stroke="black" stroke-width="2" />
-            <rect x="30" y="90" width="40" height="3" stroke="black" stroke-width="2" fill="#d7e5f0" rx="5" ry="5" />
-          </svg>
-
-            <h3>Output B</h3>
+        <div class="computer" data-computer="B" hidden>
+          <h3>Output B<span data-os-of="B"></span></h3>
+          <div class="group">
 
 
 
@@ -1187,26 +865,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Speed X=</label>
 
 
+    <form class="row">
 
-<input class="input-inline" type="number" name="aInput42" data-type="int32" data-key="42"
+<label for="f42">Speed X</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput42" data-type="int32" data-key="42"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange42.value=this.value" />
-
+          readonly oninput="this.form.aRange42.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange42" data-type="int32" data-key="42"
   onchange="valueChangedHandler(this)"
-
-        min="1" max="100" oninput="this.form.aInput42.value=this.value" />
+ id="f42"
+          min="1" max="100" oninput="this.form.aInput42.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -1223,26 +901,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Speed Y=</label>
 
 
+    <form class="row">
 
-<input class="input-inline" type="number" name="aInput43" data-type="int32" data-key="43"
+<label for="f43">Speed Y</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput43" data-type="int32" data-key="43"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange43.value=this.value" />
-
+          readonly oninput="this.form.aRange43.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange43" data-type="int32" data-key="43"
   onchange="valueChangedHandler(this)"
-
-        min="1" max="100" oninput="this.form.aInput43.value=this.value" />
+ id="f43"
+          min="1" max="100" oninput="this.form.aInput43.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -1260,24 +938,26 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Operating System</label>
 
-    <select class="api" data-type="uint8" data-key="46" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
+    <div class="row">
 
+<label for="f46">Operating System</label>
 
-    <option value="1">Linux</option>
+      <select class="api" data-type="uint8" data-key="46" id="f46" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    <option value="2">MacOS</option>
+      <option value="1">Linux</option>
 
-    <option value="3">Windows</option>
+      <option value="2">MacOS</option>
 
-    <option value="4">Android</option>
+      <option value="3">Windows</option>
 
-    <option value="255">Other</option>
+      <option value="4">Android</option>
 
-    </select><br />
+      <option value="255">Other</option>
 
+      </select>
+    </div>
 
 
 
@@ -1294,22 +974,24 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Cursor Park Position</label>
 
-    <select class="api" data-type="uint8" data-key="48" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="0">Top</option>
+    <div class="row">
 
-    <option value="1">Bottom</option>
+<label for="f48">Cursor Park Position</label>
 
-    <option value="3">Previous</option>
+      <select class="api" data-type="uint8" data-key="48" id="f48" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    </select><br />
+      <option value="0">Top</option>
 
+      <option value="1">Bottom</option>
 
+      <option value="3">Previous</option>
 
+      </select>
+    </div>
 
 
 
@@ -1324,12 +1006,12 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Screensaver</label>
 
 
 
 
 
+    <h3 class="sub">Screensaver</h3>
 
 
 
@@ -1343,25 +1025,27 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Mode</label>
 
-    <select class="api" data-type="uint8" data-key="49" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="0">Disabled</option>
 
-    <option value="1">Pong</option>
 
-    <option value="2">Jitter</option>
 
-    </select><br />
+    <div class="row">
 
+<label for="f49">Mode</label>
 
+      <select class="api" data-type="uint8" data-key="49" id="f49" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
+      <option value="0">Disabled</option>
 
+      <option value="1">Pong</option>
 
+      <option value="2">Jitter</option>
 
+      </select>
+    </div>
 
 
 
@@ -1372,17 +1056,24 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
 
-<label class="label-inline"> Only If Inactive</label>
 
 
-<input class="api" type="checkbox" name="name50" data-type="uint8" data-key="50"
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f50">Only If Inactive</label>
+
+
+<input class="api switch" type="checkbox" name="name50" data-type="uint8" data-key="50"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f50" />
+    </div>
 
 
 
@@ -1399,12 +1090,18 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Idle Time (μs)</label>
+
+
+
+    <div class="row">
+
+<label for="f51">Idle Time (μs)</label>
 
 
 <input class="api" type="text" name="name51" data-type="uint64" data-key="51"
   onchange="valueChangedHandler(this)"
-  />
+ id="f51" />
+    </div>
 
 
 
@@ -1422,12 +1119,17 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Max Time (μs)</label>
+
+
+    <div class="row">
+
+<label for="f52">Max Time (μs)</label>
 
 
 <input class="api" type="text" name="name52" data-type="uint64" data-key="52"
   onchange="valueChangedHandler(this)"
-  />
+ id="f52" />
+    </div>
 
 
 
@@ -1444,17 +1146,18 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Swap Ctrl and Cmd</label>
 
 
-<input class="api" type="checkbox" name="name53" data-type="uint8" data-key="53"
+
+    <div class="row">
+
+<label for="f53">Swap Ctrl and Cmd</label>
+
+
+<input class="api switch" type="checkbox" name="name53" data-type="uint8" data-key="53"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f53" />
+    </div>
 
 
 
@@ -1470,12 +1173,14 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix keymap-field" data-keymap-output="1"
+
+
+
+
+    <div class="row keymap-field" data-keymap-output="1"
          data-keymap-kind="overrides">
-
-<label class=""> Key overrides</label>
-
-      <textarea class="keymap-text" rows="4" autocomplete="off"
+      <label for="k1overrides">Key overrides</label>
+      <textarea id="k1overrides" class="keymap-text" rows="3" autocomplete="off" spellcheck="false"
                 placeholder="capslock=lctrl"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
@@ -1495,12 +1200,13 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix keymap-field" data-keymap-output="1"
+
+
+
+    <div class="row keymap-field" data-keymap-output="1"
          data-keymap-kind="passthrough">
-
-<label class=""> Passthrough keys</label>
-
-      <textarea class="keymap-text" rows="4" autocomplete="off"
+      <label for="k1passthrough">Passthrough keys</label>
+      <textarea id="k1passthrough" class="keymap-text" rows="3" autocomplete="off" spellcheck="false"
                 placeholder="capslock, f1"></textarea>
       <small class="keymap-error" aria-live="polite"></small>
     </div>
@@ -1508,52 +1214,14 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-
+          </div>
         </div>
 
-      </div>
 
-      <details id="advanced">
-        <summary>Advanced</summary>
-        <div class="row">
+        <details id="advanced" class="group">
+          <summary>Advanced</summary>
 
-          <section class="column" id="advanced-A">
-            <h4>Output A</h4>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Screen Count</label>
-
-    <select class="api" data-type="uint32" data-key="11" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">1</option>
-
-    <option value="2">2</option>
-
-    <option value="3">3</option>
-
-    <option value="4">4</option>
-
-    <option value="5">5</option>
-
-    <option value="6">6</option>
-
-    <option value="7">7</option>
-
-    </select><br />
+          <div class="computer" data-computer="A" id="advanced-A">
 
 
 
@@ -1570,13 +1238,57 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
+    <div class="row">
 
-<label class=""> Legacy seam fallback start (not layout offset)</label>
+<label for="f11">Screen Count</label>
+
+      <select class="api" data-type="uint32" data-key="11" id="f11" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
+
+      <option value="1">1</option>
+
+      <option value="2">2</option>
+
+      <option value="3">3</option>
+
+      <option value="4">4</option>
+
+      <option value="5">5</option>
+
+      <option value="6">6</option>
+
+      <option value="7">7</option>
+
+      </select>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f14">Legacy seam fallback start (not layout offset)</label>
 
 
 <input class="api" type="text" name="name14" data-type="int32" data-key="14"
   onchange="valueChangedHandler(this)"
-  />
+ id="f14" />
+    </div>
 
 
 
@@ -1594,12 +1306,17 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Legacy seam fallback end (not layout offset)</label>
+
+
+    <div class="row">
+
+<label for="f15">Legacy seam fallback end (not layout offset)</label>
 
 
 <input class="api" type="text" name="name15" data-type="int32" data-key="15"
   onchange="valueChangedHandler(this)"
-  />
+ id="f15" />
+    </div>
 
 
 
@@ -1617,23 +1334,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Border Direction</label>
 
-    <select class="api" data-type="uint8" data-key="17" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
+    <div class="row">
 
-    <option value="1">Left</option>
+<label for="f17">Border Direction</label>
 
-    <option value="2">Right</option>
+      <select class="api" data-type="uint8" data-key="17" id="f17" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    <option value="4">Top</option>
+      <option value="1">Left</option>
 
-    <option value="5">Bottom</option>
+      <option value="2">Right</option>
 
-    </select><br />
+      <option value="4">Top</option>
 
+      <option value="5">Bottom</option>
 
+      </select>
+    </div>
 
 
 
@@ -1649,25 +1368,27 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Chain Direction</label>
 
-    <select class="api" data-type="uint8" data-key="98" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="1">Left</option>
 
-    <option value="2">Right</option>
+    <div class="row">
 
-    <option value="4">Top</option>
+<label for="f98">Chain Direction</label>
 
-    <option value="5">Bottom</option>
+      <select class="api" data-type="uint8" data-key="98" id="f98" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    </select><br />
+      <option value="1">Left</option>
 
+      <option value="2">Right</option>
 
+      <option value="4">Top</option>
 
+      <option value="5">Bottom</option>
 
+      </select>
+    </div>
 
 
 
@@ -1681,13 +1402,13 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Seam ranges — Start/End show layout offset</label>
 
 
 
 
 
 
+    <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
 
 
 
@@ -1699,20 +1420,30 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+
+
+
+
+
+    <div class="row seam-range">
       <span>Segment 1</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="140"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="141"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="142"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -1730,20 +1461,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 2</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="143"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="144"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="145"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -1761,20 +1497,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 3</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="146"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="147"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="148"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -1792,64 +1533,33 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 4</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="149"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="150"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="151"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
 
 
-          </section>
+          </div>
 
-          <section class="column" id="advanced-B">
-            <h4>Output B</h4>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Screen Count</label>
-
-    <select class="api" data-type="uint32" data-key="41" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
-
-
-    <option value="1">1</option>
-
-    <option value="2">2</option>
-
-    <option value="3">3</option>
-
-    <option value="4">4</option>
-
-    <option value="5">5</option>
-
-    <option value="6">6</option>
-
-    <option value="7">7</option>
-
-    </select><br />
+          <div class="computer" data-computer="B" id="advanced-B" hidden>
 
 
 
@@ -1866,13 +1576,57 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
+    <div class="row">
 
-<label class=""> Legacy seam fallback start (not layout offset)</label>
+<label for="f41">Screen Count</label>
+
+      <select class="api" data-type="uint32" data-key="41" id="f41" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
+
+      <option value="1">1</option>
+
+      <option value="2">2</option>
+
+      <option value="3">3</option>
+
+      <option value="4">4</option>
+
+      <option value="5">5</option>
+
+      <option value="6">6</option>
+
+      <option value="7">7</option>
+
+      </select>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f44">Legacy seam fallback start (not layout offset)</label>
 
 
 <input class="api" type="text" name="name44" data-type="int32" data-key="44"
   onchange="valueChangedHandler(this)"
-  />
+ id="f44" />
+    </div>
 
 
 
@@ -1890,12 +1644,17 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Legacy seam fallback end (not layout offset)</label>
+
+
+    <div class="row">
+
+<label for="f45">Legacy seam fallback end (not layout offset)</label>
 
 
 <input class="api" type="text" name="name45" data-type="int32" data-key="45"
   onchange="valueChangedHandler(this)"
-  />
+ id="f45" />
+    </div>
 
 
 
@@ -1913,23 +1672,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Border Direction</label>
 
-    <select class="api" data-type="uint8" data-key="47" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
+    <div class="row">
 
-    <option value="1">Left</option>
+<label for="f47">Border Direction</label>
 
-    <option value="2">Right</option>
+      <select class="api" data-type="uint8" data-key="47" id="f47" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    <option value="4">Top</option>
+      <option value="1">Left</option>
 
-    <option value="5">Bottom</option>
+      <option value="2">Right</option>
 
-    </select><br />
+      <option value="4">Top</option>
 
+      <option value="5">Bottom</option>
 
+      </select>
+    </div>
 
 
 
@@ -1945,25 +1706,27 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Chain Direction</label>
 
-    <select class="api" data-type="uint8" data-key="99" onchange="redrawLayout()" required>
-    <option disabled selected value></option>
 
 
-    <option value="1">Left</option>
 
-    <option value="2">Right</option>
+    <div class="row">
 
-    <option value="4">Top</option>
+<label for="f99">Chain Direction</label>
 
-    <option value="5">Bottom</option>
+      <select class="api" data-type="uint8" data-key="99" id="f99" onchange="redrawLayout()" required>
+      <option disabled selected value></option>
 
-    </select><br />
+      <option value="1">Left</option>
 
+      <option value="2">Right</option>
 
+      <option value="4">Top</option>
 
+      <option value="5">Bottom</option>
 
+      </select>
+    </div>
 
 
 
@@ -1977,13 +1740,13 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Seam ranges — Start/End show layout offset</label>
 
 
 
 
 
 
+    <h3 class="sub">Seam ranges — Start/End show layout offset</h3>
 
 
 
@@ -1995,20 +1758,30 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+
+
+
+
+
+    <div class="row seam-range">
       <span>Segment 1</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="152"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="153"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="154"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -2026,20 +1799,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 2</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="155"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="156"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="157"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -2057,20 +1835,25 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 3</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="158"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="159"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="160"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
@@ -2088,51 +1871,38 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix seam-range">
+
+
+
+    <div class="row seam-range">
       <span>Segment 4</span>
-      <label>Screen
+      <span class="seam-inputs">
+        <label>Screen
 <input class="api seam-input" type="number" data-type="uint8" data-key="161"
   min="0" max="7" onchange="valueChangedHandler(this)" />
 </label>
-      <label>Start
+        <label>Start
 <input class="api seam-input" type="number" data-type="uint16" data-key="162"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
-      <label>End
+        <label>End
 <input class="api seam-input" type="number" data-type="uint16" data-key="163"
   min="0" max="65535" onchange="valueChangedHandler(this)" />
 </label>
+      </span>
     </div>
 
 
 
 
-          </section>
+          </div>
 
-        </div>
-      </details>
+        </details>
+      </section>
 
-      <div class="row">
-        <div class="column">
-
-
-          <h3>Common Config</h3>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Mouse</label>
+      <section data-section="keyboard" aria-labelledby="keyboard-title" hidden>
+        <h2 id="keyboard-title">Keyboard &amp; Mouse</h2>
+        <div class="group">
 
 
 
@@ -2150,17 +1920,40 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Force Mouse Boot Mode</label>
 
 
-<input class="api" type="checkbox" name="name71" data-type="uint8" data-key="71"
+    <h3 class="sub">Mouse</h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f71">Force Mouse Boot Mode</label>
+
+
+<input class="api switch" type="checkbox" name="name71" data-type="uint8" data-key="71"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f71" />
+    </div>
 
 
 
@@ -2176,17 +1969,22 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Enable Acceleration</label>
 
 
-<input class="api" type="checkbox" name="name75" data-type="uint8" data-key="75"
+
+
+
+
+
+    <div class="row">
+
+<label for="f75">Enable Acceleration</label>
+
+
+<input class="api switch" type="checkbox" name="name75" data-type="uint8" data-key="75"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f75" />
+    </div>
 
 
 
@@ -2202,26 +2000,31 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Jump Threshold=</label>
 
 
 
-<input class="input-inline" type="number" name="aInput77" data-type="uint16" data-key="77"
+
+
+
+
+    <form class="row">
+
+<label for="f77">Jump Threshold</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput77" data-type="uint16" data-key="77"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange77.value=this.value" />
-
+          readonly oninput="this.form.aRange77.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange77" data-type="uint16" data-key="77"
   onchange="valueChangedHandler(this)"
-
-        min="0" max="3000" oninput="this.form.aInput77.value=this.value" />
+ id="f77"
+          min="0" max="3000" oninput="this.form.aInput77.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -2239,7 +2042,11 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Keyboard</label>
+
+
+
+
+    <h3 class="sub">Keyboard</h3>
 
 
 
@@ -2257,17 +2064,20 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Force KBD Boot Protocol</label>
 
 
-<input class="api" type="checkbox" name="name72" data-type="uint8" data-key="72"
+
+
+
+    <div class="row">
+
+<label for="f72">Force KBD Boot Protocol</label>
+
+
+<input class="api switch" type="checkbox" name="name72" data-type="uint8" data-key="72"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f72" />
+    </div>
 
 
 
@@ -2283,17 +2093,22 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> KBD LED as Indicator</label>
 
 
-<input class="api" type="checkbox" name="name73" data-type="uint8" data-key="73"
+
+
+
+
+
+    <div class="row">
+
+<label for="f73">KBD LED as Indicator</label>
+
+
+<input class="api switch" type="checkbox" name="name73" data-type="uint8" data-key="73"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f73" />
+    </div>
 
 
 
@@ -2309,34 +2124,22 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Enforce Ports</label>
 
 
-<input class="api" type="checkbox" name="name76" data-type="uint8" data-key="76"
+
+
+
+
+
+    <div class="row">
+
+<label for="f76">Enforce Ports</label>
+
+
+<input class="api switch" type="checkbox" name="name76" data-type="uint8" data-key="76"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Clipboard</label>
+ id="f76" />
+    </div>
 
 
 
@@ -2354,17 +2157,521 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Block clipboard A to B</label>
 
 
-<input class="api" type="checkbox" name="name89" data-type="uint8" data-key="89"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</div>
+      </section>
+
+      <section data-section="hotkeys" aria-labelledby="hotkeys-title" hidden>
+        <h2 id="hotkeys-title">Hotkeys</h2>
+        <p class="hint">Key names joined with +, for example lctrl+rshift+c+o.</p>
+        <div class="group">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="0">
+      <label for="h0">output_toggle</label>
+      <input id="h0" class="hotkey-text" type="text" data-hotkey-key="110"
+             data-action-name="output_toggle" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="1">
+      <label for="h1">mouse_zoom</label>
+      <input id="h1" class="hotkey-text" type="text" data-hotkey-key="112"
+             data-action-name="mouse_zoom" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="2">
+      <label for="h2">switch_lock</label>
+      <input id="h2" class="hotkey-text" type="text" data-hotkey-key="114"
+             data-action-name="switch_lock" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="3">
+      <label for="h3">screen_lock</label>
+      <input id="h3" class="hotkey-text" type="text" data-hotkey-key="116"
+             data-action-name="screen_lock" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="4">
+      <label for="h4">gaming_mode</label>
+      <input id="h4" class="hotkey-text" type="text" data-hotkey-key="118"
+             data-action-name="gaming_mode" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="5">
+      <label for="h5">screensaver_pong</label>
+      <input id="h5" class="hotkey-text" type="text" data-hotkey-key="120"
+             data-action-name="screensaver_pong" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="6">
+      <label for="h6">screensaver_jitter</label>
+      <input id="h6" class="hotkey-text" type="text" data-hotkey-key="122"
+             data-action-name="screensaver_jitter" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="7">
+      <label for="h7">screensaver_disable</label>
+      <input id="h7" class="hotkey-text" type="text" data-hotkey-key="124"
+             data-action-name="screensaver_disable" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="8">
+      <label for="h8">wipe_config</label>
+      <input id="h8" class="hotkey-text" type="text" data-hotkey-key="126"
+             data-action-name="wipe_config" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="9">
+      <label for="h9">screen_seam</label>
+      <input id="h9" class="hotkey-text" type="text" data-hotkey-key="128"
+             data-action-name="screen_seam" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="10">
+      <label for="h10">config_mode</label>
+      <input id="h10" class="hotkey-text" type="text" data-hotkey-key="130"
+             data-action-name="config_mode" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="11">
+      <label for="h11">firmware_upgrade_a</label>
+      <input id="h11" class="hotkey-text" type="text" data-hotkey-key="132"
+             data-action-name="firmware_upgrade_a" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row hotkey-field" data-hotkey-action="12">
+      <label for="h12">firmware_upgrade_b</label>
+      <input id="h12" class="hotkey-text" type="text" data-hotkey-key="134"
+             data-action-name="firmware_upgrade_b" autocomplete="off" spellcheck="false" />
+      <small class="hotkey-error" aria-live="polite"></small>
+    </div>
+
+
+
+
+
+</div>
+      </section>
+
+      <section data-section="clipboard" aria-labelledby="clipboard-title" hidden>
+        <h2 id="clipboard-title">Clipboard</h2>
+        <div class="group">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <div class="row">
+
+<label for="f89">Block clipboard A to B</label>
+
+
+<input class="api switch" type="checkbox" name="name89" data-type="uint8" data-key="89"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f89" />
+    </div>
 
 
 
@@ -2380,17 +2687,22 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-
-<label class="label-inline"> Block clipboard B to A</label>
 
 
-<input class="api" type="checkbox" name="name90" data-type="uint8" data-key="90"
+
+
+
+
+
+    <div class="row">
+
+<label for="f90">Block clipboard B to A</label>
+
+
+<input class="api switch" type="checkbox" name="name90" data-type="uint8" data-key="90"
   onchange="valueChangedHandler(this)"
-  />
-
-  </div>
-
+ id="f90" />
+    </div>
 
 
 
@@ -2406,26 +2718,31 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-  <div class="clearfix">
-    <form>
-
-<label class="label-inline"> Clipboard size cap (MB)=</label>
 
 
 
-<input class="input-inline" type="number" name="aInput100" data-type="uint8" data-key="100"
+
+
+
+
+    <form class="row">
+
+<label for="f100">Clipboard size cap (MB)</label>
+
+      <span class="slider">
+
+<input class="readout" type="number" name="aInput100" data-type="uint8" data-key="100"
   onchange="valueChangedHandler(this)"
 
-        readonly oninput="this.form.aRange100.value=this.value" />
-
+          readonly oninput="this.form.aRange100.value=this.value" tabindex="-1" />
 
 <input class="range api" type="range" name="aRange100" data-type="uint8" data-key="100"
   onchange="valueChangedHandler(this)"
-
-        min="1" max="64" oninput="this.form.aInput100.value=this.value" />
+ id="f100"
+          min="1" max="64" oninput="this.form.aInput100.value=this.value" />
+      </span>
     </form>
 
-  </div>
 
 
 
@@ -2443,7 +2760,6 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Hotkeys</label>
 
 
 
@@ -2461,14 +2777,8 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-    <div class="clearfix hotkey-field" data-hotkey-action="0">
 
-<label class=""> output_toggle</label>
 
-      <input class="hotkey-text" type="text" data-hotkey-key="110"
-             data-action-name="output_toggle" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
 
 
 
@@ -2479,20 +2789,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
+</div>
+      </section>
 
+      <section data-section="status" aria-labelledby="status-title" hidden>
+        <h2 id="status-title">Status</h2>
+        <div class="group">
 
 
 
 
 
-    <div class="clearfix hotkey-field" data-hotkey-action="1">
 
-<label class=""> mouse_zoom</label>
 
-      <input class="hotkey-text" type="text" data-hotkey-key="112"
-             data-action-name="mouse_zoom" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
 
 
 
@@ -2503,291 +2812,15 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
+<div class="row">
 
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="2">
-
-<label class=""> switch_lock</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="114"
-             data-action-name="switch_lock" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="3">
-
-<label class=""> screen_lock</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="116"
-             data-action-name="screen_lock" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="4">
-
-<label class=""> gaming_mode</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="118"
-             data-action-name="gaming_mode" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="5">
-
-<label class=""> screensaver_pong</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="120"
-             data-action-name="screensaver_pong" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="6">
-
-<label class=""> screensaver_jitter</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="122"
-             data-action-name="screensaver_jitter" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="7">
-
-<label class=""> screensaver_disable</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="124"
-             data-action-name="screensaver_disable" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="8">
-
-<label class=""> wipe_config</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="126"
-             data-action-name="wipe_config" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="9">
-
-<label class=""> screen_seam</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="128"
-             data-action-name="screen_seam" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="10">
-
-<label class=""> config_mode</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="130"
-             data-action-name="config_mode" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="11">
-
-<label class=""> firmware_upgrade_a</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="132"
-             data-action-name="firmware_upgrade_a" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    <div class="clearfix hotkey-field" data-hotkey-action="12">
-
-<label class=""> firmware_upgrade_b</label>
-
-      <input class="hotkey-text" type="text" data-hotkey-key="134"
-             data-action-name="firmware_upgrade_b" autocomplete="off" />
-      <small class="hotkey-error" aria-live="polite"></small>
-    </div>
-
-
-
-
-
-          <input type="submit" value="Save" id="submitButton">
-        </div>
-
-        <div class="column">
-          <h3>Device Status</h3>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> This board FW version</label>
+<label for="f78">This board FW version</label>
 
 
 <input class="api" type="text" name="name78" data-type="uint16" data-key="78"
   onchange="valueChangedHandler(this)"
- data-fw-ver readonly />
+ id="f78" data-fw-ver readonly />
+</div>
 
 
 
@@ -2805,12 +2838,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Other board FW version</label>
+
+
+
+
+<div class="row">
+
+<label for="f84">Other board FW version</label>
 
 
 <input class="api" type="text" name="name84" data-type="uint16" data-key="84"
   onchange="valueChangedHandler(this)"
- data-peer-fw-ver readonly />
+ id="f84" data-peer-fw-ver readonly />
+</div>
 
 
 
@@ -2828,12 +2868,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Running FW checksum:</label>
 
 
-<input class="content api" type="text" name="name79" data-type="uint32" data-key="79"
+
+
+<div class="row">
+
+<label for="f79">Running FW checksum</label>
+
+
+<input class="api content" type="text" name="name79" data-type="uint32" data-key="79"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f79" data-hex readonly />
+</div>
 
 
 
@@ -2851,12 +2898,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Other board FW checksum:</label>
 
 
-<input class="content api" type="text" name="name85" data-type="uint32" data-key="85"
+
+
+<div class="row">
+
+<label for="f85">Other board FW checksum</label>
+
+
+<input class="api content" type="text" name="name85" data-type="uint32" data-key="85"
   onchange="valueChangedHandler(this)"
- data-peer-fw-crc readonly />
+ id="f85" data-peer-fw-crc readonly />
+</div>
 
 
 
@@ -2874,12 +2928,23 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class=""> Build</label>
+
+
+
+
+<div class="row">
+
+<label for="f83">Build</label>
 
 
 <input class="api" type="text" name="name83" data-type="uint8" data-key="83"
   onchange="valueChangedHandler(this)"
- data-dev-build readonly />
+ id="f83" data-dev-build readonly />
+</div>
+
+
+
+
 
 
 
@@ -2918,6 +2983,9 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
+
+
+
 <input class="api" type="hidden" name="name87" data-type="uint32" data-key="87"
   onchange="valueChangedHandler(this)"
  data-helper-key-hi readonly />
@@ -2938,30 +3006,20 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Paired helper:</label>
 
 
-<input class="content api" type="text" name="name88" data-type="uint8" data-key="88"
+
+<div class="row">
+
+<label for="f88">Paired helper</label>
+
+
+<input class="api content" type="text" name="name88" data-type="uint8" data-key="88"
   onchange="valueChangedHandler(this)"
- data-helper-paired readonly />
+ id="f88" data-helper-paired readonly />
+</div>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<label class=""> Channel drops (since this boot)</label>
 
 
 
@@ -2980,12 +3038,36 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Reports not taken:</label>
+    <h3 class="sub">Channel drops (since this boot)</h3>
 
 
-<input class="content api" type="text" name="name91" data-type="uint32" data-key="91"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="row">
+
+<label for="f91">Reports not taken</label>
+
+
+<input class="api content" type="text" name="name91" data-type="uint32" data-key="91"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f91" data-hex readonly />
+</div>
 
 
 
@@ -3003,12 +3085,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> From peer board:</label>
 
 
-<input class="content api" type="text" name="name92" data-type="uint32" data-key="92"
+
+
+<div class="row">
+
+<label for="f92">From peer board</label>
+
+
+<input class="api content" type="text" name="name92" data-type="uint32" data-key="92"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f92" data-hex readonly />
+</div>
 
 
 
@@ -3026,12 +3115,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Outbound refused:</label>
 
 
-<input class="content api" type="text" name="name93" data-type="uint32" data-key="93"
+
+
+<div class="row">
+
+<label for="f93">Outbound refused</label>
+
+
+<input class="api content" type="text" name="name93" data-type="uint32" data-key="93"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f93" data-hex readonly />
+</div>
 
 
 
@@ -3049,12 +3145,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Inter-board refused:</label>
 
 
-<input class="content api" type="text" name="name94" data-type="uint32" data-key="94"
+
+
+<div class="row">
+
+<label for="f94">Inter-board refused</label>
+
+
+<input class="api content" type="text" name="name94" data-type="uint32" data-key="94"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f94" data-hex readonly />
+</div>
 
 
 
@@ -3072,12 +3175,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Peer orphan packets:</label>
 
 
-<input class="content api" type="text" name="name95" data-type="uint32" data-key="95"
+
+
+<div class="row">
+
+<label for="f95">Peer orphan packets</label>
+
+
+<input class="api content" type="text" name="name95" data-type="uint32" data-key="95"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f95" data-hex readonly />
+</div>
 
 
 
@@ -3095,12 +3205,19 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Peer frames truncated:</label>
 
 
-<input class="content api" type="text" name="name96" data-type="uint32" data-key="96"
+
+
+<div class="row">
+
+<label for="f96">Peer frames truncated</label>
+
+
+<input class="api content" type="text" name="name96" data-type="uint32" data-key="96"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f96" data-hex readonly />
+</div>
 
 
 
@@ -3118,27 +3235,45 @@ summary { cursor: pointer; font-weight: bold; margin: 1rem 0; }
 
 
 
-<label class="label-inline"> Relay queue refused:</label>
 
 
-<input class="content api" type="text" name="name97" data-type="uint32" data-key="97"
+
+
+<div class="row">
+
+<label for="f97">Relay queue refused</label>
+
+
+<input class="api content" type="text" name="name97" data-type="uint32" data-key="97"
   onchange="valueChangedHandler(this)"
- data-hex readonly />
+ id="f97" data-hex readonly />
+</div>
 
 
 
 
-
-          <h4>Cursor transition trace</h4>
-          <button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button>
-          <pre id="cursorTrace">No trace read.</pre>
 
         </div>
+        <h3>Cursor transition trace</h3>
+        <div class="group">
+          <div class="row"><button type="button" class="online" onclick="readCursorTraceHandler()">Read trace</button></div>
+          <pre id="cursorTrace">No trace read.</pre>
+        </div>
+      </section>
 
-      </div>
-    </div>
-    </section>
-  </main>
+      <section data-section="service" aria-labelledby="service-title" hidden>
+        <h2 id="service-title">Service</h2>
+        <div class="group" id="service-buttons">
+          <div class="row"><span>Blink this board's LED</span><button type="button" class="online" data-handler="blinkHandler">Blink</button></div>
+          <div class="row"><span>Blink both boards' LEDs</span><button type="button" class="online" data-handler="blinkBothHandler">Blink both</button></div>
+          <div class="row"><span>Reboot into the bootloader for a firmware upgrade</span><button type="button" class="online" data-handler="enterBootloaderHandler" data-arm="Click again to reboot">Bootloader</button></div>
+          <div class="row"><span>Erase every setting and the helper pairing</span><button type="button" class="online" data-handler="wipeConfigHandler" data-arm="Click again to wipe">Wipe Config</button></div>
+        </div>
+      </section>
+      </fieldset>
+    </main>
+  </div>
+</div>
 
   <script>
   const mgmtReportId = 6;
@@ -3225,15 +3360,9 @@ function packValue(element, key, dataType, buffer) {
 
 window.addEventListener('load', function () {
   if (!("hid" in navigator)) {
-    document.getElementById('warning').style.display = 'block';
+    document.getElementById('warning').hidden = false;
   }
-
-  this.document.getElementById('menu-buttons').addEventListener('click', function (event) {
-    window[event.target.dataset.handler]();
-  })
 });
-
-document.getElementById('submitButton').addEventListener('click', async () => { await saveHandler(); });
 
 async function connectHandler() {
   if (device && device.opened)
@@ -3246,7 +3375,7 @@ async function connectHandler() {
   device = devices[0];
   device.open().then(async () => {
     device.addEventListener('inputreport', handleInputReport);
-    document.querySelectorAll('.online').forEach(element => { element.style.opacity = 1.0; });
+    setConnected(true);
     await readHandler();
   });
 }
@@ -3458,7 +3587,9 @@ function showKeymapError(input, result) {
   shown.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
 }
 
-async function saveKeymaps() {
+/* Parses both outputs' profiles and shows their errors. With send false it
+   stops there, so Save can check every field before it sends any. */
+async function saveKeymaps(send = true) {
   const parsed = [];
   let valid = true;
   for (let output=0; output<2; ++output) {
@@ -3471,7 +3602,7 @@ async function saveKeymaps() {
     valid = valid && !overrideResult.error && !passthroughResult.error;
     parsed.push({overrides, passthrough, overrideResult, passthroughResult});
   }
-  if (!valid) return false;
+  if (!valid || !send) return valid;
 
   for (let output=0; output<2; ++output) {
     const item = parsed[output];
@@ -3537,7 +3668,8 @@ function parseHotkey(input, action) {
   return {bytes};
 }
 
-async function saveHotkeys() {
+/* Parses every chord and shows its error; send false checks without sending. */
+async function saveHotkeys(send = true) {
   const inputs = [...document.querySelectorAll('.hotkey-text')];
   const parsed = inputs.map((input, action) => parseHotkey(input, action));
   let valid = true;
@@ -3546,7 +3678,7 @@ async function saveHotkeys() {
     error.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
     valid = valid && !result.error;
   });
-  if (!valid) return false;
+  if (!valid || !send) return valid;
   for (let action=0; action<parsed.length; ++action) {
     const input = inputs[action];
     if (input.getAttribute('fetched-value') === input.value) continue;
@@ -3609,6 +3741,7 @@ async function handleInputReport(event) {
 
   updateElement(key, event);
   redrawLayout();
+  refresh();
 }
 
 function signed16(lo, hi) {
@@ -3694,11 +3827,14 @@ async function saveHandler() {
   if (!device || !device.opened)
     return;
 
-  if (!await saveHotkeys())
-    return;
+  /* Every field is checked before anything is sent, so a refused Save has
+     sent nothing (#225). Both checks run so every error is shown at once. */
+  const hotkeysValid = await saveHotkeys(false), keymapsValid = await saveKeymaps(false);
+  if (!hotkeysValid || !keymapsValid)
+    return false;
 
-  if (!await saveKeymaps())
-    return;
+  await saveHotkeys();
+  await saveKeymaps();
 
   for (const element of elements) {
     var origValue = element.getAttribute('fetched-value')
@@ -3710,6 +3846,7 @@ async function saveHandler() {
       await valueChangedHandler(element);
   }
   await sendReport(packetType.saveConfigMsg, [], true);
+  return true;
 }
 
 async function wipeConfigHandler() {
@@ -3977,6 +4114,160 @@ document.getElementById('layout').addEventListener('keydown', event => {
   const {output, monitor} = box.dataset;
   applyGesture({output, monitor:Number(monitor), dx:step[0], dy:step[1]});
   document.querySelector(`.layout-box[data-output="${output}"][data-monitor="${monitor}"]`).focus();
+});
+// Page glue for the settings window (#225): which section is shown, which
+// computer's rows are under the picture, the connection words, the unsaved
+// count and the refusal strip. Presentation only: no field is duplicated and
+// nothing here talks to the board.
+
+function showSection(id) {
+  document.querySelectorAll('section[data-section]').forEach(s => {s.hidden = s.dataset.section !== id;});
+  document.querySelectorAll('#sidebar button').forEach(b => {
+    if (b.dataset.section === id) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+}
+
+document.getElementById('sidebar').addEventListener('click', event => {
+  const button = event.target.closest('button[data-section]');
+  if (button) showSection(button.dataset.section);
+});
+
+// Click a computer in the picture and its rows appear under it, the way the
+// OS shows the settings of the monitor you click.
+function selectComputer(letter) {
+  document.getElementById('layout').dataset.selected = letter;
+  document.querySelectorAll('.computer[data-computer]').forEach(c => {c.hidden = c.dataset.computer !== letter;});
+  refreshTitles();
+}
+
+// "Output A · MacOS": the group title carries the OS the picture's label shows.
+function refreshTitles() {
+  document.querySelectorAll('[data-os-of]').forEach(span => {
+    const os = [...document.querySelectorAll(`.computer[data-computer="${span.dataset.osOf}"] .row`)]
+      .find(row => row.querySelector('label')?.textContent === 'Operating System')?.querySelector('select');
+    const name = os && os.selectedIndex > 0 ? os.options[os.selectedIndex].text : '';
+    span.textContent = name ? ' · ' + name : '';
+  });
+}
+
+for (const type of ['pointerdown', 'focusin', 'keydown'])
+  document.getElementById('layout').addEventListener(type, event => {
+    const computer = event.target.closest('[data-output]');
+    if (computer) selectComputer(computer.dataset.output);
+  });
+
+// Connect flips every board-facing control on; the words in the toolbar say
+// so. The markup starts disabled, so nothing runs at load.
+function setConnected(on) {
+  const words = document.getElementById('connection');
+  words.textContent = on ? 'Connected — config mode' : 'Not connected';
+  words.dataset.on = on ? '1' : '';
+  document.getElementById('fields').disabled = !on;
+  document.querySelectorAll('.online').forEach(b => {b.disabled = !on;});
+  // Off: the picture goes back to its connect text, so nothing can be dragged.
+  if (!on) redrawLayout();
+}
+
+// Unsaved: derived, never stored. A field is unsaved when its value differs
+// from what the last Read fetched. Save shows the count; a section with one
+// or more carries a dot.
+function unsavedFields() {
+  return [...document.querySelectorAll('.api, .hotkey-text, .keymap-text')].filter(f =>
+    !f.readOnly && f.type !== 'hidden' && f.hasAttribute('fetched-value') && f.getAttribute('fetched-value') != getValue(f));
+}
+
+function refreshUnsaved() {
+  const fields = unsavedFields();
+  const badge = document.getElementById('unsaved');
+  badge.textContent = fields.length;
+  badge.hidden = !fields.length;
+  const sections = new Set(fields.map(f => f.closest('section[data-section]').dataset.section));
+  document.querySelectorAll('#sidebar button').forEach(b => b.toggleAttribute('data-unsaved', sections.has(b.dataset.section)));
+}
+
+// What every edit, report and toolbar action refreshes.
+function refresh() {
+  refreshUnsaved();
+  refreshTitles();
+}
+
+document.getElementById('main').addEventListener('input', event => {
+  if (event.target.getAttribute('aria-invalid')) {
+    event.target.removeAttribute('aria-invalid');
+    event.target.closest('.row').querySelector('small').textContent = '';
+  }
+  refresh();
+});
+document.getElementById('main').addEventListener('change', refresh);
+
+// Exit reboots the board, which drops the device: the toolbar says so.
+navigator.hid?.addEventListener('disconnect', event => {
+  if (event.device === device) setConnected(false);
+});
+
+// Toolbar actions run, then the counts follow. A refused Save bands the top of
+// the window with the fields that need a fix.
+document.getElementById('menu-buttons').addEventListener('click', async event => {
+  const handler = event.target.closest('button')?.dataset.handler;
+  if (!handler) return;
+  const result = await window[handler]();
+  if (handler === 'saveHandler') showRefusal(result === false);
+  // Read replaces the values the last Save refused, so its errors go too.
+  if (handler === 'readHandler') clearErrors();
+  refresh();
+});
+
+function clearErrors() {
+  document.querySelectorAll('.hotkey-error, .keymap-error').forEach(e => {e.textContent = '';});
+  showRefusal(false);
+}
+
+function revealField(field) {
+  showSection(field.closest('section[data-section]').dataset.section);
+  const computer = field.closest('.computer[data-computer]');
+  if (computer) selectComputer(computer.dataset.computer);
+  const advanced = field.closest('details');
+  if (advanced) advanced.open = true;
+  field.scrollIntoView({block: 'center'});
+  field.focus();
+}
+
+function showRefusal(refused) {
+  const strip = document.getElementById('refusal');
+  const rows = refused ? [...document.querySelectorAll('.row')].filter(r => r.querySelector('small')?.textContent) : [];
+  const control = row => row.querySelector('input, textarea');
+  document.querySelectorAll('[aria-invalid]').forEach(f => f.removeAttribute('aria-invalid'));
+  rows.forEach(r => control(r).setAttribute('aria-invalid', 'true'));
+  strip.hidden = !rows.length;
+  if (!rows.length) return;
+  const name = row => {
+    const section = row.closest('section[data-section]').querySelector('h2').textContent;
+    const computer = row.closest('.computer[data-computer]');
+    return `${section} › ${computer ? 'Output ' + computer.dataset.computer + ' ' : ''}${row.querySelector('label').textContent}`;
+  };
+  const esc = text => text.replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
+  strip.lastElementChild.innerHTML = `<strong>Save refused.</strong> ${rows.length} field${rows.length > 1 ? 's need' : ' needs'} a fix; nothing was sent.<ul>` +
+    rows.map(row => `<li><a href="#">${esc(name(row))}</a>: ${esc(row.querySelector('small').textContent)}</li>`).join('') + '</ul>';
+  strip.querySelectorAll('a').forEach((a, i) => a.addEventListener('click', e => {e.preventDefault(); revealField(control(rows[i]));}));
+  revealField(control(rows[0]));
+}
+
+// Service: a button that wipes or reboots takes two clicks. The first arms it
+// and says so; the second acts; a click anywhere else disarms it.
+window.addEventListener('click', event => {
+  const armed = document.querySelector('#service-buttons button[data-armed]');
+  if (armed && !armed.contains(event.target)) {armed.textContent = armed.dataset.armed; delete armed.dataset.armed;}
+});
+document.getElementById('service-buttons').addEventListener('click', event => {
+  const button = event.target.closest('button[data-handler]');
+  if (!button) return;
+  if (button.dataset.arm && !button.dataset.armed) {
+    button.dataset.armed = button.textContent;
+    button.textContent = button.dataset.arm;
+    return;
+  }
+  if (button.dataset.armed) {button.textContent = button.dataset.armed; delete button.dataset.armed;}
+  window[button.dataset.handler]();
 });
   </script>
 </body>

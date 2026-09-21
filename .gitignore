@@ -31,3 +31,10 @@ build-bench/
 .cache/
 compile_commands.json
 .clangd
+
+# Impeccable working files: decision-page state and review screenshots.
+# The surface brief, live config and design.json are committed.
+.impeccable/questions/
+.impeccable/review/
+.impeccable/build/
+.impeccable/mocks/

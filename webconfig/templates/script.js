@@ -82,15 +82,9 @@ function packValue(element, key, dataType, buffer) {
 
 window.addEventListener('load', function () {
   if (!("hid" in navigator)) {
-    document.getElementById('warning').style.display = 'block';
+    document.getElementById('warning').hidden = false;
   }
-
-  this.document.getElementById('menu-buttons').addEventListener('click', function (event) {
-    window[event.target.dataset.handler]();
-  })
 });
-
-document.getElementById('submitButton').addEventListener('click', async () => { await saveHandler(); });
 
 async function connectHandler() {
   if (device && device.opened)
@@ -103,7 +97,7 @@ async function connectHandler() {
   device = devices[0];
   device.open().then(async () => {
     device.addEventListener('inputreport', handleInputReport);
-    document.querySelectorAll('.online').forEach(element => { element.style.opacity = 1.0; });
+    setConnected(true);
     await readHandler();
   });
 }
@@ -315,7 +309,9 @@ function showKeymapError(input, result) {
   shown.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
 }
 
-async function saveKeymaps() {
+/* Parses both outputs' profiles and shows their errors. With send false it
+   stops there, so Save can check every field before it sends any. */
+async function saveKeymaps(send = true) {
   const parsed = [];
   let valid = true;
   for (let output=0; output<2; ++output) {
@@ -328,7 +324,7 @@ async function saveKeymaps() {
     valid = valid && !overrideResult.error && !passthroughResult.error;
     parsed.push({overrides, passthrough, overrideResult, passthroughResult});
   }
-  if (!valid) return false;
+  if (!valid || !send) return valid;
 
   for (let output=0; output<2; ++output) {
     const item = parsed[output];
@@ -394,7 +390,8 @@ function parseHotkey(input, action) {
   return {bytes};
 }
 
-async function saveHotkeys() {
+/* Parses every chord and shows its error; send false checks without sending. */
+async function saveHotkeys(send = true) {
   const inputs = [...document.querySelectorAll('.hotkey-text')];
   const parsed = inputs.map((input, action) => parseHotkey(input, action));
   let valid = true;
@@ -403,7 +400,7 @@ async function saveHotkeys() {
     error.textContent = result.error ? `Line ${result.error.line}, column ${result.error.column}, token “${result.error.token}”: ${result.error.message}` : '';
     valid = valid && !result.error;
   });
-  if (!valid) return false;
+  if (!valid || !send) return valid;
   for (let action=0; action<parsed.length; ++action) {
     const input = inputs[action];
     if (input.getAttribute('fetched-value') === input.value) continue;
@@ -466,6 +463,7 @@ async function handleInputReport(event) {
 
   updateElement(key, event);
   redrawLayout();
+  refresh();
 }
 
 function signed16(lo, hi) {
@@ -551,11 +549,14 @@ async function saveHandler() {
   if (!device || !device.opened)
     return;
 
-  if (!await saveHotkeys())
-    return;
+  /* Every field is checked before anything is sent, so a refused Save has
+     sent nothing (#225). Both checks run so every error is shown at once. */
+  const hotkeysValid = await saveHotkeys(false), keymapsValid = await saveKeymaps(false);
+  if (!hotkeysValid || !keymapsValid)
+    return false;
 
-  if (!await saveKeymaps())
-    return;
+  await saveHotkeys();
+  await saveKeymaps();
 
   for (const element of elements) {
     var origValue = element.getAttribute('fetched-value')
@@ -567,6 +568,7 @@ async function saveHandler() {
       await valueChangedHandler(element);
   }
   await sendReport(packetType.saveConfigMsg, [], true);
+  return true;
 }
 
 async function wipeConfigHandler() {
@@ -574,3 +576,4 @@ async function wipeConfigHandler() {
 }
 
 {% include "layout.js" %}
+{% include "page.js" %}

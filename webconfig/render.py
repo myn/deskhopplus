@@ -20,6 +20,11 @@ PACKER_FILENAME = "packer.j2"
 OUTPUT_FILENAME = "config.htm"
 OUTPUT_UNPACKED = "config-unpacked.htm"
 
+# The buffer the packer inflates into, in the browser. A page larger than it
+# would be cut short in silence: writes past a typed array's end are dropped,
+# and document.write would show a broken page. So the render fails instead.
+INFLATE_BUFFER = 131072
+
 def render(filename, *args, **kwargs):
     env = Environment(loader=FileSystemLoader(TEMPLATE_PATH))
     template = env.get_template(filename)
@@ -81,8 +86,12 @@ if __name__ == "__main__":
     # artifact compliant with the repository's no-trailing-whitespace rule.
     webpage = "\n".join(line.rstrip() for line in webpage.split("\n"))
 
+    unpacked_size = len(webpage.encode('utf-8'))
+    if unpacked_size > INFLATE_BUFFER:
+        raise SystemExit(f"unpacked page is {unpacked_size} bytes; the inflate buffer holds {INFLATE_BUFFER}")
+
     # Compress file and encode to base64
-    encoded_data = {'payload': encode_file(webpage)}
+    encoded_data = {'payload': encode_file(webpage), 'buffer': INFLATE_BUFFER}
 
     # Tiny Inflate JS decoder (https://github.com/foliojs/tiny-inflate)
     # Decompress the data and replace existing HTML with the decoded version

@@ -18,9 +18,11 @@ html = html.replace('</body>', `<script>
     140:2,141:0,142:65535,143:1,144:0,145:65535,
     152:1,153:0,154:65535,155:2,156:0,157:65535};
   for (let key=140; key<164; key++) fields[key] ??= 0;
-  let sets = 0;
+  let sets = 0, saves = 0, wipes = 0;
   device = {opened:true, async sendReport(id, report) {
     if (report[2] === packetType.setValMsg) sets++;
+    if (report[2] === packetType.saveConfigMsg) saves++;
+    if (report[2] === packetType.wipeConfigMsg) wipes++;
     if (report[2] !== packetType.getValAllMsg) return;
     for (const [key,value] of Object.entries(fields)) {
       const data = new DataView(new ArrayBuffer(12));
@@ -30,7 +32,30 @@ html = html.replace('</body>', `<script>
     }
   }};
   if (document.querySelectorAll('summary').length !== 1) throw Error('Expected one shared Advanced disclosure');
+  // #225: one settings window. Six sections in the sidebar, one shown at a time.
+  const sidebar = [...document.querySelectorAll('nav[aria-label="Sections"] button')];
+  const shownSections = () => [...document.querySelectorAll('section[data-section]')].filter(s => s.checkVisibility()).map(s => s.dataset.section).join();
+  if (sidebar.map(b => b.textContent.trim()).join() !== 'Desk,Keyboard & Mouse,Hotkeys,Clipboard,Status,Service')
+    throw Error('Sidebar sections: '+sidebar.map(b => b.textContent.trim()));
+  if (shownSections() !== 'desk') throw Error('Sections shown at load: '+shownSections());
+  sidebar[2].click();
+  if (shownSections() !== 'hotkeys' || sidebar[2].getAttribute('aria-current') !== 'page' || sidebar[0].hasAttribute('aria-current'))
+    throw Error('Sidebar click did not switch to Hotkeys alone: '+shownSections());
+  sidebar[0].click();
+  if (shownSections() !== 'desk') throw Error('Sidebar click did not return to Desk');
+  // Before Connect the picture says so and the fields are disabled.
+  if (!/Connect/.test(document.getElementById('layout').textContent) || !document.querySelector('[data-key="16"]').matches(':disabled') ||
+      !document.querySelector('[data-handler="saveHandler"]').disabled || document.getElementById('connection').textContent !== 'Not connected')
+    throw Error('Not-connected state is not shown');
+  setConnected(true);
+  if (document.querySelector('[data-key="16"]').matches(':disabled') || document.querySelector('[data-handler="saveHandler"]').disabled ||
+      !/Connected/.test(document.getElementById('connection').textContent))
+    throw Error('Connected state is not shown');
   await readHandler();
+  if (document.getElementById('refusal').checkVisibility() || document.getElementById('warning').checkVisibility())
+    throw Error('A strip is shown with nothing to say');
+  if (document.querySelector('.computer[data-computer="A"] h3').textContent !== 'Output A · MacOS')
+    throw Error('Read did not put the OS in the group title');
   const layout = document.getElementById('layout');
   if (layout.querySelectorAll('.layout-monitor').length !== 4 ||
       layout.querySelectorAll('[data-segment]').length !== 2 ||
@@ -48,12 +73,14 @@ html = html.replace('</body>', `<script>
   const failures = [];
   const check = (ok, message) => {if (!ok) failures.push(message);};
   const canvas = document.createElement('canvas').getContext('2d');
-  const panels = document.querySelectorAll('#advanced > .row > .column');
-  check(panels.length === 2, 'Shared Advanced must contain both outputs');
+  const panels = document.querySelectorAll('.computer[data-computer]');
+  check(panels.length === 4, 'Desk and Advanced must each hold both computers');
+  document.getElementById('advanced').open = true;
   for (const panel of panels) {
+    selectComputer(panel.dataset.computer);
     const column = panel.getBoundingClientRect();
-    const details = document.getElementById('advanced').getBoundingClientRect();
-    check(column.left >= details.left && column.right <= details.right, 'Advanced output escapes shared panel');
+    const pane = panel.closest('section').getBoundingClientRect();
+    check(column.left >= pane.left && column.right <= pane.right, 'computer panel escapes its section');
     for (const input of panel.querySelectorAll('input, select')) {
       const rect = input.getBoundingClientRect(), style = getComputedStyle(input);
       const key = input.dataset.key;
@@ -86,14 +113,15 @@ html = html.replace('</body>', `<script>
     }
   }
   if (failures.length) throw Error(failures.join('; '));
+  selectComputer('A');
   document.querySelector('#advanced summary').click();
   for (const key of [98,99])
     if (document.getElementById('advanced').open || document.querySelector('[data-key="'+key+'"]').checkVisibility())
-      throw Error('Shared Advanced disclosure did not collapse both outputs');
+      throw Error('Advanced disclosure did not collapse');
   document.querySelector('#advanced summary').click();
-  for (const key of [98,99])
-    if (!document.querySelector('[data-key="'+key+'"]').checkVisibility())
-      throw Error('Shared Advanced disclosure did not reveal both outputs');
+  if (!document.getElementById('advanced').open || !document.querySelector('[data-key="98"]').checkVisibility() ||
+      document.querySelector('[data-key="99"]').checkVisibility())
+    throw Error('Advanced disclosure did not reveal the selected computer alone');
   // Drag B's label from below A to A's right: a valid drop fills in both
   // borders and the segments but sends nothing until Save; a gap drop shows
   // its reason and changes nothing; Read puts the board's values back.
@@ -114,6 +142,19 @@ html = html.replace('</body>', `<script>
     return preview;
   }
   if (sets !== 0 || pending().length) throw Error('Read left a value unsent or pending: '+pending());
+  // #225: click a computer in the picture and its rows appear under it; the other's hide.
+  const visibleKeys = () => [16,46,98,99].filter(key => field(key).checkVisibility()).join();
+  if (visibleKeys() !== '16,98' || layout.dataset.selected !== 'A') throw Error('A is not the computer shown at first: '+visibleKeys());
+  const title = letter => document.querySelector('.computer[data-computer="'+letter+'"] h3').textContent;
+  if (title('A') !== 'Output A · MacOS' || title('B') !== 'Output B · Windows') throw Error('Group titles lack the OS: '+title('A')+' / '+title('B'));
+  press('B', 0, 0);
+  if (visibleKeys() !== '46,99' || layout.dataset.selected !== 'B' || sets !== 0 || pending().length)
+    throw Error('Clicking B did not show B alone, or moved something: '+visibleKeys());
+  boxOf('A', 2).dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowUp', bubbles:true, cancelable:true}));
+  if (visibleKeys() !== '16,98' || layout.dataset.selected !== 'A' || document.activeElement !== boxOf('A', 2))
+    throw Error('An arrow key on an A box did not select A and keep focus: '+visibleKeys());
+  await readHandler();
+  if (visibleKeys() !== '16,98' || pending().length) throw Error('Read changed the selected computer: '+visibleKeys());
   // Drag feedback is live: before release it says whether the snapped drop can apply.
   const feedbackBox = boxOf('A', 1), feedbackRect = feedbackBox.getBoundingClientRect();
   const feedbackScale = feedbackBox.ownerSVGElement.getScreenCTM().a;
@@ -225,6 +266,68 @@ html = html.replace('</body>', `<script>
   if (written() !== '5,4,2,1,1,2' || count.value !== '2' || countA() !== '2' || chainA() !== '1' || sets !== 0 || pending().length ||
       layout.querySelectorAll('[data-segment]').length !== 2)
     throw Error('Read did not restore the board values: '+written()+' pending '+pending());
+  // #225: the unsaved count follows edits and Read.
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+  const unsaved = document.getElementById('unsaved'), saveButton = document.querySelector('[data-handler="saveHandler"]');
+  if (!unsaved.hidden) throw Error('Unsaved count shown with nothing changed');
+  const os = field(46);
+  os.value = '2'; os.dispatchEvent(new Event('change', {bubbles:true}));
+  if (unsaved.hidden || unsaved.textContent !== '1' || !sidebar[0].hasAttribute('data-unsaved'))
+    throw Error('An edit did not show one unsaved field: '+unsaved.textContent);
+  await readHandler();
+  if (!unsaved.hidden || sidebar[0].hasAttribute('data-unsaved')) throw Error('Read did not clear the unsaved count');
+  // A bad hotkey: Save sends nothing, the strip names the field and lands on it; a fix clears it.
+  document.querySelectorAll('.hotkey-text').forEach(h => {h.value = 'lctrl+rshift+c+o'; h.setAttribute('fetched-value', h.value);});
+  document.querySelectorAll('.keymap-text').forEach(k => k.setAttribute('fetched-value', ''));
+  const hotkey = document.querySelector('.hotkey-text'), strip = document.getElementById('refusal');
+  hotkey.value = 'lctrl+nope'; hotkey.dispatchEvent(new Event('input', {bubbles:true}));
+  if (unsaved.textContent !== '1' || !sidebar[2].hasAttribute('data-unsaved')) throw Error('A hotkey edit did not count as unsaved');
+  saveButton.click(); await tick();
+  if (sets !== 0 || saves !== 0 || strip.hidden || !/1 field needs a fix/.test(strip.textContent) ||
+      !/Hotkeys › output_toggle/.test(strip.textContent) || !/unknown key name/.test(strip.textContent) ||
+      hotkey.getAttribute('aria-invalid') !== 'true' || shownSections() !== 'hotkeys' || document.activeElement !== hotkey)
+    throw Error('Refused Save did not band the window and land on the field: sent '+sets+'/'+saves+' strip "'+strip.textContent+'" shown '+shownSections());
+  // A strip entry is a link to its field, from any section.
+  sidebar[0].click();
+  strip.querySelector('a').click();
+  if (shownSections() !== 'hotkeys' || document.activeElement !== hotkey) throw Error('Strip entry did not land on its field');
+  hotkey.value = 'lctrl+rshift+c+o'; hotkey.dispatchEvent(new Event('input', {bubbles:true}));
+  if (hotkey.hasAttribute('aria-invalid') || hotkey.parentElement.querySelector('.hotkey-error').textContent || strip.hidden)
+    throw Error('Correcting the field did not clear its own error, or cleared the strip early');
+  // A changed chord plus a bad keymap: every field is checked before any is sent.
+  const other = document.querySelectorAll('.hotkey-text')[1], overrides = document.querySelector('.keymap-text');
+  other.value = 'lctrl+rshift+x'; other.dispatchEvent(new Event('input', {bubbles:true}));
+  overrides.value = 'capslock=nope'; overrides.dispatchEvent(new Event('input', {bubbles:true}));
+  saveButton.click(); await tick();
+  if (sets !== 0 || saves !== 0 || strip.hidden || !/1 field needs a fix/.test(strip.textContent) ||
+      !/Desk › Output A Key overrides/.test(strip.textContent) || shownSections() !== 'desk' || !overrides.checkVisibility())
+    throw Error('A refused Save sent the changed chord, or the strip missed the keymap: sent '+sets+' strip "'+strip.textContent+'"');
+  other.value = other.getAttribute('fetched-value'); other.dispatchEvent(new Event('input', {bubbles:true}));
+  // Read replaces the refused values, so the strip and the error lines go with them.
+  document.querySelector('[data-handler="readHandler"]').click(); await tick();
+  if (!strip.hidden || overrides.hasAttribute('aria-invalid') || overrides.parentElement.querySelector('.keymap-error').textContent)
+    throw Error('Read left the last refusal on the page');
+  overrides.value = ''; overrides.dispatchEvent(new Event('input', {bubbles:true}));
+  saveButton.click(); await tick();
+  // The fake board never sent some fields, so this Save fills them in; only the save message is counted.
+  if (!strip.hidden || saves !== 1 || !unsaved.hidden) throw Error('A passing Save did not clear the strip and send the save message: '+saves+' strip '+strip.hidden+' unsaved '+unsaved.hidden);
+  // Service: Wipe Config takes two clicks; any other click disarms it.
+  sidebar[5].click();
+  const wipe = document.querySelector('[data-handler="wipeConfigHandler"]');
+  wipe.click(); await tick();
+  if (wipes !== 0 || wipe.textContent !== 'Click again to wipe') throw Error('One click on Wipe Config did not arm it: '+wipes+' "'+wipe.textContent+'"');
+  document.querySelector('[data-handler="blinkHandler"]').click();
+  if (wipe.hasAttribute('data-armed') || wipe.textContent !== 'Wipe Config') throw Error('Another click did not disarm Wipe Config');
+  wipe.click(); sidebar[0].click(); sidebar[5].click();
+  if (wipe.hasAttribute('data-armed') || wipes !== 0) throw Error('A click outside Service did not disarm Wipe Config');
+  wipe.click(); wipe.click(); await tick();
+  if (wipes !== 1 || wipe.textContent !== 'Wipe Config') throw Error('Two clicks did not wipe once: '+wipes);
+  sidebar[0].click();
+  // Losing the board: the toolbar says so, the picture goes back to its connect text, nothing can be dragged.
+  device.opened = false; setConnected(false);
+  if (document.getElementById('connection').textContent !== 'Not connected' || layout.querySelector('svg') ||
+      !/Connect/.test(layout.textContent) || !saveButton.disabled)
+    throw Error('Disconnect did not reset the page');
   document.body.dataset.viewport = innerWidth;
   document.body.dataset.layoutTest = 'passed';
 })().catch(error => {document.documentElement.dataset.error = String(error);});
@@ -232,11 +335,12 @@ html = html.replace('</body>', `<script>
 fs.writeFileSync(file, html);
 (async () => {
   try {
-    for (const width of [1209, 801, 800, 640, 600]) {
+    for (const [width, dark] of [[1209], [1209, true], [801], [800], [640], [600]]) {
       const dom = await new Promise((resolve, reject) => {
         const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--no-first-run',
-          '--no-default-browser-check', '--user-data-dir='+path.join(dir,'profile-'+width),
-          '--window-size='+width+',1000', '--virtual-time-budget=2000', '--dump-dom', pathToFileURL(file).href]);
+          '--no-default-browser-check', '--user-data-dir='+path.join(dir,'profile-'+width+(dark ? '-dark' : '')),
+          '--window-size='+width+',1000', '--virtual-time-budget=2000', ...(dark ? ['--force-dark-mode'] : []),
+          '--dump-dom', pathToFileURL(file).href]);
         let stdout = '', stderr = '';
         const timeout = setTimeout(() => {child.kill('SIGKILL'); reject(Error('Chrome DOM dump timed out'));}, 30000);
         child.on('error', reject);
@@ -254,7 +358,7 @@ fs.writeFileSync(file, html);
       });
       if (!dom.includes('data-viewport="'+width+'"') || !dom.includes('data-layout-test="passed"') || /<html[^>]*data-error=/.test(dom))
         throw Error('Chrome page checks failed: '+dom.match(/<html[^>]*>|<body[^>]*>/g));
-      console.log('webconfig_chrome_test: Read, shared Advanced, field fit, seam clearance, label drag and box gestures passed at '+width+'px');
+      console.log('webconfig_chrome_test: sections, selection, Read, Advanced, field fit, seam clearance, gestures, unsaved count, refusal strip and service guard passed at '+width+'px'+(dark ? ' dark' : ''));
     }
   } finally {
     if (process.argv.includes('--keep')) console.log(file);
