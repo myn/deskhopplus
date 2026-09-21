@@ -69,7 +69,7 @@ words are one hover or one click away, and they are what to act on:
 
 | The icon | Meaning |
 | --- | --- |
-| Two solid screens joined by a bar | Connected and paired, including a live config-mode session on macOS. |
+| Two solid screens joined by a bar | Connected and paired, including a live config-mode session. |
 | Two outlined screens | Looking for the board, board not connected, or config mode. Nothing to do unless it stays that way. |
 | A badge with **!** on the screens | Something to read: open the menu. Every state with a remedy, a reconnect storm, or files waiting for your answer. |
 
@@ -92,7 +92,7 @@ second row is the state.
 | **Connected and paired** | Everything works. | Nothing. |
 | **Not paired — press the config chord on the device** | The board has no pairing for this helper. | [Pair a helper](#pair-a-helper). |
 | **Device in config mode** | You pressed the chord once. | Press it again, or wait five minutes. |
-| **Connected and paired — config mode** (macOS) | The helper has a live session while the config page is open. | Save and try the layout, then Exit when finished. |
+| **Connected and paired — config mode** | The helper has a live session while the config page is open. | Save and try the layout, then Exit when finished. |
 | **Device not connected** | The helper cannot find the board. | Check the USB cable. If the board was just replugged, wait a few seconds. |
 | **Reconnecting repeatedly — check the link, and that the helper is up to date** | The connection keeps dropping and coming back. | Check the cable. Make sure the helper and the firmware are from the same release. |
 | **Helper version does not match the device — update the helper; file transfers are refused** | The board and the helper speak different versions. | Install the helper from the same release as the firmware. The cursor still works; the clipboard does not. |
@@ -178,7 +178,7 @@ Nothing crosses without a paired helper at each end, so a computer with no helpe
 
 All of this is on the config page. To open it: press the chord, open the `DESKHOP` drive, open
 `config.htm` in Chrome or another Chromium browser (Firefox has no WebHID), click **Connect**.
-Change what you want and click **Save**. On macOS, wait for **Connected and paired — config mode**
+Change what you want and click **Save**. Wait for **Connected and paired — config mode**
 in the helper menu, then try multi-monitor navigation while the page stays connected. **Device in
 config mode** means there is no usable helper channel; multi-monitor hops may then land on the wrong
 monitor. Click **Exit** when finished, or the board leaves config mode after five minutes. Each

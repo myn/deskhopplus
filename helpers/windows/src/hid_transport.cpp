@@ -100,29 +100,6 @@ bool device_is_gone(DWORD error) {
            error == ERROR_NOT_FOUND;
 }
 
-enum class Match { None, Normal, ConfigMode };
-
-/*
- * Identity is the USB identifier, the serial and the usage page — never the
- * interface path, which does not survive a reconnect on either platform.
- *
- * Matched narrowly, on the vendor page and the channel's own usage. Broad
- * matching would open a keyboard, which is neither ours to hold nor something
- * a managed laptop's security software ignores.
- *
- * The config-mode identity is matched too: seeing it is how the helper knows
- * the device rebooted rather than vanished.
- */
-Match classify(const HIDD_ATTRIBUTES &attrs, const HIDP_CAPS &caps) {
-    if (caps.UsagePage != kUsagePage) return Match::None;
-    if (attrs.VendorID == kVendorId && attrs.ProductID == kProductId && caps.Usage >= kUsage &&
-        caps.Usage < kUsage + DH_SESSION_CHANNEL_COUNT)
-        return Match::Normal;
-    if (attrs.VendorID == kConfigVendorId && attrs.ProductID == kConfigProductId)
-        return Match::ConfigMode;
-    return Match::None;
-}
-
 } // namespace
 
 HidTransport::~HidTransport() { stop(); }
@@ -184,9 +161,9 @@ void HidTransport::rescan() {
     if (!announced && has_device() && !holding_channels()) acquire();
 }
 
-std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) const {
+std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_api_nodes) const {
     std::vector<Found> found;
-    config_mode_nodes = 0;
+    config_api_nodes = 0;
 
     HDEVINFO set = SetupDiGetClassDevsW(&GUID_DEVINTERFACE_HID, nullptr, nullptr,
                                         DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -212,14 +189,17 @@ std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) 
                                               nullptr))
             continue;
 
-        /*
-         * Queried with no access at all and shared both ways, so that a
-         * collection somebody else already holds still answers what it is.
-         * The seizing open is a separate call with dwShareMode = 0, which is
-         * the one ADR-0001 measured as exclusive.
-         */
-        HANDLE probe = CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                   nullptr, OPEN_EXISTING, 0, nullptr);
+        /* A held channel already has an exclusive handle. Reuse it: a fresh
+           probe of our own collection may be refused by hidclass.sys and a
+           later config API arrival must not make that look like removal. */
+        const auto held = std::find_if(channels_.begin(), channels_.end(), [&](const Channel &c) {
+            return c.path == detail->DevicePath && c.opened;
+        });
+        const bool borrowed = held != channels_.end();
+        HANDLE probe = borrowed ? held->handle
+                                : CreateFileW(detail->DevicePath, 0,
+                                              FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                              nullptr, OPEN_EXISTING, 0, nullptr);
         if (probe == INVALID_HANDLE_VALUE) continue;
 
         HIDD_ATTRIBUTES attrs{};
@@ -233,18 +213,24 @@ std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) 
         wchar_t serial[256] = {0};
         if (described) HidD_GetSerialNumberString(probe, serial, sizeof serial);
         if (preparsed) HidD_FreePreparsedData(preparsed);
-        CloseHandle(probe);
+        if (!borrowed) CloseHandle(probe);
         if (!described) continue;
 
-        switch (classify(attrs, caps)) {
-        case Match::ConfigMode:
-            ++config_mode_nodes;
+        switch (classify_collection(attrs.VendorID, attrs.ProductID, caps.UsagePage, caps.Usage)) {
+        case Collection::ConfigApi:
+            ++config_api_nodes;
             break;
-        case Match::Normal:
+        case Collection::NormalChannel:
+        case Collection::ConfigChannel: {
+            const Mode mode = attrs.VendorID == kConfigVendorId ? Mode::Config : Mode::Normal;
             found.push_back(Found{detail->DevicePath, serial, caps.InputReportByteLength,
-                                  caps.OutputReportByteLength, static_cast<uint8_t>(caps.Usage - kUsage)});
+                                  caps.OutputReportByteLength,
+                                  mode == Mode::Config ? uint8_t{0}
+                                                       : static_cast<uint8_t>(caps.Usage - kUsage),
+                                  mode});
             break;
-        case Match::None:
+        }
+        case Collection::None:
             break;
         }
     }
@@ -254,8 +240,8 @@ std::vector<HidTransport::Found> HidTransport::sweep(size_t &config_mode_nodes) 
 }
 
 bool HidTransport::refresh() {
-    size_t config_nodes = 0;
-    std::vector<Found> found = sweep(config_nodes);
+    size_t config_apis = 0;
+    std::vector<Found> found = sweep(config_apis);
 
     /* The first serial seen wins. Behaviour with more than one device attached
        is out of scope (#42), and the alternative to ignoring the second is
@@ -273,6 +259,15 @@ bool HidTransport::refresh() {
                  " channel(s) on another serial; holding " + narrow(serial_));
     }
 
+    const size_t normal_count = static_cast<size_t>(std::count_if(
+        found.begin(), found.end(), [](const Found &f) { return f.mode == Mode::Normal; }));
+    const size_t config_count = found.size() - normal_count;
+    const Mode previous_mode = mode_;
+    const Mode selected = discover(previous_mode, normal_count, config_count, config_apis, false).mode;
+    found.erase(std::remove_if(found.begin(), found.end(),
+                               [&](const Found &f) { return f.mode != selected; }),
+                found.end());
+
     const bool changed = found.size() != channels_.size() ||
         std::any_of(found.begin(), found.end(), [&](const Found &f) {
             return std::none_of(channels_.begin(), channels_.end(),
@@ -281,10 +276,6 @@ bool HidTransport::refresh() {
     const bool was_holding = holding_channels();
     /* OVERLAPPED addresses must remain stable until cancellation completes. */
     if (changed) release();
-
-    const bool had_device = !channels_.empty();
-    const size_t config_before = config_mode_nodes_;
-    config_mode_nodes_ = config_nodes;
 
     /* Removals first: a channel that is gone must not be counted towards the
        set the next acquisition rolls back. */
@@ -315,41 +306,26 @@ bool HidTransport::refresh() {
         ++added;
     }
 
+    /* The failure callback feeds the session and presence immediately. It
+       must see the new mode before it reports loss of the old channel set. */
+    mode_ = selected;
     if (changed) {
         std::sort(channels_.begin(), channels_.end(),
                   [](const Channel &a, const Channel &b) { return a.index < b.index; });
         if (was_holding && events_.transport_failed)
             events_.transport_failed("channel set changed");
     }
-    bool announced = false;
+    const Discovery decision = discover(previous_mode, normal_count, config_count, config_apis,
+                                        added > 0);
     if (added > 0) {
         note("channel(s) found on serial " +
              (serial_.empty() ? std::string("(none exposed)") : narrow(serial_)) + ": " +
              std::to_string(channels_.size()) + " so far");
-        announced = true;
-        if (events_.device_appeared) events_.device_appeared(DH_DEVICE_NORMAL);
     }
 
-    /*
-     * Config mode is announced on its own. The core takes it as the session
-     * ending under a named reason rather than as the device vanishing, so
-     * there is no disappearance to report first — dh_helper_device_appeared
-     * closes the channels itself.
-     */
-    if (config_before == 0 && config_mode_nodes_ > 0) {
-        announced = true;
-        if (events_.device_appeared) events_.device_appeared(DH_DEVICE_CONFIG_MODE);
-    }
-
-    /*
-     * Absent means *nothing* of ours is attached — neither a channel nor a
-     * config-mode node. Saying it while the device sits in config mode would
-     * report "device not connected" for the five minutes the user is
-     * deliberately configuring it.
-     */
-    const bool have_something = !channels_.empty() || config_mode_nodes_ > 0;
-    const bool had_something = had_device || config_before > 0;
-    if (had_something && !have_something) {
+    if (decision.appeared && events_.device_appeared)
+        events_.device_appeared(mode_ == Mode::Config ? DH_DEVICE_CONFIG_MODE : DH_DEVICE_NORMAL);
+    if (decision.disappeared) {
         /*
          * Said out loud, as the counterpart of "channel(s) found on serial …".
          * Neither this nor dh_helper_device_left writes anything, so a device
@@ -362,10 +338,9 @@ bool HidTransport::refresh() {
         note("the device went away" + (serial_.empty() ? std::string()
                                                        : " (serial " + narrow(serial_) + ")"));
         serial_.clear();
-        announced = true;
         if (events_.device_disappeared) events_.device_disappeared();
     }
-    return announced;
+    return decision.appeared || decision.disappeared;
 }
 
 bool HidTransport::holding_channels() const {

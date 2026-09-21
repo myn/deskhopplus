@@ -125,7 +125,10 @@ class Helper : public HelperEffects {
     }
     void note_sent() override { session_->note_sent(now_ms()); }
     void note_send_refused() override { session_->note_send_refused(); }
-    void show_state(dh_helper_state state) override { tray_.show(state); }
+    void show_state(dh_helper_state state) override {
+        tray_.show(words::presence_state(state, transport_.mode() == Mode::Config,
+                                         session_->can_send_bulk()));
+    }
     void deliver_text(const std::vector<uint8_t> &utf8) override {
         clipboard_.deliver_text(utf8);
     }
@@ -608,6 +611,10 @@ void Helper::feed(const std::vector<Output> &outputs) {
      */
     const bool live = session_->can_send_bulk();
     if (bulk_was_allowed_ && !live) dispatch_.emit(clipboard_service_->session_ended());
+    if (const auto presence = words::session_edge_presence(session_->state(),
+                                                           transport_.mode() == Mode::Config,
+                                                           bulk_was_allowed_, live))
+        show_state(*presence);
     bulk_was_allowed_ = live;
 }
 
@@ -672,7 +679,7 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
            says should be showing. */
         tray_.detach();
         tray_.attach(window_, tray_callbacks());
-        tray_.show(session_->state());
+        show_state(session_->state());
         return 0;
     }
 

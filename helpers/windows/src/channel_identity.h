@@ -15,19 +15,18 @@
  */
 
 #include "dh_channel_identity.h"
+#include "dh_session.h"
 
 #include <cstddef>
 #include <cstdint>
 
-
 namespace deskhop {
 
-/* Normal mode: pid.codes/1209/C000. The channel exists only here. */
+/* Normal mode: pid.codes/1209/C000. */
 inline constexpr uint16_t kVendorId = DH_CHANNEL_VENDOR_ID;
 inline constexpr uint16_t kProductId = DH_CHANNEL_PRODUCT_ID;
 
-/* Config mode. Seeing this is not the device being absent — it is the user
-   opening the configuration page, and the helper says so. */
+/* Config mode has separate config API and helper channel collections. */
 inline constexpr uint16_t kConfigVendorId = DH_CHANNEL_CONFIG_VENDOR_ID;
 inline constexpr uint16_t kConfigProductId = DH_CHANNEL_CONFIG_PRODUCT_ID;
 
@@ -38,6 +37,45 @@ inline constexpr uint16_t kConfigProductId = DH_CHANNEL_CONFIG_PRODUCT_ID;
  */
 inline constexpr uint16_t kUsagePage = DH_CHANNEL_USAGE_PAGE;
 inline constexpr uint16_t kUsage = DH_CHANNEL_USAGE;
+
+enum class Collection { None, NormalChannel, ConfigApi, ConfigChannel };
+enum class Mode { None, Normal, Config };
+
+inline Collection classify_collection(uint16_t vendor, uint16_t product, uint16_t page,
+                                      uint16_t usage) {
+    if (page != kUsagePage) return Collection::None;
+    if (vendor == kVendorId && product == kProductId && usage >= kUsage &&
+        usage < kUsage + DH_SESSION_CHANNEL_COUNT)
+        return Collection::NormalChannel;
+    if (vendor == kConfigVendorId && product == kConfigProductId) {
+        if (usage == 0x10) return Collection::ConfigApi;
+        if (usage == kUsage) return Collection::ConfigChannel;
+    }
+    return Collection::None;
+}
+
+struct Discovery {
+    Mode mode;
+    bool appeared;
+    bool disappeared;
+};
+
+/* Keep the held identity while Windows briefly exposes both during a reboot.
+   A config API alone reports presence, but never counts as a helper channel. */
+inline Discovery discover(Mode previous, size_t normal_channels, size_t config_channels,
+                          size_t config_apis, bool channel_added) {
+    Mode mode = Mode::None;
+    if (normal_channels && config_channels)
+        mode = previous;
+    else if (config_channels)
+        mode = Mode::Config;
+    else if (normal_channels)
+        mode = Mode::Normal;
+    else if (config_apis)
+        mode = Mode::Config;
+    return {mode, mode != Mode::None && (mode != previous || channel_added),
+            mode == Mode::None && previous != Mode::None};
+}
 
 /* One report is one full-speed packet, and the framing layer owns every byte
    of it: no report ID, so no byte is spent on one.

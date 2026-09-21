@@ -17,7 +17,8 @@ first row, greyed, is **deskhopplus helper** and the release number, from the on
 firmware and both helpers share (`src/core/dh_version.h`). It is not clickable.
 
 The icon is always there, with one of three looks — `words::look`: **paired**, the solid glyph,
-for connected; **off**, the outlined glyph, for looking, absent and config mode; **attention**,
+for connected, including a live config-mode session; **off**, the outlined glyph, for looking,
+absent and config mode without a session; **attention**,
 the badge, for every state with a remedy, the reconnect rate, and a waiting file question — and
 the state words in the tooltip (`words::tooltip`), which a look never replaces (#38). While a
 file arrives it is the percent, two white digits on a blue tile drawn with GDI+ at the taskbar's
@@ -56,7 +57,7 @@ The exe lands at `helpers/windows/build/Release/deskhop-helper.exe`. CI builds a
 on every push to `main`, which is what makes the no-install property something a user receives
 rather than something this file asserts.
 
-The tests cover five things: the autostart ladder's decisions, the clipboard path, the seal's
+The tests cover the autostart ladder, channel discovery, the clipboard path, the seal's
 cipher, the shim's dispatch — which output reaches which effect — and what the presence shows
 for a state (`words_test`: the look and the tooltip, #208). The ladder is the code most
 likely to be wrong on a managed laptop nobody can reproduce, and it needs no registry to be worth

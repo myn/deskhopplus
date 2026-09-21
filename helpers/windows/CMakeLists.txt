@@ -89,6 +89,14 @@ target_include_directories(ladder INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 enable_testing()
 
+add_executable(channel_discovery_test tests/channel_discovery_test.cpp)
+target_link_libraries(channel_discovery_test PRIVATE dhcore)
+target_include_directories(channel_discovery_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(channel_discovery_test PRIVATE /WX)
+endif()
+add_test(NAME channel_discovery COMMAND channel_discovery_test)
+
 # House style: an assertion macro, a main, a printed failure line, a non-zero
 # exit. No framework and no new dependency (ADR-0006).
 add_executable(autostart_ladder_test tests/autostart_ladder_test.cpp)

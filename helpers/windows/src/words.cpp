@@ -10,6 +10,26 @@
 
 namespace deskhop::words {
 
+dh_helper_state presence_state(dh_helper_state state, bool config_present, bool live) {
+    if (state == DH_HELPER_CONNECTED_CONFIG_MODE) {
+        if (live) return config_present ? DH_HELPER_CONNECTED_CONFIG_MODE : DH_HELPER_CONNECTED;
+        return config_present ? DH_HELPER_DEVICE_IN_CONFIG_MODE : DH_HELPER_DEVICE_ABSENT;
+    }
+    if (state == DH_HELPER_CONNECTED && config_present)
+        return live ? DH_HELPER_CONNECTED_CONFIG_MODE : DH_HELPER_DEVICE_IN_CONFIG_MODE;
+    return state;
+}
+
+std::optional<dh_helper_state> session_edge_presence(dh_helper_state state,
+                                                     bool config_present,
+                                                     bool was_live, bool live) {
+    if (was_live == live ||
+        (state != DH_HELPER_CONNECTED_CONFIG_MODE &&
+         !(state == DH_HELPER_CONNECTED && config_present && !live)))
+        return std::nullopt;
+    return presence_state(state, config_present, live);
+}
+
 std::string release_row() {
     return "deskhopplus helper " + std::to_string(DH_VERSION_MAJOR) + "." +
            std::to_string(DH_VERSION_MINOR);

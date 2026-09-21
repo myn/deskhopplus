@@ -3,8 +3,8 @@
 
 #pragma once
 
-/* USB identity shared by firmware and helpers. The channel exists only in
-   normal mode; config mode reboots under a different device identity. */
+/* USB identity shared by firmware and helpers. Config mode reboots under a
+   different identity with one helper channel beside the config API. */
 #define DH_CHANNEL_VENDOR_ID 0x1209
 #define DH_CHANNEL_PRODUCT_ID 0xC000
 #define DH_CHANNEL_CONFIG_VENDOR_ID 0x2E8A

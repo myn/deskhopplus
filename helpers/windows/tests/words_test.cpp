@@ -28,6 +28,36 @@ static int failures = 0;
     } while (0)
 
 int main() {
+    CHECK(presence_state(DH_HELPER_CONNECTED_CONFIG_MODE, true, false) ==
+              DH_HELPER_DEVICE_IN_CONFIG_MODE, "reassertion after config channel loss");
+    CHECK(presence_state(DH_HELPER_CONNECTED_CONFIG_MODE, false, false) ==
+              DH_HELPER_DEVICE_ABSENT, "reassertion after config device removal");
+    CHECK(presence_state(DH_HELPER_CONNECTED_CONFIG_MODE, false, true) ==
+              DH_HELPER_CONNECTED, "reassertion after normal reconnection");
+    CHECK(presence_state(DH_HELPER_CONNECTED, true, false) ==
+              DH_HELPER_DEVICE_IN_CONFIG_MODE, "reassertion during config entry");
+    CHECK(presence_state(DH_HELPER_CONNECTED, false, false) ==
+              DH_HELPER_CONNECTED, "ordinary USB noise keeps core debounce");
+
+    /* Clear a stale connected config label on session loss, while the shared
+       core keeps its USB-noise grace period. */
+    CHECK(session_edge_presence(DH_HELPER_CONNECTED_CONFIG_MODE, true, true, false) ==
+              DH_HELPER_DEVICE_IN_CONFIG_MODE, "config session loss with API present");
+    CHECK(session_edge_presence(DH_HELPER_CONNECTED_CONFIG_MODE, false, true, false) ==
+              DH_HELPER_DEVICE_ABSENT, "config session loss after device removal");
+    CHECK(session_edge_presence(DH_HELPER_CONNECTED, true, true, false) ==
+              DH_HELPER_DEVICE_IN_CONFIG_MODE, "normal session loss on config entry");
+    CHECK(!session_edge_presence(DH_HELPER_CONNECTED, false, true, false),
+          "normal session loss keeps core debounce");
+    CHECK(session_edge_presence(DH_HELPER_CONNECTED_CONFIG_MODE, true, false, true) ==
+              DH_HELPER_CONNECTED_CONFIG_MODE, "config session becomes live");
+    CHECK(session_edge_presence(DH_HELPER_CONNECTED_CONFIG_MODE, false, false, true) ==
+              DH_HELPER_CONNECTED, "normal session clears stale config label");
+    CHECK(!session_edge_presence(DH_HELPER_CONNECTED_CONFIG_MODE, true, false, false),
+          "no status change without session edge");
+    CHECK(!session_edge_presence(DH_HELPER_RECONNECTING_REPEATEDLY, true, true, false),
+          "failure status is not overwritten");
+
     /* The shape carries the state, and the words stay beside it (#38). */
     CHECK(look(DH_HELPER_CONNECTED, false) == Look::Paired, "paired is the solid glyph");
     CHECK(look(DH_HELPER_QUIET, false) == Look::Off, "looking for the device is off");

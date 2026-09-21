@@ -9,11 +9,11 @@
  * its own words; a Windows tray tooltip and a macOS menu bar item are not one
  * string table living in C.
  *
- * What is *not* here is any decision. Which state the helper is in, whether
- * the config chord may be offered from it, and whether bulk is allowed are all
- * read off the core, so a second helper cannot answer them differently. The
- * chord predicate in particular carries a security property (#34) and is
- * called, never re-read.
+ * The session state, config-chord permission, and bulk permission come from
+ * the core. The Windows presence view below also uses the transport mode to
+ * clear a stale connected config label during the core's USB-noise debounce.
+ * The chord predicate carries a security property (#34) and is called,
+ * never re-read.
  *
  * The rule the note codes exist to protect: **a note never loses its
  * numbers**. A rate reported without the rate is what let #94 run for two
@@ -23,11 +23,22 @@
  */
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "dh_helper.h"
 
 namespace deskhop::words {
+
+/* The tray's current state, including a config label still held by the
+   shared core during its USB-noise debounce. */
+dh_helper_state presence_state(dh_helper_state state, bool config_present, bool live);
+
+/* Update the Windows presence at a live-session edge; the shared core still
+   debounces ordinary USB noise. */
+std::optional<dh_helper_state> session_edge_presence(dh_helper_state state,
+                                                     bool config_present,
+                                                     bool was_live, bool live);
 
 /* The greyed first row of the tray menu: this helper's name and release, from
    the one version the firmware and both helpers share (#199). */

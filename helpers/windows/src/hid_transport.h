@@ -18,9 +18,9 @@
  * ownership pins work to the window thread regardless. There is nothing here
  * to lock (#49).
  *
- * Platform-boundary code, verified by hand and by use rather than at a seam
- * (#42, "Not tested at a seam"). What *is* testable — the ladder's decisions —
- * lives in autostart_ladder.h with no Win32 in it.
+ * Win32 handle operations need device verification. Collection matching and
+ * discovery decisions have a host-runnable test; the autostart ladder has
+ * its own decision test too.
  */
 
 #include <windows.h>
@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "dh_helper.h"
+#include "channel_identity.h"
 
 namespace deskhop {
 
@@ -73,9 +74,8 @@ class HidTransport {
        #157, confirmed with the device reported OK by Windows while this held
        no channel at all. Repeating the sweep costs one SetupAPI enumeration
        per interval and logs nothing while the answer does not change. It
-       stops once a channel is found, so it runs for the whole of config mode,
-       where there are nodes but never a channel — a second of enumeration
-       against five minutes of deliberate configuring. */
+       stops once a channel is found. An API-only config-mode board keeps the
+       sweep running until its separate helper channel appears. */
     void rescan();
 
     /* Seize every channel or none (ADR-0002). ADR-0001 measured that even a
@@ -100,6 +100,7 @@ class HidTransport {
 
     bool has_device() const { return !channels_.empty(); }
     bool holding_channels() const;
+    Mode mode() const { return mode_; }
 
   private:
     struct Channel {
@@ -125,6 +126,7 @@ class HidTransport {
         USHORT input_report_len{0};
         USHORT output_report_len{0};
         uint8_t index{0};
+        Mode mode{Mode::None};
     };
 
     /* A fresh sweep, diffed against what is held. Arrival and removal both
@@ -135,7 +137,7 @@ class HidTransport {
        for the channels, and so the difference between a device event that has
        already triggered an acquisition and one that has not. */
     bool refresh();
-    std::vector<Found> sweep(size_t &config_mode_nodes) const;
+    std::vector<Found> sweep(size_t &config_api_nodes) const;
     void close(Channel &channel);
     bool start_read(Channel &channel);
     void note(const std::string &message) const;
@@ -145,7 +147,7 @@ class HidTransport {
     HDEVNOTIFY notification_{nullptr};
     std::vector<Channel> channels_;
     uint8_t next_striped_{0};
-    size_t config_mode_nodes_{0};
+    Mode mode_{Mode::None};
 
     /* The serial of the device this helper is talking to. Every channel must
        belong to it: behaviour with more than one device attached is out of
