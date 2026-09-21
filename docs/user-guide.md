@@ -184,6 +184,13 @@ config mode** means there is no usable helper channel; multi-monitor hops may th
 monitor. Click **Exit** when finished, or the board leaves config mode after five minutes. Each
 entry and exit reboots the board and starts a fresh helper session. Pair a new helper after Exit.
 
+**On a Mac, eject `DESKHOP` in Finder before you leave config mode** — before Exit, before the
+chord, and before the five minutes run out. macOS can hang its disk mounter when a mounted drive
+vanishes ([#178](https://github.com/myn/deskhopplus/issues/178)). The board withdraws the drive
+two seconds before it reboots, but macOS does not look while the drive is mounted, so only an
+eject makes it let go first. After an eject the board treats the drive as gone and reboots at once
+on the next exit.
+
 The page is one settings window. The sidebar on the left has six sections, shown one at a time:
 **Desk**, **Keyboard & Mouse**, **Hotkeys**, **Clipboard**, **Status** and **Service**. The
 toolbar at the top says in words whether the page is connected and holds **Connect**, **Read**,
@@ -423,7 +430,9 @@ Pressed the chord, LED blinks, no drive. First: did you press twice? See
 
 If you pressed once and still nothing, and Disk Utility or `diskutil list` hangs, macOS's disk
 mounter is stuck. Nothing else will mount either until the Mac reboots. Reboot the Mac. This is
-[#178](https://github.com/myn/deskhopplus/issues/178).
+[#178](https://github.com/myn/deskhopplus/issues/178). To stop it happening again, eject
+`DESKHOP` in Finder before every exit from config mode; the board cannot make macOS let go by
+itself ([#229](https://github.com/myn/deskhopplus/issues/229)).
 
 ### The cursor jumps to the middle of the screen, or the clipboard fills with screenshots
 

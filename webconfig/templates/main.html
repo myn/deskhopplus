@@ -94,7 +94,9 @@
         <p class="hint">Save, then try the layout while this page stays connected. Wait for the helper
           to say “Connected and paired — config mode” for correct multi-monitor hops. If it says
           “Device in config mode”, Exit before testing multi-monitor hops. Config mode reboots on
-          entry and Exit, and ends automatically after five minutes.</p>
+          entry and Exit, and ends automatically after five minutes. On a Mac, eject the DESKHOP
+          drive in Finder before Exit or the timeout: macOS can hang its disk mounter when a
+          mounted drive vanishes.</p>
 
         {% for letter, fields in [('A', screen_A), ('B', screen_B)] %}
         <div class="computer" data-computer="{{ letter }}"{% if not loop.first %} hidden{% endif %}>

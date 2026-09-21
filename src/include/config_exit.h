@@ -11,11 +11,21 @@
  * nothing mounts again until the Mac reboots (#178). Two exits in five did it.
  *
  * So leaving config mode is now two steps. First the drive reports "no
- * medium" while the USB device stays enumerated, which the host handles as an
- * ordinary media removal. Then, after a grace period long enough for the host
- * to have noticed, the board reboots. A host that ejects the drive itself
- * first is honoured: the medium is gone from then on, and the later exit
- * reboots at once because there is nothing left for the host to tear down.
+ * medium" while the USB device stays enumerated, which a host that polls
+ * handles as an ordinary media removal. Then, after a grace period, the board
+ * reboots. A host that ejects the drive itself first is honoured: the medium
+ * is gone from then on, and the later exit reboots at once because there is
+ * nothing left for the host to tear down.
+ *
+ * What the hardware trial found (2026-09-21, board A, macOS 15.8, on #229):
+ * the grace is real — a timeout exit vanished 302.5 s after enumeration —
+ * but macOS never noticed it. It asks TEST UNIT READY when it first probes
+ * the disk (an exit before the mount left it unmounted, every time) and
+ * never again while the volume is mounted: in eight mounted exits the kernel
+ * destroyed the device 15 ms *before* the unmount, as before. On the Mac the
+ * eject is therefore the protection, and the user guide says so. The grace
+ * stays for hosts that do poll (Windows and Linux check about once a second,
+ * unverified here) and because it costs nothing.
  *
  * Pure C11: no SDK, no I/O, no clock of its own — the caller supplies the
  * time. tests/config_exit_test.c is the gate. Same split, for the same
@@ -29,9 +39,10 @@
 /*
  * How long the medium is reported absent before the board reboots.
  *
- * macOS polls a removable disk with TEST UNIT READY about once a second, so
- * two seconds is at least one poll with margin and still feels immediate.
- * The knob for the hardware trial on the ticket.
+ * Two seconds: above the once-a-second media poll Windows and Linux are
+ * believed to run, and still feels immediate. macOS does not poll a mounted
+ * volume at all (see above), so no value of this helps it. The knob, should
+ * a host turn out to poll more slowly.
  */
 #define CONFIG_EXIT_GRACE_US (2u * 1000000u)
 
