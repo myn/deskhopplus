@@ -95,6 +95,11 @@ target_compile_definitions(tinyusb_host_base INTERFACE
 #------------------------------------
 # Host MAX3421
 #------------------------------------
+# deskhopplus: the vendored tinyusb carries only the RP2040 port, so this
+# driver's source is absent. CMake 4.4 checks the sources of an interface
+# library nothing links and prints an error for the missing file (#226).
+# Declare the target only when its source exists.
+if (EXISTS ${TOP}/src/portable/analog/max3421/hcd_max3421.c)
 add_library(tinyusb_host_max3421 INTERFACE)
 target_sources(tinyusb_host_max3421 INTERFACE
 	${TOP}/src/portable/analog/max3421/hcd_max3421.c
@@ -105,6 +110,7 @@ target_compile_definitions(tinyusb_host_max3421 INTERFACE
 target_link_libraries(tinyusb_host_max3421 INTERFACE
 	hardware_spi
 	)
+endif ()
 
 #------------------------------------
 # BSP & Additions
