@@ -220,7 +220,7 @@ The palette is system greys plus one blue, with yellow and red held back for ref
 - **Ground** (`ground`, dark `ground-dark`): the sidebar.
 - **Pane** (`pane`, dark `pane-dark`): the body, the toolbar, and every editable input's background.
 - **Box** (`box`, dark `box-dark`): grouped boxes and default buttons. The lightest surface in light mode; the top layer in dark mode.
-- **Well** (`well`, dark `well-dark`): the arrangement well, recessed below the pane. Also the digit fill on the seam bands.
+- **Well** (`well`, dark `well-dark`): the layout well, recessed below the pane. Also the digit fill on the seam bands.
 - **Line** (`line`, dark `line-dark`): every hairline: sidebar edge, toolbar edge, box borders, row separators, input borders.
 - **Ink** (`ink`, dark `ink-dark`): body text and labels.
 - **Ink 2** (`ink-2`, dark `ink-2-dark`): secondary text: hints, the toolbar words when not connected, read-only readings, slider readouts, the trace, sub-headings, seam input labels.
@@ -266,7 +266,7 @@ The window is a flex row: a 220px sidebar (`ground`, 1px right hairline, padding
 
 One section is visible at a time. The others are hidden, not removed, so every field stays in the document. The section title has 20px above and 12px below. A group title (`h3`) has 24px above and 8px below. A hint has 8px above. The Advanced disclosure box has 12px above.
 
-Inside a grouped box, rows stack with a hairline between them. A row is a wrapping flex line: min-height 40px, padding 6px 14px, gap 8px vertical and 16px horizontal, label left (`flex: 1 1 160px`) and control right. An error line (`small`) takes the full width under them. The arrangement well has 16px padding; the picture's SVG is centred, full width, capped at 360px tall; the +/- counts sit 10px under it with a 24px gap between computers.
+Inside a grouped box, rows stack with a hairline between them. A row is a wrapping flex line: min-height 40px, padding 6px 14px, gap 8px vertical and 16px horizontal, label left (`flex: 1 1 160px`) and control right. An error line (`small`) takes the full width under them. The layout well has 16px padding; the picture's SVG is centred, full width, capped at 360px tall; the +/- counts sit 10px under it with a 24px gap between computers.
 
 The spacing scale is 4px-based: 4, 8, 12, 16, 24, 40. Row padding (6px 14px), strip padding (10px 14px) and button padding (4px 12px) are the exceptions and are recorded on their components.
 
