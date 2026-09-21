@@ -32,6 +32,12 @@ void kick_watchdog_task(device_t *state) {
     uint32_t core1_last_loop_pass = state->core1_last_loop_pass;
     uint32_t current_time         = time_us_32();
 
+    /* Config mode leaves in two steps (#229): the drive's medium goes first,
+       and the reboot follows once the host has had time to notice. Asked
+       here, on the core that answers the host, with this pass's one clock. */
+    if (config_exit_reboot_now(&state->config_exit, current_time))
+        state->reboot_requested = true;
+
     /* If a reboot is requested, we'll stop updating watchdog */
     if (state->reboot_requested) {
         watchdog_hw->scratch[2] = MAGIC_WORD_REBOOT;
@@ -170,12 +176,13 @@ void screensaver_task(device_t *state) {
  * by hand. That call keeps a guard; the rest no longer have one, because
  * queueing a packet and setting a blink counter touch no flash at all.
  *
- * The config-mode reboot keeps a guard too, for a different reason given at
+ * The config-mode exit keeps a guard too, for a different reason given at
  * the call. Both remaining guards are now bounded by FW_UPGRADE_STALL_US,
  * which is what stops a transfer that stopped from holding either forever.
  */
 void heartbeat_output_task(device_t *state) {
-    uint64_t now = time_us_64();
+    uint64_t now   = time_us_64();
+    uint32_t now32 = (uint32_t)now; // The same read, for the 32-bit askers (#107)
 
     /* Forget a peer board that has stopped heartbeating, so its version is not
        left reading as current after it has gone (#89). This task's own cadence
@@ -190,7 +197,7 @@ void heartbeat_output_task(device_t *state) {
        The 32-bit clock rather than `now` is deliberate, not an oversight: the
        UF2 path stamps that timestamp from core0, and fw_upgrade.h explains why
        a 64-bit one could tear across cores. */
-    if (fw_upgrade_stalled(&state->fw, time_us_32()))
+    if (fw_upgrade_stalled(&state->fw, now32))
         abandon_firmware_upgrade(state);
 
     if (state->config_mode_active) {
@@ -198,9 +205,14 @@ void heartbeat_output_task(device_t *state) {
            A live upgrade still defers this, because the UF2 disk only exists
            in config mode and rebooting mid-write would brick the board — but
            "live" is now bounded by FW_UPGRADE_STALL_US, so a stalled transfer
-           can hold config mode open for that long and no longer. */
+           can hold config mode open for that long and no longer.
+
+           Not a reboot on the spot: the host still has the drive mounted, and
+           pulling the device out from under a mounted volume is what wedges
+           macOS (#229). The exit withdraws the medium first; the reboot
+           follows from kick_watchdog_task after the grace. */
         if (now > state->config_mode_timer && !state->fw.upgrade_in_progress)
-            reboot();
+            config_exit_request(&state->config_exit, now32);
 
         /* Keep notifying the user we're still in config mode. Skipping this
            was what made a stalled board look like it had left config mode:

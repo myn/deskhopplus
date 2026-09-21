@@ -11,6 +11,7 @@
  */
 #pragma once
 
+#include "config_exit.h"
 #include "config_read_all.h"
 #include "dh_hotkey.h"
 #include "dh_pair.h"
@@ -171,6 +172,7 @@ typedef struct {
     uint32_t _channel_relay_refused;
     bool dev_build;                  // True when channel authentication is compiled out (#44)
     bool reboot_requested;           // If set, stop updating watchdog
+    config_exit_t config_exit;       // How config mode gives the drive back before the reboot (#229)
     uint64_t config_mode_timer;      // Counts how long are we to remain in config mode
 
     uint8_t page_buffer[CONFIG_FLASH_BYTES]; // Config save and firmware page staging

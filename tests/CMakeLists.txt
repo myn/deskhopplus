@@ -262,6 +262,13 @@ add_executable(fw_upgrade_test fw_upgrade_test.c ${FW}/fw_upgrade.c)
 target_include_directories(fw_upgrade_test PRIVATE ${FW}/include)
 add_test(NAME fw_upgrade_test COMMAND fw_upgrade_test)
 
+# How config mode gives the config drive back to the host (#229). Split out
+# for the same reason as fw_upgrade above: the exit decision sat inside four
+# call sites and two cores, where no test could reach its timing.
+add_executable(config_exit_test config_exit_test.c ${FW}/config_exit.c)
+target_include_directories(config_exit_test PRIVATE ${FW}/include)
+add_test(NAME config_exit_test COMMAND config_exit_test)
+
 # The board's stored identity (#111). Firmware domain, pure arithmetic, split
 # out for the reason #74 paid for — with more at stake, because the key this
 # validates cannot be regenerated without unpairing every helper.

@@ -169,7 +169,7 @@ void disable_screensaver_hotkey_handler(device_t *state, hid_keyboard_report_t *
     _screensaver_set(state, DISABLED);
 }
 
-/* Put the device into a special configuration mode */
+/* Enter or leave the special configuration mode */
 void config_enable_hotkey_handler(device_t *state, hid_keyboard_report_t *report) {
     /*
      * Entering or leaving config mode opens a pairing window (#46). Both are
@@ -179,14 +179,21 @@ void config_enable_hotkey_handler(device_t *state, hid_keyboard_report_t *report
      */
     watchdog_hw->scratch[3] = MAGIC_WORD_PAIR;
 
-    /* If config mode is already active, skip this and reboot to return to normal mode */
+    /* If config mode is already active, skip this: the chord is the exit */
     if (!state->config_mode_active) {
         watchdog_hw->scratch[5] = MAGIC_WORD_1;
         watchdog_hw->scratch[6] = MAGIC_WORD_2;
     }
 
     release_all_keys(state);
-    state->reboot_requested = true;
+
+    /* Entering reboots at once. Leaving withdraws the config drive's medium
+       first and reboots after a grace, so the host sees a media removal and
+       not a mounted volume under a vanished device (#229). */
+    if (state->config_mode_active)
+        config_exit_request(&state->config_exit, time_us_32());
+    else
+        state->reboot_requested = true;
 };
 
 
@@ -333,9 +340,15 @@ void handle_save_config_msg(uart_packet_t *packet, device_t *state) {
     save_config(state);
 }
 
-/* Process request to reboot the board */
+/* Process request to reboot the board. In config mode this is the config
+   page's Exit button, and the host still has the config drive mounted, so it
+   leaves the two-step way (#229). Anywhere else — a reboot proxied to the peer
+   board, say — there is no drive, and the board reboots on the spot. */
 void handle_reboot_msg(uart_packet_t *packet, device_t *state) {
-    reboot();
+    if (state->config_mode_active)
+        config_exit_request(&state->config_exit, time_us_32());
+    else
+        reboot();
 }
 
 /* Decapsulate and send to the other box */

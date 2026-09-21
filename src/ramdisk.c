@@ -23,8 +23,11 @@ void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor_id[8], uint8_t product_id[16
     strcpy((char *)product_rev, "1.0");
 }
 
+/* False once config mode is leaving or the host has ejected: TinyUSB then
+   answers NOT READY / MEDIUM NOT PRESENT, and the host tears the volume down
+   while the device stays enumerated (#229). */
 bool tud_msc_test_unit_ready_cb(uint8_t lun) {
-    return true;
+    return config_exit_medium_present(&global_state.config_exit);
 }
 
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size) {
@@ -32,7 +35,13 @@ void tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_siz
     *block_size  = BLOCK_SIZE;
 }
 
+/* Load/eject with start clear is the host's eject: Finder's eject button,
+   Windows "Safely remove", Linux `eject`. The medium is gone from here on,
+   and a later exit need not wait for the host (#229). */
 bool tud_msc_start_stop_cb(uint8_t lun, uint8_t power_condition, bool start, bool load_eject) {
+    if (load_eject && !start)
+        config_exit_host_ejected(&global_state.config_exit);
+
     return true;
 }
 
@@ -122,9 +131,11 @@ int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *
         if (global_state.fw.checksum != calculate_firmware_crc32())
             recover_to_rom();
         else {
-            /* The image is whole again, so nothing is left to repair. */
+            /* The image is whole again, so nothing is left to repair. Reboot
+               into it through the two-step exit, so the host's copy ends with
+               a media removal rather than a vanished device (#229). */
             global_state.fw.image_dirty = false;
-            global_state.reboot_requested = true;
+            config_exit_request(&global_state.config_exit, time_us_32());
         }
     }
 
