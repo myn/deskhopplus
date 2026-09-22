@@ -129,7 +129,19 @@ build_helper() {
     # same tree as cmake's build/. Named in full every time because the two
     # differ by one character and only one of them holds the flashable image.
     say "macOS helper → .build/release/ (swiftpm — not build/)"
+    # SwiftPM does not track the C headers the helper compiles from src/core,
+    # so a header-only change (dh_version.h at the 1.1 bump) left the old
+    # binary in place (it even relinks it, so the binary's date moves and a
+    # date check never fires). A changed header hash drops the whole release
+    # tree; deleting one *.build dir inside it breaks SwiftPM's output file map.
+    local headers stamp=.build/core-headers.sha
+    headers="$(find src/core -name '*.h' -type f | LC_ALL=C sort | xargs shasum | shasum)"
+    if [ -d .build/release ] && [ "$headers" != "$(cat "$stamp" 2>/dev/null)" ]; then
+        say "src/core headers changed since the last helper build — rebuilding it from scratch"
+        rm -rf "$(cd .build/release && pwd -P)"
+    fi
     swift build -c release
+    printf '%s\n' "$headers" > "$stamp"
 }
 
 # Release, to reuse the build above rather than compiling the whole package a
