@@ -306,6 +306,11 @@ final class MenuBar: NSObject, NSMenuDelegate {
      * this file into a renderer that tints it and packs the Windows tray
      * icons, the exe icon and the .app icon from it. Change it here and run
      * that script.
+     *
+     * One reader is not a script: the config page's sidebar mark and tab icon
+     * are a hand copy of the `.paired` numbers below, in
+     * `webconfig/templates/main.html` (#233). Change those by hand and
+     * re-render the page.
      */
     static let images: [Look: NSImage] = Dictionary(
         uniqueKeysWithValues: [Look.paired, .off, .attention].map { ($0, image(for: $0)) })

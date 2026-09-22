@@ -33,6 +33,27 @@ html = html.replace('</body>', `<script>
     }
   }};
   if (document.querySelectorAll('summary').length !== 1) throw Error('Expected one shared Advanced disclosure');
+  // #233: the name in title case, with the helper's glyph beside it.
+  const h1 = document.querySelector('nav[aria-label="Sections"] h1');
+  if (document.title !== 'DeskHopPlus' || h1.textContent.trim() !== 'DeskHopPlus' ||
+      h1.querySelector('svg[aria-hidden="true"]').querySelectorAll('rect').length !== 3)
+    throw Error('Sidebar title or glyph: '+document.title+' / '+h1.innerHTML);
+  // The tab icon, painted and sampled inside the left screen. A tab strip
+  // never lends the icon the page's colours, so the icon carries its own
+  // dark-mode rule and the --force-dark-mode pass below is what catches its
+  // loss. A mis-encoded data URI never loads at all.
+  const icon = await new Promise((resolve, reject) => {
+    const probe = new Image();
+    probe.onload = () => resolve(probe);
+    probe.onerror = () => reject(Error('The tab icon data URI does not load'));
+    probe.src = document.querySelector('link[rel="icon"]').href;
+  });
+  const paint = Object.assign(document.createElement('canvas'), {width:16, height:16}).getContext('2d');
+  paint.drawImage(icon, 0, 0, 16, 16);
+  const ink = paint.getImageData(4, 8, 1, 1).data;
+  const onDarkStrip = matchMedia('(prefers-color-scheme: dark)').matches;
+  if (ink[3] !== 255 || (onDarkStrip ? ink[0] < 200 : ink[0] > 60))
+    throw Error('Tab icon ink does not suit the tab strip (dark: '+onDarkStrip+'): '+[...ink]);
   // #225: one settings window. Six sections in the sidebar, one shown at a time.
   const sidebar = [...document.querySelectorAll('nav[aria-label="Sections"] button')];
   const shownSections = () => [...document.querySelectorAll('section[data-section]')].filter(s => s.checkVisibility()).map(s => s.dataset.section).join();

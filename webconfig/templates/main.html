@@ -1,5 +1,27 @@
 {# templates/main.j2 #}
 
+{# The helper's own mark: two rounded screens joined by a short bar — the
+   solid "paired" look. A hand copy of the one geometry, which lives in the
+   macOS menu bar's drawing code (`MenuBar.image(for:)` in
+   helpers/macos/Sources/deskhop-helper/MenuBar.swift), the same source the
+   icon renderer packs every shipped icon from (#208). Change it there first.
+   The 16-unit grid and y-runs-down match, so the numbers copy across. #}
+{% macro glyph_rects() %}<rect x="1" y="4" width="6" height="8" rx="1"/><rect x="9" y="4" width="6" height="8" rx="1"/><rect x="7" y="7.25" width="2" height="1.5"/>{% endmacro %}
+
+{# The tab icon. A tab icon never sees the page's colours, so it carries its
+   own dark-mode rule and stays legible on a dark tab strip. Written as a data
+   URI: the packed page is one file, so it cannot link a second one.
+
+   The two fills repeat the `ink` and dark `ink` values from style.css as
+   literals. A second document cannot read this one's custom properties, so
+   there is no way to point at the tokens; change a token and change these too.
+
+   The fills are written `%23…` because a raw `#` would cut the URI short here
+   and nowhere else; the markup's own `<`, `>` and `"` are encoded at the point
+   of use below. Jinja's `urlencode` is not used: it would escape the whole
+   string, spaces and slashes and all, for no gain. #}
+{%- set favicon_svg %}<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><style>svg{fill:%231d1d1f}@media(prefers-color-scheme:dark){svg{fill:%23f2f2f7}}</style>{{ glyph_rects() }}</svg>{% endset %}
+
 <!DOCTYPE html>
 <html lang="en">
 
@@ -11,7 +33,8 @@
     {% include "style.css" %}
   </style>
 
-  <title>deskhopplus</title>
+  <link rel="icon" href="data:image/svg+xml,{{ favicon_svg | replace('<', '%3C') | replace('>', '%3E') | replace('"', "'") }}">
+  <title>DeskHopPlus</title>
 </head>
 
 <body>
@@ -57,7 +80,7 @@
 
 <div class="window">
   <nav class="sidebar" id="sidebar" aria-label="Sections">
-    <h1>deskhopplus</h1>
+    <h1><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">{{ glyph_rects() }}</svg>DeskHopPlus</h1>
     {% for id, name in sections %}
     <button type="button" data-section="{{ id }}"{% if loop.first %} aria-current="page"{% endif %}>{{ name }}</button>
     {% endfor %}

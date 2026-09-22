@@ -1,5 +1,5 @@
 ---
-name: deskhopplus config page
+name: DeskHopPlus config page
 description: An OS display-arrangement pane stretched over two computers. One settings window, a sidebar, one accent, and a picture you click.
 colors:
   ground: "#ececec"
@@ -178,9 +178,9 @@ components:
     padding: "10px 14px"
 ---
 
-# Design System: deskhopplus config page
+# Design System: DeskHopPlus config page
 
-Scope: this file covers the config page only (`webconfig/templates/` rendered to `webconfig/config.htm`). The macOS menu bar item and the Windows tray item are native and out of scope. Every value here is read from `webconfig/templates/style.css` as shipped on 2026-09-21. Light values sit on `:root`. Dark values are the `-dark` tokens and apply under `prefers-color-scheme: dark`; a token with no `-dark` twin is the same in both schemes.
+Scope: this file covers the config page only (`webconfig/templates/` rendered to `webconfig/config.htm`). The macOS menu bar item and the Windows tray item are native and out of scope. Every value here is read from `webconfig/templates/style.css` as shipped on 2026-09-22. Light values sit on `:root`. Dark values are the `-dark` tokens and apply under `prefers-color-scheme: dark`; a token with no `-dark` twin is the same in both schemes.
 
 ## Overview
 
@@ -190,7 +190,7 @@ The page looks like the OS's own display settings, stretched over two computers.
 
 The material is flat. Depth comes from tonal steps (sidebar darker than content, boxes lighter, the well recessed) and 1px hairlines, not shadows. Type is the system face at 13px in every row. One accent, system selection blue, marks what is selected or what acts: the current section, the chosen computer, the Save button, switches that are on, the range thumb, the focus ring. Yellow is the only other fill and it means "stop and read": the refusal strip and an armed service button.
 
-The page ships inline on a 64 kB disk with no network. That is a design fact, not a limit to work around. No web fonts, no images, no icon library. Icons are few-path inline SVG, and there are two of them.
+The page ships inline on a 64 kB disk with no network. That is a design fact, not a limit to work around. No web fonts, no images, no icon library. Icons are few-path inline SVG, and there are three of them.
 
 **Key Characteristics:**
 - One window: 220px sidebar, 44px sticky toolbar, 760px content column.
@@ -247,7 +247,7 @@ Three literal colours sit outside the token set and are the same in both schemes
 
 ### Hierarchy
 - **Headline** (600, 20px, -0.01em): the section title (`h2`) at the top of the content column, one per section.
-- **Title** (600, 15px, -0.01em): the window title "deskhopplus" at the top of the sidebar.
+- **Title** (600, 15px, -0.01em): the window title "DeskHopPlus" at the top of the sidebar, with the helper glyph beside it.
 - **Subtitle** (600, 13px): a group title above a grouped box ("Output A · MacOS", "Cursor transition trace"), the Advanced summary, and the Save button's label.
 - **Body** (400, 13px, 1.45): every row label, every control, every button, the sidebar items, the toolbar words.
 - **Label** (600, 11px, 0.04em, uppercase, Ink 2): a group title above its grouped box (`h3.sub`), such as "SCREENSAVER" or "KEY MAPPING", set 18px above the box and 14px in from its edge, as the OS sets them. Every label in a field list starts a new box. It never sits above a section title.
@@ -288,7 +288,7 @@ The page is flat. Depth is tonal layering plus hairlines: the sidebar is darker 
 
 Corners are small and consistent: 6px on buttons, inputs, selects, text areas and sidebar items; 8px on the strips and the unsaved-count badge; 10px on grouped boxes, the Advanced disclosure and the well. The switch is a 34×20 pill (10px radius); its thumb and the sidebar's unsaved dot are circles.
 
-In the picture, monitors are rounded rectangles filled `monitor` with a 1.5px `monitor-ink` stroke; the Main monitor's stroke is 3px. Seam bands are 6px round-capped strokes. Handles (the label bars) are filled rectangles with white 10px text. Icons: one chevron (10×6, stroke `#888`) as a data-URI on every select; one ring-and-exclamation (16×16, `currentColor`) leading every strip.
+In the picture, monitors are rounded rectangles filled `monitor` with a 1.5px `monitor-ink` stroke; the Main monitor's stroke is 3px. Seam bands are 6px round-capped strokes. Handles (the label bars) are filled rectangles with white 10px text. Icons: one chevron (10×6, stroke `#888`) as a data-URI on every select; one ring-and-exclamation (16×16, `currentColor`) leading every strip; the helper glyph (16×16, three rects, `currentColor`) beside the sidebar title, and again as the tab icon in a data-URI. The tab icon carries its own `prefers-color-scheme` rule, and repeats the light and dark `ink` values as literals, because a second document cannot read this page's tokens.
 
 ## Components
 

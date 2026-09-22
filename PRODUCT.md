@@ -14,7 +14,7 @@ web
 ## Users
 
 Derek, at his own desk: one Mac and one Windows PC, more than one monitor on
-each, joined by a deskhopplus board pair. He opens the page rarely — at first
+each, joined by a DeskHopPlus board pair. He opens the page rarely — at first
 setup and when the desk changes — and knows the firmware inside out.
 
 Other DeskHop owners who flash the fork from the release page are welcome but
@@ -119,13 +119,14 @@ layout editor memory).
 
 ## Brand Commitments
 
-deskhopplus is its own product (confirmed 2026-09-21). The upstream DeskHop
+DeskHopPlus is its own product (confirmed 2026-09-21). The upstream DeskHop
 name, logo, the "DeskHop Config" title and the green `#5e9f41` **Hop** are not
 binding; later design work may replace them. Nothing has been chosen to replace
 them yet — that is a new-work decision, not a fact.
 
-The product name is written **deskhopplus**, lowercase, as in the README and
-release assets.
+Words a person reads spell the product **DeskHopPlus** (#233). Every identifier
+stays lowercase `deskhopplus`: file names, folders, paths, URLs and release
+assets.
 
 Voice, from the README and user guide: short plain sentences, active voice, one
 idea per sentence, no marketing. The guide states rules at the moment they

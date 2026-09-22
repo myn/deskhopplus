@@ -7,10 +7,11 @@
 #
 #   ./tools/check-config-artifacts.sh
 #
-# Two questions, and deliberately not a third:
+# Three questions, and deliberately not a fourth:
 #
 #   1. Does webconfig/config.htm match what the templates render?
 #   2. Does disk/disk.img carry that page?
+#   3. Does the page's helper glyph still match the geometry it copies?
 #
 # What it does NOT ask is whether disk.img is byte-identical to a fresh build.
 # That was tried and cannot work: mformat writes version-dependent bytes into
@@ -61,3 +62,52 @@ if ! cmp -s "$extracted" webconfig/config.htm; then
 Run './create.sh' in disk/ and commit the image."
 fi
 ok "committed image carries the current page ($(wc -c <"$extracted" | tr -d ' ') bytes)"
+
+# 3. The page's helper glyph against the one geometry (#208, #233). The macOS
+#    menu bar draws that glyph in code, and helpers/icon/render.sh packs every
+#    shipped icon from the same drawing. The config page cannot run Swift, so
+#    its mark is a hand copy — and a hand copy held in place by a comment alone
+#    drifts the first time the glyph changes. This makes that drift a failure.
+#
+#    The heredoc is deliberately not inside $(...): bash 3.2 mis-parses a quote
+#    in a heredoc in a command substitution, and this script runs on the Mac.
+glyph="$(mktemp "${TMPDIR:-/tmp}/deskhop-glyph.XXXXXX")"
+trap 'rm -f "$committed" "$extracted" "$glyph"' EXIT
+
+if python3 - > "$glyph" 2>&1 <<'PY'
+import re, sys
+
+swift = open("helpers/macos/Sources/deskhop-helper/MenuBar.swift").read()
+page = open("webconfig/templates/main.html").read()
+
+def rects(text, pattern):
+    return [" ".join(m) for m in re.findall(pattern, text)]
+
+# The .paired look only: the two screens and the bar that joins them. The
+# badge and its knocked-out mark belong to .attention, which the page never
+# draws, so they are not read here.
+screens = re.search(r"let screens = \[(.*?)\]\n", swift, re.S)
+bar = re.search(r"NSBezierPath\(rect: (NSRect\(x:.*?\))\)\.fill\(\)", swift)
+if not screens or not bar:
+    sys.exit("could not read the paired glyph out of MenuBar.swift")
+swift_rect = r"x: ([\d.]+), y: ([\d.]+), width: ([\d.]+), height: ([\d.]+)"
+source = rects(screens.group(1), swift_rect) + rects(bar.group(1), swift_rect)
+
+macro = re.search(r"\{% macro glyph_rects\(\) %\}(.*?)\{% endmacro %\}", page, re.S)
+if not macro:
+    sys.exit("could not find glyph_rects() in webconfig/templates/main.html")
+page_rect = r'x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"'
+copy = rects(macro.group(1), page_rect)
+
+if source != copy:
+    sys.exit("MenuBar.swift draws " + str(source) + "\nthe page draws       " + str(copy))
+print(" | ".join(source))
+PY
+then
+    ok "page glyph matches the menu bar drawing ($(cat "$glyph"))"
+else
+    fail "The page's helper glyph no longer matches the menu bar drawing.
+$(cat "$glyph")
+Copy the numbers from MenuBar.image(for:) into glyph_rects() in
+webconfig/templates/main.html, then run 'make' in webconfig/ and './create.sh' in disk/."
+fi
