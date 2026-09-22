@@ -6,8 +6,11 @@ const {spawn, spawnSync} = require('child_process');
 const candidates = [process.env.CHROME, 'google-chrome', 'chromium', 'chromium-browser',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'Google/Chrome/Application/chrome.exe')].filter(Boolean);
-const chrome = candidates.find(binary => spawnSync(binary, ['--version'], {timeout:5000}).status === 0);
+// #239: no pipes, and SIGKILL. With a pipe, spawnSync waits for every process
+// holding it, and a Chrome helper can hold it past the timeout, which hung CI.
+const chrome = candidates.find(binary => spawnSync(binary, ['--version'], {timeout:5000, killSignal:'SIGKILL', stdio:'ignore'}).status === 0);
 if (!chrome) {console.log('SKIP: Chrome is not installed'); process.exit(77);}
+console.log('webconfig_chrome_test: using '+chrome);
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deskhopplus-layout-'));
 const file = path.join(dir, 'layout.htm');
 let html = fs.readFileSync(process.argv[2], 'utf8');
@@ -261,14 +264,18 @@ html = html.replace('</body>', `<script>
   press('B', 0, 0);
   if (document.getElementById('layout-status').textContent) throw Error('A new drag did not clear the reason');
   // The label bar holds its text, for a wide block and for a one-box block.
-  const labelFits = () => [...layout.querySelectorAll('.layout-handle')].every(handle => {
+  // Names each label that overflows, with its measured box, so a failure says why.
+  const labelOverflows = () => [...layout.querySelectorAll('.layout-handle')].map(handle => {
     const bar = handle.querySelector('rect').getBBox(), text = handle.querySelector('text').getBBox();
-    return text.x >= bar.x+2 && text.x+text.width <= bar.x+bar.width-2;
-  });
-  if (!labelFits()) throw Error('Label bar text overflows a wide bar');
+    return text.x >= bar.x+2 && text.x+text.width <= bar.x+bar.width-2 ? '' :
+      '"'+handle.textContent+'" text '+text.x.toFixed(1)+'+'+text.width.toFixed(1)+' bar '+bar.x+'+'+bar.width+' font '+getComputedStyle(handle.querySelector('text')).fontFamily;
+  }).filter(Boolean).join('; ');
+  let overflows = labelOverflows();
+  if (overflows) throw Error('Label bar text overflows a wide bar: '+overflows);
   const count = field(41);
   count.value = '1'; count.dispatchEvent(new Event('change', {bubbles:true}));
-  if (!labelFits()) throw Error('Label bar text overflows a one-box bar');
+  overflows = labelOverflows();
+  if (overflows) throw Error('Label bar text overflows a one-box bar: '+overflows);
   // Box gestures (#213) go through the same path: fields fill in, nothing is sent.
   await readHandler();
   const chainA = () => field(98).value, countA = () => field(11).value;
@@ -406,35 +413,85 @@ html = html.replace('</body>', `<script>
 })().catch(error => {document.documentElement.dataset.error = String(error);});
 </script></body>`);
 fs.writeFileSync(file, html);
+// All widths share one deadline inside ctest's TIMEOUT 40, so a stall reports
+// its width and stage before ctest kills the run.
+const deadline = Date.now()+35000;
+// A killed Node leaves a pipe-mode Chrome running, so a stop takes it too.
+let running;
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {running?.kill('SIGKILL'); process.exit(1);});
+// Opens the page in headless Chrome at one width and returns its DOM once the
+// injected script has finished. Node polls over the DevTools pipe in real time.
+// #239: --dump-dom with --virtual-time-budget sometimes never dumped a page
+// whose script had already finished, about 1 launch in 100 under load.
+function pageDom(width, dark) {
+  const url = pathToFileURL(file).href, label = width+'px'+(dark ? ' dark' : '');
+  return new Promise((resolve, reject) => {
+    const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--no-first-run',
+      '--no-default-browser-check', '--user-data-dir='+path.join(dir,'profile-'+width+(dark ? '-dark' : '')),
+      '--window-size='+width+',1000', ...(dark ? ['--force-dark-mode'] : []),
+      '--remote-debugging-pipe', url], {stdio:['ignore', 'ignore', 'pipe', 'pipe', 'pipe']});
+    // stage names the last step reached, so a timeout says where it stopped.
+    running = child;
+    let stderr = '', incoming = '', id = 0, stage = 'waiting for the page target';
+    const replies = new Map();
+    // One DevTools command; the pipe carries NUL-terminated JSON both ways.
+    const send = (method, params = {}, sessionId) => new Promise((done, fail) => {
+      replies.set(++id, reply => reply.error ? fail(Error(method+': '+reply.error.message)) : done(reply.result));
+      child.stdio[3].write(JSON.stringify({id, method, params, sessionId})+'\0');
+    });
+    child.stdio[4].setEncoding('utf8');  // a chunk can split a character such as "·"
+    child.stdio[4].on('data', data => {
+      incoming += data;
+      for (let end; (end = incoming.indexOf('\0')) >= 0; incoming = incoming.slice(end+1)) {
+        const reply = JSON.parse(incoming.slice(0, end));
+        replies.get(reply.id)?.(reply);
+        replies.delete(reply.id);
+      }
+    });
+    // SIGKILL and no wait for 'close': a Chrome helper can hold a pipe open.
+    let settled = false;
+    const finish = (error, dom) => {
+      if (settled) return;
+      settled = true; clearTimeout(timeout); child.kill('SIGKILL');
+      if (error) reject(Error('at '+label+': '+error+(stderr ? '\nChrome stderr:\n'+stderr : ''))); else resolve(dom);
+    };
+    const timeout = setTimeout(() => finish('no result by the 35 s deadline, '+stage), deadline-Date.now());
+    child.on('error', error => finish(error.message));
+    child.on('exit', code => finish('Chrome exited early with '+code));
+    child.stderr.on('data', data => {stderr += data;});
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+    (async () => {
+      // Attach only once the tab shows our file. Before that it is the blank
+      // start page, and the move to the file drops a command sent to it.
+      let page;
+      while (!(page = (await send('Target.getTargets')).targetInfos.find(target => target.type === 'page' && target.url === url))) await pause(50);
+      stage = 'attaching to the page';
+      const {sessionId} = await send('Target.attachToTarget', {targetId:page.targetId, flatten:true});
+      for (let polls = 1; ; polls++) {
+        stage = 'poll '+polls+' sent, no reply';
+        const {result} = await send('Runtime.evaluate', {expression:
+          "document.body?.dataset.layoutTest || document.documentElement.dataset.error ? document.documentElement.outerHTML : document.readyState"}, sessionId);
+        // No value while the document is still being replaced; poll again.
+        if (result.value?.startsWith('<html')) return finish(null, result.value);
+        stage = 'page script still running after '+polls+' polls, document '+(result.value ?? result.description);
+        await pause(100);
+      }
+    })().catch(error => finish(error.message));
+  });
+}
 (async () => {
   try {
     for (const [width, dark] of [[1209], [1209, true], [801], [800], [640], [600]]) {
-      const dom = await new Promise((resolve, reject) => {
-        const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--no-first-run',
-          '--no-default-browser-check', '--user-data-dir='+path.join(dir,'profile-'+width+(dark ? '-dark' : '')),
-          '--window-size='+width+',1000', '--virtual-time-budget=2000', ...(dark ? ['--force-dark-mode'] : []),
-          '--dump-dom', pathToFileURL(file).href]);
-        let stdout = '', stderr = '';
-        const timeout = setTimeout(() => {child.kill('SIGKILL'); reject(Error('Chrome DOM dump timed out'));}, 30000);
-        child.on('error', reject);
-        child.stderr.on('data', data => {stderr += data;});
-        child.stdout.on('data', data => {
-          stdout += data;
-          // Some macOS Chrome builds hang on shutdown after the complete dump.
-          if (stdout.trimEnd().endsWith('</html>')) child.kill('SIGKILL');
-        });
-        child.on('close', () => {
-          clearTimeout(timeout);
-          if (!stdout.trimEnd().endsWith('</html>')) reject(Error(stderr || 'Incomplete Chrome DOM dump'));
-          else resolve(stdout);
-        });
-      });
+      const label = width+'px'+(dark ? ' dark' : '');
+      const dom = await pageDom(width, dark);
       if (!dom.includes('data-viewport="'+width+'"') || !dom.includes('data-layout-test="passed"') || /<html[^>]*data-error=/.test(dom))
-        throw Error('Chrome page checks failed: '+dom.match(/<html[^>]*>|<body[^>]*>/g));
-      console.log('webconfig_chrome_test: sections, selection, Read, Advanced, field fit, seam clearance, gestures, unsaved count, refusal strip and service guard passed at '+width+'px'+(dark ? ' dark' : ''));
+        throw Error('Chrome page checks failed at '+label+': '+dom.match(/<html[^>]*>|<body[^>]*>/g));
+      console.log('webconfig_chrome_test: sections, selection, Read, Advanced, field fit, seam clearance, gestures, unsaved count, refusal strip and service guard passed at '+label);
     }
   } finally {
     if (process.argv.includes('--keep')) console.log(file);
-    else fs.rmSync(dir, {recursive:true, force:true});
+    // Retries: a killed Chrome's helpers can still be writing to their profiles.
+    else fs.rmSync(dir, {recursive:true, force:true, maxRetries:10});
   }
-})().catch(error => {console.error(error); process.exitCode = 1;});
+  // Exit now: a Chrome helper left behind holding a pipe would keep Node alive.
+})().then(() => process.exit(0), error => {console.error(error); process.exit(1);});
