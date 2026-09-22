@@ -17,6 +17,10 @@ _Avoid_: serial port, CDC, pipe
 **Helper**:
 The companion application on each computer (Swift on macOS, C++ on Windows) that reads and writes
 the pasteboard and places the cursor. An enhancement, never a dependency.
+Words a person reads spell the product `DeskHopPlus` and the full form `DeskHopPlus Helper`;
+every identifier, folder, path and file name stays lowercase `deskhopplus`. The two namings are
+deliberate: those folders hold the pairing key, so renaming one would make every user pair again
+(#232).
 _Avoid_: agent, daemon, client, companion app
 
 **Presence**:

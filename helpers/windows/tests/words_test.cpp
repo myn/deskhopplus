@@ -80,23 +80,23 @@ int main() {
     /* The tooltip, by priority: the question, then a receive, then a send,
        then the state. What the user can act on comes before what the device
        is doing. */
-    CHECK(tooltip(DH_HELPER_CONNECTED, "", 0, 0, false) == "deskhopplus — Connected and paired",
+    CHECK(tooltip(DH_HELPER_CONNECTED, "", 0, 0, false) == "DeskHopPlus — Connected and paired",
           "an idle tooltip names the helper and the state");
-    CHECK(tooltip(DH_HELPER_QUIET, "", 0, 0, false) == "deskhopplus — Looking for the device",
+    CHECK(tooltip(DH_HELPER_QUIET, "", 0, 0, false) == "DeskHopPlus — Looking for the device",
           "the quiet state now has an icon, so it has words to hover");
     CHECK(tooltip(DH_HELPER_CONNECTED, "", 2200000, 8388608, false)
-              == "deskhopplus — Receiving 2.0 MB of 8.0 MB — 26%",
+              == "DeskHopPlus — Receiving 2.0 MB of 8.0 MB — 26%",
           "a receive shows the percent, truncated, the same as the Mac");
-    CHECK(tooltip(DH_HELPER_CONNECTED, "", 0, 0, true) == "deskhopplus — Sending",
+    CHECK(tooltip(DH_HELPER_CONNECTED, "", 0, 0, true) == "DeskHopPlus — Sending",
           "a send is named, since the icon does not change for it");
     CHECK(tooltip(DH_HELPER_CONNECTED, "", 4096, 8192, true)
-              == "deskhopplus — Receiving 4 KB of 8 KB — 50%",
+              == "DeskHopPlus — Receiving 4 KB of 8 KB — 50%",
           "a receive outranks a send: it has a number");
     CHECK(tooltip(DH_HELPER_CONNECTED, "photo.jpg — 1.0 MB, about 5 seconds.", 4096, 8192, true)
-              == "deskhopplus — Files offered: photo.jpg — 1.0 MB, about 5 seconds.",
+              == "DeskHopPlus — Files offered: photo.jpg — 1.0 MB, about 5 seconds.",
           "a waiting question outranks everything");
     CHECK(tooltip(DH_HELPER_NOT_PAIRED, "", 0, 0, false)
-              == "deskhopplus — Not paired — press the config chord on the device",
+              == "DeskHopPlus — Not paired — press the config chord on the device",
           "a state with a remedy keeps its remedy");
 
     /* The size spelling the Mac and Windows quote one transfer at. */

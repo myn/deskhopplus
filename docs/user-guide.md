@@ -80,10 +80,11 @@ computer is sending, and **⚠** when the menu holds a message for you. Hover fo
 On Windows the icon itself turns into the percent while a file arrives; hover for the rest. The
 helper asks Windows to keep the icon on the taskbar rather than behind the **^** overflow. If it
 still lands in the overflow, turn it on once by hand: **Settings › Personalization › Taskbar ›
-Other system tray icons › deskhopplus helper**. The helper asks again on every start, so the
-setting follows the exe if you move it.
+Other system tray icons**, and turn the DeskHopPlus icon on. Windows labels the row itself,
+from the tooltip; look for the icon. The helper asks again on every start, so the setting
+follows the exe if you move it.
 
-The first row of the menu is greyed and shows the release, e.g. **deskhopplus helper 1.0**. The
+The first row of the menu is greyed and shows the release, e.g. **DeskHopPlus Helper 1.0**. The
 second row is the state.
 
 | Menu says | What it means | What to do |
@@ -106,7 +107,7 @@ Below the state the menu may also show:
 - a transfer in progress, **Receiving 2.1 MB of 8.0 MB — 26%**, with **Cancel this transfer**;
 - **Cancel what is being sent** while this computer is sending;
 - **Start at login** (macOS) or **Start at logon** (Windows);
-- **Quit deskhopplus helper**.
+- **Quit DeskHopPlus Helper**.
 
 **Start at login / Start at logon** makes the helper start when you log in. On macOS the change
 takes effect at the next login. On Windows a managed laptop may refuse every method the helper
@@ -397,7 +398,7 @@ image) or swapping in another board changes it.
 
 If you did that yourself, tell the helper: quit it, delete the remembered key, start it again.
 
-macOS: click **Quit deskhopplus helper** in the menu. In Terminal:
+macOS: click **Quit DeskHopPlus Helper** in the menu. In Terminal:
 
 ```sh
 rm ~/Library/Application\ Support/deskhopplus/board_key
@@ -405,7 +406,7 @@ rm ~/Library/Application\ Support/deskhopplus/board_key
 
 Then double-click the app, or log out and in.
 
-Windows: click **Quit deskhopplus helper** in the tray menu, delete
+Windows: click **Quit DeskHopPlus Helper** in the tray menu, delete
 `%LOCALAPPDATA%\deskhopplus\board_key`, run the exe again.
 
 Then [pair](#pair-a-helper) again.
@@ -477,7 +478,7 @@ on the config page.
 
 1. Click the menu bar item. If **Start at login** is ticked, click it to untick it. (If the
    helper is not running, double-click it first.)
-2. Click **Quit deskhopplus helper**.
+2. Click **Quit DeskHopPlus Helper**.
 3. In Terminal:
 
 ```sh
@@ -494,7 +495,7 @@ nothing else.
 
 1. Right-click the tray icon. If **Start at logon** is ticked, click it to untick it. (If the
    helper is not running, run the exe first.) This removes the logon entry it made.
-2. Click **Quit deskhopplus helper**.
+2. Click **Quit DeskHopPlus Helper**.
 3. Delete `%LOCALAPPDATA%\deskhopplus\`.
 4. Delete the exe.
 

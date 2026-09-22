@@ -22,6 +22,11 @@
 # covers every slice of the universal binary and the plist alike. Nothing is
 # nested (no frameworks, no helpers), so signing the .app signs it all.
 #
+# CFBundleName carries the product's own spelling, DeskHopPlus Helper (#232).
+# What Finder shows is the file name, which stays lowercase: macOS ignores a
+# CFBundleDisplayName that differs from the name on disk, so there is no key
+# that changes the label under the icon without renaming the bundle.
+#
 # The zip is made here too, so CI ships and the test checks one artefact.
 # Info-ZIP keeps the mode bits, and the seal lives inside the files, so what
 # a user unzips still verifies and runs.
@@ -65,7 +70,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleIdentifier</key>
 	<string>com.deskhopplus.helper</string>
 	<key>CFBundleName</key>
-	<string>deskhopplus helper</string>
+	<string>DeskHopPlus Helper</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

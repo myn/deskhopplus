@@ -31,7 +31,7 @@ std::optional<dh_helper_state> session_edge_presence(dh_helper_state state,
 }
 
 std::string release_row() {
-    return "deskhopplus helper " + std::to_string(DH_VERSION_MAJOR) + "." +
+    return "DeskHopPlus Helper " + std::to_string(DH_VERSION_MAJOR) + "." +
            std::to_string(DH_VERSION_MINOR);
 }
 
@@ -190,7 +190,7 @@ std::string tooltip(dh_helper_state state, const std::string &question_summary,
            icon to hover over, so it borrows the menu's. */
         if (tip.empty()) tip = "Looking for the device";
     }
-    return "deskhopplus \xe2\x80\x94 " + tip;
+    return "DeskHopPlus \xe2\x80\x94 " + tip;
 }
 
 std::string size_text(uint64_t bytes) {

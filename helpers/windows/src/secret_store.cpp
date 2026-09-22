@@ -91,7 +91,8 @@ bool SecretStore::write_protected(const std::wstring &path, const std::vector<ui
     DATA_BLOB in{static_cast<DWORD>(plain.size()), const_cast<BYTE *>(plain.data())};
     DATA_BLOB out{};
     /* No optional entropy, and no UI. Both are decisions, not omissions — see
-       the header. */
+       the header. The descriptor keeps its lowercase spelling: it is a label on the
+       blob, and CRYPTPROTECT_UI_FORBIDDEN means nobody ever reads it (#232). */
     if (!CryptProtectData(&in, L"deskhopplus helper", nullptr, nullptr, nullptr,
                           CRYPTPROTECT_UI_FORBIDDEN, &out))
         return false;

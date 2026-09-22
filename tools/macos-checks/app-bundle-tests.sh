@@ -45,6 +45,9 @@ check plutil -lint "$plist"
 key CFBundleExecutable deskhopplus-helper
 key CFBundleIdentifier com.deskhopplus.helper
 key CFBundlePackageType APPL
+# The product's own spelling (#232). Not what Finder shows -- that is the file
+# name, which stays lowercase on purpose.
+key CFBundleName "DeskHopPlus Helper"
 # The literal on purpose, like the menu tests: it moves with dh_version.h.
 key CFBundleShortVersionString 1.0
 key LSUIElement true

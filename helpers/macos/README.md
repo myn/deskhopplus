@@ -282,7 +282,7 @@ including a custom executable path. The checkbox reports whether the plist is in
 that macOS has launched it. A `launchctl disable` override or a background-item restriction can
 still prevent startup. Existing launchd jobs retain their current restart policy until reloaded.
 
-**Quit deskhopplus helper** boots the job out (`launchctl bootout`) rather than exiting, so it
+**Quit DeskHopPlus Helper** boots the job out (`launchctl bootout`) rather than exiting, so it
 stays stopped whatever `KeepAlive` an installed plist carries (#190). A crash is still restarted.
 
 ## Installing the agent

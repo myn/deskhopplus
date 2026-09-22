@@ -267,7 +267,7 @@ void Tray::balloon(const std::string &message) {
     NOTIFYICONDATAW data = base(window_);
     data.uFlags = NIF_INFO;
     data.dwInfoFlags = NIIF_WARNING;
-    copy_into(data.szInfoTitle, sizeof(data.szInfoTitle) / sizeof(wchar_t), L"deskhopplus");
+    copy_into(data.szInfoTitle, sizeof(data.szInfoTitle) / sizeof(wchar_t), L"DeskHopPlus");
     copy_into(data.szInfo, sizeof(data.szInfo) / sizeof(wchar_t), widen(message));
     Shell_NotifyIconW(NIM_MODIFY, &data);
 }
@@ -365,7 +365,7 @@ void Tray::show_menu() {
     AppendMenuW(menu, MF_STRING | (enabled ? MF_CHECKED : 0u), kIdAutostart, L"Start at logon");
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kIdQuit, L"Quit deskhopplus helper");
+    AppendMenuW(menu, MF_STRING, kIdQuit, L"Quit DeskHopPlus Helper");
 
     POINT where{};
     GetCursorPos(&where);
@@ -401,7 +401,7 @@ void Tray::ask_about_files(const deskhop::FileOffer &offer) {
     have_question_ = true;
     update();
     balloon("Files from the other computer: " + summary(offer) +
-            " Click this to accept, or use the deskhopplus icon to decline.");
+            " Click this to accept, or use the DeskHopPlus icon to decline.");
 }
 
 void Tray::withdraw_file_question(uint32_t id) {

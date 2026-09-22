@@ -13,7 +13,7 @@ Finds the board by its USB identifier and serial, takes exclusive hold of every 
 hello, keeps the session alive, and reconnects on its own when the device goes away and comes
 back. It carries the clipboard — text, images and files — and places the cursor. It shows what it
 is doing in the notification area, and can be asked to start itself at logon. The tray menu's
-first row, greyed, is **deskhopplus helper** and the release number, from the one version the
+first row, greyed, is **DeskHopPlus Helper** and the release number, from the one version the
 firmware and both helpers share (`src/core/dh_version.h`). It is not clickable.
 
 The icon is always there, with one of three looks — `words::look`: **paired**, the solid glyph,
@@ -30,7 +30,8 @@ Windows 11 puts a new icon behind the taskbar's **^** overflow. After the icon a
 sets `IsPromoted` on its own record under `HKCU\Control Panel\NotifyIconSettings` — undocumented,
 per-user, keyed by exe path — so it sits on the taskbar; it does so on every start, so a moved exe
 heals itself. If Windows ignores it, the one-time fallback is **Settings › Personalization ›
-Taskbar › Other system tray icons › deskhopplus helper › On** (#208).
+Taskbar › Other system tray icons**, and turn the DeskHopPlus icon on (#208). Windows labels
+that row itself, so go by the icon rather than by an exact name.
 
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over

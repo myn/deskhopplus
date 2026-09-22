@@ -155,7 +155,7 @@ bool write_startup_link(const std::wstring &link, const std::wstring &exe) {
     bool saved = false;
     shell_link->SetPath(exe.c_str());
     shell_link->SetArguments(kAutostartArgument);
-    shell_link->SetDescription(L"deskhopplus helper");
+    shell_link->SetDescription(L"DeskHopPlus Helper");
     IPersistFile *file = nullptr;
     if (shell_link->QueryInterface(IID_PPV_ARGS(&file)) == S_OK) {
         saved = file->Save(link.c_str(), TRUE) == S_OK;

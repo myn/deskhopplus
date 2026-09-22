@@ -46,15 +46,16 @@ for state in HelperState.allCases {
     menuBar.menuNeedsUpdate(menu)
     // The literal, not DH_VERSION_MAJOR spelled back out: this is the release
     // the helper claims to be, and it moves with src/core/dh_version.h (#199).
-    check(menu.items[0].title == "deskhopplus helper 1.0" && !menu.items[0].isEnabled,
+    check(menu.items[0].title == "DeskHopPlus Helper 1.0" && !menu.items[0].isEnabled,
           "the first row names the helper and its release, greyed")
     check(menu.items[1].isSeparatorItem, "the release row stands apart from the state")
     let words = menu.items.dropFirst(2).prefix { !$0.isSeparatorItem }.map(\.title).joined(separator: " ")
     check(words == state.message ?? "Waiting for the device", "the menu must preserve the shared state's remedy")
-    check(MenuBar.tooltip(state: state, placementProblem: nil, notice: nil).hasPrefix("deskhopplus helper"),
+    check(MenuBar.tooltip(state: state, placementProblem: nil, notice: nil).hasPrefix("DeskHopPlus Helper"),
           "with an icon-only title, the tooltip is what names the helper")
     check(MenuBar.tooltip(state: state, placementProblem: nil, notice: nil).contains(state.message ?? "Waiting for the device"),
           "the words moved out of the title into the tooltip, not out of sight")
+    check(menu.items.last?.title == "Quit DeskHopPlus Helper", "the Quit row names the product (#232)")
 }
 // The three looks (#208): the shape carries the state, and the words stay one
 // hover away, so #38's "in words, not a colour" still holds.

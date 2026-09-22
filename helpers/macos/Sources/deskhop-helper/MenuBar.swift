@@ -231,7 +231,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     /// The greyed first row: this helper's name and release, from the one
     /// version the firmware and both helpers share (#199).
-    static let releaseRow = "deskhopplus helper \(DH_VERSION_MAJOR).\(DH_VERSION_MINOR)"
+    static let releaseRow = "DeskHopPlus Helper \(DH_VERSION_MAJOR).\(DH_VERSION_MINOR)"
 
     /*
      * The three looks the icon can take (#208). The shape carries the state
@@ -392,7 +392,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         let startup = action("Start at login", #selector(toggleLogin))
         startup.state = login.isEnabled ? .on : .off
         menu.addItem(startup)
-        menu.addItem(action("Quit deskhopplus helper", #selector(quit)))
+        menu.addItem(action("Quit DeskHopPlus Helper", #selector(quit)))
     }
 
     private func addWords(_ text: String, to menu: NSMenu) {
