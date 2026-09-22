@@ -83,7 +83,7 @@ still lands in the overflow, turn it on once by hand: **Settings › Personaliza
 Other system tray icons**, and turn on **DeskHopPlus Helper**. The helper asks again on every
 start, so the setting follows the exe if you move it.
 
-The first row of the menu is greyed and shows the release, e.g. **DeskHopPlus Helper 1.0**. The
+The first row of the menu is greyed and shows the release, e.g. **DeskHopPlus Helper 1.1**. The
 second row is the state.
 
 | Menu says | What it means | What to do |

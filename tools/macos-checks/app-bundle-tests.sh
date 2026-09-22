@@ -49,7 +49,7 @@ key CFBundlePackageType APPL
 # name, which stays lowercase on purpose.
 key CFBundleName "DeskHopPlus Helper"
 # The literal on purpose, like the menu tests: it moves with dh_version.h.
-key CFBundleShortVersionString 1.0
+key CFBundleShortVersionString 1.1
 key LSUIElement true
 # The icon Finder shows (#208): the plist names it, and the file is inside.
 key CFBundleIconFile deskhop

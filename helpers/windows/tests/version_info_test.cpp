@@ -59,16 +59,16 @@ int main(int argc, char **argv) {
 
     check_string(block, "FileDescription", "DeskHopPlus Helper");
     check_string(block, "ProductName", "DeskHopPlus");
-    check_string(block, "FileVersion", "1.0");
-    check_string(block, "ProductVersion", "1.0");
+    check_string(block, "FileVersion", "1.1");
+    check_string(block, "ProductVersion", "1.1");
 
-    /* The numeric versions, 1.0.0.0; Explorer shows the file one. */
+    /* The numeric versions, 1.1.0.0; Explorer shows the file one. */
     VS_FIXEDFILEINFO *fixed = nullptr;
     UINT length = 0;
     if (!VerQueryValueA(block.data(), "\\", reinterpret_cast<void **>(&fixed), &length) ||
-        fixed->dwFileVersionMS != MAKELONG(0, 1) || fixed->dwFileVersionLS != 0 ||
-        fixed->dwProductVersionMS != MAKELONG(0, 1) || fixed->dwProductVersionLS != 0) {
-        std::fprintf(stderr, "FAIL: the fixed versions are not 1.0.0.0\n");
+        fixed->dwFileVersionMS != MAKELONG(1, 1) || fixed->dwFileVersionLS != 0 ||
+        fixed->dwProductVersionMS != MAKELONG(1, 1) || fixed->dwProductVersionLS != 0) {
+        std::fprintf(stderr, "FAIL: the fixed versions are not 1.1.0.0\n");
         ++failures;
     }
 

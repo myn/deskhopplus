@@ -19,4 +19,4 @@
  * that reason (#21).
  */
 #define DH_VERSION_MAJOR 1
-#define DH_VERSION_MINOR 0
+#define DH_VERSION_MINOR 1

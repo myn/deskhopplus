@@ -46,7 +46,7 @@ for state in HelperState.allCases {
     menuBar.menuNeedsUpdate(menu)
     // The literal, not DH_VERSION_MAJOR spelled back out: this is the release
     // the helper claims to be, and it moves with src/core/dh_version.h (#199).
-    check(menu.items[0].title == "DeskHopPlus Helper 1.0" && !menu.items[0].isEnabled,
+    check(menu.items[0].title == "DeskHopPlus Helper 1.1" && !menu.items[0].isEnabled,
           "the first row names the helper and its release, greyed")
     check(menu.items[1].isSeparatorItem, "the release row stands apart from the state")
     let words = menu.items.dropFirst(2).prefix { !$0.isSeparatorItem }.map(\.title).joined(separator: " ")
