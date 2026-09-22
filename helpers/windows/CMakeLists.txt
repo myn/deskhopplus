@@ -242,4 +242,13 @@ if(WIN32)
   if(MSVC)
     target_compile_options(deskhop-helper PRIVATE /WX)
   endif()
+
+  # The exe's own properties (#237), read back from the built exe.
+  add_executable(version_info_test tests/version_info_test.cpp)
+  target_link_libraries(version_info_test PRIVATE version)
+  add_dependencies(version_info_test deskhop-helper)
+  if(MSVC)
+    target_compile_options(version_info_test PRIVATE /WX)
+  endif()
+  add_test(NAME version_info COMMAND version_info_test $<TARGET_FILE:deskhop-helper>)
 endif()

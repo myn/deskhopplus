@@ -10,3 +10,35 @@ IDI_APP        ICON "app.ico"
 IDI_PAIRED     ICON "paired.ico"
 IDI_OFF        ICON "off.ico"
 IDI_ATTENTION  ICON "attention.ico"
+
+// The exe's own properties (#237): Explorer's Details tab and Task Manager
+// read these, and Settings' list of tray icons is expected to (unconfirmed). The version comes from
+// the one release number (#199), found through dhcore's include directory.
+#include "dh_version.h"
+
+#define DH_STR2(x) #x
+#define DH_STR(x) DH_STR2(x)
+#define DH_VERSION_STR DH_STR(DH_VERSION_MAJOR.DH_VERSION_MINOR)
+
+1 VERSIONINFO
+FILEVERSION    DH_VERSION_MAJOR, DH_VERSION_MINOR, 0, 0
+PRODUCTVERSION DH_VERSION_MAJOR, DH_VERSION_MINOR, 0, 0
+FILEOS         0x40004L // VOS_NT_WINDOWS32
+FILETYPE       0x1L     // VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0" // US English, Unicode
+        BEGIN
+            VALUE "FileDescription",  "DeskHopPlus Helper"
+            VALUE "ProductName",      "DeskHopPlus"
+            VALUE "FileVersion",      DH_VERSION_STR
+            VALUE "ProductVersion",   DH_VERSION_STR
+            VALUE "LegalCopyright",   "Copyright (c) 2026 Derek Reynolds. GPL-3.0-only."
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
