@@ -1,6 +1,6 @@
-# deskhopplus user guide
+# DeskHopPlus user guide
 
-How to pair, use, fix and remove deskhopplus. Nothing here needs the source code.
+How to pair, use, fix and remove DeskHopPlus. Nothing here needs the source code.
 
 You need a DeskHop board pair running `deskhopplus.uf2`, and a helper on each computer. The
 README's [Get started](../README.md#get-started) covers flashing and the first run of each helper.
@@ -451,7 +451,7 @@ a normal window; the next crossing is placed correctly.
 
 Corporate endpoint software such as Trellix treats the config-mode drive as removable storage. It
 may ask you to justify it each time, and it may refuse writes, which also blocks the drag-and-drop
-firmware upgrade on that PC. Nothing in deskhopplus can change that policy. Use the Mac, or any
+firmware upgrade on that PC. Nothing in DeskHopPlus can change that policy. Use the Mac, or any
 unmanaged computer, for config mode and firmware upgrades. Pairing is unaffected: the pairing
 window opens on the reboot back, whether or not the drive mounted. [#58](https://github.com/myn/deskhopplus/issues/58).
 

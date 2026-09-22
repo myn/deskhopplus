@@ -1,8 +1,8 @@
-# deskhopplus
+# DeskHopPlus
 
 > **A hard fork of [DeskHop](https://github.com/hrvach/deskhop) by Hrvoje Cavrak.**
 >
-> deskhopplus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a vendor-defined USB HID channel with per-OS companion helpers.
+> DeskHopPlus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a vendor-defined USB HID channel with per-OS companion helpers.
 >
 > This is a **hard fork, not a downstream branch.** It deliberately replaces upstream models where they don't fit — most significantly the linear screen chain in `src/mouse.c`, which assumes each computer's monitors are arranged along the same axis as the border between computers.
 >
@@ -16,9 +16,9 @@
 
 ---
 
-## What deskhopplus adds
+## What DeskHopPlus adds
 
-DeskHop moves one keyboard and mouse between two computers. deskhopplus keeps all of that and adds:
+DeskHop moves one keyboard and mouse between two computers. DeskHopPlus keeps all of that and adds:
 
 - **Screens above and below.** The two computers can sit one above the other, not only side by side. Each computer's own monitors can run along either axis.
 - **Key remapping per direction.** Keys can be changed on their way to one computer and left alone on their way to the other.
@@ -41,7 +41,7 @@ Helpers exist for macOS and Windows. A Linux computer gets the keyboard and mous
 
 **Blank boards:** hold the button on each Pico while you plug it in. A drive named `RPI-RP2` appears. Copy `deskhopplus.uf2` onto it. Do this for both boards.
 
-**Boards that already run deskhopplus:** press **Left Ctrl + Right Shift + C + O**. A drive named `DESKHOP` appears. Copy `deskhopplus.uf2` onto it. The other board upgrades itself over the inter-board link. Details are under *Upgrading firmware* below.
+**Boards that already run DeskHopPlus:** press **Left Ctrl + Right Shift + C + O**. A drive named `DESKHOP` appears. Copy `deskhopplus.uf2` onto it. The other board upgrades itself over the inter-board link. Details are under *Upgrading firmware* below.
 
 ### 2. Install the helper
 
@@ -67,7 +67,7 @@ The [user guide](docs/user-guide.md) has the rest: what each menu state means, h
 
 ### USB identifiers
 
-The boards still present DeskHop's USB identifiers, `1209:C000`, until [#14](https://github.com/myn/deskhopplus/issues/14) lands. A stock DeskHop and a deskhopplus look the same to the operating system. The helpers still find the right one, because they look for the clipboard channel, which a stock DeskHop does not have.
+The boards still present DeskHop's USB identifiers, `1209:C000`, until [#14](https://github.com/myn/deskhopplus/issues/14) lands. A stock DeskHop and a DeskHopPlus look the same to the operating system. The helpers still find the right one, because they look for the clipboard channel, which a stock DeskHop does not have.
 
 ---
 
@@ -158,7 +158,7 @@ All I wanted was a way to use a keyboard shortcut to quickly switch outputs, pai
 - Completely **[free and open source](https://certification.oshwa.org/de000149.html)**
 - No noticeable delay when switching
 - Simply drag the mouse pointer between computers
-- No software installed — **deskhopplus:** still true for the keyboard and mouse. Clipboard sharing and cursor placement need the helper in *Get started* above.
+- No software installed — **DeskHopPlus:** still true for the keyboard and mouse. Clipboard sharing and cursor placement need the helper in *Get started* above.
 - Affordable and obtainable components (<15€)
 - 3D printable snap-fit case
 - Full Galvanic isolation between your outputs
@@ -233,7 +233,7 @@ The disk image is rebuilt for you **if mtools is installed**: `cmake --build` th
 
 ## Using a pre-built image
 
-Alternatively, you can use the [pre-built images](https://github.com/myn/deskhopplus/releases) — **deskhopplus:** this fork's releases, not DeskHop's. A stock DeskHop image does not pair with the helpers, and the version numbers here are DeskHop's. Since version 0.6 there is only a single universal image. You need the .uf2 file which you simply copy to the device in one of the following ways:
+Alternatively, you can use the [pre-built images](https://github.com/myn/deskhopplus/releases) — **DeskHopPlus:** this fork's releases, not DeskHop's. A stock DeskHop image does not pair with the helpers, and the version numbers here are DeskHop's. Since version 0.6 there is only a single universal image. You need the .uf2 file which you simply copy to the device in one of the following ways:
 
 ## Upgrading firmware
 
@@ -407,7 +407,7 @@ Repeat for the bottom border (if it's above the larger screen's border). This wi
 
 ### Multiple screens per output
 
-Windows and Mac have issues with multiple screens and absolute positioning, so workarounds are needed (still experimental). There is a better workaround under construction, but for now you have to set the operating system for each output and number of screens. **deskhopplus:** with the helper running, the cursor lands on any monitor, and where the monitors sit is set by dragging them in the *Layout* at the top of the same page (see the [user guide](docs/user-guide.md#where-the-computers-sit)). Without a helper, this section still applies.
+Windows and Mac have issues with multiple screens and absolute positioning, so workarounds are needed (still experimental). There is a better workaround under construction, but for now you have to set the operating system for each output and number of screens. **DeskHopPlus:** with the helper running, the cursor lands on any monitor, and where the monitors sit is set by dragging them in the *Layout* at the top of the same page (see the [user guide](docs/user-guide.md#where-the-computers-sit)). Without a helper, this section still applies.
 
 Your main screens need to be in the middle, and secondary screen(s) on the edges. To configure the actual options, open the web configuration page for your device.
 
@@ -464,8 +464,8 @@ Do this test by first plugging the keyboard on one side and then on the other. I
 
 Some features are missing on purpose, despite the fact it would make the device easier to use or simpler to configure. Here is a quick breakdown of these decisions:
 
-- There is no copy-paste or _any_ information sharing between systems. This prevents information leakage. **deskhopplus:** no longer true. When a helper runs on both computers the clipboard crosses, sealed helper to helper (see *What deskhopplus adds*). Each direction can be turned off on the config page. With no helper, nothing crosses, as before.
-- No webhid device management without explicit user consent. No inbound connectivity from the output computers, with the only exception of standard keyboard LED on/off messages and hard limited to 1 byte of data. **deskhopplus:** the helper channel is inbound connectivity. It is a separate vendor HID interface. It works only for a helper paired by a physical chord press on the keyboard, and every frame of a session is authenticated.
+- There is no copy-paste or _any_ information sharing between systems. This prevents information leakage. **DeskHopPlus:** no longer true. When a helper runs on both computers the clipboard crosses, sealed helper to helper (see *What DeskHopPlus adds*). Each direction can be turned off on the config page. With no helper, nothing crosses, as before.
+- No webhid device management without explicit user consent. No inbound connectivity from the output computers, with the only exception of standard keyboard LED on/off messages and hard limited to 1 byte of data. **DeskHopPlus:** the helper channel is inbound connectivity. It is a separate vendor HID interface. It works only for a helper paired by a physical chord press on the keyboard, and every frame of a session is authenticated.
 - No FW upgrade triggering from the outputs. Only explicit and deliberate user action through a special keyboard shortcut may do that.
 - No plugged-in keyboard/mouse custom endpoints are exposed or information forwarded towards these devices. Their potential vulnerabilities are effectively firewalled from the computer.
 - No input history is allowed to be retained.
@@ -526,13 +526,13 @@ There are several software alternatives you can use if that works in your partic
 
 ## Shortcomings
 
-- Windows 10 broke HID absolute coordinates behavior in KB5003637, so you can't use more than 1 screen on Windows (mouse will stay on the main screen). There is an experimental workaround with a better one on the way. **deskhopplus:** not with the helper running. It places the cursor on any monitor.
+- Windows 10 broke HID absolute coordinates behavior in KB5003637, so you can't use more than 1 screen on Windows (mouse will stay on the main screen). There is an experimental workaround with a better one on the way. **DeskHopPlus:** not with the helper running. It places the cursor on any monitor.
 - Code needs cleanup, some refactoring etc.
 - Not tested with a wide variety of devices, I don't know how it will work with your hardware. There is a reasonable chance things might not work out-of-the-box.
 - Advanced keyboards (with knobs, extra buttons or sliders) will probably face issues where this additional hardware doesn't work.
 - Super-modern mice with 300 buttons might see some buttons not work as expected.
 - NOTE: **Both computers need to be connected and provide power to the USB for this to work** (as each board gets powered by the computer it plugs into). Many desktops and laptops will provide power even when shut down nowadays. If you need to run with one board fully disconnected, you should be able to use a USB hub to plug both keyboard and mouse to a single port.
-- MacOS has issues with more than one screens, latest firmware offers an experimental workaround that fixes it. **deskhopplus:** not with the helper running. It places the cursor on any monitor.
+- MacOS has issues with more than one screens, latest firmware offers an experimental workaround that fixes it. **DeskHopPlus:** not with the helper running. It places the cursor on any monitor.
 
 ## Progress
 
