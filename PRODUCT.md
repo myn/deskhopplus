@@ -136,9 +136,12 @@ matter ("one line under the picture says why").
 
 - The live page: `webconfig/templates/main.html`, `form.html`, `style.css`
   (Milligram 1.4.1, MIT, vendored inline), `script.js`, `layout.js`.
-- `img/config-page-big.png` and `img/connect-dialog.png`: upstream DeskHop's
-  page, before this fork's changes. Reference for what upstream looked like,
-  not for what this page looks like now.
+- `img/config-page.gif`: this page in the README. A screen recording of the
+  page connected to a board in config mode, taken with CleanShot in light
+  mode at 800 px wide and saved as a GIF. Record it again the same way when
+  the page changes; keep it under GitHub's 10 MB image limit.
+- `img/connect-dialog.png`: upstream DeskHop's connect dialog, before this
+  fork's changes.
 - `docs/user-guide.md` — the page's documentation. `README.md` — product
   description and release flow.
 - Spec #210 (closed): the layout editor's user stories, model, gestures and

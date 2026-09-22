@@ -431,7 +431,7 @@ Starting with fw 0.6, an improved configuration mode is introduced. To configure
 
 1. Click "exit" in the menu to leave configuration mode for added safety.
 
-   ![Web Config](img/config-page-big.png)
+   ![DeskHopPlus config page](img/config-page.gif)
 
 <details closed>
   <summary>Linux doesn't see device? Click here.</summary>
