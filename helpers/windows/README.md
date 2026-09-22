@@ -30,8 +30,8 @@ Windows 11 puts a new icon behind the taskbar's **^** overflow. After the icon a
 sets `IsPromoted` on its own record under `HKCU\Control Panel\NotifyIconSettings` — undocumented,
 per-user, keyed by exe path — so it sits on the taskbar; it does so on every start, so a moved exe
 heals itself. If Windows ignores it, the one-time fallback is **Settings › Personalization ›
-Taskbar › Other system tray icons**, and turn the DeskHopPlus icon on (#208). Windows labels
-that row itself, so go by the icon rather than by an exact name.
+Taskbar › Other system tray icons**, and turn on **DeskHopPlus Helper** (#208). The row takes
+that name from the exe's `FileDescription` (#237).
 
 Files arriving from the other computer are **offered, not pushed**
 ([ADR-0011](../../docs/adr/0011-paste-side-acceptance-starts-a-file-transfer.md)): a set over

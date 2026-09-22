@@ -80,9 +80,8 @@ computer is sending, and **⚠** when the menu holds a message for you. Hover fo
 On Windows the icon itself turns into the percent while a file arrives; hover for the rest. The
 helper asks Windows to keep the icon on the taskbar rather than behind the **^** overflow. If it
 still lands in the overflow, turn it on once by hand: **Settings › Personalization › Taskbar ›
-Other system tray icons**, and turn the DeskHopPlus icon on. Windows labels the row itself,
-from the tooltip; look for the icon. The helper asks again on every start, so the setting
-follows the exe if you move it.
+Other system tray icons**, and turn on **DeskHopPlus Helper**. The helper asks again on every
+start, so the setting follows the exe if you move it.
 
 The first row of the menu is greyed and shows the release, e.g. **DeskHopPlus Helper 1.0**. The
 second row is the state.

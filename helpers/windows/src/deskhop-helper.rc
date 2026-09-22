@@ -11,8 +11,8 @@ IDI_PAIRED     ICON "paired.ico"
 IDI_OFF        ICON "off.ico"
 IDI_ATTENTION  ICON "attention.ico"
 
-// The exe's own properties (#237): Explorer's Details tab and Task Manager
-// read these, and Settings' list of tray icons is expected to (unconfirmed). The version comes from
+// The exe's own properties (#237): Explorer's Details tab, Task Manager and
+// the row in Settings' list of tray icons read these. The version comes from
 // the one release number (#199), found through dhcore's include directory.
 #include "dh_version.h"
 
