@@ -1,5 +1,7 @@
 # DeskHopPlus
 
+![DeskHopPlus config page](img/config-page.gif)
+
 > **A hard fork of [DeskHop](https://github.com/hrvach/deskhop) by Hrvoje Cavrak.**
 >
 > DeskHopPlus adds a generalized 2-D screen layout (so the computers can sit above and below each other, not only side by side), per-direction key remapping, a configurable hotkey table, and clipboard sharing over a vendor-defined USB HID channel with per-OS companion helpers.
@@ -430,8 +432,6 @@ Starting with fw 0.6, an improved configuration mode is introduced. To configure
 1. Configure the options as you wish and click save to write to device.
 
 1. Click "exit" in the menu to leave configuration mode for added safety.
-
-   ![DeskHopPlus config page](img/config-page.gif)
 
 <details closed>
   <summary>Linux doesn't see device? Click here.</summary>
