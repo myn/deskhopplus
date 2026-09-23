@@ -138,8 +138,9 @@ matter ("one line under the picture says why").
   (Milligram 1.4.1, MIT, vendored inline), `script.js`, `layout.js`.
 - `img/config-page.gif`: this page in the README. A screen recording of the
   page connected to a board in config mode, taken with CleanShot in light
-  mode at 800 px wide and saved as a GIF. It sits at the top of the README. Record it again the same way when
-  the page changes; keep it under GitHub's 10 MB image limit.
+  mode at 800 px wide and saved as a GIF. It sits at the top of the README. Refresh it
+  the same way for major releases, batching intervening config-page changes;
+  keep it under GitHub's 10 MB image limit.
 - `img/connect-dialog.png`: upstream DeskHop's connect dialog, before this
   fork's changes.
 - `docs/user-guide.md` — the page's documentation. `README.md` — product
