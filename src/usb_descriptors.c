@@ -76,17 +76,59 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
     }
 }
 
+static int16_t last_absolute_x, last_absolute_y;
+
+void tud_mouse_report_reset(int16_t x, int16_t y) {
+    last_absolute_x = x;
+    last_absolute_y = y;
+}
+
 bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_t wheel, int8_t pan) {
     mouse_report_t report = {.buttons = buttons, .wheel = wheel, .x = x, .y = y, .mode = mode, .pan = pan};
     uint8_t instance = ITF_NUM_HID;
     uint8_t report_id = REPORT_ID_MOUSE;
+    int32_t dx = x, dy = y;
 
     if (mode == RELATIVE) {
         instance = ITF_NUM_HID_REL_M;
         report_id = REPORT_ID_RELMOUSE;
+    } else {
+        dx = (int32_t)x - last_absolute_x;
+        dy = (int32_t)y - last_absolute_y;
+        if (tud_hid_n_get_protocol(ITF_NUM_HID_REL_M) == HID_PROTOCOL_BOOT)
+            instance = ITF_NUM_HID_REL_M;
     }
 
-    return tud_hid_n_report(instance, report_id, &report, sizeof(report));
+    /* A boot keyboard cannot carry the absolute mouse collection. */
+    if (mode != RELATIVE && instance == ITF_NUM_HID
+        && tud_hid_n_get_protocol(ITF_NUM_HID) == HID_PROTOCOL_BOOT)
+        return true;
+
+    if (instance == ITF_NUM_HID_REL_M && tud_hid_n_get_protocol(instance) == HID_PROTOCOL_BOOT) {
+        const uint8_t boot_report[3] = {
+            buttons,
+            (uint8_t)(int8_t)(dx < -128 ? -128 : dx > 127 ? 127 : dx),
+            (uint8_t)(int8_t)(dy < -128 ? -128 : dy > 127 ? 127 : dy),
+        };
+        bool sent = tud_hid_n_report(instance, 0, boot_report, sizeof(boot_report));
+        if (sent && mode != RELATIVE)
+            tud_mouse_report_reset(x, y);
+        return sent;
+    }
+
+    bool sent = tud_hid_n_report(instance, report_id, &report, sizeof(report));
+    if (sent && mode != RELATIVE)
+        tud_mouse_report_reset(x, y);
+    return sent;
+}
+
+bool tud_keyboard_report(const hid_keyboard_report_t *report) {
+    if (tud_hid_n_get_protocol(ITF_NUM_HID) == HID_PROTOCOL_BOOT) {
+        hid_keyboard_report_t boot = *report;
+        boot.reserved = 0;
+        return tud_hid_n_report(ITF_NUM_HID, 0, &boot, sizeof(boot));
+    }
+    return tud_hid_keyboard_report(REPORT_ID_KEYBOARD, report->modifier, (uint8_t *)report->keycode);
 }
 
 
@@ -225,7 +267,7 @@ uint8_t const desc_configuration[] = {
     // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
     TUD_HID_DESCRIPTOR(ITF_NUM_HID,
                        STRID_PRODUCT,
-                       HID_ITF_PROTOCOL_NONE,
+                       HID_ITF_PROTOCOL_KEYBOARD,
                        sizeof(desc_hid_report),
                        EPNUM_HID,
                        LEGACY_EP_PACKET_SIZE,
@@ -233,7 +275,7 @@ uint8_t const desc_configuration[] = {
 
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_REL_M,
                        STRID_MOUSE,
-                       HID_ITF_PROTOCOL_NONE,
+                       HID_ITF_PROTOCOL_MOUSE,
                        sizeof(desc_hid_report_relmouse),
                        EPNUM_HID_REL_M,
                        LEGACY_EP_PACKET_SIZE,
@@ -270,7 +312,7 @@ uint8_t const desc_configuration_config[] = {
     // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
     TUD_HID_DESCRIPTOR(ITF_NUM_HID,
                        STRID_PRODUCT,
-                       HID_ITF_PROTOCOL_NONE,
+                       HID_ITF_PROTOCOL_KEYBOARD,
                        sizeof(desc_hid_report),
                        EPNUM_HID,
                        LEGACY_EP_PACKET_SIZE,
@@ -278,7 +320,7 @@ uint8_t const desc_configuration_config[] = {
 
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_REL_M,
                        STRID_MOUSE,
-                       HID_ITF_PROTOCOL_NONE,
+                       HID_ITF_PROTOCOL_MOUSE,
                        sizeof(desc_hid_report_relmouse),
                        EPNUM_HID_REL_M,
                        LEGACY_EP_PACKET_SIZE,

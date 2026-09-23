@@ -88,6 +88,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/led.c
   ${SRC_DIR}/uart.c
   ${SRC_DIR}/usb.c
+  ${SRC_DIR}/usb_control.c
   ${SRC_DIR}/channel.c
   ${SRC_DIR}/channel_lifecycle.c
   ${SRC_DIR}/main.c

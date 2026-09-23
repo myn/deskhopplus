@@ -1,7 +1,5 @@
-# Host test harness for the pure-logic core (src/core/) — the standalone build
-# decided in #9: no SDK, no cross-compiler, no framework, invoked separately so
-# the firmware build is untouched. Run in CI by the "Run host tests" step in
-# .github/workflows/build.yml, ahead of the firmware build.
+# Host tests use the bundled TinyUSB headers only for the #67 USB-boundary
+# test; no Pico SDK build, cross-compiler, or test framework is needed.
 #
 # The macOS helper's suite (swift run channel-tests) is *not* run there: it
 # needs a macOS runner, which is a separate decision.
@@ -33,6 +31,11 @@ set(VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/frames.txt)
 set(PRIMITIVE_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/primitives.txt)
 
 enable_testing()
+
+add_executable(boot_hid_test boot_hid_test.c ../src/usb_descriptors.c ../src/usb_control.c)
+target_include_directories(boot_hid_test PRIVATE boot_stubs ../src ../src/include ../src/core)
+target_include_directories(boot_hid_test SYSTEM PRIVATE ../pico-sdk/lib/tinyusb/src)
+add_test(NAME boot_hid_test COMMAND boot_hid_test)
 
 # Public headers must compile in both languages without consumer definitions (#121).
 add_library(core_headers_c OBJECT core_headers_test.c)

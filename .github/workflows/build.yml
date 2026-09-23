@@ -94,8 +94,8 @@ jobs:
       run: ./create.sh
 
     # Before the firmware, so a logic regression fails fast and reads as a
-    # logic failure rather than as a build one. Needs no cross-compiler and
-    # no SDK — that is the point of the split.
+    # logic failure rather than as a build one. Needs no cross-compiler or
+    # SDK build; the #67 USB-boundary test uses bundled TinyUSB headers.
     - name: Run host tests
       shell: bash
       run: |

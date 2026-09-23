@@ -31,4 +31,5 @@ void mouse_crossing_task(device_t *, uint32_t now_us);
 void mouse_crossing_query_unavailable(device_t *, uint8_t output, uint8_t query_id);
 void queue_mouse_report(mouse_report_t *, device_t *);
 bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_t wheel, int8_t pan);
+void tud_mouse_report_reset(int16_t x, int16_t y);
 void output_mouse_report(mouse_report_t *, device_t *);

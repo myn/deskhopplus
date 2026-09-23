@@ -40,6 +40,8 @@
    and disk-encryption prompts - byte-identical on the wire. */
 #define LEGACY_EP_PACKET_SIZE 32
 
+void discard_queued_host_reports(void);
+
 
 #define DEVICE_DESCRIPTOR(vid, pid) \
 {.bLength         = sizeof(tusb_desc_device_t),\

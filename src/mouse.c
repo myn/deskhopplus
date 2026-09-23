@@ -128,7 +128,9 @@ void process_mouse_queue_task(device_t *state) {
         tud_remote_wakeup();
 
     /* If it's not ready, we'll try on the next pass */
-    if (!tud_hid_n_ready(ITF_NUM_HID))
+    if (!tud_hid_n_ready(report.mode == RELATIVE
+            || tud_hid_n_get_protocol(ITF_NUM_HID_REL_M) == HID_PROTOCOL_BOOT
+            ? ITF_NUM_HID_REL_M : ITF_NUM_HID))
         return;
 
     /* Try sending it to the host, if it's successful */

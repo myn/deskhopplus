@@ -49,6 +49,7 @@ void     process_keyboard_report(uint8_t *, int, uint8_t, hid_interface_t *);
 void     process_system_report(uint8_t *, int, uint8_t, hid_interface_t *);
 void     queue_cc_packet(uint8_t *, device_t *);
 void     queue_kbd_report(hid_keyboard_report_t *, device_t *);
+bool     tud_keyboard_report(const hid_keyboard_report_t *);
 void     output_keyboard_report(const hid_keyboard_report_t *, dh_keyboard_provenance, device_t *);
 bool     queue_remote_keyboard_report(const hid_keyboard_report_t *, dh_keyboard_provenance);
 void     queue_system_packet(uint8_t *, device_t *);

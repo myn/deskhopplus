@@ -21,88 +21,11 @@ _Static_assert(MAX_DEVICES <= CFG_TUH_DEVICE_MAX,
  * ===========  TinyUSB Device Callbacks  =========== *
  * ================================================== */
 
-/* Invoked when we get GET_REPORT control request.
- * We are expected to fill buffer with the report content, update reqlen
- * and return its length. We return 0 to STALL the request. */
-uint16_t tud_hid_get_report_cb(uint8_t instance,
-                               uint8_t report_id,
-                               hid_report_type_t report_type,
-                               uint8_t *buffer,
-                               uint16_t request_len) {
-    return 0;
-}
-
-/**
- * Computer controls our LEDs by sending USB SetReport messages with a payload
- * of just 1 byte and report type output. It's type 0x21 (USB_REQ_DIR_OUT |
- * USB_REQ_TYP_CLASS | USB_REQ_REC_IFACE) Request code for SetReport is 0x09,
- * report type is 0x02 (HID_REPORT_TYPE_OUTPUT). We get a set_report callback
- * from TinyUSB device HID and then figure out what to do with the LEDs.
- */
-void tud_hid_set_report_cb(uint8_t instance,
-                           uint8_t report_id,
-                           hid_report_type_t report_type,
-                           uint8_t const *buffer,
-                           uint16_t bufsize) {
-
-    /* In config mode HID instance 3 is the separate helper channel after MSC;
-       in normal mode instances 2 and 3 are the two helper channels. */
-    if (report_id == 0 && (global_state.config_mode_active
-                              ? instance == ITF_NUM_HID_CHANNEL_1
-                              : (instance == ITF_NUM_HID_VENDOR || instance == ITF_NUM_HID_CHANNEL_1))) {
-        if (report_type == HID_REPORT_TYPE_OUTPUT)
-            channel_receive_report(global_state.config_mode_active ? 0 : instance - ITF_NUM_HID_VENDOR,
-                                   buffer, bufsize);
-        return;
-    }
-
-    /* We received a report on the config report ID */
-    if (instance == ITF_NUM_HID_VENDOR && report_id == REPORT_ID_VENDOR) {
-        /* Security - only if config mode is enabled are we allowed to do anything. While the report_id
-           isn't even advertised when not in config mode, security must always be explicit and never assume */
-        if (!global_state.config_mode_active)
-            return;
-
-        /* We insist on a fixed size packet. No overflows. */
-        if (bufsize != RAW_PACKET_LENGTH)
-            return;
-
-        uart_packet_t *packet = (uart_packet_t *) (buffer + START_LENGTH);
-
-        /* Only a certain packet types are accepted */
-        if (!validate_packet(packet))
-            return;
-
-        process_packet(packet, &global_state);
-    }
-
-    /* Only other set report we care about is LED state change, and that's exactly 1 byte long */
-    if (report_id != REPORT_ID_KEYBOARD || bufsize != 1 || report_type != HID_REPORT_TYPE_OUTPUT)
-        return;
-
-    uint8_t leds = buffer[0];
-
-    /* If we are using caps lock LED to indicate the chosen output, that has priority */
-    if (global_state.config.kbd_led_as_indicator) {
-        leds = leds & 0xFD; /* 1111 1101 (Clear Caps Lock bit) */
-
-        if (global_state.active_output)
-            leds |= KEYBOARD_LED_CAPSLOCK;
-    }
-
-    global_state.keyboard_leds_desired[BOARD_ROLE] = leds;
-
-    /* If the board has a keyboard connected directly, restore those leds. */
-    if (global_state.keyboard_connected && CURRENT_BOARD_IS_ACTIVE_OUTPUT)
-        restore_leds(&global_state);
-
-    /* Always send to the other one, so it is aware of the change */
-    (void)send_value(leds, KBD_SET_REPORT_MSG);
-}
-
 /* Invoked when device is mounted */
 void tud_mount_cb(void) {
+    discard_queued_host_reports();
     global_state.tud_connected = true;
+    tud_mouse_report_reset(global_state.pointer_x, global_state.pointer_y);
 
     /* A modifier is held by the host, not by the board: the OS believes the
        last report it was given until a later one says otherwise. Any reset
@@ -130,6 +53,7 @@ void tud_mount_cb(void) {
 /* Invoked when device is unmounted */
 void tud_umount_cb(void) {
     global_state.tud_connected = false;
+    discard_queued_host_reports();
 
     /* The channel went with it. Config mode reboots the device under a
        different USB identity, so this is also the ordinary path in and out of

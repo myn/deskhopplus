@@ -166,7 +166,7 @@ void process_kbd_queue_task(device_t *state) {
         return;
 
     /* ... try sending it to the host, if it's successful */
-    bool succeeded = tud_hid_keyboard_report(REPORT_ID_KEYBOARD, report.modifier, report.keycode);
+    bool succeeded = tud_keyboard_report(&report);
 
     /* ... then we can remove it from the queue. Race conditions shouldn't happen [tm] */
     if (succeeded)

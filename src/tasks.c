@@ -271,6 +271,12 @@ void process_hid_queue_task(device_t *state) {
     if (!tud_hid_n_ready(packet.instance))
         return;
 
+    /* Report-ID controls on interface 0 are not boot-keyboard input. */
+    if (packet.instance == ITF_NUM_HID && tud_hid_n_get_protocol(ITF_NUM_HID) == HID_PROTOCOL_BOOT) {
+        queue_try_remove(&state->hid_queue_out, &packet);
+        return;
+    }
+
     /* ... try sending it to the host, if it's successful */
     bool succeeded = tud_hid_n_report(packet.instance, packet.report_id, packet.data, packet.len);
 
