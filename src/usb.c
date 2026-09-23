@@ -26,6 +26,7 @@ void tud_mount_cb(void) {
     discard_queued_host_reports();
     global_state.tud_connected = true;
     tud_mouse_report_reset(global_state.pointer_x, global_state.pointer_y);
+    set_local_boot_mouse_mode(tud_hid_n_get_protocol(ITF_NUM_HID_REL_M) == HID_PROTOCOL_BOOT);
 
     /* A modifier is held by the host, not by the board: the OS believes the
        last report it was given until a later one says otherwise. Any reset
@@ -54,6 +55,7 @@ void tud_mount_cb(void) {
 void tud_umount_cb(void) {
     global_state.tud_connected = false;
     discard_queued_host_reports();
+    set_local_boot_mouse_mode(false);
 
     /* The channel went with it. Config mode reboots the device under a
        different USB identity, so this is also the ordinary path in and out of

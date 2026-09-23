@@ -88,8 +88,9 @@ bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_
     uint8_t instance = ITF_NUM_HID;
     uint8_t report_id = REPORT_ID_MOUSE;
     int32_t dx = x, dy = y;
+    const bool relative = mode == RELATIVE || mode == BOOT_RELATIVE;
 
-    if (mode == RELATIVE) {
+    if (relative) {
         instance = ITF_NUM_HID_REL_M;
         report_id = REPORT_ID_RELMOUSE;
     } else {
@@ -100,12 +101,12 @@ bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_
     }
 
     /* A boot keyboard cannot carry the absolute mouse collection. */
-    if (mode != RELATIVE && instance == ITF_NUM_HID
+    if (!relative && instance == ITF_NUM_HID
         && tud_hid_n_get_protocol(ITF_NUM_HID) == HID_PROTOCOL_BOOT)
         return true;
 
     if (instance == ITF_NUM_HID_REL_M && tud_hid_n_get_protocol(instance) == HID_PROTOCOL_BOOT) {
-        if (mode != RELATIVE) {
+        if (!relative) {
             /* Absolute coordinates include the output's screen-space speed;
                boot mouse reports need relative mouse counts. */
             const output_t *output = &global_state.config.output[BOARD_ROLE];
@@ -121,13 +122,13 @@ bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_
             (uint8_t)(int8_t)(dy < -128 ? -128 : dy > 127 ? 127 : dy),
         };
         bool sent = tud_hid_n_report(instance, 0, boot_report, sizeof(boot_report));
-        if (sent && mode != RELATIVE)
+        if (sent && !relative)
             tud_mouse_report_reset(x, y);
         return sent;
     }
 
     bool sent = tud_hid_n_report(instance, report_id, &report, sizeof(report));
-    if (sent && mode != RELATIVE)
+    if (sent && !relative)
         tud_mouse_report_reset(x, y);
     return sent;
 }

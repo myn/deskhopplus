@@ -247,7 +247,8 @@ void heartbeat_output_task(device_t *state) {
         .type = HEARTBEAT_MSG,
         .data16 = {
             [HEARTBEAT_VERSION_SLOT16] = state->_running_fw.version,
-            [HEARTBEAT_OUTPUT_SLOT16]  = state->active_output,
+            [HEARTBEAT_OUTPUT_SLOT16]  = state->active_output |
+                (state->boot_mouse_mode[BOARD_ROLE] ? HEARTBEAT_BOOT_MOUSE_BIT : 0),
         },
     };
     packet.data32[HEARTBEAT_CHECKSUM_SLOT32] = state->_running_fw.checksum;

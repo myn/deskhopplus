@@ -18,7 +18,8 @@ static uint8_t protocol[2] = {HID_PROTOCOL_REPORT, HID_PROTOCOL_REPORT};
 static uint8_t last_instance, last_id, payload[32];
 static uint16_t payload_len;
 static hid_keyboard_report_t held_keys = {.modifier = 2, .reserved = 0x42, .keycode = {4}};
-static uint8_t sent_led, received_channel;
+static uint8_t sent_value, received_channel;
+static enum packet_type_e sent_type;
 static int channel_calls;
 static int failures;
 
@@ -60,8 +61,8 @@ bool validate_packet(uart_packet_t *packet) { (void)packet; return false; }
 void process_packet(uart_packet_t *packet, device_t *state) { (void)packet; (void)state; }
 void restore_leds(device_t *state) { (void)state; }
 bool send_value(uint8_t value, enum packet_type_e type) {
-    (void)type;
-    sent_led = value;
+    sent_type = type;
+    sent_value = value;
     return true;
 }
 bool queue_try_remove(queue_t *queue, void *item) {
@@ -123,6 +124,7 @@ int main(void) {
     global_state.pointer_x = 10;
     global_state.pointer_y = 20;
     tud_hid_set_protocol_cb(1, HID_PROTOCOL_BOOT);
+    CHECK(global_state.boot_mouse_mode[0] && sent_type == BOOT_MOUSE_MODE_MSG && sent_value == 1);
     CHECK(tud_mouse_report(ABSOLUTE, 1, 100, 50, 0, 0));
     CHECK(last_instance == 1 && last_id == 0 && payload_len == 3);
     CHECK(payload[0] == 1 && payload[1] == 5 && payload[2] == 1);
@@ -147,7 +149,13 @@ int main(void) {
     CHECK(payload[1] == 1 && payload[2] == 1);
     global_state.mouse_zoom = false;
     global_state.board_role = 0;
+    tud_mouse_report_reset(100, 0);
+    CHECK(tud_mouse_report(BOOT_RELATIVE, 0, 0, -10, 0, 0));
+    CHECK(last_instance == 1 && last_id == 0 && payload_len == 3);
+    CHECK(payload[1] == 0 && payload[2] == 246);
     protocol[1] = HID_PROTOCOL_REPORT;
+    tud_hid_set_protocol_cb(1, HID_PROTOCOL_REPORT);
+    CHECK(!global_state.boot_mouse_mode[0] && sent_type == BOOT_MOUSE_MODE_MSG && sent_value == 0);
     CHECK(tud_mouse_report(RELATIVE, 1, -5, 6, 0, 0));
     CHECK(last_id == REPORT_ID_RELMOUSE && payload_len == sizeof(mouse_report_t));
     CHECK(tud_mouse_report(ABSOLUTE, 1, 10, 20, 0, 0));
@@ -178,7 +186,7 @@ int main(void) {
 
     uint8_t led = 1;
     tud_hid_set_report_cb(0, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
-    CHECK(global_state.keyboard_leds_desired[0] == 1 && sent_led == 1);
+    CHECK(global_state.keyboard_leds_desired[0] == 1 && sent_value == 1);
     led = 7;
     tud_hid_set_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_OUTPUT, &led, 1);
     CHECK(global_state.keyboard_leds_desired[0] == 1);
@@ -187,7 +195,7 @@ int main(void) {
     protocol[0] = HID_PROTOCOL_REPORT;
     led = 4;
     tud_hid_set_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_OUTPUT, &led, 1);
-    CHECK(global_state.keyboard_leds_desired[0] == 4 && sent_led == 4);
+    CHECK(global_state.keyboard_leds_desired[0] == 4 && sent_value == 4);
     tud_hid_set_report_cb(2, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
     CHECK(channel_calls == 1 && received_channel == 0);
     global_state.config_mode_active = true;

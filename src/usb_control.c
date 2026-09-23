@@ -14,8 +14,17 @@ void discard_queued_host_reports(void) {
     while (queue_try_remove(&global_state.hid_queue_out, &packet)) {}
 }
 
+void set_local_boot_mouse_mode(bool boot) {
+    global_state.boot_mouse_mode[BOARD_ROLE] = boot;
+    (void)send_value(boot, BOOT_MOUSE_MODE_MSG);
+}
+
 void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol) {
-    if (instance == ITF_NUM_HID_REL_M && protocol == HID_PROTOCOL_BOOT)
+    if (instance != ITF_NUM_HID_REL_M)
+        return;
+    const bool boot = protocol == HID_PROTOCOL_BOOT;
+    set_local_boot_mouse_mode(boot);
+    if (boot)
         tud_mouse_report_reset(global_state.pointer_x, global_state.pointer_y);
 }
 

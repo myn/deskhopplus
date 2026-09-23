@@ -32,6 +32,7 @@ typedef struct {
     uint8_t keyboard_leds_desired[2];
     bool keyboard_connected;
     bool mouse_zoom;
+    bool boot_mouse_mode[2];
     int16_t pointer_x, pointer_y;
     queue_t kbd_queue, mouse_queue, hid_queue_out;
     struct {
@@ -45,7 +46,7 @@ extern device_t global_state;
 #define START_LENGTH 2
 #define RAW_PACKET_LENGTH 12
 typedef struct { uint8_t bytes[10]; } uart_packet_t;
-enum packet_type_e { KBD_SET_REPORT_MSG = 6 };
+enum packet_type_e { KBD_SET_REPORT_MSG = 6, BOOT_MOUSE_MODE_MSG = 35 };
 
 void combine_kbd_states(device_t *state, hid_keyboard_report_t *report);
 void channel_receive_report(uint8_t index, const uint8_t *buffer, uint16_t bufsize);

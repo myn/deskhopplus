@@ -116,6 +116,23 @@ static device_t stacked_computers_state(void) {
     return state;
 }
 
+static void test_boot_mouse_keeps_raw_motion_at_firmware_edge(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_y = MIN_SCREEN_COORD;
+    state.config.jump_threshold = 0;
+    state.boot_mouse_mode[0] = true;
+    global_state = state;
+    mouse_values_t values = {.move_y = -10};
+
+    CHECK(update_mouse_position(&state, &values) == NONE,
+          "boot mouse crossed to another computer at its firmware coordinate edge");
+    CHECK(state.pointer_y == MIN_SCREEN_COORD && values.move_y == -10,
+          "boot mouse lost raw upward motion at its firmware coordinate edge");
+    const mouse_report_t report = create_mouse_report(&state, &values);
+    CHECK(report.mode == BOOT_RELATIVE && report.y == -10,
+          "boot mouse emitted clamped absolute position instead of raw upward motion");
+}
+
 static device_t four_screen_corner_state(enum screen_pos_e horizontal,
                                          enum screen_pos_e vertical) {
     device_t state = side_by_side_state();
@@ -1183,6 +1200,7 @@ static void test_crossing_emits_source_park_and_maps_legacy_entry(void) {
 }
 
 int main(void) {
+    test_boot_mouse_keeps_raw_motion_at_firmware_edge();
     test_crossing_emits_source_park_and_maps_legacy_entry();
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();

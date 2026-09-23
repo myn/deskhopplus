@@ -70,6 +70,7 @@ typedef struct {
     bool mouse_zoom;
     bool switch_lock;
     bool gaming_mode;
+    bool boot_mouse_mode[NUM_SCREENS];
     bool relative_mouse;
     cursor_crossing_t cursor_crossing;
     uint8_t output_arrival_guard;
@@ -114,6 +115,7 @@ void cursor_trace_event(const device_t *, dh_cursor_trace_event_t, uint8_t,
 
 #define ABSOLUTE 0
 #define RELATIVE 1
+#define BOOT_RELATIVE 3
 typedef struct {
     uint8_t buttons;
     int16_t x, y;
@@ -121,4 +123,5 @@ typedef struct {
     uint8_t mode;
 } mouse_report_t;
 void output_mouse_report(mouse_report_t *, device_t *);
+mouse_report_t create_mouse_report(device_t *, mouse_values_t *);
 void set_active_output(device_t *, uint8_t);

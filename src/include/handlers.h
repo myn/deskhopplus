@@ -59,6 +59,7 @@ void handle_heartbeat_msg(uart_packet_t *, device_t *);
 void handle_keyboard_uart_msg(uart_packet_t *, device_t *);
 void handle_mouse_abs_uart_msg(uart_packet_t *, device_t *);
 void handle_mouse_zoom_msg(uart_packet_t *, device_t *);
+void handle_boot_mouse_mode_msg(uart_packet_t *, device_t *);
 void handle_output_select_msg(uart_packet_t *, device_t *);
 void handle_cursor_place_msg(uart_packet_t *, device_t *);
 void handle_proxy_msg(uart_packet_t *, device_t *);

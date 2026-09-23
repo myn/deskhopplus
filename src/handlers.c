@@ -238,8 +238,10 @@ void handle_mouse_abs_uart_msg(uart_packet_t *packet, device_t *state) {
     mouse_report_t *mouse_report = (mouse_report_t *)packet->data;
     queue_mouse_report(mouse_report, state);
 
-    state->pointer_x       = mouse_report->x;
-    state->pointer_y       = mouse_report->y;
+    if (mouse_report->mode != BOOT_RELATIVE) {
+        state->pointer_x = mouse_report->x;
+        state->pointer_y = mouse_report->y;
+    }
     state->mouse_buttons   = mouse_report->buttons;
 
     state->last_activity[BOARD_ROLE] = time_us_64();
@@ -282,6 +284,10 @@ void handle_fw_upgrade_msg(uart_packet_t *packet, device_t *state) {
 /* Comply with request to turn mouse zoom mode on/off  */
 void handle_mouse_zoom_msg(uart_packet_t *packet, device_t *state) {
     state->mouse_zoom = packet->data[0];
+}
+
+void handle_boot_mouse_mode_msg(uart_packet_t *packet, device_t *state) {
+    state->boot_mouse_mode[OTHER_ROLE] = packet->data[0] != 0;
 }
 
 /* Process request to update keyboard LEDs */
@@ -523,6 +529,8 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
         .version  = state->_running_fw.version,
         .checksum = state->_running_fw.checksum,
     };
+    state->boot_mouse_mode[OTHER_ROLE] =
+        (packet->data16[HEARTBEAT_OUTPUT_SLOT16] & HEARTBEAT_BOOT_MOUSE_BIT) != 0;
 
     /* Remember it, so this board can be asked what its peer is running (#89).
        The checksum comes along because at equal version it is the only thing

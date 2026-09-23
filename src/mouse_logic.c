@@ -244,7 +244,8 @@ typedef struct {
 
 static dh_mouse_transition_t actionable_transition_for(
     const device_t *state, const output_t *output, enum screen_pos_e direction, int buttons) {
-    if (direction == NONE || state->switch_lock || state->gaming_mode)
+    if (direction == NONE || state->switch_lock || state->gaming_mode ||
+        state->boot_mouse_mode[state->active_output])
         return DH_MOUSE_TRANSITION_NONE;
     const dh_mouse_layout_t layout = mouse_layout_for(output);
     const dh_mouse_transition_t transition = dh_mouse_transition_for(
@@ -367,6 +368,27 @@ float calculate_mouse_acceleration_factor(int32_t offset_x, int32_t offset_y) {
         }
     }
     return 1.0;
+}
+
+mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
+    mouse_report_t report = {
+        .buttons = values->buttons,
+        .x = state->pointer_x,
+        .y = state->pointer_y,
+        .wheel = values->wheel,
+        .pan = values->pan,
+        .mode = ABSOLUTE,
+    };
+
+    if (state->boot_mouse_mode[state->active_output] ||
+        dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
+        report.x = values->move_x;
+        report.y = values->move_y;
+        report.mode = state->boot_mouse_mode[state->active_output]
+                          ? BOOT_RELATIVE : RELATIVE;
+    }
+
+    return report;
 }
 
 enum screen_pos_e update_mouse_position(device_t *state, mouse_values_t *values) {

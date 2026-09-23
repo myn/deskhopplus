@@ -13,6 +13,7 @@
 #ifndef USB_DESCRIPTORS_H_
 #define USB_DESCRIPTORS_H_
 
+#include <stdbool.h>
 #include "dh_channel_identity.h"
 
 // Interface 0
@@ -41,6 +42,7 @@
 #define LEGACY_EP_PACKET_SIZE 32
 
 void discard_queued_host_reports(void);
+void set_local_boot_mouse_mode(bool boot);
 
 
 #define DEVICE_DESCRIPTOR(vid, pid) \
@@ -107,7 +109,7 @@ void discard_queued_host_reports(void);
         HID_USAGE_N     ( HID_USAGE_CONSUMER_AC_PAN, 2           ) ,\
         HID_INPUT       ( HID_DATA | HID_VARIABLE | HID_RELATIVE ) ,\
         \
-        /* Mouse mode (0 = absolute, 1 = relative) */ \
+        /* Mouse mode (0 = absolute, 1 = relative, 3 = boot-relative) */ \
         HID_REPORT_COUNT( 1                                      ), \
         HID_REPORT_SIZE ( 8                                      ), \
         HID_INPUT       ( HID_CONSTANT                           ), \

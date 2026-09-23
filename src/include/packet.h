@@ -78,6 +78,7 @@
 #define HEARTBEAT_VERSION_SLOT16  0 /* data16[0] — the sender's firmware version  */
 #define HEARTBEAT_OUTPUT_SLOT16   1 /* data16[1] — the sender's active output     */
 #define HEARTBEAT_CHECKSUM_SLOT32 1 /* data32[1] — the sender's firmware CRC32    */
+#define HEARTBEAT_BOOT_MOUSE_BIT  0x8000u /* data16[1] — sender's boot mouse mode */
 
 _Static_assert(HEARTBEAT_CHECKSUM_SLOT32 * sizeof(uint32_t)
                    >= (HEARTBEAT_OUTPUT_SLOT16 + 1) * sizeof(uint16_t),

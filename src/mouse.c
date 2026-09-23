@@ -56,27 +56,6 @@ void extract_report_values(uint8_t *raw_report, int len, device_t *state, mouse_
     }
 }
 
-mouse_report_t create_mouse_report(device_t *state, mouse_values_t *values) {
-    mouse_report_t mouse_report = {
-        .buttons = values->buttons,
-        .x       = state->pointer_x,
-        .y       = state->pointer_y,
-        .wheel   = values->wheel,
-        .pan     = values->pan,
-        .mode    = ABSOLUTE,
-    };
-
-    /* Windows secondary monitors need relative HID reports. macOS crosses its
-       monitor chain with the absolute edge-and-nudge path above. */
-    if (dh_mouse_reports_are_relative(state->relative_mouse, state->gaming_mode)) {
-        mouse_report.x = values->move_x;
-        mouse_report.y = values->move_y;
-        mouse_report.mode = RELATIVE;
-    }
-
-    return mouse_report;
-}
-
 void process_mouse_report(uint8_t *raw_report, int len, uint8_t itf, hid_interface_t *iface) {
     mouse_values_t values = {0};
     device_t *state = &global_state;
@@ -128,7 +107,7 @@ void process_mouse_queue_task(device_t *state) {
         tud_remote_wakeup();
 
     /* If it's not ready, we'll try on the next pass */
-    if (!tud_hid_n_ready(report.mode == RELATIVE
+    if (!tud_hid_n_ready(report.mode == RELATIVE || report.mode == BOOT_RELATIVE
             || tud_hid_n_get_protocol(ITF_NUM_HID_REL_M) == HID_PROTOCOL_BOOT
             ? ITF_NUM_HID_REL_M : ITF_NUM_HID))
         return;
