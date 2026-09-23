@@ -16,6 +16,8 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/
 
 ## Implementation Workflow
 
+Work on `main`, commit there, and push directly to `origin/main` by default. Create a branch or pull request only when the user explicitly asks. For a requested pull request, merge it and delete its branch after required checks pass.
+
 For every non-trivial implementation, follow this order:
 
 1. `mattpocock-skills:implement`
@@ -51,7 +53,7 @@ Before closing an issue, verify all applicable items:
 - Final diff has been reviewed.
 - Changes are committed.
 - Changes are pushed to GitHub.
-- The remote branch contains the expected commit.
+- The remote target (`origin/main` by default) contains the expected commit.
 - Required CI checks have finished.
 - All required CI checks are green.
 - The issue contains relevant completion context.
