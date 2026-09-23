@@ -31,5 +31,6 @@
         "reason": "Claude: SVG text in the desk picture, in viewBox units drawn by layout.js and scaled ~1.6x on screen (renders 14-16px); not a CSS ramp step"
       }
     ]
-  }
+  },
+  "buildPath": "code"
 }
