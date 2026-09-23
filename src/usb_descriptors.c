@@ -105,6 +105,16 @@ bool tud_mouse_report(uint8_t mode, uint8_t buttons, int16_t x, int16_t y, int8_
         return true;
 
     if (instance == ITF_NUM_HID_REL_M && tud_hid_n_get_protocol(instance) == HID_PROTOCOL_BOOT) {
+        if (mode != RELATIVE) {
+            /* Absolute coordinates include the output's screen-space speed;
+               boot mouse reports need relative mouse counts. */
+            const output_t *output = &global_state.config.output[BOARD_ROLE];
+            const uint8_t shift = global_state.mouse_zoom ? MOUSE_ZOOM_SCALING_FACTOR : 0;
+            const int32_t speed_x = output->speed_x >> shift;
+            const int32_t speed_y = output->speed_y >> shift;
+            dx /= speed_x > 0 ? speed_x : 1;
+            dy /= speed_y > 0 ? speed_y : 1;
+        }
         const uint8_t boot_report[3] = {
             buttons,
             (uint8_t)(int8_t)(dx < -128 ? -128 : dx > 127 ? 127 : dx),

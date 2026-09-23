@@ -22,6 +22,7 @@ typedef struct TU_ATTR_PACKED {
 
 typedef struct { int remaining; } queue_t;
 typedef struct { uint8_t bytes[16]; } hid_generic_pkt_t;
+typedef struct { int32_t speed_x, speed_y; dh_keymap_profile_t keymap; bool swap_ctrl_gui; } output_t;
 bool queue_try_remove(queue_t *queue, void *item);
 void tud_mouse_report_reset(int16_t x, int16_t y);
 
@@ -30,11 +31,12 @@ typedef struct {
     uint8_t board_role, active_output;
     uint8_t keyboard_leds_desired[2];
     bool keyboard_connected;
+    bool mouse_zoom;
     int16_t pointer_x, pointer_y;
     queue_t kbd_queue, mouse_queue, hid_queue_out;
     struct {
         bool kbd_led_as_indicator;
-        struct { dh_keymap_profile_t keymap; bool swap_ctrl_gui; } output[2];
+        output_t output[2];
     } config;
 } device_t;
 extern device_t global_state;

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "main.h"
+#include "user_config.h"
 
 extern uint8_t const desc_configuration[];
 extern uint8_t const desc_configuration_config[];
@@ -94,6 +95,8 @@ static void check_interfaces(const uint8_t *desc, size_t length, bool config) {
 }
 
 int main(void) {
+    global_state.config.output[0].speed_x = MOUSE_SPEED_A_FACTOR_X;
+    global_state.config.output[0].speed_y = MOUSE_SPEED_A_FACTOR_Y;
     check_interfaces(desc_configuration, TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + 2 * TUD_HID_INOUT_DESC_LEN, false);
     check_interfaces(desc_configuration_config, TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_INOUT_DESC_LEN, true);
     CHECK(tud_descriptor_configuration_cb(0) == desc_configuration);
@@ -122,9 +125,28 @@ int main(void) {
     tud_hid_set_protocol_cb(1, HID_PROTOCOL_BOOT);
     CHECK(tud_mouse_report(ABSOLUTE, 1, 100, 50, 0, 0));
     CHECK(last_instance == 1 && last_id == 0 && payload_len == 3);
-    CHECK(payload[0] == 1 && payload[1] == 90 && payload[2] == 30);
+    CHECK(payload[0] == 1 && payload[1] == 5 && payload[2] == 1);
     CHECK(tud_mouse_report(ABSOLUTE, 2, 300, -300, 0, 0));
-    CHECK(payload[0] == 2 && payload[1] == 127 && payload[2] == 128);
+    CHECK(payload[0] == 2 && payload[1] == 12 && payload[2] == 244);
+    /* One physical count becomes these absolute-coordinate steps at default speed.
+       A boot host must receive one relative count, not the screen-space step. */
+    tud_mouse_report_reset(100, 50);
+    CHECK(tud_mouse_report(ABSOLUTE, 0,
+                           100 + MOUSE_SPEED_A_FACTOR_X,
+                           50 + MOUSE_SPEED_A_FACTOR_Y, 0, 0));
+    CHECK(payload[1] == 1 && payload[2] == 1);
+    global_state.board_role = 1;
+    global_state.config.output[1].speed_x = 12;
+    global_state.config.output[1].speed_y = 20;
+    tud_mouse_report_reset(100, 50);
+    CHECK(tud_mouse_report(ABSOLUTE, 0, 112, 70, 0, 0));
+    CHECK(payload[1] == 1 && payload[2] == 1);
+    global_state.mouse_zoom = true;
+    tud_mouse_report_reset(100, 50);
+    CHECK(tud_mouse_report(ABSOLUTE, 0, 103, 55, 0, 0));
+    CHECK(payload[1] == 1 && payload[2] == 1);
+    global_state.mouse_zoom = false;
+    global_state.board_role = 0;
     protocol[1] = HID_PROTOCOL_REPORT;
     CHECK(tud_mouse_report(RELATIVE, 1, -5, 6, 0, 0));
     CHECK(last_id == REPORT_ID_RELMOUSE && payload_len == sizeof(mouse_report_t));
