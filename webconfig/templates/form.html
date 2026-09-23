@@ -114,7 +114,7 @@
       {{ label(item) }}
       {{ input(item, type=('number' if item.scale != 1 else 'text')) }} id="f{{ key }}"{% if item.scale != 1 %}
         min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-{{ key }}"{% endif %} />
-      {% if item.scale != 1 %}<span class="timer-hint" id="timer-range-{{ key }}">0–4294.967295 seconds</span>{% endif %}
+      {% if item.scale != 1 %}<span class="timer-hint" id="timer-range-{{ key }}">{% if key in [22, 52] %}0 = no time limit{% else %}0 to under 4,295 seconds{% endif %}</span>{% endif %}
       {% if item.scale != 1 %}<small class="timer-error" id="timer-error-{{ key }}" aria-live="polite"></small>{% endif %}
     </div>
 

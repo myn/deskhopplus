@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-23T13:07:24Z",
+  "generatedAt": "2026-09-23T15:40:09Z",
   "title": "Design System: DeskHopPlus config page",
   "scope": "The config page only (webconfig/templates/ rendered to webconfig/config.htm). Helper menus are out of scope.",
   "extensions": {
@@ -392,7 +392,7 @@
       "kind": "input",
       "refersTo": "input",
       "description": "Idle Time in seconds. The range hint stays visible; validation marks the field and shows a live error line.",
-      "html": "<div class=\"ds-timer-row\"><label for=\"ds-idle\">Idle Time (seconds)</label><input class=\"ds-timer-input\" id=\"ds-idle\" type=\"number\" min=\"0\" max=\"4294.967295\" step=\"0.000001\" data-scale=\"1000000\" aria-describedby=\"ds-idle-range\"><span class=\"ds-timer-hint\" id=\"ds-idle-range\">0–4294.967295 seconds</span><small class=\"ds-timer-error\" aria-live=\"polite\"></small></div>",
+      "html": "<div class=\"ds-timer-row\"><label for=\"ds-idle\">Idle Time (seconds)</label><input class=\"ds-timer-input\" id=\"ds-idle\" type=\"number\" min=\"0\" max=\"4294.967295\" step=\"0.000001\" data-scale=\"1000000\" aria-describedby=\"ds-idle-range\"><span class=\"ds-timer-hint\" id=\"ds-idle-range\">0 to under 4,295 seconds</span><small class=\"ds-timer-error\" aria-live=\"polite\"></small></div>",
       "css": ".ds-timer-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;min-height:40px;padding:6px 14px;font:13px/1.45 -apple-system,\"Segoe UI\",system-ui,sans-serif;color:var(--ink,#1d1d1f)}.ds-timer-row label{flex:1 1 160px}.ds-timer-input{width:148px;min-width:0;padding:4px 8px;border:1px solid var(--line,#d2d2d7);border-radius:6px;background:var(--pane,#f5f5f7);color:inherit;font:inherit;font-variant-numeric:tabular-nums}.ds-timer-input[aria-invalid]{border-color:var(--bad,#d70015)}.ds-timer-input:focus-visible{outline:3px solid var(--focus,#0a60ff66);outline-offset:1px}.ds-timer-hint,.ds-timer-error{flex-basis:100%;font-size:12px}.ds-timer-hint{color:var(--ink-2,#6e6e73)}.ds-timer-error{color:var(--bad,#d70015)}.ds-timer-error:empty{display:none}@media(max-width:480px){.ds-timer-input{width:80px}}"
     },
     {

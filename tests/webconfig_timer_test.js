@@ -34,7 +34,10 @@ for (const key of [21, 22, 51, 52, 14]) {
   assert.equal(attrs.get('step'), '0.000001');
   assert.equal(markup.includes('onchange='), false, 'timer edit waits for Save');
   assert.match(html, new RegExp(`<small class="timer-error"[^>]*id="timer-error-${key}"`));
-  assert.match(html, /0–4294\.967295 seconds/);
+  const hint = html.match(new RegExp(`<span class="timer-hint" id="timer-range-${key}">([^<]+)</span>`))?.[1];
+  assert.equal(hint, [22, 52].includes(key)
+    ? '0 = no time limit'
+    : '0 to under 4,295 seconds');
 }
 
 const context = {console, Uint8Array, ArrayBuffer, DataView, Event: function() {},
