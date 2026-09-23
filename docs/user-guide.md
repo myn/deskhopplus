@@ -205,9 +205,12 @@ Unplug and replug both boards: the keyboard and mouse always start on board A's 
 **Service** holds the maintenance buttons: **Blink**, **Blink both**, **Bootloader** and
 **Wipe Config**. Bootloader and Wipe Config need two clicks; the first arms the button and says so.
 
-When Save finds a field it cannot send — a hotkey or key name the board does not know — nothing
-is sent. A yellow strip at the top of the window says how many fields need a fix and names each
-one with its section; click a name to land on the field. Fix them and Save again.
+The idle and maximum screensaver times for each output are in seconds, from 0 to 4294.967295
+in steps of 0.000001. A maximum time of 0 leaves the screensaver without a time limit.
+
+When Save finds a field it cannot send — a screensaver time outside that range, or an unknown
+hotkey or key name — nothing is sent. A yellow strip at the top of the window says how many fields
+need a fix and names each with its section. Click a name to land on the field. Fix them and Save again.
 
 ### Where the computers sit
 

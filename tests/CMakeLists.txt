@@ -126,6 +126,9 @@ set_tests_properties(webconfig_chrome_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOU
 add_test(NAME webconfig_cursor_trace_test COMMAND ${NODE_EXECUTABLE}
          ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_cursor_trace_test.js
          ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
+add_test(NAME webconfig_timer_test COMMAND ${NODE_EXECUTABLE}
+         ${CMAKE_CURRENT_SOURCE_DIR}/webconfig_timer_test.js
+         ${CMAKE_CURRENT_SOURCE_DIR}/../webconfig/config-unpacked.htm)
 # The packed page's design budget (#225, PRODUCT.md): 40 960 of the 59 392
 # bytes the config disk can hold, so future fields have room. The disk's own
 # hard limit is checked by disk/capacity.py at build time.
