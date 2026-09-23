@@ -32,10 +32,14 @@ set(PRIMITIVE_VECTORS ${CMAKE_CURRENT_SOURCE_DIR}/../test-vectors/primitives.txt
 
 enable_testing()
 
-add_executable(boot_hid_test boot_hid_test.c ../src/usb_descriptors.c ../src/usb_control.c)
-target_include_directories(boot_hid_test PRIVATE boot_stubs ../src ../src/include ../src/core)
-target_include_directories(boot_hid_test SYSTEM PRIVATE ../pico-sdk/lib/tinyusb/src)
-add_test(NAME boot_hid_test COMMAND boot_hid_test)
+# Bundled TinyUSB headers do not support MSVC. The firmware and Linux host
+# build exercise this USB boundary; Windows still runs the portable core suite.
+if(NOT MSVC)
+  add_executable(boot_hid_test boot_hid_test.c ../src/usb_descriptors.c ../src/usb_control.c)
+  target_include_directories(boot_hid_test PRIVATE boot_stubs ../src ../src/include ../src/core)
+  target_include_directories(boot_hid_test SYSTEM PRIVATE ../pico-sdk/lib/tinyusb/src)
+  add_test(NAME boot_hid_test COMMAND boot_hid_test)
+endif()
 
 # Public headers must compile in both languages without consumer definitions (#121).
 add_library(core_headers_c OBJECT core_headers_test.c)
