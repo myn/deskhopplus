@@ -120,6 +120,7 @@ static void test_boot_mouse_keeps_raw_motion_at_firmware_edge(void) {
     device_t state = stacked_computers_state();
     state.pointer_y = MIN_SCREEN_COORD;
     state.config.jump_threshold = 0;
+    state.config.output[0].border_direction = DH_DIRECTION_BOTTOM;
     state.boot_mouse_mode[0] = true;
     global_state = state;
     mouse_values_t values = {.move_y = -10};
@@ -131,6 +132,30 @@ static void test_boot_mouse_keeps_raw_motion_at_firmware_edge(void) {
     const mouse_report_t report = create_mouse_report(&state, &values);
     CHECK(report.mode == BOOT_RELATIVE && report.y == -10,
           "boot mouse emitted clamped absolute position instead of raw upward motion");
+}
+
+static void test_boot_mouse_crosses_configured_computer_seam(void) {
+    device_t state = stacked_computers_state();
+    state.pointer_y = MAX_SCREEN_COORD;
+    state.config.jump_threshold = 0;
+    state.config.output[0].border_direction = DH_DIRECTION_BOTTOM;
+    state.boot_mouse_mode[0] = true;
+    global_state = state;
+    mouse_values_t values = {.move_y = 10};
+
+    const enum screen_pos_e direction = update_mouse_position(&state, &values);
+    CHECK(direction == BOTTOM, "boot mouse could not cross the configured computer seam");
+    const mouse_report_t report = create_mouse_report(&state, &values);
+    CHECK(report.mode == BOOT_RELATIVE && report.y == 10,
+          "boot mouse lost raw motion while crossing the computer seam");
+
+    output_switches = 0;
+    emitted_count = 0;
+    do_screen_switch(&state, direction);
+    CHECK(output_switches == 1 && state.active_output == 1,
+          "boot mouse stayed on Mac at the configured computer seam");
+    CHECK(emitted_count == 0,
+          "boot mouse crossing parked the cursor with a synthetic absolute report");
 }
 
 static device_t four_screen_corner_state(enum screen_pos_e horizontal,
@@ -1201,6 +1226,7 @@ static void test_crossing_emits_source_park_and_maps_legacy_entry(void) {
 
 int main(void) {
     test_boot_mouse_keeps_raw_motion_at_firmware_edge();
+    test_boot_mouse_crosses_configured_computer_seam();
     test_crossing_emits_source_park_and_maps_legacy_entry();
     test_update_and_switch_at_the_public_mouse_seam();
     test_virtual_desktops_remain_local();
