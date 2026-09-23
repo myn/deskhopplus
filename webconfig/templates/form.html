@@ -3,8 +3,8 @@
 {% set key = item.key %}
 
 {% macro input(item, type='text', class='api', name='name') %}
-<input class="{{ class }}" type="{{ type }}" name="{{ name }}{{ key }}" data-type="{{ item.type }}" data-key="{{ key }}"
-  onchange="valueChangedHandler(this)"
+<input class="{{ class }}" type="{{ type }}" name="{{ name }}{{ key }}" data-type="{{ item.type }}" data-key="{{ key }}"{% if item.scale != 1 %} data-scale="{{ item.scale }}"{% endif %}
+  {% if item.scale == 1 %}onchange="valueChangedHandler(this)"{% endif %}
 {% endmacro %}
 
 {% macro label(item, add='') %}
@@ -112,7 +112,10 @@
   {% else %}
     <div class="row">
       {{ label(item) }}
-      {{ input(item) }} id="f{{ key }}" />
+      {{ input(item, type=('number' if item.scale != 1 else 'text')) }} id="f{{ key }}"{% if item.scale != 1 %}
+        min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-{{ key }}"{% endif %} />
+      {% if item.scale != 1 %}<span class="timer-hint" id="timer-range-{{ key }}">0–4294.967295 seconds</span>{% endif %}
+      {% if item.scale != 1 %}<small class="timer-error" id="timer-error-{{ key }}" aria-live="polite"></small>{% endif %}
     </div>
 
   {% endif %}

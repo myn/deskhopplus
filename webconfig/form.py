@@ -23,6 +23,7 @@ class FormField:
     keymap_kind: str | None = None
     keymap_output: int | None = None
     output_keys: tuple[int, int] | None = None
+    scale: int = 1
 
 @dataclass
 class SeamRangeRow:
@@ -134,8 +135,8 @@ OUTPUT_ = [
     FormField(1003, "Screensaver", elem="label"),
     FormField(9, "Mode", 0, {0: "Disabled", 1: "Pong", 2: "Jitter"}, "uint8"),
     FormField(10, "Only If Inactive", None, {}, "uint8", "checkbox"),
-    FormField(11, "Idle Time (μs)", None, {}, "uint64"),
-    FormField(12, "Max Time (μs)", None, {}, "uint64"),
+    FormField(11, "Idle Time (seconds)", None, {}, "uint64", scale=1000000),
+    FormField(12, "Max Time (seconds)", None, {}, "uint64", scale=1000000),
     FormField(1008, "Key mapping", elem="label"),
     FormField(13, "Swap Ctrl and Cmd", None, {}, "uint8", "checkbox"),
     FormField(1007, "Seam ranges — Start/End show layout offset", elem="label"),
@@ -177,6 +178,7 @@ def generate_output(base, data, output_index=None):
             "action": field.action,
             "keymap_kind": field.keymap_kind,
             "keymap_output": output_index if field.keymap_kind else field.keymap_output,
+            "scale": field.scale,
             })
     return output
 

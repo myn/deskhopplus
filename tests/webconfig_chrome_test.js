@@ -403,6 +403,19 @@ html = html.replace('</body>', `<script>
   wipe.click(); wipe.click(); await tick();
   if (wipes !== 1 || wipe.textContent !== 'Wipe Config') throw Error('Two clicks did not wipe once: '+wipes);
   sidebar[0].click();
+  // An invalid timer on the other computer must stop the whole Save and reveal its row.
+  const timerB = document.querySelector('[data-key="51"]');
+  timerB.value = '4294.967295';
+  if (!timerB.checkValidity()) throw Error('Maximum representable timer is invalid');
+  timerB.value = '4294.967296';
+  if (timerB.checkValidity()) throw Error('Timer above the wire limit was accepted');
+  selectComputer('A');
+  const beforeTimerSets = sets, beforeTimerSaves = saves;
+  saveButton.click(); await tick();
+  if (sets !== beforeTimerSets || saves !== beforeTimerSaves || strip.hidden ||
+      !/Output B Idle Time/.test(strip.textContent) || !timerB.checkVisibility() || document.activeElement !== timerB)
+    throw Error('Invalid output B timer did not refuse Save and reveal its field');
+  timerB.value = ''; timerB.dispatchEvent(new Event('input', {bubbles:true}));
   // Losing the board: the toolbar says so, the picture goes back to its connect text, nothing can be dragged.
   device.opened = false; setConnected(false);
   if (document.getElementById('connection').textContent !== 'Not connected' || layout.querySelector('svg') ||

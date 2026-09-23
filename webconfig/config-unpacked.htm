@@ -248,6 +248,8 @@ h3.sub:first-child { margin-top: 8px; }
 
 .row > small { flex-basis: 100%; }
 
+.row > .timer-hint { flex-basis: 100%; color: var(--ink-2); font-size: 12px; }
+
 .row input[type="text"], .row input[type="number"], .row textarea, .row select {
   padding: 4px 8px;
   border: 1px solid var(--line);
@@ -260,6 +262,8 @@ h3.sub:first-child { margin-top: 8px; }
 .row input[type="text"] { width: 260px; }
 
 .row input[type="number"] { width: 100px; }
+
+.row input[type="number"][data-scale] { width: 148px; font-variant-numeric: tabular-nums; }
 
 .row input[readonly] { background: transparent; border-color: transparent; text-align: right; color: var(--ink-2); }
 
@@ -279,9 +283,9 @@ h3.sub:first-child { margin-top: 8px; }
 
 .row input[aria-invalid], .row textarea[aria-invalid] { border-color: var(--bad); }
 
-.hotkey-error, .keymap-error { color: var(--bad); font-size: 12px; }
+.hotkey-error, .keymap-error, .timer-error { color: var(--bad); font-size: 12px; }
 
-.hotkey-error:empty, .keymap-error:empty { display: none; }
+.hotkey-error:empty, .keymap-error:empty, .timer-error:empty { display: none; }
 
 /* Switch: a checkbox drawn as the OS draws one. */
 .switch {
@@ -757,12 +761,15 @@ pre {
 
     <div class="row">
 
-<label for="f21">Idle Time (μs)</label>
+<label for="f21">Idle Time (seconds)</label>
 
 
-<input class="api" type="text" name="name21" data-type="uint64" data-key="21"
-  onchange="valueChangedHandler(this)"
- id="f21" />
+<input class="api" type="number" name="name21" data-type="uint64" data-key="21" data-scale="1000000"
+
+ id="f21"
+        min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-21" />
+      <span class="timer-hint" id="timer-range-21">0–4294.967295 seconds</span>
+      <small class="timer-error" id="timer-error-21" aria-live="polite"></small>
     </div>
 
 
@@ -788,12 +795,15 @@ pre {
 
     <div class="row">
 
-<label for="f22">Max Time (μs)</label>
+<label for="f22">Max Time (seconds)</label>
 
 
-<input class="api" type="text" name="name22" data-type="uint64" data-key="22"
-  onchange="valueChangedHandler(this)"
- id="f22" />
+<input class="api" type="number" name="name22" data-type="uint64" data-key="22" data-scale="1000000"
+
+ id="f22"
+        min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-22" />
+      <span class="timer-hint" id="timer-range-22">0–4294.967295 seconds</span>
+      <small class="timer-error" id="timer-error-22" aria-live="polite"></small>
     </div>
 
 
@@ -1153,12 +1163,15 @@ pre {
 
     <div class="row">
 
-<label for="f51">Idle Time (μs)</label>
+<label for="f51">Idle Time (seconds)</label>
 
 
-<input class="api" type="text" name="name51" data-type="uint64" data-key="51"
-  onchange="valueChangedHandler(this)"
- id="f51" />
+<input class="api" type="number" name="name51" data-type="uint64" data-key="51" data-scale="1000000"
+
+ id="f51"
+        min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-51" />
+      <span class="timer-hint" id="timer-range-51">0–4294.967295 seconds</span>
+      <small class="timer-error" id="timer-error-51" aria-live="polite"></small>
     </div>
 
 
@@ -1184,12 +1197,15 @@ pre {
 
     <div class="row">
 
-<label for="f52">Max Time (μs)</label>
+<label for="f52">Max Time (seconds)</label>
 
 
-<input class="api" type="text" name="name52" data-type="uint64" data-key="52"
-  onchange="valueChangedHandler(this)"
- id="f52" />
+<input class="api" type="number" name="name52" data-type="uint64" data-key="52" data-scale="1000000"
+
+ id="f52"
+        min="0" max="4294.967295" step="0.000001" aria-describedby="timer-range-52" />
+      <span class="timer-hint" id="timer-range-52">0–4294.967295 seconds</span>
+      <small class="timer-error" id="timer-error-52" aria-live="polite"></small>
     </div>
 
 
@@ -1373,6 +1389,8 @@ pre {
 <input class="api" type="text" name="name14" data-type="int32" data-key="14"
   onchange="valueChangedHandler(this)"
  id="f14" />
+
+
     </div>
 
 
@@ -1404,6 +1422,8 @@ pre {
 <input class="api" type="text" name="name15" data-type="int32" data-key="15"
   onchange="valueChangedHandler(this)"
  id="f15" />
+
+
     </div>
 
 
@@ -1728,6 +1748,8 @@ pre {
 <input class="api" type="text" name="name44" data-type="int32" data-key="44"
   onchange="valueChangedHandler(this)"
  id="f44" />
+
+
     </div>
 
 
@@ -1759,6 +1781,8 @@ pre {
 <input class="api" type="text" name="name45" data-type="int32" data-key="45"
   onchange="valueChangedHandler(this)"
  id="f45" />
+
+
     </div>
 
 
@@ -3577,6 +3601,18 @@ function makeReport(type, payload, proxy=false) {
   return report;
 }
 
+function scaleOf(element) {
+  return Number(element.getAttribute('data-scale')) || 1;
+}
+
+function timerValid(element) {
+  if (!element.hasAttribute('data-scale') || element.checkValidity()) return true;
+  element.closest('.row').querySelector('small').textContent =
+    'Enter 0–4294.967295 seconds, with up to six decimal places.';
+  element.reportValidity();
+  return false;
+}
+
 function packValue(element, key, dataType, buffer) {
   const dataOffset = 1;
   var buffer = new ArrayBuffer(8);
@@ -3597,7 +3633,8 @@ function packValue(element, key, dataType, buffer) {
     if (element.type === 'checkbox')
       view.setUint8(dataOffset, element.checked ? 1 : 0, true);
     else
-      method.call(view, dataOffset, element.value, true);
+      method.call(view, dataOffset,
+                  scaleOf(element) === 1 ? element.value : Math.round(element.value * scaleOf(element)), true);
   }
 
   view.setUint8(0, key);
@@ -3690,7 +3727,7 @@ function updateElement(key, event) {
   dataType = element.getAttribute('data-type');
 
   if (dataType in methods) {
-    var value = methods[dataType].call(event.data, dataOffset, true);
+    var value = methods[dataType].call(event.data, dataOffset, true) / scaleOf(element);
     setValue(element, value);
 
     if (element.hasAttribute('data-hex'))
@@ -4051,6 +4088,7 @@ async function enterBootloaderHandler() {
 }
 
 async function valueChangedHandler(element) {
+  if (!timerValid(element)) return false;
   redrawLayout();
   var key = element.getAttribute('data-key');
   var dataType = element.getAttribute('data-type');
@@ -4074,6 +4112,14 @@ async function saveHandler() {
 
   if (!device || !device.opened)
     return;
+
+  const invalidTimer = [...elements].find(element =>
+    element.hasAttribute('data-scale') && !element.checkValidity());
+  if (invalidTimer) {
+    revealField(invalidTimer);
+    timerValid(invalidTimer);
+    return false;
+  }
 
   /* Every field is checked before anything is sent, so a refused Save has
      sent nothing (#225). Both checks run so every error is shown at once. */

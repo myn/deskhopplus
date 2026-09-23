@@ -53,6 +53,18 @@ function makeReport(type, payload, proxy=false) {
   return report;
 }
 
+function scaleOf(element) {
+  return Number(element.getAttribute('data-scale')) || 1;
+}
+
+function timerValid(element) {
+  if (!element.hasAttribute('data-scale') || element.checkValidity()) return true;
+  element.closest('.row').querySelector('small').textContent =
+    'Enter 0–4294.967295 seconds, with up to six decimal places.';
+  element.reportValidity();
+  return false;
+}
+
 function packValue(element, key, dataType, buffer) {
   const dataOffset = 1;
   var buffer = new ArrayBuffer(8);
@@ -73,7 +85,8 @@ function packValue(element, key, dataType, buffer) {
     if (element.type === 'checkbox')
       view.setUint8(dataOffset, element.checked ? 1 : 0, true);
     else
-      method.call(view, dataOffset, element.value, true);
+      method.call(view, dataOffset,
+                  scaleOf(element) === 1 ? element.value : Math.round(element.value * scaleOf(element)), true);
   }
 
   view.setUint8(0, key);
@@ -166,7 +179,7 @@ function updateElement(key, event) {
   dataType = element.getAttribute('data-type');
 
   if (dataType in methods) {
-    var value = methods[dataType].call(event.data, dataOffset, true);
+    var value = methods[dataType].call(event.data, dataOffset, true) / scaleOf(element);
     setValue(element, value);
 
     if (element.hasAttribute('data-hex'))
@@ -527,6 +540,7 @@ async function enterBootloaderHandler() {
 }
 
 async function valueChangedHandler(element) {
+  if (!timerValid(element)) return false;
   redrawLayout();
   var key = element.getAttribute('data-key');
   var dataType = element.getAttribute('data-type');
@@ -550,6 +564,14 @@ async function saveHandler() {
 
   if (!device || !device.opened)
     return;
+
+  const invalidTimer = [...elements].find(element =>
+    element.hasAttribute('data-scale') && !element.checkValidity());
+  if (invalidTimer) {
+    revealField(invalidTimer);
+    timerValid(invalidTimer);
+    return false;
+  }
 
   /* Every field is checked before anything is sent, so a refused Save has
      sent nothing (#225). Both checks run so every error is shown at once. */

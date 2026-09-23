@@ -233,6 +233,8 @@ h3.sub:first-child { margin-top: 8px; }
 
 .row > small { flex-basis: 100%; }
 
+.row > .timer-hint { flex-basis: 100%; color: var(--ink-2); font-size: 12px; }
+
 .row input[type="text"], .row input[type="number"], .row textarea, .row select {
   padding: 4px 8px;
   border: 1px solid var(--line);
@@ -245,6 +247,8 @@ h3.sub:first-child { margin-top: 8px; }
 .row input[type="text"] { width: 260px; }
 
 .row input[type="number"] { width: 100px; }
+
+.row input[type="number"][data-scale] { width: 148px; font-variant-numeric: tabular-nums; }
 
 .row input[readonly] { background: transparent; border-color: transparent; text-align: right; color: var(--ink-2); }
 
@@ -264,9 +268,9 @@ h3.sub:first-child { margin-top: 8px; }
 
 .row input[aria-invalid], .row textarea[aria-invalid] { border-color: var(--bad); }
 
-.hotkey-error, .keymap-error { color: var(--bad); font-size: 12px; }
+.hotkey-error, .keymap-error, .timer-error { color: var(--bad); font-size: 12px; }
 
-.hotkey-error:empty, .keymap-error:empty { display: none; }
+.hotkey-error:empty, .keymap-error:empty, .timer-error:empty { display: none; }
 
 /* Switch: a checkbox drawn as the OS draws one. */
 .switch {
