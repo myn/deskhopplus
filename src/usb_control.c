@@ -33,6 +33,21 @@ static void current_keyboard_report(hid_keyboard_report_t *report) {
     }
 }
 
+/* The peer board sends this from set_local_boot_mouse_mode, so it also means
+   the peer board's computer just connected, disconnected or changed protocol.
+   Keyboards report only changes, so a key held before then (Option at a Mac's
+   power-on) would never reach that computer. Resend the held keys when the peer
+   board is the output (#67); after a disconnect the peer board drops them.
+   Local keys only: the peer board stores this as its remote state. */
+void handle_boot_mouse_mode_msg(uart_packet_t *packet, device_t *state) {
+    state->boot_mouse_mode[OTHER_ROLE] = packet->data[0] != 0;
+    if (CURRENT_BOARD_IS_ACTIVE_OUTPUT)
+        return;
+    hid_keyboard_report_t held;
+    combine_local_kbd_states(state, &held);
+    (void)queue_remote_keyboard_report(&held, DH_KEYBOARD_PHYSICAL);
+}
+
 void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol) {
     if (instance == ITF_NUM_HID) {
         /* SET_PROTOCOL cannot recall a report already armed in the old format.

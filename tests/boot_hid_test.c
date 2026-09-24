@@ -67,6 +67,20 @@ void queue_kbd_report(hid_keyboard_report_t *report, device_t *state) {
     queued_keys = *report;
     queued_key_reports++;
 }
+static hid_keyboard_report_t local_keys, sent_peer_keys;
+static int peer_key_reports;
+static dh_keyboard_provenance sent_peer_provenance;
+void combine_local_kbd_states(device_t *state, hid_keyboard_report_t *report) {
+    (void)state;
+    *report = local_keys;
+}
+bool queue_remote_keyboard_report(const hid_keyboard_report_t *report,
+                                  dh_keyboard_provenance provenance) {
+    sent_peer_provenance = provenance;
+    sent_peer_keys = *report;
+    peer_key_reports++;
+    return true;
+}
 static mouse_report_t queued_mouse;
 static int queued_mouse_reports;
 void queue_mouse_report(mouse_report_t *report, device_t *state) {
@@ -247,6 +261,24 @@ int main(void) {
     global_state.config_mode_active = true;
     tud_hid_set_report_cb(3, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
     CHECK(channel_calls == 2 && received_channel == 0);
+
+    /* Board B, Alt held on its keyboard before board A enumerates: keyboards
+       report only changes, so the held Alt must be resent when board A says
+       it connected, or the Mac never sees Option at power-on (#67). */
+    global_state.config_mode_active = false;
+    global_state.board_role = 1;
+    global_state.active_output = 0;
+    local_keys = (hid_keyboard_report_t){.modifier = KEYBOARD_MODIFIER_LEFTALT};
+    uart_packet_t peer_state = {.type = BOOT_MOUSE_MODE_MSG, .data = {0}};
+    handle_boot_mouse_mode_msg(&peer_state, &global_state);
+    CHECK(peer_key_reports == 1 && sent_peer_keys.modifier == KEYBOARD_MODIFIER_LEFTALT
+          && sent_peer_provenance == DH_KEYBOARD_PHYSICAL);
+    /* Board B is the active output: its keys already go to its own computer. */
+    global_state.active_output = 1;
+    handle_boot_mouse_mode_msg(&peer_state, &global_state);
+    CHECK(peer_key_reports == 1);
+    global_state.board_role = 0;
+    global_state.active_output = 0;
 
     global_state.kbd_queue.remaining = 3;
     global_state.mouse_queue.remaining = 4;

@@ -43,8 +43,11 @@ void tud_mount_cb(void) {
        enumerated holds nothing either way, and both state arrays are
        overwritten wholesale by the next report from their source
        (update_kbd_state, update_remote_kbd_state), so a key held across the
-       mount is back the moment its keyboard speaks again. handle_output_select_msg
-       already releases on the same reasoning.
+       mount is back the moment its keyboard speaks again. The peer board does
+       not wait for that: set_local_boot_mouse_mode above tells it, and its
+       held keys come back over UART after this release
+       (handle_boot_mouse_mode_msg). handle_output_select_msg already releases
+       on the same reasoning.
 
        One report per attach, and it drains in config mode too - that identity
        keeps ITF_NUM_HID. It goes out in report protocol, so a boot host that

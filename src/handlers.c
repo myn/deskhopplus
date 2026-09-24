@@ -286,10 +286,6 @@ void handle_mouse_zoom_msg(uart_packet_t *packet, device_t *state) {
     state->mouse_zoom = packet->data[0];
 }
 
-void handle_boot_mouse_mode_msg(uart_packet_t *packet, device_t *state) {
-    state->boot_mouse_mode[OTHER_ROLE] = packet->data[0] != 0;
-}
-
 /* Process request to update keyboard LEDs */
 void handle_set_report_msg(uart_packet_t *packet, device_t *state) {
     /* We got this via serial, so it's stored to the opposite of our board role */
