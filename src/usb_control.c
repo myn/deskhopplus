@@ -46,8 +46,9 @@ uint16_t tud_hid_get_report_cb(uint8_t instance,
     if (instance != ITF_NUM_HID)
         return 0;
 
-    bool boot = tud_hid_n_get_protocol(instance) == HID_PROTOCOL_BOOT;
-    if (report_id != (boot ? 0 : REPORT_ID_KEYBOARD))
+    /* Match upstream: control requests accept either keyboard ID, including
+       while a host is changing protocol. Interrupt reports still follow it. */
+    if (report_id != 0 && report_id != REPORT_ID_KEYBOARD)
         return 0;
 
     if (report_type == HID_REPORT_TYPE_OUTPUT && request_len >= 1) {
@@ -119,8 +120,7 @@ void tud_hid_set_report_cb(uint8_t instance,
 
     /* Only other set report we care about is LED state change, and that's exactly 1 byte long */
     if (instance != ITF_NUM_HID || bufsize != 1 || report_type != HID_REPORT_TYPE_OUTPUT
-        || report_id != (tud_hid_n_get_protocol(instance) == HID_PROTOCOL_BOOT
-                         ? 0 : REPORT_ID_KEYBOARD))
+        || (report_id != 0 && report_id != REPORT_ID_KEYBOARD))
         return;
 
     uint8_t leds = buffer[0];

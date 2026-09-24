@@ -173,13 +173,19 @@ int main(void) {
     global_state.active_output = 0;
     CHECK(tud_hid_get_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_INPUT, control, 7) == 0);
     CHECK(tud_hid_get_report_cb(2, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_INPUT, control, 8) == 0);
-    CHECK(tud_hid_get_report_cb(0, 0, HID_REPORT_TYPE_INPUT, control, 8) == 0);
+    /* Like upstream, answer either keyboard control ID regardless of the
+       current interrupt protocol, including before SET_PROTOCOL(boot). */
+    CHECK(tud_hid_get_report_cb(0, 0, HID_REPORT_TYPE_INPUT, control, 8) == 8);
+    CHECK(control[0] == held_keys.modifier && control[1] == 0 && memcmp(control + 2, held_keys.keycode, 6) == 0);
     protocol[0] = HID_PROTOCOL_BOOT;
     CHECK(tud_hid_get_report_cb(0, 0, HID_REPORT_TYPE_INPUT, control, 8) == 8);
     CHECK(control[0] == held_keys.modifier && control[1] == 0 && memcmp(control + 2, held_keys.keycode, 6) == 0);
-    CHECK(tud_hid_get_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_INPUT, control, 8) == 0);
+    CHECK(tud_hid_get_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_INPUT, control, 8) == 8);
+    CHECK(control[0] == held_keys.modifier && control[1] == 0 && memcmp(control + 2, held_keys.keycode, 6) == 0);
+    CHECK(tud_hid_get_report_cb(0, REPORT_ID_MOUSE, HID_REPORT_TYPE_INPUT, control, 8) == 0);
     global_state.keyboard_leds_desired[0] = 2;
     CHECK(tud_hid_get_report_cb(0, 0, HID_REPORT_TYPE_OUTPUT, control, 1) == 1 && control[0] == 2);
+    CHECK(tud_hid_get_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_OUTPUT, control, 1) == 1 && control[0] == 2);
     protocol[1] = HID_PROTOCOL_BOOT;
     CHECK(tud_hid_get_report_cb(1, 0, HID_REPORT_TYPE_INPUT, control, 3) == 3);
     CHECK(memcmp(control, (uint8_t[3]){0}, 3) == 0);
@@ -189,13 +195,20 @@ int main(void) {
     CHECK(global_state.keyboard_leds_desired[0] == 1 && sent_value == 1);
     led = 7;
     tud_hid_set_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_OUTPUT, &led, 1);
-    CHECK(global_state.keyboard_leds_desired[0] == 1);
+    CHECK(global_state.keyboard_leds_desired[0] == 7 && sent_value == 7);
+    led = 3;
     tud_hid_set_report_cb(1, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
-    CHECK(global_state.keyboard_leds_desired[0] == 1);
+    CHECK(global_state.keyboard_leds_desired[0] == 7);
     protocol[0] = HID_PROTOCOL_REPORT;
     led = 4;
     tud_hid_set_report_cb(0, REPORT_ID_KEYBOARD, HID_REPORT_TYPE_OUTPUT, &led, 1);
     CHECK(global_state.keyboard_leds_desired[0] == 4 && sent_value == 4);
+    led = 5;
+    tud_hid_set_report_cb(0, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
+    CHECK(global_state.keyboard_leds_desired[0] == 5 && sent_value == 5);
+    led = 6;
+    tud_hid_set_report_cb(0, REPORT_ID_MOUSE, HID_REPORT_TYPE_OUTPUT, &led, 1);
+    CHECK(global_state.keyboard_leds_desired[0] == 5);
     tud_hid_set_report_cb(2, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
     CHECK(channel_calls == 1 && received_channel == 0);
     global_state.config_mode_active = true;
