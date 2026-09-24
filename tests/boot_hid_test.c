@@ -60,6 +60,20 @@ void channel_receive_report(uint8_t index, const uint8_t *buffer, uint16_t size)
 bool validate_packet(uart_packet_t *packet) { (void)packet; return false; }
 void process_packet(uart_packet_t *packet, device_t *state) { (void)packet; (void)state; }
 void restore_leds(device_t *state) { (void)state; }
+static hid_keyboard_report_t queued_keys;
+static int queued_key_reports;
+void queue_kbd_report(hid_keyboard_report_t *report, device_t *state) {
+    (void)state;
+    queued_keys = *report;
+    queued_key_reports++;
+}
+static mouse_report_t queued_mouse;
+static int queued_mouse_reports;
+void queue_mouse_report(mouse_report_t *report, device_t *state) {
+    (void)state;
+    queued_mouse = *report;
+    queued_mouse_reports++;
+}
 bool send_value(uint8_t value, enum packet_type_e type) {
     sent_type = type;
     sent_value = value;
@@ -113,6 +127,21 @@ int main(void) {
     CHECK(last_instance == 0 && last_id == 0 && payload_len == 8);
     CHECK(payload[0] == keys.modifier && payload[1] == 0 && memcmp(payload + 2, keys.keycode, 6) == 0);
 
+    /* A report armed before SET_PROTOCOL still goes out in the old format: the
+       boot host reads report ID 01 as a held Left Ctrl (#67). The switch must
+       queue a fresh report of the output's current keys to replace it. */
+    tud_hid_set_protocol_cb(0, HID_PROTOCOL_BOOT);
+    CHECK(queued_key_reports == 1 && queued_keys.modifier == held_keys.modifier
+          && memcmp(queued_keys.keycode, held_keys.keycode, 6) == 0);
+    global_state.active_output = 1;
+    tud_hid_set_protocol_cb(0, HID_PROTOCOL_BOOT);
+    CHECK(queued_key_reports == 2 && memcmp(&queued_keys, (uint8_t[8]){0}, 8) == 0);
+    global_state.active_output = 0;
+    protocol[0] = HID_PROTOCOL_REPORT;
+    tud_hid_set_protocol_cb(0, HID_PROTOCOL_REPORT);
+    CHECK(queued_key_reports == 3 && queued_keys.modifier == held_keys.modifier);
+    protocol[0] = HID_PROTOCOL_BOOT;
+
     CHECK(tud_mouse_report(RELATIVE, 3, 300, -300, 1, 2));
     CHECK(last_instance == 1 && last_id == REPORT_ID_RELMOUSE && payload_len == sizeof(mouse_report_t));
     protocol[1] = HID_PROTOCOL_BOOT;
@@ -125,6 +154,10 @@ int main(void) {
     global_state.pointer_y = 20;
     tud_hid_set_protocol_cb(1, HID_PROTOCOL_BOOT);
     CHECK(global_state.boot_mouse_mode[0] && sent_type == BOOT_MOUSE_MODE_MSG && sent_value == 1);
+    /* Same stale-report hazard as the keyboard: report ID 05 read as buttons
+       would hold left and middle. A still report replaces it. */
+    CHECK(queued_mouse_reports == 1 && queued_mouse.mode == RELATIVE
+          && queued_mouse.buttons == 0 && queued_mouse.x == 0 && queued_mouse.y == 0);
     CHECK(tud_mouse_report(ABSOLUTE, 1, 100, 50, 0, 0));
     CHECK(last_instance == 1 && last_id == 0 && payload_len == 3);
     CHECK(payload[0] == 1 && payload[1] == 5 && payload[2] == 1);

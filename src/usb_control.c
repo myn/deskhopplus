@@ -19,13 +19,42 @@ void set_local_boot_mouse_mode(bool boot) {
     (void)send_value(boot, BOOT_MOUSE_MODE_MSG);
 }
 
+/* The keys this output holds now, as the computer should see them. An
+   inactive output holds nothing. */
+static void current_keyboard_report(hid_keyboard_report_t *report) {
+    memset(report, 0, sizeof(*report));
+    if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
+        hid_keyboard_report_t combined;
+        combine_kbd_states(&global_state, &combined);
+        dh_keyboard_output_prepare((const uint8_t *)&combined, DH_KEYBOARD_PHYSICAL,
+                                   &global_state.config.output[BOARD_ROLE].keymap,
+                                   global_state.config.output[BOARD_ROLE].swap_ctrl_gui,
+                                   (uint8_t *)report);
+    }
+}
+
 void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol) {
+    if (instance == ITF_NUM_HID) {
+        /* SET_PROTOCOL cannot recall a report already armed in the old format.
+           tud_mount_cb arms one before a boot host asks for boot protocol, and
+           that host reads its report ID 01 as a held Left Ctrl until the next
+           report. A fresh report in the new format replaces it (#67). */
+        hid_keyboard_report_t report;
+        current_keyboard_report(&report);
+        queue_kbd_report(&report, &global_state);
+        return;
+    }
     if (instance != ITF_NUM_HID_REL_M)
         return;
     const bool boot = protocol == HID_PROTOCOL_BOOT;
     set_local_boot_mouse_mode(boot);
     if (boot)
         tud_mouse_report_reset(global_state.pointer_x, global_state.pointer_y);
+
+    /* The same holds here: a boot host reads an armed report's ID 05 as the
+       left and middle buttons held. A still report replaces it. */
+    mouse_report_t still = {.mode = RELATIVE};
+    queue_mouse_report(&still, &global_state);
 }
 
 /* Invoked when we get GET_REPORT control request.
@@ -57,15 +86,8 @@ uint16_t tud_hid_get_report_cb(uint8_t instance,
     }
 
     if (report_type == HID_REPORT_TYPE_INPUT && request_len >= sizeof(hid_keyboard_report_t)) {
-        hid_keyboard_report_t report = {0};
-        if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
-            hid_keyboard_report_t combined;
-            combine_kbd_states(&global_state, &combined);
-            dh_keyboard_output_prepare((const uint8_t *)&combined, DH_KEYBOARD_PHYSICAL,
-                                       &global_state.config.output[BOARD_ROLE].keymap,
-                                       global_state.config.output[BOARD_ROLE].swap_ctrl_gui,
-                                       (uint8_t *)&report);
-        }
+        hid_keyboard_report_t report;
+        current_keyboard_report(&report);
         report.reserved = 0;
         memcpy(buffer, &report, sizeof(report));
         return sizeof(report);

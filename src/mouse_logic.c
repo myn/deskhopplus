@@ -133,8 +133,7 @@ static void switch_to_another_pc(
         .y = (int16_t)hidden.y,
     };
 
-    if (!state->boot_mouse_mode[state->active_output])
-        output_mouse_report(&hidden_pointer, state);
+    output_mouse_report(&hidden_pointer, state);
     set_active_output(state, output_to);
     const dh_mouse_coordinates_t entry = dh_mouse_entry_coordinates(
         (dh_direction_t)direction,
@@ -245,15 +244,15 @@ typedef struct {
 
 static dh_mouse_transition_t actionable_transition_for(
     const device_t *state, const output_t *output, enum screen_pos_e direction, int buttons) {
-    if (direction == NONE || state->switch_lock || state->gaming_mode)
+    /* A boot-mode host cannot report its pointer, so the firmware position is
+       a guess that drifts from it. Boot mode switches by hotkey only (#67). */
+    if (direction == NONE || state->switch_lock || state->gaming_mode ||
+        state->boot_mouse_mode[state->active_output])
         return DH_MOUSE_TRANSITION_NONE;
     const dh_mouse_layout_t layout = mouse_layout_for(output);
     const dh_mouse_transition_t transition = dh_mouse_transition_for(
         &layout, output->screen_index, output->screen_count,
         (dh_direction_t)direction);
-    if (state->boot_mouse_mode[state->active_output] &&
-        transition != DH_MOUSE_TRANSITION_OUTPUT)
-        return DH_MOUSE_TRANSITION_NONE;
     return transition == DH_MOUSE_TRANSITION_OUTPUT && buttons
                ? DH_MOUSE_TRANSITION_NONE
                : transition;

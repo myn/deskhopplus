@@ -53,4 +53,6 @@ void channel_receive_report(uint8_t index, const uint8_t *buffer, uint16_t bufsi
 bool validate_packet(uart_packet_t *packet);
 void process_packet(uart_packet_t *packet, device_t *state);
 void restore_leds(device_t *state);
+void queue_kbd_report(hid_keyboard_report_t *report, device_t *state);
+void queue_mouse_report(mouse_report_t *report, device_t *state);
 bool send_value(uint8_t value, enum packet_type_e type);

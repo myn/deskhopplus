@@ -47,7 +47,9 @@ void tud_mount_cb(void) {
        already releases on the same reasoning.
 
        One report per attach, and it drains in config mode too - that identity
-       keeps ITF_NUM_HID. */
+       keeps ITF_NUM_HID. It goes out in report protocol, so a boot host that
+       switches protocol afterwards gets a replacement from
+       tud_hid_set_protocol_cb (#67). */
     release_all_keys(&global_state);
 }
 
