@@ -43,10 +43,9 @@ typedef struct {
 extern device_t global_state;
 
 #define BOARD_ROLE (global_state.board_role)
-#define OTHER_ROLE (1 - BOARD_ROLE)
 #define START_LENGTH 2
 #define RAW_PACKET_LENGTH 12
-typedef struct { uint8_t type; uint8_t data[8]; } uart_packet_t;
+typedef struct { uint8_t bytes[10]; } uart_packet_t;
 enum packet_type_e { KBD_SET_REPORT_MSG = 6, BOOT_MOUSE_MODE_MSG = 35 };
 
 void combine_kbd_states(device_t *state, hid_keyboard_report_t *report);
@@ -56,7 +55,4 @@ void process_packet(uart_packet_t *packet, device_t *state);
 void restore_leds(device_t *state);
 void queue_kbd_report(hid_keyboard_report_t *report, device_t *state);
 void queue_mouse_report(mouse_report_t *report, device_t *state);
-void combine_local_kbd_states(device_t *state, hid_keyboard_report_t *report);
-bool queue_remote_keyboard_report(const hid_keyboard_report_t *report, dh_keyboard_provenance provenance);
-void handle_boot_mouse_mode_msg(uart_packet_t *packet, device_t *state);
 bool send_value(uint8_t value, enum packet_type_e type);
