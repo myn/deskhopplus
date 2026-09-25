@@ -145,6 +145,13 @@ prompt threshold is accepted without asking.
 _Avoid_: confirmation (the dialog is one way of asking; the acceptance is the decision), approval,
 consent
 
+**Arrival**:
+The board telling its helper that its computer has just become the active output, by any route —
+a mapped crossing, an unmapped one, or the output hotkey. It is what puts a held file question to
+the user. A placement is not an arrival: before #248 it was the only signal, so a board with no
+segments saved, or a hotkey switch, never asked.
+_Avoid_: focus, placement (a placement moves the cursor; an arrival only says the user is here)
+
 **Size cap**:
 The largest payload a helper will assemble, stated by the board in `CLIP_POLICY` — 10 MB by
 default and up to 64. The device is the single source of truth for it, as for every setting, so no
