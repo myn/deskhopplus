@@ -71,8 +71,13 @@ constexpr wchar_t kInstanceMutex[] = L"Local\\deskhopplus-helper";
    macOS helper ticks at. ADR-0004's interval is a second; a quarter of it
    leaves room for the wait to be woken by something else first. */
 constexpr uint32_t kTickMs = 250;
+/* One step of the Windows clock. The beat timer and GetTickCount64 both move
+   in steps of about 15.6 ms, so a beat can read as a step short of kTickMs;
+   without the slack the tick would skip it and run at half rate inside a
+   modal loop (#262). */
+constexpr uint32_t kTickSlackMs = 16;
 /* The timer that keeps the beat alive inside a modal message loop; see
-   WM_TIMER in Helper::on_message (#161). */
+   WM_TIMER in Helper::handle (#161). */
 constexpr UINT_PTR kBeatTimerId = 1;
 
 /* How often to re-sweep while no channel has been found (#157). Long enough
@@ -211,6 +216,7 @@ class Helper : public HelperEffects {
     LRESULT handle(UINT message, WPARAM w, LPARAM l);
 
     void feed(const std::vector<Output> &outputs);
+    void tick(uint32_t now, bool nested);
     std::optional<std::vector<uint8_t>> request_lazy_image(uint32_t id, uint64_t total);
     void abandon_prefetched_image();
 
@@ -245,8 +251,17 @@ class Helper : public HelperEffects {
     OutputDispatch dispatch_{*this};
 
     uint32_t last_tick_{0};
-    /* Set while the WM_TIMER beat is running; see WM_TIMER in on_message. */
+    /* Set while the WM_TIMER beat runs its reads and tick; see WM_TIMER in
+       handle. */
     bool in_beat_{false};
+    /* The message run() is dispatching, so that WM_TIMER can tell its own
+       loop from one nested inside a handler: a modal loop such as the tray
+       menu, or the image prefetch's wait. */
+    UINT dispatching_{0};
+    /* Set while tick() runs; see there. */
+    bool in_tick_{false};
+    /* The received percent last logged from a nested loop (#262). */
+    uint64_t nested_percent_logged_{UINT64_MAX};
     uint32_t last_rescan_{0};
     bool retry_pending_{false};
     uint32_t retry_at_{0};
@@ -524,7 +539,9 @@ int Helper::run() {
                     return static_cast<int>(message.wParam);
                 }
                 TranslateMessage(&message);
+                dispatching_ = message.message;
                 DispatchMessageW(&message);
+                dispatching_ = 0;
             }
         }
 
@@ -540,7 +557,7 @@ int Helper::run() {
                held — the device may have come back on its own in the meantime. */
             if (transport_.has_device() && !transport_.holding_channels()) transport_.acquire();
         }
-        /* Unsigned difference, the same shape as the tick below and for the
+        /* Unsigned difference, the same shape as the one in tick() and for the
            same reason: GetTickCount64 is truncated to 32 bits here and wraps.
            Guarded on has_device() — nothing found — rather than on
            holding_channels(), so this can never race the retry above, which
@@ -556,46 +573,71 @@ int Helper::run() {
             if (transport_.has_device())
                 log("found by the idle rescan, with no device event to prompt it");
         }
-        if (now - last_tick_ >= kTickMs) {
-            last_tick_ = now;
-            feed(session_->tick(now));
-            /* A chance to push the next credit-gated batch. On the tick as well
-               as on arriving frames, so a transfer whose last credit grant was
-               lost still finishes rather than sitting still. */
-            if (session_->can_send_bulk()) dispatch_.emit(clipboard_service_->pump());
-            /* And a chance to give up on one that has stopped moving — the far
-               helper having crashed leaves this end's session perfectly
-               healthy, so nothing else here would ever notice. */
-            /* The board's drop totals go with the tick so that an
-               abandonment can quote them (#133). Read here rather than held
-               there: the board restates them whenever they move, and nothing
-               tells the clipboard when that was. */
-            dh_device_drops drops{};
-            const bool stated = session_->device_drops(&drops);
-            dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
+        tick(now, false);
+    }
+}
 
-            /* What the tray shows about the arriving transfer, refreshed only
-               when it has moved — rebuilding the menu under a user who has it
-               open would close it (#56). */
-            uint64_t received = 0;
-            uint64_t total = 0;
-            if (!clipboard_service_->arriving(nullptr, &received, &total)) {
-                received = 0;
-                total = 0;
-            }
-            if (received != shown_received_ || total != shown_total_) {
-                shown_received_ = received;
-                shown_total_ = total;
-                tray_.show_progress(received, total);
-            }
-            /* And the send, which the tooltip names (#208). */
-            const bool sending = clipboard_service_->awaiting_send();
-            if (sending != shown_sending_) {
-                shown_sending_ = sending;
-                tray_.show_sending(sending);
-            }
+/*
+ * The periodic work, at most once per kTickMs. Called by run() and by the
+ * WM_TIMER beat, so a modal loop (the tray menu) does all of it too, not the
+ * heartbeat alone (#262).
+ */
+void Helper::tick(uint32_t now, bool nested) {
+    /* Not inside itself. Shell_NotifyIcon and the clipboard wait on other
+       processes, and Windows delivers sent messages meanwhile: a paste's
+       WM_RENDERFORMAT starts the image prefetch, whose wait pumps the beat
+       timer. A tick nested there would run on the outer one's half-done
+       state. */
+    if (in_tick_ || now - last_tick_ < kTickMs - kTickSlackMs) return;
+    in_tick_ = true;
+    last_tick_ = now;
+    feed(session_->tick(now));
+    /* A chance to push the next credit-gated batch. On the tick as well
+       as on arriving frames, so a transfer whose last credit grant was
+       lost still finishes rather than sitting still. */
+    if (session_->can_send_bulk()) dispatch_.emit(clipboard_service_->pump());
+    /* And a chance to give up on one that has stopped moving — the far
+       helper having crashed leaves this end's session perfectly
+       healthy, so nothing else here would ever notice. */
+    /* The board's drop totals go with the tick so that an
+       abandonment can quote them (#133). Read here rather than held
+       there: the board restates them whenever they move, and nothing
+       tells the clipboard when that was. */
+    dh_device_drops drops{};
+    const bool stated = session_->device_drops(&drops);
+    dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
+
+    /* What the tray shows about the arriving transfer, refreshed only
+       when it has moved. It changes the icon and tooltip, not the menu, so
+       a menu the user has open stays open (#56, #262). */
+    uint64_t received = 0;
+    uint64_t total = 0;
+    if (!clipboard_service_->arriving(nullptr, &received, &total)) {
+        received = 0;
+        total = 0;
+    }
+    if (received != shown_received_ || total != shown_total_) {
+        shown_received_ = received;
+        shown_total_ = total;
+        tray_.show_progress(received, total);
+    }
+    /* Proof on hardware that a transfer moves under an open menu (#262). */
+    if (total == 0) {
+        nested_percent_logged_ = UINT64_MAX;
+    } else if (nested) {
+        const uint64_t percent = received * 100u / total;
+        if (percent != nested_percent_logged_) {
+            nested_percent_logged_ = percent;
+            log("in a nested message loop: received " + std::to_string(percent) + "%");
         }
     }
+    /* And the send, which the tooltip names (#208). */
+    const bool sending = clipboard_service_->awaiting_send();
+    if (sending != shown_sending_) {
+        shown_sending_ = sending;
+        tray_.show_sending(sending);
+    }
+    in_tick_ = false;
 }
 
 void Helper::feed(const std::vector<Output> &outputs) {
@@ -703,8 +745,8 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
          *
          * A timer on this window is dispatched by a modal loop as well as by
          * ours, so this covers every one of them rather than the menu alone.
-         * Only the session tick: the clipboard pump can wait for the menu to
-         * close, where the beat cannot.
+         * It runs the whole tick, not the beat alone: a transfer should not
+         * stall or freeze its percent because the menu is open (#262).
          */
         if (w == kBeatTimerId) {
             /* Reads as well as the beat. A helper that sends while a menu is
@@ -715,7 +757,7 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
             if (in_beat_) return 0;
             in_beat_ = true;
             transport_.pump_reads();
-            feed(session_->tick(now_ms()));
+            tick(now_ms(), dispatching_ != WM_TIMER);
             in_beat_ = false;
             return 0;
         }
