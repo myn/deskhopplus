@@ -135,6 +135,8 @@ class Tray {
     HICON digits(unsigned percent);
     void promote();
     void show_menu();
+    std::wstring progress_row() const;
+    void refresh_open_menu();
 
     HWND window_{nullptr};
     Callbacks callbacks_;
@@ -158,6 +160,9 @@ class Tray {
     deskhop::FileOffer question_;
     uint64_t progress_received_{0};
     uint64_t progress_total_{0};
+    /* The menu while TrackPopupMenu has it open, so its progress row can be
+       rewritten under the user (#262); null otherwise. */
+    HMENU open_menu_{nullptr};
     /* A balloon fires on *entering* a state, not on every call saying it.
        The core emits a state output only on a change, so this is not guarding
        against it — it guards the paths that re-assert the current state

@@ -345,12 +345,7 @@ void Tray::show_menu() {
 
     if (progress_total_ > 0) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        const unsigned percent =
-            static_cast<unsigned>(progress_received_ * 100u / progress_total_);
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress,
-                    widen("Receiving " + words::size_text(progress_received_) + " of " +
-                          words::size_text(progress_total_) + " \xe2\x80\x94 " +
-                          std::to_string(percent) + "%").c_str());
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress, progress_row().c_str());
         AppendMenuW(menu, MF_STRING, kIdAbortTransfer, L"Cancel this transfer");
     }
 
@@ -372,9 +367,11 @@ void Tray::show_menu() {
     /* Required for the menu to dismiss when the user clicks elsewhere — a
        tray menu on a window that is not foreground otherwise stays up. */
     SetForegroundWindow(window_);
+    open_menu_ = menu;
     const UINT chosen = static_cast<UINT>(TrackPopupMenu(
         menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, where.x, where.y, 0, window_,
         nullptr));
+    open_menu_ = nullptr;
     DestroyMenu(menu);
 
     if (chosen == kIdAutostart && callbacks_.toggle_autostart) callbacks_.toggle_autostart();
@@ -414,6 +411,43 @@ void Tray::show_progress(uint64_t received, uint64_t total) {
     progress_received_ = received;
     progress_total_ = total;
     update();
+    refresh_open_menu();
+}
+
+std::wstring Tray::progress_row() const {
+    const unsigned percent = static_cast<unsigned>(progress_received_ * 100u / progress_total_);
+    return widen("Receiving " + words::size_text(progress_received_) + " of " +
+                 words::size_text(progress_total_) + " \xe2\x80\x94 " +
+                 std::to_string(percent) + "%");
+}
+
+/*
+ * Rewrites the progress row of a menu the user has open. The WM_TIMER tick
+ * keeps running under TrackPopupMenu (#262), so this is reached while the menu
+ * is up. The menu item changes, but its window does not repaint on its own:
+ * the open menu's window is found by class and asked to. A transfer that ends
+ * while the menu is open leaves the last row standing until the menu closes.
+ *
+ * ponytail: the menu's width is fixed when it opens, so a row that grows
+ * (a longer size or a third percent digit) can be clipped; owner-draw if seen.
+ */
+void Tray::refresh_open_menu() {
+    if (!open_menu_ || progress_total_ == 0) return;
+    const std::wstring row = progress_row();
+    if (!ModifyMenuW(open_menu_, kIdProgress, MF_BYCOMMAND | MF_STRING | MF_GRAYED, kIdProgress,
+                     row.c_str()))
+        return;
+    /* "#32768" is the popup-menu window class. Only this thread's are asked,
+       so a hung program's menu can never block the helper, and MN_GETHMENU
+       picks ours among them. */
+    for (HWND popup = FindWindowW(L"#32768", nullptr); popup;
+         popup = FindWindowExW(nullptr, popup, L"#32768", nullptr)) {
+        if (GetWindowThreadProcessId(popup, nullptr) != GetCurrentThreadId()) continue;
+        if (reinterpret_cast<HMENU>(SendMessageW(popup, MN_GETHMENU, 0, 0)) == open_menu_) {
+            InvalidateRect(popup, nullptr, TRUE);
+            break;
+        }
+    }
 }
 
 std::string Tray::summary(const deskhop::FileOffer &offer) {
