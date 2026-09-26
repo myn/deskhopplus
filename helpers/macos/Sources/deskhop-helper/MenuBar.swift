@@ -199,7 +199,12 @@ final class MenuBar: NSObject, NSMenuDelegate {
     func show(progress: (received: UInt64, total: UInt64)?) {
         self.progress = progress
         updateTitle()
+        /* Retitling an item is safe under a menu the user has open, unlike a
+           rebuild, and the line follows the transfer (#262). */
+        if let progress, progress.total > 0 { progressLine?.title = Self.progressRow(progress) }
     }
+    /// The "Receiving" line of the menu last built, if it had one.
+    private weak var progressLine: NSMenuItem?
 
     /*
      * The menu is built when it is about to be shown, and never while it is
@@ -379,12 +384,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
         if let progress, progress.total > 0 {
             menu.addItem(.separator())
-            let line = NSMenuItem(
-                title: "Receiving \(Self.size(progress.received)) of "
-                    + "\(Self.size(progress.total)) — \(Self.percent(progress))%",
-                action: nil, keyEquivalent: "")
+            let line = NSMenuItem(title: Self.progressRow(progress), action: nil, keyEquivalent: "")
             line.isEnabled = false
             menu.addItem(line)
+            progressLine = line
             menu.addItem(action("Cancel this transfer", #selector(abort)))
         }
 
@@ -526,6 +529,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
         if seconds < 60 { return "\(max(seconds, 1)) seconds" }
         let minutes = (seconds + 59) / 60
         return minutes == 1 ? "a minute" : "\(minutes) minutes"
+    }
+
+    static func progressRow(_ progress: (received: UInt64, total: UInt64)) -> String {
+        "Receiving \(size(progress.received)) of \(size(progress.total)) — \(percent(progress))%"
     }
 
     static func percent(_ progress: (received: UInt64, total: UInt64)) -> Int {

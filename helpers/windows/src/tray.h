@@ -163,6 +163,9 @@ class Tray {
     /* The menu while TrackPopupMenu has it open, so its progress row can be
        rewritten under the user (#262); null otherwise. */
     HMENU open_menu_{nullptr};
+    /* The progress row as the open menu shows it, so a repaint happens only
+       when the text actually changes. */
+    std::wstring shown_row_;
     /* A balloon fires on *entering* a state, not on every call saying it.
        The core emits a state output only on a change, so this is not guarding
        against it — it guards the paths that re-assert the current state
