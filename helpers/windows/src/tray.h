@@ -49,6 +49,10 @@ class Tray {
     static constexpr UINT kCallbackMessage = WM_APP + 1;
     /* The window timer `promote` retries on; main.cpp's beat timer is 1. */
     static constexpr UINT_PTR kPromoteTimerId = 2;
+    /* A fast timer that runs only while the menu is open, so the reads keep a
+       transfer at speed under TrackPopupMenu (#262); main.cpp handles it as
+       it does the beat. */
+    static constexpr UINT_PTR kMenuReadTimerId = 3;
 
     struct Callbacks {
         /* The tray menu is where autostart is turned on and off — an offer,

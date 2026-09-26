@@ -746,14 +746,17 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
          * A timer on this window is dispatched by a modal loop as well as by
          * ours, so this covers every one of them rather than the menu alone.
          * It runs the whole tick, not the beat alone: a transfer should not
-         * stall or freeze its percent because the menu is open (#262).
+         * stall or freeze its percent because the menu is open (#262). The
+         * tray's fast menu timer shares this handler, for the reads.
          */
-        if (w == kBeatTimerId) {
+        if (w == kBeatTimerId || w == Tray::kMenuReadTimerId) {
             /* Reads as well as the beat. A helper that sends while a menu is
                open but never *reads* sees nothing from the board and drops the
                session itself ("nothing from the device in 3.0s") — the same
                eviction from the other end. Re-entrancy guarded because the
-               image prefetch pumps messages while it waits. */
+               image prefetch pumps messages while it waits. The tray's fast
+               timer lands here too while its menu is open, for the reads;
+               tick() keeps its own 250 ms pace. */
             if (in_beat_) return 0;
             in_beat_ = true;
             transport_.pump_reads();

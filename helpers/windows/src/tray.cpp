@@ -371,9 +371,15 @@ void Tray::show_menu() {
        tray menu on a window that is not foreground otherwise stays up. */
     SetForegroundWindow(window_);
     open_menu_ = menu;
+    /* The beat alone reads every 250 ms, and each read moves only one credit
+       window of chunks, which cut a transfer to a third of its speed under the
+       open menu (#262). 10 ms is USER_TIMER_MINIMUM; it fires about every
+       15.6 ms, the Windows clock step. */
+    SetTimer(window_, kMenuReadTimerId, 10, nullptr);
     const UINT chosen = static_cast<UINT>(TrackPopupMenu(
         menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, where.x, where.y, 0, window_,
         nullptr));
+    KillTimer(window_, kMenuReadTimerId);
     open_menu_ = nullptr;
     DestroyMenu(menu);
 
