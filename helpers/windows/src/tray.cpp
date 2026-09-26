@@ -345,8 +345,10 @@ void Tray::show_menu() {
 
     if (progress_total_ > 0) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        shown_row_ = widen(words::progress_row(progress_received_, progress_total_));
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress, shown_row_.c_str());
+        shown_percent_ = static_cast<int>(progress_received_ * 100u / progress_total_);
+        shown_total_ = progress_total_;
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress,
+                    widen(words::progress_row(progress_received_, progress_total_)).c_str());
         AppendMenuW(menu, MF_STRING, kIdAbortTransfer, L"Cancel this transfer");
     }
 
@@ -420,7 +422,8 @@ void Tray::show_progress(uint64_t received, uint64_t total) {
  * keeps running under TrackPopupMenu (#262), so this is reached while the menu
  * is up. The item changes, but its window does not repaint on its own, so the
  * row alone is invalidated, without erasing: repainting the whole menu, or
- * erasing first, flickers. Only when the text changes, not on every chunk. A
+ * erasing first, flickers. Only when the percent moves: the size text alone
+ * changes every kilobyte early on, and each repaint shows as a flicker. A
  * transfer that ends under the open menu says so and its Cancel greys out; one
  * that starts again under it turns Cancel back on.
  *
@@ -430,9 +433,12 @@ void Tray::show_progress(uint64_t received, uint64_t total) {
 void Tray::refresh_open_menu() {
     if (!open_menu_) return;
     const bool ended = progress_total_ == 0;
+    const int percent = ended ? -1 : static_cast<int>(progress_received_ * 100u / progress_total_);
+    /* The total as well: a new transfer can start at the percent the last
+       one showed, within one tick and with no end seen between them. */
+    if (percent == shown_percent_ && progress_total_ == shown_total_) return;
     const std::wstring row = ended ? L"No longer receiving"
                                    : widen(words::progress_row(progress_received_, progress_total_));
-    if (row == shown_row_) return;
     int position = -1;
     for (int i = 0, n = GetMenuItemCount(open_menu_); i < n && position < 0; ++i)
         if (GetMenuItemID(open_menu_, i) == kIdProgress) position = i;
@@ -442,7 +448,8 @@ void Tray::refresh_open_menu() {
     info.fMask = MIIM_STRING;
     info.dwTypeData = const_cast<wchar_t *>(row.c_str());
     if (!SetMenuItemInfoW(open_menu_, kIdProgress, FALSE, &info)) return;
-    shown_row_ = row;
+    shown_percent_ = percent;
+    shown_total_ = progress_total_;
     /* Back on for a transfer that starts under the same open menu. */
     EnableMenuItem(open_menu_, kIdAbortTransfer, MF_BYCOMMAND | (ended ? MF_GRAYED : MF_ENABLED));
     /* "#32768" is the popup-menu window class. Only this thread's are asked,
