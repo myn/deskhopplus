@@ -31,3 +31,8 @@
    0-2 are the ones nothing else writes. */
 #define MAGIC_WORD_REBOOT 0x0b00dead
 #define MAGIC_WORD_2 0x00c0ffee
+/* Set when the peer board asked this board to link its helper: enter config
+   mode, then leave it immediately on the next boot. scratch[0] because 0-2
+   are the ones nothing else writes, and 3, 5 and 6 already carry the pairing
+   window and the config-mode flags. Consumed by is_config_mode_active. */
+#define MAGIC_WORD_LINK_HELPER 0x11ac0ffe
