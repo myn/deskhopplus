@@ -54,6 +54,12 @@ enum packet_type_e {
     GET_CURSOR_TRACE_MSG = 33,
     CURSOR_TRACE_MSG = 34,
     BOOT_MOUSE_MODE_MSG = 35,
+    /* Ask the peer board to re-enumerate the way a config-mode round trip
+       does: enter config mode (a different USB identity), then leave it at
+       once, so the host sees the device appear twice in two shapes. A plain
+       reboot is not enough — the identity never changes, and the helper on
+       that computer only connects to a shape it recognises arriving fresh. */
+    LINK_HELPER_MSG = 36,
 };
 
 _Static_assert(KEYBOARD_REPORT_MSG == DH_KEYBOARD_PHYSICAL_PACKET,
