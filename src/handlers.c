@@ -357,6 +357,34 @@ void handle_reboot_msg(uart_packet_t *packet, device_t *state) {
         reboot();
 }
 
+/* The peer board asked this board to re-enumerate the way a config-mode
+   round trip does, so the helper on this computer can connect. A plain
+   reboot does not do it: the USB identity never changes, and a host that
+   only connects to a shape it recognises arriving fresh never sees one.
+
+   Entering config mode reboots into a different device (a mass-storage
+   volume, no keyboard or mouse), and leaving it reboots back. Both are the
+   same reboot machinery the config chord uses, so this only sets the two
+   flags that chord sets — plus one of its own, which the next boot reads to
+   leave config mode again without waiting for a timeout or a keypress. */
+void handle_link_helper_msg(uart_packet_t *packet, device_t *state) {
+    (void)packet;
+
+    /* Already in config mode: leaving is the whole job, and the flags for
+       entering again would be consumed by the boot that is about to happen
+       anyway. */
+    if (state->config_mode_active) {
+        config_exit_request(&state->config_exit, time_us_32());
+        return;
+    }
+
+    watchdog_hw->scratch[3] = MAGIC_WORD_PAIR;
+    watchdog_hw->scratch[5] = MAGIC_WORD_1;
+    watchdog_hw->scratch[6] = MAGIC_WORD_2;
+    watchdog_hw->scratch[0] = MAGIC_WORD_LINK_HELPER;
+    state->reboot_requested = true;
+}
+
 /* Decapsulate and send to the other box */
 void handle_proxy_msg(uart_packet_t *packet, device_t *state) {
     (void)queue_packet(&packet->data[1], (enum packet_type_e)packet->data[0], PACKET_DATA_LENGTH - 1);
