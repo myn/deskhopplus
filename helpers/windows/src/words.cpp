@@ -174,14 +174,18 @@ Look look(dh_helper_state state, bool question_waiting) {
     return Look::Off;
 }
 
+std::string progress_row(uint64_t received, uint64_t total) {
+    return "Receiving " + size_text(received) + " of " + size_text(total) + " \xe2\x80\x94 " +
+           std::to_string(received * 100u / total) + "%";
+}
+
 std::string tooltip(dh_helper_state state, const std::string &question_summary,
                     uint64_t received, uint64_t total, bool sending) {
     std::string tip;
     if (!question_summary.empty()) {
         tip = "Files offered: " + question_summary;
     } else if (total > 0) {
-        tip = "Receiving " + size_text(received) + " of " + size_text(total) + " \xe2\x80\x94 " +
-              std::to_string(received * 100u / total) + "%";
+        tip = progress_row(received, total);
     } else if (sending) {
         tip = "Sending";
     } else {

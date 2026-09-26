@@ -89,6 +89,14 @@ check(menu.items.contains { $0.title.contains("25%") }, "receiving progress is d
 // An open menu is never rebuilt, so the line itself must follow the transfer (#262).
 menuBar.show(progress: (50, 100))
 check(menu.items.contains { $0.title.contains("50%") }, "an open menu's progress line follows the transfer")
+menuBar.show(progress: nil)
+check(menu.items.contains { $0.title == "No longer receiving" }, "a transfer that ends under the open menu says so")
+check(menu.items.contains { $0.title == "Cancel this transfer" && !$0.isEnabled }, "and its Cancel greys out")
+menuBar.show(progress: (10, 100))
+check(menu.items.contains { $0.title == "Cancel this transfer" && $0.isEnabled },
+      "a new transfer under the same open menu can be cancelled again")
+menuBar.show(progress: (25, 100))
+menuBar.menuNeedsUpdate(menu)
 check(menu.items.contains { $0.title == "Cancel this transfer" && $0.isEnabled }, "receiving can be cancelled")
 check(menu.items.contains { $0.title == "Start at login" }, "the login action is discoverable")
 print("Menu state and action checks passed")

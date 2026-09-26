@@ -91,6 +91,10 @@ Look look(dh_helper_state state, bool question_waiting);
 std::string tooltip(dh_helper_state state, const std::string &question_summary,
                     uint64_t received, uint64_t total, bool sending);
 
+/* "Receiving X of Y — N%", the tooltip's receive and the tray menu's row.
+   `total` must not be zero. */
+std::string progress_row(uint64_t received, uint64_t total);
+
 /* Integer arithmetic, and truncating rather than rounding — the same spelling
    as `MenuBar.size` on the other computer, so the two ends quote one transfer
    at one size. */

@@ -135,7 +135,6 @@ class Tray {
     HICON digits(unsigned percent);
     void promote();
     void show_menu();
-    std::wstring progress_row() const;
     void refresh_open_menu();
 
     HWND window_{nullptr};

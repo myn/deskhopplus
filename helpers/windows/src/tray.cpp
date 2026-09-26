@@ -345,7 +345,7 @@ void Tray::show_menu() {
 
     if (progress_total_ > 0) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        shown_row_ = progress_row();
+        shown_row_ = widen(words::progress_row(progress_received_, progress_total_));
         AppendMenuW(menu, MF_STRING | MF_GRAYED, kIdProgress, shown_row_.c_str());
         AppendMenuW(menu, MF_STRING, kIdAbortTransfer, L"Cancel this transfer");
     }
@@ -415,35 +415,36 @@ void Tray::show_progress(uint64_t received, uint64_t total) {
     refresh_open_menu();
 }
 
-std::wstring Tray::progress_row() const {
-    const unsigned percent = static_cast<unsigned>(progress_received_ * 100u / progress_total_);
-    return widen("Receiving " + words::size_text(progress_received_) + " of " +
-                 words::size_text(progress_total_) + " \xe2\x80\x94 " +
-                 std::to_string(percent) + "%");
-}
-
 /*
  * Rewrites the progress row of a menu the user has open. The WM_TIMER tick
  * keeps running under TrackPopupMenu (#262), so this is reached while the menu
  * is up. The item changes, but its window does not repaint on its own, so the
  * row alone is invalidated, without erasing: repainting the whole menu, or
  * erasing first, flickers. Only when the text changes, not on every chunk. A
- * transfer that ends while the menu is open leaves the last row standing.
+ * transfer that ends under the open menu says so and its Cancel greys out; one
+ * that starts again under it turns Cancel back on.
  *
  * ponytail: the menu's width is fixed when it opens, so a row that grows
  * (a longer size or a third percent digit) can be clipped; owner-draw if seen.
  */
 void Tray::refresh_open_menu() {
-    if (!open_menu_ || progress_total_ == 0) return;
-    const std::wstring row = progress_row();
+    if (!open_menu_) return;
+    const bool ended = progress_total_ == 0;
+    const std::wstring row = ended ? L"No longer receiving"
+                                   : widen(words::progress_row(progress_received_, progress_total_));
     if (row == shown_row_) return;
     int position = -1;
-    for (int i = 0, n = GetMenuItemCount(open_menu_); i < n; ++i)
+    for (int i = 0, n = GetMenuItemCount(open_menu_); i < n && position < 0; ++i)
         if (GetMenuItemID(open_menu_, i) == kIdProgress) position = i;
-    if (position < 0 || !ModifyMenuW(open_menu_, kIdProgress, MF_BYCOMMAND | MF_STRING | MF_GRAYED,
-                                     kIdProgress, row.c_str()))
-        return;
+    if (position < 0) return;
+    MENUITEMINFOW info{};
+    info.cbSize = sizeof info;
+    info.fMask = MIIM_STRING;
+    info.dwTypeData = const_cast<wchar_t *>(row.c_str());
+    if (!SetMenuItemInfoW(open_menu_, kIdProgress, FALSE, &info)) return;
     shown_row_ = row;
+    /* Back on for a transfer that starts under the same open menu. */
+    EnableMenuItem(open_menu_, kIdAbortTransfer, MF_BYCOMMAND | (ended ? MF_GRAYED : MF_ENABLED));
     /* "#32768" is the popup-menu window class. Only this thread's are asked,
        so a hung program's menu can never block the helper, and MN_GETHMENU
        picks ours among them. */
@@ -451,10 +452,14 @@ void Tray::refresh_open_menu() {
          popup = FindWindowExW(nullptr, popup, L"#32768", nullptr)) {
         if (GetWindowThreadProcessId(popup, nullptr) != GetCurrentThreadId()) continue;
         if (reinterpret_cast<HMENU>(SendMessageW(popup, MN_GETHMENU, 0, 0)) != open_menu_) continue;
-        RECT item{};
-        if (GetMenuItemRect(nullptr, open_menu_, static_cast<UINT>(position), &item)) {
-            MapWindowPoints(nullptr, popup, reinterpret_cast<POINT *>(&item), 2);
-            InvalidateRect(popup, &item, FALSE);
+        /* The Cancel row right below as well, since it greys and ungreys. */
+        RECT rows{};
+        if (GetMenuItemRect(nullptr, open_menu_, static_cast<UINT>(position), &rows)) {
+            RECT below{};
+            if (GetMenuItemRect(nullptr, open_menu_, static_cast<UINT>(position + 1), &below))
+                UnionRect(&rows, &rows, &below);
+            MapWindowPoints(nullptr, popup, reinterpret_cast<POINT *>(&rows), 2);
+            InvalidateRect(popup, &rows, FALSE);
         }
         break;
     }

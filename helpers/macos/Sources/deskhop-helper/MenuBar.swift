@@ -200,11 +200,19 @@ final class MenuBar: NSObject, NSMenuDelegate {
         self.progress = progress
         updateTitle()
         /* Retitling an item is safe under a menu the user has open, unlike a
-           rebuild, and the line follows the transfer (#262). */
-        if let progress, progress.total > 0 { progressLine?.title = Self.progressRow(progress) }
+           rebuild, so the line follows the transfer, and says so when it ends
+           (#262). */
+        if let progress, progress.total > 0 {
+            progressLine?.title = Self.progressRow(progress)
+            cancelLine?.isEnabled = true
+        } else if progressLine != nil {
+            progressLine?.title = "No longer receiving"
+            cancelLine?.isEnabled = false
+        }
     }
-    /// The "Receiving" line of the menu last built, if it had one.
+    /// The "Receiving" line and its Cancel in the menu last built, if it had them.
     private weak var progressLine: NSMenuItem?
+    private weak var cancelLine: NSMenuItem?
 
     /*
      * The menu is built when it is about to be shown, and never while it is
@@ -213,8 +221,9 @@ final class MenuBar: NSObject, NSMenuDelegate {
      * Rebuilding on every change would be the obvious thing and is wrong twice
      * over: progress moves twice a second, and replacing an `NSMenu` the user
      * has open closes it under them — including at the moment they are
-     * reaching for Accept. Building here instead means what they see is always
-     * current, and nothing is thrown away underneath them.
+     * reaching for Accept. Building here instead means nothing is thrown away
+     * underneath them. The one thing that moves while it is open, the
+     * Receiving line, is retitled in place by `show(progress:)`.
      */
     func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
 
@@ -358,6 +367,8 @@ final class MenuBar: NSObject, NSMenuDelegate {
 
     private func fill(_ menu: NSMenu) {
         menu.removeAllItems()
+        progressLine = nil
+        cancelLine = nil
         menu.autoenablesItems = false
 
         addWords(Self.releaseRow, to: menu)
@@ -388,7 +399,9 @@ final class MenuBar: NSObject, NSMenuDelegate {
             line.isEnabled = false
             menu.addItem(line)
             progressLine = line
-            menu.addItem(action("Cancel this transfer", #selector(abort)))
+            let cancel = action("Cancel this transfer", #selector(abort))
+            menu.addItem(cancel)
+            cancelLine = cancel
         }
 
         if callbacks?.isSending() == true {
