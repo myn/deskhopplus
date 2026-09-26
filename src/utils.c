@@ -308,6 +308,7 @@ bool validate_packet(uart_packet_t *packet) {
         WIPE_CONFIG_MSG,
         SAVE_CONFIG_MSG,
         REBOOT_MSG,
+        LINK_HELPER_MSG,
         PROXY_PACKET_MSG,
         GET_CURSOR_TRACE_MSG,
     };
