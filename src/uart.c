@@ -102,6 +102,7 @@ const uart_handler_t uart_handler[] = {
     {.type = WIPE_CONFIG_MSG, .handler = handle_wipe_config_msg},
     {.type = SAVE_CONFIG_MSG, .handler = handle_save_config_msg},
     {.type = REBOOT_MSG, .handler = handle_reboot_msg},
+    {.type = LINK_HELPER_MSG, .handler = handle_link_helper_msg},
     {.type = GET_VAL_MSG, .handler = handle_api_msgs},
     {.type = GET_ALL_VALS_MSG, .handler = handle_api_read_all_msg},
     {.type = SET_VAL_MSG, .handler = handle_api_msgs},
