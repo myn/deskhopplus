@@ -212,8 +212,8 @@ std::vector<ClipOutput> ClipService::local_copy_files(
 }
 
 /*
- * The cursor has arrived at this computer, so the user is here and a paste is
- * now possible. Anything held quietly is put to them at this moment and not
+ * The user has arrived at this computer — an ARRIVAL or a placement from its
+ * board (#250) — so a paste is now possible. Anything held quietly is put to them at this moment and not
  * before. Idempotent: crossings are frequent and a question is asked once.
  */
 std::vector<ClipOutput> ClipService::user_is_here() {

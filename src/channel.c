@@ -236,6 +236,10 @@ bool channel_helper_present(void) {
     return channel.lifecycle.session.present;
 }
 
+void channel_output_changed(uint8_t new_output) {
+    channel_lifecycle_arrive(&channel.lifecycle, (uint8_t)BOARD_ROLE, new_output);
+}
+
 cursor_query_result_t channel_query_cursor(uint8_t output, uint8_t query_id) {
     if (output != BOARD_ROLE) {
         uart_packet_t packet = {

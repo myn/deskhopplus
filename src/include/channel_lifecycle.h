@@ -112,6 +112,12 @@ typedef struct {
     channel_query_origin cursor_query_origin;
     uint8_t cursor_query_id;
 
+    /* An ARRIVAL this board owes its helper (#250). Set by a switch on either
+       core, sent by channel_task on core 0, under the outbound lock. Owed
+       rather than sent at once: a crossing fills the one-deep priority lane
+       with PLACE and POS_QUERY, and a refused arrival would be lost. */
+    bool arrival_owed;
+
 } channel_lifecycle;
 
 /* Hardware adapter: same outbound critical section as transport peek/advance. */
@@ -143,6 +149,10 @@ bool channel_lifecycle_send_relay(const dh_relay_packet *packet);
 
 bool channel_lifecycle_emit_placement(channel_lifecycle *c, uint8_t type,
                                       const uint8_t *body, size_t len, uint32_t now);
+/* The active output is now `new_output`. When that is this board's `role` and a
+   helper is live, an ARRIVAL is owed to it and channel_lifecycle_step sends it,
+   retrying while the priority lane is full. A switch away cancels it (#250). */
+void channel_lifecycle_arrive(channel_lifecycle *c, uint8_t role, uint8_t new_output);
 void channel_lifecycle_barrier(void);
 void channel_lifecycle_save_registration(void *context);
 bool channel_lifecycle_query_unavailable(void *context, uint8_t query_id);

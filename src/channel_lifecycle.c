@@ -276,6 +276,33 @@ bool channel_lifecycle_emit_placement(channel_lifecycle *c, uint8_t type, const 
            channel_lifecycle_queue(c, frame_bytes, frame_len, now);
 }
 
+void channel_lifecycle_arrive(channel_lifecycle *c, uint8_t role, uint8_t new_output) {
+    channel_lifecycle_lock();
+    c->arrival_owed = new_output == role && c->session.present;
+    channel_lifecycle_unlock();
+}
+
+/* The owed arrival, if any. Left owed while the priority lane refuses it;
+   dropped with the session, since it was news for that helper only. */
+static void pump_arrival(channel_lifecycle *c, uint32_t now) {
+    channel_lifecycle_lock();
+    const bool owed = c->arrival_owed;
+    channel_lifecycle_unlock();
+    if (!owed)
+        return;
+    /* The placement path is reused for its priority lane and small frame buffer;
+       an arrival is not a placement (CONTEXT.md). `empty` is a real pointer
+       because memcpy from NULL is undefined even for zero bytes. */
+    static const uint8_t empty[1];
+    const bool done = !c->session.present ||
+                      channel_lifecycle_emit_placement(c, DH_MSG_ARRIVAL, empty, 0, now);
+    if (done) {
+        channel_lifecycle_lock();
+        c->arrival_owed = false;
+        channel_lifecycle_unlock();
+    }
+}
+
 /*
  * Whatever the peer board handed over, tagged for this board's helper.
  *
@@ -363,6 +390,7 @@ static void pump_query(channel_lifecycle *c, uint32_t now, void *context) {
 void channel_lifecycle_step(channel_lifecycle *c, uint32_t now, void *context) {
     drain_reports(c, now, context);
     pump_query(c, now, context);
+    pump_arrival(c, now);
     if (c->registration_unsaved) {
         c->registration_unsaved = false;
         channel_lifecycle_save_registration(context);

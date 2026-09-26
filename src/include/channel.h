@@ -64,6 +64,11 @@ void handle_channel_relay_msg(uart_packet_t *, device_t *);
 /* Is a helper live on this board's channel? The configuration UI shows it
    per side (#50) — the surface that survives the helper being disabled. */
 bool channel_helper_present(void);
+
+/* The active output just changed, on this board or the peer. Both boards call
+   it on every switch; the one whose computer is now active sends its helper an
+   ARRIVAL (#250), which is what asks a held file question. */
+void channel_output_changed(uint8_t new_output);
 typedef enum {
     CURSOR_QUERY_UNAVAILABLE = 0,
     CURSOR_QUERY_RETRY,

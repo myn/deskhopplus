@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "channel_lifecycle.h"
+#include "dh_place.h"
 #include "dh_xfer.h"
 
 /* Keep checks active in the MSVC Release host suite too. */
@@ -591,6 +592,49 @@ static void test_sustained_two_channel_chunks_preserve_tags_and_bytes(void) {
     CHECK(c.inbound.dropped == 0);
 }
 
+/* One channel_task pass, then everything it queued: how many were ARRIVAL. */
+static unsigned arrivals_after_step(uint32_t now) {
+    channel_lifecycle_step(&c, now, NULL);
+    unsigned arrivals = 0;
+    while (drain(sizeof wire) > 0)
+        if (wire[0] == 0x23) ++arrivals;
+    return arrivals;
+}
+
+/* An arrival goes to the helper of the board whose computer became active,
+   once, and only while that helper is live (#250). */
+static void test_arrival_goes_only_to_the_new_active_outputs_helper(void) {
+    init();
+    channel_lifecycle_arrive(&c, 0, 1);
+    CHECK(arrivals_after_step(200) == 0);
+
+    channel_lifecycle_arrive(&c, 0, 0);
+    CHECK(arrivals_after_step(201) == 1);
+    CHECK(arrivals_after_step(202) == 0);
+
+    channel_lifecycle_link_lost(&c);
+    channel_lifecycle_arrive(&c, 0, 0);
+    CHECK(arrivals_after_step(203) == 0);
+}
+
+/* A crossing fills the one-deep priority lane with PLACE and POS_QUERY. The
+   arrival waits behind them instead of being refused and lost (#250). */
+static void test_arrival_waits_for_a_busy_priority_lane(void) {
+    init();
+    CHECK(arrivals_after_step(200) == 0);
+    const uint8_t place[DH_PLACE_BODY_SIZE] = {0};
+    const uint8_t query[] = {0};
+    channel_lifecycle_arrive(&c, 0, 0);
+    CHECK(channel_lifecycle_emit_placement(&c, DH_MSG_PLACE, place, sizeof place, 201));
+    CHECK(channel_lifecycle_emit_placement(&c, DH_MSG_POS_QUERY, query, sizeof query, 201));
+    channel_lifecycle_step(&c, 201, NULL);
+
+    CHECK(drain(sizeof wire) > 0 && wire[0] == DH_MSG_PLACE);
+    CHECK(drain(sizeof wire) > 0 && wire[0] == DH_MSG_POS_QUERY);
+    CHECK(drain(sizeof wire) == 0);
+    CHECK(arrivals_after_step(202) == 1);
+}
+
 int main(void) {
     test_sustained_two_channel_chunks_preserve_tags_and_bytes();
     test_two_channels_share_one_transfer_credit_window();
@@ -611,6 +655,8 @@ int main(void) {
     test_peer_query_is_acknowledged_only_after_queue_acceptance();
     test_link_loss_resets_relay_and_inbound_without_erasing_diagnostics();
     test_inbound_pressure_retains_frames_behind_the_counted_loss();
+    test_arrival_goes_only_to_the_new_active_outputs_helper();
+    test_arrival_waits_for_a_busy_priority_lane();
     puts("channel lifecycle tests passed");
     return 0;
 }

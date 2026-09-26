@@ -215,12 +215,12 @@ class ClipService {
         const std::vector<FileEntry> &files,
         std::function<bool(std::vector<uint8_t> &)> provider);
 
+    /* The user arrived here (ARRIVAL or a placement, #250), so a paste is now
+       possible: put any held question to the user. Idempotent. */
+    std::vector<ClipOutput> user_is_here();
     /* The user accepted the files the other computer offered. This is where a
        file transfer actually begins — on a decision made here, never on the
        copy made over there (ADR-0011). */
-    /* The cursor arrived here, so a paste is now possible: put any held
-       question to the user. Idempotent. */
-    std::vector<ClipOutput> user_is_here();
     std::vector<ClipOutput> accept_files(uint32_t id);
     /* The user declined. The far end is told, so its offer stops repeating. */
     std::vector<ClipOutput> decline_files(uint32_t id);

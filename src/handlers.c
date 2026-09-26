@@ -256,6 +256,7 @@ void handle_output_select_msg(uart_packet_t *packet, device_t *state) {
         release_all_keys(state);
 
     restore_leds(state);
+    channel_output_changed(state->active_output);
 }
 
 void handle_cursor_place_msg(uart_packet_t *packet, device_t *state) {
@@ -569,13 +570,15 @@ void handle_heartbeat_msg(uart_packet_t *packet, device_t *state) {
  * ==============  Output Switch Routines  ============ *
  * ==================================================== */
 
-/* Update output variable, set LED on/off and notify the other board so they are in sync. */
+/* Update output variable, set LED on/off, notify the other board so they are in sync, and
+   tell this board's helper the user arrived if its computer is now active (#250). */
 void set_active_output(device_t *state, uint8_t new_output) {
     state->active_output = new_output;
     state->output_arrival_guard = DH_DIRECTION_NONE;
     state->output_arrival_reverse = 0;
     restore_leds(state);
     (void)send_value(new_output, OUTPUT_SELECT_MSG);
+    channel_output_changed(new_output);
 
     /* If we were holding a key down and drag the mouse to another screen, the key gets stuck.
        Changing outputs = no more keypresses on the previous system. */

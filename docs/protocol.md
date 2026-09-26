@@ -1,4 +1,4 @@
-# deskhopplus channel protocol — v3
+# deskhopplus channel protocol — v4
 
 The single source of truth for bytes on the helper↔firmware channel. Any change here must
 update `test-vectors/frames.txt` and the shared C core (`src/core/`) in the same change.
@@ -14,10 +14,17 @@ board will act on.
 **Old pairings do not migrate.** A migration path would have to accept the old bearer token,
 which is the thing being removed. Recovery is one chord press, by design.
 
+> **v4 is v3 plus ARRIVAL** ([#250](https://github.com/myn/deskhopplus/issues/250)): one new
+> board→helper type, `0x23 ARRIVAL`. No frame layout and no report shape changes;
+> `DH_PROTO_VERSION` is `4`. **Unlike v3, this bump is a gate.** The hello arrives intact, so a
+> mismatched pair gets `HELLO_REFUSED(version_incompatible)` rather than a reconnect loop — which
+> is the point: a v3 helper drops the session on a type it does not know, so a v4 board must not
+> keep one. Firmware and both helpers move together, as before.
+>
 > **v3 is v2 plus one byte per report** ([#185](https://github.com/myn/deskhopplus/issues/185),
 > [ADR-0012](adr/0012-frame-start-flag-for-report-resync.md)): byte 0 of every 64-byte HID report
 > is a frame-start flag, so the reader can resync across a lost report. No frame layout below
-> changes; `DH_PROTO_VERSION` is `3`. **The bump is a record, not a gate.** The hello itself rides
+> changed; `DH_PROTO_VERSION` was `3`. **The bump is a record, not a gate.** The hello itself rides
 > the changed report shape, so a mismatched peer misparses it before it can read `proto_version`:
 > an old board reads a new hello's length as `0x3F00` and refuses it as oversize; a new board reads
 > an old hello's flags byte as type `0x00` and refuses it as unknown. An old helper then loops on
@@ -588,6 +595,7 @@ types `0x08`–`0x0F`, which have no prefix and whose body starts at offset 4 of
 | 0x20 | PLACE | d→h | `k_b2h` | `chain_index:u8` `chain_direction:u8` (the configured direction in which indices increase) `border_direction:u8` (which side of the target output is entered) `entry_pos:u16` (0–65535 normalized within the target monitor). Fire-and-forget; no reply path. Authenticated, **not** sealed — coordinates cross in the clear. |
 | 0x21 | POS_QUERY | d→h | `k_b2h` | `query_id:u8` (`0` denotes the post-placement refresh) |
 | 0x22 | POS_RESPONSE | h→d | `k_h2b` | `query_id:u8` `chain_index:u8` `x:u16` `y:u16` (the query ID is echoed; coordinates are 0–65535 normalized within the current monitor) |
+| 0x23 | ARRIVAL | d→h | `k_b2h` | Empty body. This board's computer has just become the active output, by any route — a mapped crossing, an unmapped one, or the output hotkey. Sent by the board whose role is the new active output, once per switch, and only while its helper is live. The helper treats it as the user arriving: a held file question is put now. A mapped crossing also sends `PLACE`; the two are independent, and the helper's arrival handling is idempotent. Authenticated, not sealed. |
 | 0x30 | CLIP_OFFER | h↔h | per hop | `id:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `kind:u8` (0=utf8-text, 1=png, 2=file-list, 3=bundle) `total_size:u64` `meta_len:u16` `meta:bytes`. AAD is the 16 clear bytes. Kind 3 is text beside its picture, so the pasting application picks (ADR-0013): its payload is a list of parts, each `part_kind:u8 len:u32 bytes`, with `part_kind` reusing the offer kinds (0 = UTF-8 text, 1 = PNG) and its metadata empty. `dh_bundle.h` is the codec; the paste side refuses a part that runs past the payload and skips a part kind it does not know. Kind 2's metadata is a UTF-8 JSON array of `{"name":…,"size":…}` objects **in that key order, with no escapes anywhere in it** — `dh_file_list.h` is the codec, and it cleans every name on the way out so that the two characters JSON would have to escape are already illegal in it. At most 64 files, each name at most 255 bytes, and the whole array must fit one offer. The sizes must sum to `total_size`; a receiver that finds otherwise refuses the transfer rather than slicing the payload at offsets it cannot trust. |
 | 0x31 | CLIP_REQUEST | h↔h | per hop | `id:u32` |
 | 0x32 | CLIP_CHUNK | h↔h | per hop | `id:u32` `seq:u32` `seal_id:u32` `seal_counter:u64` `ciphertext:bytes` `gcm_tag:16`. Sealed plaintext: `crc32:u32` (of `data`, the end-to-end integrity check) `data:bytes`. AAD is the 20 clear bytes. |
@@ -892,7 +900,8 @@ between the helpers**; the firmware relays its messages opaquely.
 
   **Files wait for the paste side's user** (ADR-0011). A kind-2 offer over 256 KiB is accepted as
   lazy and then held: the far end knows it was heard and stops retrying, and no CLIP_REQUEST goes
-  out until someone on the receiving computer accepts it in the menu bar or tray. That acceptance
+  out until someone on the receiving computer accepts it in the menu bar or tray. The question is
+  put when the user arrives there — ARRIVAL, or a PLACE — not when the copy is made. That acceptance
   is what starts the transfer; the copy side then reads the files for the first time, answering
   NEED_DATA with exactly the length its offer promised — a file edited in between fails the
   transfer rather than truncating it. A set at or below 256 KiB is requested straight away —

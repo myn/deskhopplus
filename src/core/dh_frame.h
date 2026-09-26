@@ -57,6 +57,7 @@ extern "C" {
     X(DH_MSG_PLACE, 0x20)            \
     X(DH_MSG_POS_QUERY, 0x21)        \
     X(DH_MSG_POS_RESPONSE, 0x22)     \
+    X(DH_MSG_ARRIVAL, 0x23)          \
     X(DH_MSG_CLIP_OFFER, 0x30)       \
     X(DH_MSG_CLIP_REQUEST, 0x31)     \
     X(DH_MSG_CLIP_CHUNK, 0x32)       \
