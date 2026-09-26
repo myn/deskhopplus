@@ -115,6 +115,15 @@ bool is_config_mode_active(device_t *state) {
     bool is_active = (watchdog_hw->scratch[5] == MAGIC_WORD_1 &&
                       watchdog_hw->scratch[6] == MAGIC_WORD_2);
 
+    /* The peer board asked for a link-helper round trip: this boot is the
+       config-mode half of it, and it ends here rather than waiting five
+       minutes for the timeout. The flag is read once and cleared, so a
+       later boot — the one that leaves config mode — is ordinary. */
+    if (is_active && watchdog_hw->scratch[0] == MAGIC_WORD_LINK_HELPER) {
+        watchdog_hw->scratch[0] = 0;
+        config_exit_request(&state->config_exit, time_us_32());
+    }
+    
     /* Remove, so next reboot it's no longer active */
     if (is_active)
         watchdog_hw->scratch[5] = 0;
