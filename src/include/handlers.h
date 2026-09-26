@@ -65,6 +65,7 @@ void handle_cursor_place_msg(uart_packet_t *, device_t *);
 void handle_proxy_msg(uart_packet_t *, device_t *);
 void handle_read_config_msg(uart_packet_t *, device_t *);
 void handle_reboot_msg(uart_packet_t *, device_t *);
+void handle_link_helper_msg(uart_packet_t *, device_t *);
 void handle_request_byte_msg(uart_packet_t *, device_t *);
 void handle_response_byte_msg(uart_packet_t *, device_t *);
 void handle_save_config_msg(uart_packet_t *, device_t *);
