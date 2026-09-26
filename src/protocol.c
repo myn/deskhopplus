@@ -209,6 +209,11 @@ const field_map_t api_field_map[] = {
    #156), so the map and the queue are no longer tied together and the
    assertion that tied them has gone. */
 
+/* The hotkey fields grow by two per action. Past this line they would take
+   over the seam field ids and both blocks would read and write the same ids. */
+_Static_assert(DH_HOTKEY_CONFIG_FIELD_BASE + 2 * DH_HOTKEY_ACTION_COUNT <= DH_SEAM_CONFIG_FIELD_A_BASE,
+               "hotkey config fields run into the seam config fields");
+
 /* Fields 86 and 87 cover the helper key id exactly. A wider key id would leave
    its tail unreadable, and the config page would show a truncated value as if
    it were the whole thing — silently, since nothing else here would change. */

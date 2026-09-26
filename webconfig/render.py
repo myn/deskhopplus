@@ -60,6 +60,8 @@ if __name__ == "__main__":
     passthrough_capacity = int(re.search(r"DH_CONFIG_TEXT_PASSTHROUGH_CAPACITY\s+(\d+)u", config_text_header).group(1))
     keymap_header = (Path(__file__).parent.parent / "src/core/dh_keymap.h").read_text()
     keymap_value = lambda name: int(re.search(rf"{name}\s+(\d+)u", keymap_header).group(1))
+    seam_header = (Path(__file__).parent.parent / "src/core/dh_seam_map.h").read_text()
+    seam_value = lambda name: int(re.search(rf"{name}\s+(\d+)u", seam_header).group(1))
     # Read main template contents
     webpage = render(
         INPUT_FILENAME,
@@ -81,6 +83,7 @@ if __name__ == "__main__":
         keymap_override_count_offset=keymap_value("DH_KEYMAP_OVERRIDE_COUNT_OFFSET"),
         keymap_passthrough_offset=keymap_value("DH_KEYMAP_PASSTHROUGH_OFFSET"),
         keymap_passthrough_count_offset=keymap_value("DH_KEYMAP_PASSTHROUGH_COUNT_OFFSET"),
+        seam_field_bases=[seam_value("DH_SEAM_CONFIG_FIELD_A_BASE"), seam_value("DH_SEAM_CONFIG_FIELD_B_BASE")],
     )
     # Jinja preserves indentation on control-only lines. Keep the generated
     # artifact compliant with the repository's no-trailing-whitespace rule.

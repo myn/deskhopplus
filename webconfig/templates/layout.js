@@ -22,7 +22,7 @@ function layoutFromFields(fields) {
     return {letter:i ? 'B' : 'A', os:({1:'Linux',2:'MacOS',3:'Windows',4:'Android',255:'Other'})[fields[base+6]] || 'Other',
       chain, border:Number(fields[base+7]) || opposite[border], monitors};
   });
-  const segments = Array.from({length:4}, (_, n) => [140,152].map(base => ({
+  const segments = Array.from({length:4}, (_, n) => [{{ seam_field_bases|join(',') }}].map(base => ({
     monitor:Number(fields[base+3*n]) || 0,
     start:Number(fields[base+3*n+1]) || 0, end:Number(fields[base+3*n+2]) || 0,
   })));
@@ -111,7 +111,7 @@ function fieldsFromLayout(layout) {
   }
   pairs.sort((u, v) => u.start-v.start);
   if (pairs.length > 4) return {refused:`Not moved: that layout needs ${pairs.length} segments; the board holds 4.`};
-  [140, 152].forEach((base, i) => {
+  [{{ seam_field_bases|join(', ') }}].forEach((base, i) => {
     for (let n = 0; n < 4; n++) {
       const pair = pairs[n], m = pair && pair.sides[i];
       fields[base+3*n] = pair ? m.number : 0;
