@@ -236,6 +236,10 @@ void dh_outq_note_preamble(dh_outq *q, const dh_outq_view *view);
 /* True while any frame is still owed, in either band. */
 bool dh_outq_busy(const dh_outq *q);
 
+/* True when a priority frame offered now would be refused as busy. For a
+   sender that waits and retries, so waiting is not counted as a refusal. */
+bool dh_outq_priority_full(const dh_outq *q);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -282,11 +282,13 @@ void channel_lifecycle_arrive(channel_lifecycle *c, uint8_t role, uint8_t new_ou
     channel_lifecycle_unlock();
 }
 
-/* The owed arrival, if any. Left owed while the priority lane refuses it;
+/* The owed arrival, if any. Left owed while the priority lane is full;
    dropped with the session, since it was news for that helper only. */
 static void pump_arrival(channel_lifecycle *c, uint32_t now) {
     channel_lifecycle_lock();
-    const bool owed = c->arrival_owed;
+    /* A full lane is waited out, not offered to: each refusal would count in
+       the drop totals the helper logs, and nothing here is being dropped. */
+    const bool owed = c->arrival_owed && !dh_outq_priority_full(&c->out);
     channel_lifecycle_unlock();
     if (!owed)
         return;

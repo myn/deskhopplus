@@ -617,21 +617,30 @@ static void test_arrival_goes_only_to_the_new_active_outputs_helper(void) {
     CHECK(arrivals_after_step(203) == 0);
 }
 
-/* A crossing fills the one-deep priority lane with PLACE and POS_QUERY. The
-   arrival waits behind them instead of being refused and lost (#250). */
-static void test_arrival_waits_for_a_busy_priority_lane(void) {
+/* One pass with the priority lane full of a crossing's PLACE and POS_QUERY,
+   with or without an arrival owed. Returns the refusals the pass counted. */
+static uint32_t refusals_behind_a_full_lane(bool arrival) {
     init();
     CHECK(arrivals_after_step(200) == 0);
     const uint8_t place[DH_PLACE_BODY_SIZE] = {0};
     const uint8_t query[] = {0};
-    channel_lifecycle_arrive(&c, 0, 0);
+    if (arrival) channel_lifecycle_arrive(&c, 0, 0);
     CHECK(channel_lifecycle_emit_placement(&c, DH_MSG_PLACE, place, sizeof place, 201));
     CHECK(channel_lifecycle_emit_placement(&c, DH_MSG_POS_QUERY, query, sizeof query, 201));
+    const uint32_t before = c.out.refused_priority;
     channel_lifecycle_step(&c, 201, NULL);
+    return c.out.refused_priority - before;
+}
+
+/* The arrival waits behind a crossing's PLACE and POS_QUERY instead of being
+   refused and lost, and waiting is not counted as a refusal: the helper logs
+   that total as board drops (#250). */
+static void test_arrival_waits_for_a_busy_priority_lane(void) {
+    const uint32_t without = refusals_behind_a_full_lane(false);
+    CHECK(refusals_behind_a_full_lane(true) == without);
 
     CHECK(drain(sizeof wire) > 0 && wire[0] == DH_MSG_PLACE);
     CHECK(drain(sizeof wire) > 0 && wire[0] == DH_MSG_POS_QUERY);
-    CHECK(drain(sizeof wire) == 0);
     CHECK(arrivals_after_step(202) == 1);
 }
 

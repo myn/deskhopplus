@@ -261,3 +261,7 @@ void dh_outq_note_preamble(dh_outq *q, const dh_outq_view *view) {
 bool dh_outq_busy(const dh_outq *q) {
     return q->priority.len > 0 || q->bulk.len > 0;
 }
+
+bool dh_outq_priority_full(const dh_outq *q) {
+    return q->priority.len > 0 && q->priority_stage_used >= DH_OUTQ_PRIORITY_DEPTH;
+}
