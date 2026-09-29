@@ -22,6 +22,7 @@ enum {
     DH_STATUS_LED_NEVER        = 0,
     DH_STATUS_LED_IDLE         = 1, /* no input for the time, counted from the later of input and switch */
     DH_STATUS_LED_AFTER_SWITCH = 2, /* the time after a switch, even while typing */
+    DH_STATUS_LED_OFF          = 3, /* aways turn off */
 };
 
 /* The page's default After time (form.py, field 102), and what a stored zero
