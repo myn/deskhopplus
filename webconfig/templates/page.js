@@ -85,7 +85,7 @@ function refreshUnsaved() {
 function refreshStatusLed() {
   const mode = document.querySelector('[data-key="101"]');
   const after = document.querySelector('[data-key="102"]');
-  if (mode && after) after.disabled = !Number(mode.value);
+  if (mode && after) after.disabled = (Number(mode.value) === 0 || Number(mode.value) === 3);
 }
 
 // What every edit, report and toolbar action refreshes.
