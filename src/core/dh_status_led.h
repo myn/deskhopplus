@@ -36,7 +36,10 @@ static inline bool dh_status_led_dark(uint8_t mode, uint16_t seconds, uint64_t n
                                       bool config_mode) {
     if (config_mode || seconds == 0)
         return false;
-
+    
+    if (mode == DH_STATUS_LED_OFF)
+        return true;
+   
     uint64_t since;
     if (mode == DH_STATUS_LED_IDLE)
         since = (int64_t)(last_input_us - last_switch_us) > 0 ? last_input_us : last_switch_us;
