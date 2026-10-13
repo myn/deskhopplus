@@ -52,31 +52,13 @@
 #include <string>
 #include <vector>
 
-#include "clip_service.h"
+#include "clipboard_copy.h"
 
 namespace deskhop {
 
 class Clipboard {
   public:
-    struct Callbacks {
-        /* Text copied on this computer, already filtered for this helper's own
-           writes. UTF-8. */
-        std::function<void(std::vector<uint8_t>)> local_copy;
-        std::function<void(std::vector<uint8_t>)> local_image;
-        /* Text and its picture together (#195), already packed as a kind-3
-           payload — one transfer, so the pasting application picks. */
-        std::function<void(std::vector<uint8_t>)> local_bundle;
-        /* Any external sequence, before inspecting its formats or send policy. */
-        std::function<void()> local_replaced;
-        std::function<std::optional<std::vector<uint8_t>>(uint32_t, uint64_t)> request_image;
-        std::function<void(uint32_t)> lazy_image_replaced;
-        /* Files copied here (#56): what they are called and how long they are,
-           plus the callable that reads them — invoked only if the transfer is
-           accepted on the other computer. */
-        std::function<void(std::vector<FileEntry>,
-                           std::function<bool(std::vector<uint8_t> &)>)> local_files;
-        std::function<void(const std::string &)> log;
-    };
+    using Callbacks = ClipboardCallbacks;
 
     /* The helper's message-only window. Registers for WM_CLIPBOARDUPDATE. */
     void attach(HWND window, Callbacks callbacks);
@@ -110,14 +92,15 @@ class Clipboard {
     bool deliver_files(const std::vector<std::wstring> &paths);
 
   private:
-    void read_clipboard();
+    /* Take the copy off the clipboard (#328). Calls no callback, the log
+       included: its lines go in the snapshot's notes, so this step alone can
+       move to another thread (#326). */
+    ClipboardCopy read_copy();
     /* The files on the clipboard, if any, as a list and a way to read them
-       later. Called with the clipboard already open, and it does not invoke the
-       callback — the caller closes the clipboard first, because the clipboard
-       is a machine-wide lock and that callback runs the whole offer path. */
-    bool read_files(std::vector<FileEntry> &entries,
-                    std::function<bool(std::vector<uint8_t> &)> &read);
-    bool open_with_retry();
+       later. Called with the clipboard already open. */
+    bool read_files(ClipboardCopy &copy);
+    /* Lines go to `notes` when given, else to the log callback. */
+    bool open_with_retry(std::vector<std::string> *notes = nullptr);
     bool load_lazy_image();
 
     HWND window_{nullptr};

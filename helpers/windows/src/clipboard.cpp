@@ -3,8 +3,6 @@
 
 #include "clipboard.h"
 
-#include <cctype>
-
 #include <cstring>
 #include <cwchar>
 #include <propidl.h>
@@ -16,7 +14,6 @@
 #include "clipboard_update.h"
 #include "clipboard_image.h"
 #include "file_read.h"
-#include "dh_bundle.h"
 
 namespace deskhop {
 
@@ -152,33 +149,6 @@ void Clipboard::attach(HWND window, Callbacks callbacks) {
     if (!listening_ && callbacks_.log)
         callbacks_.log("the clipboard listener could not be registered; copies made on this "
                        "computer will not be sent");
-}
-
-
-/*
- * Whether every copied file is itself a picture — the one case where image data
- * on the clipboard beside a file path is the thing the user meant, rather than
- * a preview something drew for a file that is not an image.
- *
- * Extension-based on purpose: the question is what the user copied, and asking
- * the shell for a type means loading the file, which a clipboard poll must not
- * do.
- */
-static bool all_files_are_images(const std::vector<FileEntry> &files) {
-    static const char *const kImageExtensions[] = {".png",  ".jpg",  ".jpeg", ".gif", ".bmp",
-                                                   ".tif",  ".tiff", ".webp", ".heic"};
-    if (files.empty()) return false;
-    for (const FileEntry &file : files) {
-        const size_t dot = file.name.rfind('.');
-        if (dot == std::string::npos) return false;
-        std::string ext = file.name.substr(dot);
-        for (char &c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        bool matched = false;
-        for (const char *candidate : kImageExtensions)
-            if (ext == candidate) { matched = true; break; }
-        if (!matched) return false;
-    }
-    return true;
 }
 
 
@@ -320,7 +290,7 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
             sequence, self_sequence_, reinterpret_cast<uintptr_t>(GetClipboardOwner()),
             reinterpret_cast<uintptr_t>(window_))) {
         if (callbacks_.local_replaced) callbacks_.local_replaced();
-        read_clipboard();
+        act_on_copy(read_copy(), callbacks_, ClipService::kEagerImageThreshold);
         /* The first external update is the replacement under investigation.
            One line records it; ordinary copies after it stay off the helper's
            synchronously flushed diagnostic path. */
@@ -383,14 +353,17 @@ void Clipboard::cancel_lazy_image(uint32_t id) {
                                        " was removed before it could be pasted");
 }
 
-bool Clipboard::open_with_retry() {
+bool Clipboard::open_with_retry(std::vector<std::string> *notes) {
     if (window_ == nullptr) return false;
+    const auto log = [&](const std::string &line) {
+        if (notes != nullptr) notes->push_back(line);
+        else if (callbacks_.log) callbacks_.log(line);
+    };
     DWORD delay = kFirstRetryMs;
     for (int attempt = 1; attempt <= kOpenAttempts; attempt++) {
         if (OpenClipboard(window_)) {
-            if (attempt > 1 && callbacks_.log)
-                callbacks_.log("the clipboard took " + std::to_string(attempt) +
-                               " attempts to open");
+            if (attempt > 1)
+                log("the clipboard took " + std::to_string(attempt) + " attempts to open");
             return true;
         }
         if (attempt < kOpenAttempts) {
@@ -398,9 +371,8 @@ bool Clipboard::open_with_retry() {
             delay *= 2;
         }
     }
-    if (callbacks_.log)
-        callbacks_.log("another program held the clipboard open through " +
-                       std::to_string(kOpenAttempts) + " attempts");
+    log("another program held the clipboard open through " + std::to_string(kOpenAttempts) +
+        " attempts");
     return false;
 }
 
@@ -413,18 +385,18 @@ bool Clipboard::open_with_retry() {
  * Skipped visibly, because a copied folder that silently transfers nothing is
  * the kind of quiet failure #42 exists to avoid.
  *
- * Called with the clipboard already open. It does **not** invoke the callback:
- * the caller closes the clipboard first, because that callback runs the whole
- * offer path — sealing, framing, the transport — and the clipboard is a
- * machine-wide lock that every other application is waiting on.
+ * Called with the clipboard already open. It invokes no callback: the offer
+ * path — sealing, framing, the transport — runs only after the clipboard is
+ * closed, because the clipboard is a machine-wide lock that every other
+ * application is waiting on.
  */
-bool Clipboard::read_files(std::vector<FileEntry> &entries,
-                           std::function<bool(std::vector<uint8_t> &)> &read) {
+bool Clipboard::read_files(ClipboardCopy &copy) {
     HANDLE handle = GetClipboardData(CF_HDROP);
     if (handle == nullptr) return false;
     auto *drop = static_cast<HDROP>(handle);
     const UINT count = DragQueryFileW(drop, 0xFFFFFFFFu, nullptr, 0);
 
+    std::vector<FileEntry> &entries = copy.files;
     entries.clear();
     std::vector<std::pair<std::wstring, FileEntry>> readable;
     unsigned skipped = 0;
@@ -447,13 +419,13 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
         entries.push_back(FileEntry{wide_to_utf8_string(name), size});
         readable.emplace_back(path, entries.back());
     }
-    if (skipped > 0 && callbacks_.log)
-        callbacks_.log(std::to_string(skipped) +
-                       " copied item(s) were not ordinary files — a folder is not carried — "
-                       "and were left out");
+    if (skipped > 0)
+        copy.notes.push_back(std::to_string(skipped) +
+                             " copied item(s) were not ordinary files — a folder is not "
+                             "carried — and were left out");
     if (entries.empty()) return false;
 
-    read = [readable, log = callbacks_.log](std::vector<uint8_t> &payload) -> bool {
+    copy.read_files = [readable, log = callbacks_.log](std::vector<uint8_t> &payload) -> bool {
         payload.clear();
         for (const auto &[path, file] : readable) {
             /* Each file at its offered length (#182). The name and not the
@@ -486,8 +458,9 @@ bool Clipboard::read_files(std::vector<FileEntry> &entries,
     return true;
 }
 
-void Clipboard::read_clipboard() {
-    if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) return;
+ClipboardCopy Clipboard::read_copy() {
+    ClipboardCopy copy;
+    if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) return copy;
 
     /* Ask first so unrelated clipboard formats cost nothing and do not open
        the clipboard against another program that wants it. */
@@ -499,43 +472,21 @@ void Clipboard::read_clipboard() {
     const ClipboardImageFormat image_format =
         select_clipboard_image_format(has_png, has_dibv5, has_dib, has_bitmap);
     const bool has_image = image_format != ClipboardImageFormat::None;
+    const bool has_files = callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP);
 
-    /*
-     * Files first; then text and image together as a bundle when both are
-     * there and small enough, else whichever is there (#195). The same order
-     * as the macOS twin, and a divergence here is a clipboard that behaves
-     * differently on each computer.
-     *
-     * **Files before text**, because copying one in Explorer also puts its
-     * path on the clipboard as text, and reading text first would send the
-     * path instead of the file.
-     *
-     * **An image before files only when the files *are* images.** A screenshot
-     * tool writes its capture to a temporary file and puts both on the
-     * clipboard, and sending that as a file made it paste into Explorer as a
-     * .png instead of into an image editor — so an image still wins there.
-     *
-     * The old rule read the image first unconditionally, on the claim that
-     * image data beside a path is the screenshot case and nothing else. That
-     * claim is wrong wherever anything puts a preview or an icon on the
-     * clipboard beside a copied file: the preview is then sent in place of the
-     * file. It cost the macOS twin every single-file copy (#56), and the rule
-     * being shared is the reason to correct both.
-     */
-    bool files_found = false;
-    if (callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP)) {
-        if (!open_with_retry()) return;
-        std::vector<FileEntry> files;
-        std::function<bool(std::vector<uint8_t> &)> read;
-        files_found = read_files(files, read);
+    /* One open for files, text and image. The has_ flags stay false until it
+       succeeds, so a copy that could not be read sends nothing and says only
+       why (`act_on_copy`). */
+    if (!has_files && !has_text && !has_image) return copy;
+    if (!open_with_retry(&copy.notes)) return copy;
+    copy.has_text = has_text;
+    copy.has_image = has_image;
+    const bool files_found = has_files && read_files(copy);
+    /* Files that will be sent need nothing else read: see `clipboard_files_win`. */
+    if (clipboard_files_win(copy)) {
         CloseClipboard();
-        if (files_found && !(has_image && all_files_are_images(files))) {
-            callbacks_.local_files(std::move(files), std::move(read));
-            return;
-        }
+        return copy;
     }
-    if (!has_text && !has_image) return;
-    if (!open_with_retry()) return;
 
     /*
      * Both read when both are there. Every Office application puts a picture
@@ -544,7 +495,7 @@ void Clipboard::read_clipboard() {
      * a picture of the words. Which of the two goes, or whether both go
      * together, is `select_clipboard_send`'s call once the sizes are known.
      */
-    std::vector<uint8_t> image;
+    std::vector<uint8_t> &image = copy.image;
     const char *captured_format = nullptr;
     switch (image_format) {
     case ClipboardImageFormat::Png:
@@ -567,63 +518,22 @@ void Clipboard::read_clipboard() {
     case ClipboardImageFormat::None:
         break;
     }
-    if (!image.empty() && captured_format != nullptr && callbacks_.log)
-        callbacks_.log(std::string("captured image from ") + captured_format);
+    if (!image.empty() && captured_format != nullptr)
+        copy.notes.push_back(std::string("captured image from ") + captured_format);
     /* Not read beside files, even the image-only files a screenshot tool
        leaves: the text beside a copied file is its path, and a bundle of a
        path and a picture would paste the path into a text field. Gated on a
        file being *found*, as the macOS twin is, so a copied folder still
        behaves as it did. */
-    std::vector<uint8_t> text;
     if (has_text && !files_found) {
         HANDLE handle = GetClipboardData(CF_UNICODETEXT);
         if (const auto *wide = static_cast<const wchar_t *>(GlobalLock(handle))) {
-            text = wide_to_utf8(wide);
+            copy.text = wide_to_utf8(wide);
             GlobalUnlock(handle);
         }
     }
     CloseClipboard();
-
-    switch (select_clipboard_send(text.size(), image.size(), ClipService::kEagerImageThreshold)) {
-    case ClipboardSend::Nothing:
-        /*
-         * An empty read is not the same as an empty clipboard. The managed
-         * laptop runs Trellix DLP, whose block behaviour at the Win32 level is
-         * undocumented, so a read that "succeeded" and returned nothing cannot
-         * be ruled out (#60) — the spec's standing instruction is to treat a
-         * clipboard read failure as an expected state and say so rather than
-         * trust it. Nothing is sent, and the reason is in the log.
-         */
-        if (callbacks_.log)
-            callbacks_.log("the clipboard offered content and then read as empty; nothing was sent");
-        return;
-    case ClipboardSend::Bundle: {
-        const dh_bundle_part parts[] = {
-            {DH_BUNDLE_PART_TEXT, text.data(), static_cast<uint32_t>(text.size())},
-            {DH_BUNDLE_PART_PNG, image.data(), static_cast<uint32_t>(image.size())},
-        };
-        std::vector<uint8_t> packed(dh_bundle_packed_len(parts, 2));
-        if (dh_bundle_pack(parts, 2, packed.data(), packed.size()) == 0) {
-            if (callbacks_.log) callbacks_.log("text and its picture would not pack; nothing was sent");
-            return;
-        }
-        if (callbacks_.log)
-            callbacks_.log("bundling " + std::to_string(text.size()) + " bytes of text with its " +
-                           std::to_string(image.size()) + "-byte picture");
-        if (callbacks_.local_bundle) callbacks_.local_bundle(std::move(packed));
-        return;
-    }
-    case ClipboardSend::Image:
-        if (callbacks_.local_image) callbacks_.local_image(std::move(image));
-        return;
-    case ClipboardSend::Text:
-        if (!image.empty() && callbacks_.log)
-            callbacks_.log("sending " + std::to_string(text.size()) +
-                           " bytes of text alone; the " + std::to_string(image.size()) +
-                           "-byte picture beside it is over the bundle limit and does not travel");
-        if (callbacks_.local_copy) callbacks_.local_copy(std::move(text));
-        return;
-    }
+    return copy;
 }
 
 /*

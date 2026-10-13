@@ -127,6 +127,15 @@ if(MSVC)
 endif()
 add_test(NAME clipboard_update COMMAND clipboard_update_test)
 
+# What one local copy sends, decided from a snapshot the read took (#328).
+add_executable(clipboard_copy_test tests/clipboard_copy_test.cpp)
+target_link_libraries(clipboard_copy_test PRIVATE dhcore)
+target_include_directories(clipboard_copy_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(MSVC)
+  target_compile_options(clipboard_copy_test PRIVATE /WX)
+endif()
+add_test(NAME clipboard_copy COMMAND clipboard_copy_test)
+
 # ------------------------------------------------- the shim's dispatch (#152)
 #
 # What each output *does*, with the platform behind an interface — the wiring
