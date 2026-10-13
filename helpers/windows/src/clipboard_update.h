@@ -56,6 +56,39 @@ class ClipboardReads {
 };
 
 /*
+ * When a read that waits is logged (#330). The tick asks `warn` while a read
+ * runs: true once, the first time it has waited past kWarnAfterMs, and the
+ * helper then names the clipboard's owner. `end` says whether a total line
+ * follows — only after a warning, so a fast copy logs nothing new. Times are
+ * the helper's 32-bit ms clock; the unsigned difference survives its wrap.
+ */
+class SlowRead {
+  public:
+    static constexpr uint32_t kWarnAfterMs = 5000;
+
+    void start(uint32_t now) {
+        started_ = now;
+        running_ = true;
+        warned_ = false;
+    }
+    bool warn(uint32_t now) {
+        if (!running_ || warned_ || waited(now) <= kWarnAfterMs) return false;
+        warned_ = true;
+        return true;
+    }
+    bool end() {
+        running_ = false;
+        return warned_;
+    }
+    uint32_t waited(uint32_t now) const { return now - started_; }
+
+  private:
+    uint32_t started_{0};
+    bool running_{false};
+    bool warned_{false};
+};
+
+/*
  * What one copy sends when it holds text, a picture, or both (#195).
  *
  * A size of zero is "not there" — which is also what a read that came back

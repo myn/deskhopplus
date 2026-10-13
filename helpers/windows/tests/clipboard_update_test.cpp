@@ -9,6 +9,7 @@ using deskhop::clipboard_update_is_external;
 using deskhop::prefetched_image_is_current;
 using deskhop::ClipboardReads;
 using deskhop::ClipboardSend;
+using deskhop::SlowRead;
 using deskhop::select_clipboard_send;
 
 int main() {
@@ -66,6 +67,29 @@ int main() {
         CHECK(!reads.update(6401, false), "the helper's own write was read as a copy");
         CHECK(!reads.update(6401, true), "the helper's own write was read on a later update");
         CHECK(reads.update(6402, true), "an external copy after an own write was not read");
+    }
+
+    /* A read that waits past 5 s warns once, and its end gives one total line
+       only then (#330). Started near the 32-bit wrap: the clock is
+       GetTickCount64 cut to 32 bits. */
+    {
+        SlowRead slow;
+        CHECK(!slow.warn(1000), "an idle watch warned");
+        slow.start(4294964000u);
+        CHECK(!slow.warn(4294964000u + 5000u), "a read warned at exactly 5 s");
+        CHECK(slow.warn(2001u), "a read past 5 s across the clock wrap did not warn");
+        CHECK(slow.waited(2001u) == 5297u, "the wait across the clock wrap was wrong");
+        CHECK(!slow.warn(9000u), "a slow read warned twice");
+        CHECK(slow.end(), "a read that warned gave no total line");
+        CHECK(!slow.warn(20000u), "an ended read warned");
+    }
+    {
+        SlowRead slow;
+        slow.start(1000);
+        CHECK(!slow.warn(1250), "a fast read warned");
+        CHECK(!slow.end(), "a fast read gave a total line");
+        slow.start(30000);
+        CHECK(!slow.warn(30250), "a new read inherited the last one's warning");
     }
 
     if (failures != 0) return 1;

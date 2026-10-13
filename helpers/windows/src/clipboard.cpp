@@ -87,6 +87,26 @@ std::string wide_to_utf8_string(const wchar_t *text) {
     return std::string(bytes.begin(), bytes.end());
 }
 
+/* The program that owns the clipboard, as its exe's file name (#330): the one
+   a slow read waits on, so the one to close. Its pid when the name is out of
+   reach. */
+std::string clipboard_owner_name() {
+    HWND owner = GetClipboardOwner();
+    if (owner == nullptr) return "no program (the clipboard has no owner)";
+    DWORD pid = 0;
+    GetWindowThreadProcessId(owner, &pid);
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    wchar_t path[MAX_PATH];
+    DWORD size = MAX_PATH;
+    const bool named = process != nullptr && QueryFullProcessImageNameW(process, 0, path, &size);
+    if (process != nullptr) CloseHandle(process);
+    if (!named) return "pid " + std::to_string(pid);
+    const wchar_t *slash = std::wcsrchr(path, L'\\');
+    return wide_to_utf8_string(slash != nullptr ? slash + 1 : path);
+}
+
+uint32_t clock_ms() { return static_cast<uint32_t>(GetTickCount64()); }
+
 std::vector<uint8_t> global_bytes(HANDLE handle) {
     if (handle == nullptr) return {};
     const SIZE_T size = GlobalSize(handle);
@@ -313,6 +333,9 @@ bool Clipboard::handle(UINT message, WPARAM parameter, LPARAM detail) {
     if (message == kReadDoneMessage) {
         ClipboardCopy *copy = reinterpret_cast<ClipboardCopy *>(detail);
         reads_.read_done();
+        if (slow_read_.end() && callbacks_.log)
+            callbacks_.log("the slow clipboard read ended after " +
+                           std::to_string(slow_read_.waited(clock_ms())) + " ms");
         act_on_copy(std::move(*copy), callbacks_, ClipService::kEagerImageThreshold);
         delete copy;
         /* A copy made while that read waited started nothing; read it now. */
@@ -369,6 +392,9 @@ void Clipboard::start_read() {
         reads_.read_done();
         return;
     }
+    /* The owner now: by the time the read is slow, another copy may own it. */
+    read_owner_ = clipboard_owner_name();
+    slow_read_.start(clock_ms());
     /* Plain copies, so the thread shares nothing with this one. */
     auto *job = new ReadJob{ReadSource{png_format_, gdiplus_token_ != 0,
                                        static_cast<bool>(callbacks_.local_files), callbacks_.log},
@@ -386,6 +412,13 @@ void Clipboard::start_read() {
     auto *copy = new ClipboardCopy(read_copy(job->source));
     delete job;
     handle(kReadDoneMessage, 0, reinterpret_cast<LPARAM>(copy));
+}
+
+void Clipboard::tick() {
+    const uint32_t now = clock_ms();
+    if (slow_read_.warn(now) && callbacks_.log)
+        callbacks_.log("a clipboard read has waited " + std::to_string(slow_read_.waited(now)) +
+                       " ms on " + read_owner_ + ", which owns the clipboard");
 }
 
 void Clipboard::lazy_image(uint32_t id, uint64_t total) {

@@ -675,6 +675,7 @@ void Helper::tick(uint32_t now, bool nested) {
     dh_device_drops drops{};
     const bool stated = session_->device_drops(&drops);
     dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
+    clipboard_.tick();
 
     /* What the tray shows about the arriving transfer, refreshed only
        when it has moved. It changes the icon and tooltip, not the menu, so

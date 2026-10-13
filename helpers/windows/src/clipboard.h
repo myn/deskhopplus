@@ -80,6 +80,10 @@ class Clipboard {
        object's and needs no further handling. */
     bool handle(UINT message, WPARAM parameter = 0, LPARAM detail = 0);
 
+    /* From the helper's tick: a read that has waited past 5 s names the
+       program that owns the clipboard, once (#330). */
+    void tick();
+
     /* Write what arrived from the other computer. The bytes are handed to the
        platform exactly as they arrived: ADR-0003 makes this channel
        fidelity-preserving, so the only transform is CF_UNICODETEXT's own
@@ -123,6 +127,10 @@ class Clipboard {
        behind one change would otherwise both read the same clipboard and send
        the same payload twice. */
     ClipboardReads reads_;
+    /* How long the read in flight has waited, and who owned the clipboard
+       when it started (#330). */
+    SlowRead slow_read_;
+    std::string read_owner_;
     ULONG_PTR gdiplus_token_{0};
     UINT png_format_{0};
     uint32_t lazy_image_id_{0};
