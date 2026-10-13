@@ -89,6 +89,23 @@ int main() {
         CHECK(!reads.read_done(6400), "a held write was handed back twice");
     }
     {
+        /* A copy made during the read goes first: its read starts at the
+           read's end, and the held write is held again behind it, so the
+           write cannot replace that copy before it is read. */
+        ClipboardReads reads(6399);
+        int ran = 0;
+        reads.update(6400, true);
+        reads.write([&ran] { ran = 1; });
+        auto held = reads.read_done(6400);
+        CHECK(reads.update(6401, true), "a copy made during the read was not read");
+        reads.write(std::move(held));
+        CHECK(ran == 0, "the held write replaced a copy not yet read");
+        held = reads.read_done(6401);
+        CHECK(held, "the held write was lost behind the second read");
+        if (held) held();
+        CHECK(ran == 1, "the held write did not run after the second read");
+    }
+    {
         ClipboardReads reads(6399);
         CHECK(reads.update(6400, true), "an external copy did not start a read");
         CHECK(!reads.update(6400, true), "two updates for one copy read it twice");

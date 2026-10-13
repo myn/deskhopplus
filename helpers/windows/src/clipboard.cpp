@@ -342,11 +342,13 @@ bool Clipboard::handle(UINT message, WPARAM parameter, LPARAM detail) {
         if (clipboard_update_is_external(copy->sequence, self_sequence_, copy->owner,
                                          reinterpret_cast<uintptr_t>(window_)))
             act_on_copy(std::move(*copy), callbacks_, ClipService::kEagerImageThreshold);
-        /* An arriving write held while the read had the clipboard. Its own
-           self_sequence_ keeps the update it causes from reading it back. */
-        if (held) held();
-        /* A copy made while that read waited started nothing; read it now. */
+        /* A copy made while that read waited started nothing; read it now,
+           before the held write, which would otherwise replace it unread. */
         on_update();
+        /* An arriving write held while the read had the clipboard: it runs
+           now, or behind that new read. Its own self_sequence_ keeps the
+           update it causes from reading it back. */
+        if (held) reads_.write(held);
         return true;
     }
     if (message != WM_CLIPBOARDUPDATE) return false;
