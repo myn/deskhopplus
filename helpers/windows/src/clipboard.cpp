@@ -29,33 +29,6 @@ namespace {
 constexpr int kOpenAttempts = 5;
 constexpr DWORD kFirstRetryMs = 10;
 
-std::string clipboard_state(HWND helper) {
-    return "sequence=" + std::to_string(GetClipboardSequenceNumber()) +
-           " owner=" + std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
-           " helper=" + std::to_string(reinterpret_cast<uintptr_t>(helper)) +
-           " opener=" + std::to_string(reinterpret_cast<uintptr_t>(GetOpenClipboardWindow()));
-}
-
-HBITMAP png_to_bitmap(const std::vector<uint8_t> &png) {
-    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, png.size());
-    if (!memory) return nullptr;
-    void *destination = GlobalLock(memory);
-    if (!destination) { GlobalFree(memory); return nullptr; }
-    std::memcpy(destination, png.data(), png.size());
-    GlobalUnlock(memory);
-    IStream *stream = nullptr;
-    if (CreateStreamOnHGlobal(memory, TRUE, &stream) != S_OK) {
-        GlobalFree(memory);
-        return nullptr;
-    }
-    Gdiplus::Bitmap image(stream);
-    HBITMAP bitmap = nullptr;
-    if (image.GetLastStatus() == Gdiplus::Ok)
-        image.GetHBITMAP(Gdiplus::Color(255, 255, 255), &bitmap);
-    stream->Release();
-    return bitmap;
-}
-
 std::wstring utf8_to_wide(const uint8_t *bytes, size_t len) {
     if (len == 0) return {};
     const int chars = MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char *>(bytes),
@@ -235,101 +208,7 @@ void Clipboard::detach() {
     png_format_ = 0;
 }
 
-bool Clipboard::load_lazy_image() {
-    if (!lazy_image_png_.empty()) return true;
-    const uint32_t id = lazy_image_id_;
-    if (id == 0 || !callbacks_.request_image) return false;
-    if (callbacks_.log)
-        callbacks_.log("[clipboard-debug] requesting lazy image id=" + std::to_string(id) +
-                       " bytes=" + std::to_string(lazy_image_total_) + " " +
-                       clipboard_state(window_));
-    const auto png = callbacks_.request_image(id, lazy_image_total_);
-    if (!png) {
-        if (callbacks_.log)
-            callbacks_.log("the lazy image did not arrive before the paste timed out");
-        return false;
-    }
-    lazy_image_png_ = *png;
-    lazy_image_id_ = 0;
-    return true;
-}
-
-bool Clipboard::handle(UINT message, WPARAM parameter, LPARAM detail) {
-    if (message == WM_DESTROYCLIPBOARD) {
-        /* Another owner replaced our lazy placeholder. Forget it before a
-           later transfer cancellation can empty that owner's newer copy. */
-        const uint32_t replaced = lazy_image_id_;
-        if (callbacks_.log)
-            callbacks_.log("[clipboard-debug] WM_DESTROYCLIPBOARD lazy_id=" +
-                           std::to_string(replaced) + " cached_bytes=" +
-                           std::to_string(lazy_image_png_.size()) + " " +
-                           clipboard_state(window_));
-        lazy_image_id_ = 0;
-        lazy_image_total_ = 0;
-        lazy_image_png_.clear();
-        if (replaced != 0 && callbacks_.lazy_image_replaced)
-            callbacks_.lazy_image_replaced(replaced);
-        return true;
-    }
-    if (message == WM_RENDERFORMAT && callbacks_.log)
-        callbacks_.log("[clipboard-debug] WM_RENDERFORMAT format=" +
-                       std::to_string(parameter) + " lazy_id=" +
-                       std::to_string(lazy_image_id_) + " cached_bytes=" +
-                       std::to_string(lazy_image_png_.size()) + " " +
-                       clipboard_state(window_));
-    if (message == WM_RENDERFORMAT && (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
-        if (!load_lazy_image()) return true;
-        if (parameter == png_format_) {
-            HGLOBAL block = bytes_to_global(lazy_image_png_);
-            if (block == nullptr || SetClipboardData(png_format_, block) == nullptr) {
-                if (block) GlobalFree(block);
-                if (callbacks_.log)
-                    callbacks_.log("the lazy image arrived but its PNG format could not be rendered");
-            }
-        } else if (parameter == CF_BITMAP) {
-            HBITMAP bitmap = png_to_bitmap(lazy_image_png_);
-            if (!bitmap || SetClipboardData(CF_BITMAP, bitmap) == nullptr) {
-                if (bitmap) DeleteObject(bitmap);
-                if (callbacks_.log)
-                    callbacks_.log("the lazy image arrived but its bitmap format could not be rendered");
-            }
-        }
-        /* Filling a promised format is our clipboard write too. If Windows
-           advances the sequence for it, its update must not echo the image
-           back across the channel as a new local copy. */
-        self_sequence_ = GetClipboardSequenceNumber();
-        return true;
-    }
-    if (message == WM_RENDERALLFORMATS && callbacks_.log)
-        callbacks_.log("[clipboard-debug] WM_RENDERALLFORMATS lazy_id=" +
-                       std::to_string(lazy_image_id_) + " cached_bytes=" +
-                       std::to_string(lazy_image_png_.size()) + " " +
-                       clipboard_state(window_));
-    if (message == WM_RENDERALLFORMATS &&
-        (lazy_image_id_ != 0 || !lazy_image_png_.empty())) {
-        /* Windows is about to destroy the owner window. Materialise every
-           promised representation so the clipboard survives helper exit. */
-        if (!load_lazy_image()) return true;
-        const std::vector<uint8_t> png = lazy_image_png_;
-        if (!open_with_retry()) return true;
-        if (GetClipboardOwner() != window_) {
-            CloseClipboard();
-            return true;
-        }
-        EmptyClipboard();
-        HGLOBAL block = png_format_ != 0 ? bytes_to_global(png) : nullptr;
-        if (block != nullptr && SetClipboardData(png_format_, block) == nullptr)
-            GlobalFree(block);
-        HBITMAP bitmap = gdiplus_token_ != 0 ? png_to_bitmap(png) : nullptr;
-        if (bitmap != nullptr && SetClipboardData(CF_BITMAP, bitmap) == nullptr)
-            DeleteObject(bitmap);
-        self_sequence_ = GetClipboardSequenceNumber();
-        CloseClipboard();
-        lazy_image_id_ = 0;
-        lazy_image_total_ = 0;
-        lazy_image_png_.clear();
-        return true;
-    }
+bool Clipboard::handle(UINT message, LPARAM detail) {
     if (message == kReadDoneMessage) {
         std::unique_ptr<ClipboardCopy> copy(reinterpret_cast<ClipboardCopy *>(detail));
         const std::function<void()> held = reads_.read_done(copy->sequence);
@@ -365,22 +244,6 @@ void Clipboard::on_update() {
      * the link twice.
      */
     const DWORD sequence = GetClipboardSequenceNumber();
-    if (trace_lazy_lifecycle_ && callbacks_.log)
-        callbacks_.log("[clipboard-debug] WM_CLIPBOARDUPDATE sequence=" +
-                       std::to_string(sequence) + " handled=" +
-                       std::to_string(reads_.handled()) + " self=" +
-                       std::to_string(self_sequence_) + " owner=" +
-                       std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
-                       " helper=" + std::to_string(reinterpret_cast<uintptr_t>(window_)) +
-                       " has_text=" +
-                       std::to_string(IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE) +
-                       " has_png=" +
-                       std::to_string(png_format_ != 0 &&
-                                      IsClipboardFormatAvailable(png_format_) != FALSE) +
-                       " has_bitmap=" +
-                       std::to_string(IsClipboardFormatAvailable(CF_BITMAP) != FALSE) +
-                       " reading=" + std::to_string(reads_.reading()));
-
     /* A delayed-format close can advance the sequence after self_sequence_ was
        sampled. The owner window remains ours, and is the authoritative second
        signal that this update must not echo back across the channel. */
@@ -389,10 +252,6 @@ void Clipboard::on_update() {
         reinterpret_cast<uintptr_t>(window_));
     if (!reads_.update(sequence, external)) return;
     if (callbacks_.local_replaced) callbacks_.local_replaced();
-    /* The first external update is the replacement under investigation.
-       One line records it; ordinary copies after it stay off the helper's
-       synchronously flushed diagnostic path. */
-    trace_lazy_lifecycle_ = false;
     start_read();
 }
 
@@ -418,7 +277,7 @@ void Clipboard::start_read() {
     if (callbacks_.log) callbacks_.log("a clipboard read thread could not start; reading inline");
     auto *copy = new ClipboardCopy(read_copy(job->source));
     delete job;
-    handle(kReadDoneMessage, 0, reinterpret_cast<LPARAM>(copy));
+    handle(kReadDoneMessage, reinterpret_cast<LPARAM>(copy));
 }
 
 void Clipboard::tick(uint32_t now) {
@@ -427,60 +286,6 @@ void Clipboard::tick(uint32_t now) {
     if (slow_read_.warn(now) && callbacks_.log)
         callbacks_.log("a clipboard read has waited " + std::to_string(slow_read_.waited(now)) +
                        " ms on " + clipboard_owner_name() + ", which owns the clipboard");
-}
-
-void Clipboard::claim_lazy_image(uint32_t id, uint64_t total) {
-    trace_lazy_lifecycle_ = true;
-    if (callbacks_.log)
-        callbacks_.log("[clipboard-debug] claiming lazy image id=" + std::to_string(id) +
-                       " bytes=" + std::to_string(total) + " before_" +
-                       clipboard_state(window_));
-    if (!open_with_retry()) {
-        if (callbacks_.log) callbacks_.log("a lazy image offer could not claim the clipboard");
-        return;
-    }
-    EmptyClipboard();
-    bool advertised = false;
-    if (png_format_ != 0) {
-        SetLastError(ERROR_SUCCESS);
-        SetClipboardData(png_format_, nullptr);
-        advertised = GetLastError() == ERROR_SUCCESS;
-    }
-    SetLastError(ERROR_SUCCESS);
-    SetClipboardData(CF_BITMAP, nullptr);
-    advertised = advertised || GetLastError() == ERROR_SUCCESS;
-    if (!advertised) {
-        CloseClipboard();
-        if (callbacks_.log) callbacks_.log("the clipboard refused a lazy image placeholder");
-        return;
-    }
-    lazy_image_id_ = id;
-    lazy_image_total_ = total;
-    lazy_image_png_.clear();
-    self_sequence_ = GetClipboardSequenceNumber();
-    CloseClipboard();
-    if (callbacks_.log)
-        callbacks_.log("a lazy image id=" + std::to_string(id) + " of " +
-                       std::to_string(total) + " bytes is ready to paste; " +
-                       clipboard_state(window_));
-}
-
-void Clipboard::cancel_lazy_image(uint32_t id) {
-    if (callbacks_.log)
-        callbacks_.log("[clipboard-debug] cancel lazy image id=" + std::to_string(id) +
-                       " active_id=" + std::to_string(lazy_image_id_) + " " +
-                       clipboard_state(window_));
-    if (lazy_image_id_ != id) return;
-    lazy_image_id_ = 0;
-    lazy_image_total_ = 0;
-    lazy_image_png_.clear();
-    if (GetClipboardOwner() == window_ && open_with_retry()) {
-        EmptyClipboard();
-        self_sequence_ = GetClipboardSequenceNumber();
-        CloseClipboard();
-    }
-    if (callbacks_.log) callbacks_.log("lazy image " + std::to_string(id) +
-                                       " was removed before it could be pasted");
 }
 
 /* While a read holds the clipboard, each of these is held and runs at its end
@@ -499,10 +304,6 @@ void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
 void Clipboard::deliver_files(const std::vector<std::wstring> &paths) {
     reads_.write([this, paths] { write_files(paths); });
 }
-void Clipboard::lazy_image(uint32_t id, uint64_t total) {
-    reads_.write([this, id, total] { claim_lazy_image(id, total); });
-}
-
 bool Clipboard::open_with_retry() {
     return window_ != nullptr && open_clipboard(window_, callbacks_.log);
 }

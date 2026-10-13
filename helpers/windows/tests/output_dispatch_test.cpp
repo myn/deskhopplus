@@ -201,8 +201,8 @@ static const char *effect_named_by(ClipOutput::Kind kind) {
     switch (kind) {
     case ClipOutput::Kind::Send: return "the body is built into a frame and sent";
     case ClipOutput::Kind::Deliver: return "the payload reaches this computer's clipboard";
-    case ClipOutput::Kind::LazyImage: return "the lazy image reaches this computer's clipboard";
-    case ClipOutput::Kind::CancelLazyImage: return "the lazy image is removed from the clipboard";
+    case ClipOutput::Kind::LazyImage: return "the lazy image is prefetched for this computer's clipboard";
+    case ClipOutput::Kind::CancelLazyImage: return "the lazy image's prefetch is abandoned";
     case ClipOutput::Kind::Note: return "the note is logged";
     case ClipOutput::Kind::TellUser: return "the message is logged and put in front of the user";
     case ClipOutput::Kind::ProtocolError: return "the connection is dropped";

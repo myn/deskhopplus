@@ -33,12 +33,10 @@
 #include <shlobj.h>
 
 #include <share.h>
-#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -145,10 +143,6 @@ class Helper : public HelperEffects {
         clipboard_.deliver_bundle(utf8, png);
     }
     void deliver_image(const std::vector<uint8_t> &png) override {
-        if (waiting_for_image_) {
-            awaited_image_ = png;
-            return;
-        }
         if (prefetched_image_id_ != 0) {
             prefetched_image_id_ = 0;
             clipboard_.deliver_image(png, prefetched_image_sequence_);
@@ -164,11 +158,7 @@ class Helper : public HelperEffects {
         dispatch_.emit(clipboard_service_->request_lazy_image(id));
     }
     void cancel_lazy_image(uint32_t id) override {
-        if (prefetched_image_id_ == id) {
-            prefetched_image_id_ = 0;
-            return;
-        }
-        clipboard_.cancel_lazy_image(id);
+        if (prefetched_image_id_ == id) prefetched_image_id_ = 0;
     }
     void schedule_retry(uint32_t after_ms) override {
         /* Compared as an unsigned difference in run(), never as `now >= then`:
@@ -225,7 +215,6 @@ class Helper : public HelperEffects {
     /* Tell the board this PC sleeps (1) or is awake (0) (#293). */
     void send_host_sleep(uint8_t asleep);
     void tick(uint32_t now, bool nested);
-    std::optional<std::vector<uint8_t>> request_lazy_image(uint32_t id, uint64_t total);
     void abandon_prefetched_image();
 
     /*
@@ -269,7 +258,7 @@ class Helper : public HelperEffects {
     bool in_beat_{false};
     /* The message run() is dispatching, so that WM_TIMER can tell its own
        loop from one nested inside a handler: a modal loop such as the tray
-       menu, or the image prefetch's wait. */
+       menu. */
     UINT dispatching_{0};
     /* Set while tick() runs; see there. */
     bool in_tick_{false};
@@ -287,7 +276,6 @@ class Helper : public HelperEffects {
     bool bulk_was_allowed_{false};
     /* This PC's sleep, as the board is told it (#293). */
     HostSleep host_sleep_;
-    bool waiting_for_image_{false};
     /* What the tray last showed, so the tick only touches it when the transfer
        has actually moved. */
     uint64_t shown_received_{0};
@@ -295,7 +283,6 @@ class Helper : public HelperEffects {
     bool shown_sending_{false};
     uint32_t prefetched_image_id_{0};
     uint32_t prefetched_image_sequence_{0};
-    std::optional<std::vector<uint8_t>> awaited_image_;
 };
 
 Helper *Helper::instance_ = nullptr;
@@ -527,12 +514,6 @@ bool Helper::start(HINSTANCE instance) {
         dispatch_.emit(clipboard_service_->local_copy(ClipKind::Bundle, packed));
     };
     clipboard_callbacks.local_replaced = [this] { abandon_prefetched_image(); };
-    clipboard_callbacks.request_image = [this](uint32_t id, uint64_t total) {
-        return request_lazy_image(id, total);
-    };
-    clipboard_callbacks.lazy_image_replaced = [this](uint32_t id) {
-        dispatch_.emit(clipboard_service_->lazy_image_was_replaced(id));
-    };
     clipboard_callbacks.local_files = [this](std::vector<FileEntry> files,
                                              std::function<bool(std::vector<uint8_t> &)> read) {
         /* The list goes out now; `read` is not called until the other
@@ -594,8 +575,6 @@ int Helper::run() {
             MSG message;
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
                 if (message.message == WM_QUIT) {
-                    /* Destroying the clipboard-owner window gives Windows its
-                       WM_RENDERALLFORMATS chance before the channel stops. */
                     if (window_ != nullptr) {
                         DestroyWindow(window_);
                         window_ = nullptr;
@@ -650,11 +629,9 @@ int Helper::run() {
  * heartbeat alone (#262).
  */
 void Helper::tick(uint32_t now, bool nested) {
-    /* Not inside itself. Shell_NotifyIcon and the clipboard wait on other
-       processes, and Windows delivers sent messages meanwhile: a paste's
-       WM_RENDERFORMAT starts the image prefetch, whose wait pumps the beat
-       timer. A tick nested there would run on the outer one's half-done
-       state. */
+    /* Not inside itself, as a cheap safety net: a handler that pumped
+       messages under a tick would run a second one on the first one's
+       half-done state. Nothing known does since #331. */
     if (in_tick_ || now - last_tick_ < kTickMs - kTickSlackMs) return;
     in_tick_ = true;
     last_tick_ = now;
@@ -747,35 +724,6 @@ void Helper::feed(const std::vector<Output> &outputs) {
     bulk_was_allowed_ = live;
 }
 
-std::optional<std::vector<uint8_t>> Helper::request_lazy_image(uint32_t id, uint64_t total) {
-    awaited_image_.reset();
-    waiting_for_image_ = true;
-    dispatch_.emit(clipboard_service_->request_lazy_image(id));
-    const uint32_t started = now_ms();
-    const uint64_t estimated_ms = total * 1000u / (49u * 1024u);
-    const uint32_t timeout_ms = static_cast<uint32_t>(
-        std::min<uint64_t>(estimated_ms + 30000u, UINT32_MAX / 2u));
-    while (!awaited_image_ && session_->can_send_bulk() &&
-           now_ms() - started < timeout_ms) {
-        transport_.pump_reads();
-        feed(session_->tick(now_ms()));
-        if (session_->can_send_bulk()) dispatch_.emit(clipboard_service_->pump());
-        MSG message{};
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-            if (message.message == WM_QUIT) {
-                waiting_for_image_ = false;
-                PostQuitMessage(static_cast<int>(message.wParam));
-                return std::nullopt;
-            }
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-        Sleep(1);
-    }
-    waiting_for_image_ = false;
-    return std::exchange(awaited_image_, std::nullopt);
-}
-
 void Helper::abandon_prefetched_image() {
     if (prefetched_image_id_ == 0) return;
     const uint32_t id = std::exchange(prefetched_image_id_, 0);
@@ -836,8 +784,9 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
             /* Reads as well as the beat. A helper that sends while a menu is
                open but never *reads* sees nothing from the board and drops the
                session itself ("nothing from the device in 3.0s") — the same
-               eviction from the other end. Re-entrancy guarded because the
-               image prefetch pumps messages while it waits. The tray's fast
+               eviction from the other end. Re-entrancy guarded as a cheap
+               safety net: nothing known pumps messages under it since the
+               lazy-image wait went (#331). The tray's fast
                timer lands here too while its menu is open, for the reads;
                tick() keeps its own 250 ms pace. */
             if (in_beat_) return 0;
@@ -868,15 +817,7 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
         /* Something was copied on this computer, or its read has ended. The
            read runs on its own thread so a slow source app cannot stop the
            heartbeat; what it sends is decided here (clipboard.h, #329). */
-        clipboard_.handle(message, w, l);
-        return 0;
-
-    case WM_RENDERFORMAT:
-    case WM_RENDERALLFORMATS:
-    case WM_DESTROYCLIPBOARD:
-        /* Delayed image rendering and ownership loss are directed to the
-           owner window, not delivered as clipboard-update notifications. */
-        clipboard_.handle(message, w);
+        clipboard_.handle(message, l);
         return 0;
 
     case WM_POWERBROADCAST:

@@ -28,23 +28,19 @@
  * back as kReadDoneMessage; `act_on_copy` then runs here as before. While a
  * read waits, a write of what arrived is held, the latest only, and runs when
  * the read ends (`ClipboardReads::write`) — it would find the clipboard open
- * and lose its payload otherwise. A quit while a read waits cannot open the
- * clipboard for WM_RENDERALLFORMATS either, so a lazy image not yet rendered
- * is lost with the helper; that is left as it is.
+ * and lose its payload otherwise.
  *
  * A message-only window does not receive *broadcast* messages, but
  * WM_CLIPBOARDUPDATE is sent to listeners registered with
  * AddClipboardFormatListener rather than broadcast, so it arrives.
  *
  * ---------------------------------------------------------------------------
- * WINDOWS DELAYED RENDERING FOR LAZY IMAGES
+ * NO DELAYED RENDERING
  *
- * A large image is claimed with a null handle and requested from the copy side
- * only when WM_RENDERFORMAT says an application pasted it. The handler pumps
- * the channel and window messages while it waits, bounded by the measured
- * 49 KB/s route plus margin, so the helper remains live during the synchronous
- * Win32 callback. Text and small images remain eager and always publish real
- * handles immediately.
+ * Every write puts real data on the clipboard. A large image is prefetched
+ * first, in main.cpp, and written only when it has all arrived (ADR-0010):
+ * Windows asks for a delayed format within milliseconds, and the wait for the
+ * bytes then locks the clipboard for the whole transfer.
  *
  * ---------------------------------------------------------------------------
  * OPENING THE CLIPBOARD CAN FAIL
@@ -81,7 +77,7 @@ class Clipboard {
 
     /* Called from the window procedure. True when the message was this
        object's and needs no further handling. */
-    bool handle(UINT message, WPARAM parameter = 0, LPARAM detail = 0);
+    bool handle(UINT message, LPARAM detail);
 
     /* From the helper's tick: a read that has waited past 5 s names the
        program that owns the clipboard, once (#330). */
@@ -103,8 +99,6 @@ class Clipboard {
        writes would bump the sequence twice and the second would clear the
        first. Neither part is empty. */
     void deliver_bundle(const std::vector<uint8_t> &utf8, const std::vector<uint8_t> &png);
-    void lazy_image(uint32_t id, uint64_t total);
-    void cancel_lazy_image(uint32_t id);
 
     /* Put references to files that arrived on the clipboard as CF_HDROP. The
        files themselves are already on disk (FileStore); this is only what the
@@ -120,9 +114,7 @@ class Clipboard {
     bool write_image(const std::vector<uint8_t> &png, std::optional<DWORD> expected_sequence);
     void write_bundle(const std::vector<uint8_t> &utf8, const std::vector<uint8_t> &png);
     bool write_files(const std::vector<std::wstring> &paths);
-    void claim_lazy_image(uint32_t id, uint64_t total);
     bool open_with_retry();
-    bool load_lazy_image();
 
     HWND window_{nullptr};
     bool listening_{false};
@@ -141,12 +133,6 @@ class Clipboard {
     SlowRead slow_read_;
     ULONG_PTR gdiplus_token_{0};
     UINT png_format_{0};
-    uint32_t lazy_image_id_{0};
-    uint64_t lazy_image_total_{0};
-    std::vector<uint8_t> lazy_image_png_;
-    /* Temporary #55 diagnostics remain armed just long enough to observe the
-       external copy that replaces a received lazy image. */
-    bool trace_lazy_lifecycle_{false};
 };
 
 } // namespace deskhop
