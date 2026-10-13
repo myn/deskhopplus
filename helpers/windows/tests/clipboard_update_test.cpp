@@ -54,16 +54,45 @@ int main() {
         ClipboardReads reads(6399);
         CHECK(reads.update(6400, true), "an external copy did not start a read");
         CHECK(!reads.update(6401, true), "a second read started while one was in flight");
-        reads.read_done();
+        reads.read_done(6400);
         CHECK(reads.update(6401, true), "a copy made during a read was lost when it ended");
-        reads.read_done();
+        reads.read_done(6401);
         CHECK(!reads.update(6401, true), "a read ending with no new copy read again");
+    }
+    {
+        /* 6401 landed between the update and the read's open, so the read
+           took 6401: its end must not read 6401 again. */
+        ClipboardReads reads(6399);
+        CHECK(reads.update(6400, true), "an external copy did not start a read");
+        reads.read_done(6401);
+        CHECK(!reads.update(6401, true), "the copy the read took was read again at its end");
+        CHECK(reads.update(6402, true), "a copy after the read's was not read");
+        /* A read that could not open the clipboard took nothing: 0. */
+        reads.read_done(0);
+        CHECK(!reads.update(6402, true), "a read that took nothing let its copy be read twice");
+    }
+    {
+        /* An arriving write during a read is held, the latest wins, and the
+           read's end hands it back; with no read it runs at once. */
+        ClipboardReads reads(6399);
+        int ran = 0;
+        reads.write([&ran] { ran = 1; });
+        CHECK(ran == 1, "a write with no read in flight did not run at once");
+        reads.update(6400, true);
+        reads.write([&ran] { ran = 2; });
+        reads.write([&ran] { ran = 3; });
+        CHECK(ran == 1, "a write ran while a read held the clipboard");
+        auto held = reads.read_done(6400);
+        CHECK(held, "a write held during a read was lost");
+        if (held) held();
+        CHECK(ran == 3, "the held write was not the latest");
+        CHECK(!reads.read_done(6400), "a held write was handed back twice");
     }
     {
         ClipboardReads reads(6399);
         CHECK(reads.update(6400, true), "an external copy did not start a read");
         CHECK(!reads.update(6400, true), "two updates for one copy read it twice");
-        reads.read_done();
+        reads.read_done(6400);
         CHECK(!reads.update(6401, false), "the helper's own write was read as a copy");
         CHECK(!reads.update(6401, true), "the helper's own write was read on a later update");
         CHECK(reads.update(6402, true), "an external copy after an own write was not read");

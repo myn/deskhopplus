@@ -26,8 +26,11 @@
  * each read runs on a short-lived thread with the clipboard opened by no
  * window, on plain copies of what it needs, and posts its `ClipboardCopy`
  * back as kReadDoneMessage; `act_on_copy` then runs here as before. While a
- * read waits, this helper's own writes find the clipboard held, as they would
- * if any other program held it.
+ * read waits, a write of what arrived is held, the latest only, and runs when
+ * the read ends (`ClipboardReads::write`) — it would find the clipboard open
+ * and lose its payload otherwise. A quit while a read waits cannot open the
+ * clipboard for WM_RENDERALLFORMATS either, so a lazy image not yet rendered
+ * is lost with the helper; that is left as it is.
  *
  * A message-only window does not receive *broadcast* messages, but
  * WM_CLIPBOARDUPDATE is sent to listeners registered with
@@ -82,17 +85,18 @@ class Clipboard {
 
     /* From the helper's tick: a read that has waited past 5 s names the
        program that owns the clipboard, once (#330). */
-    void tick();
+    void tick(uint32_t now);
 
     /* Write what arrived from the other computer. The bytes are handed to the
        platform exactly as they arrived: ADR-0003 makes this channel
        fidelity-preserving, so the only transform is CF_UNICODETEXT's own
        encoding conversion at this edge. Malformed input converts best-effort
-       with the OS default and is never rejected. */
+       with the OS default and is never rejected. Every write here is held
+       while a read has the clipboard, and runs when it ends (#329). */
     void deliver_text(const std::vector<uint8_t> &utf8);
     /* expected_sequence is used by a background prefetch: after opening the
        clipboard, refuse to overwrite a local copy made while bytes crossed. */
-    bool deliver_image(const std::vector<uint8_t> &png,
+    void deliver_image(const std::vector<uint8_t> &png,
                        std::optional<DWORD> expected_sequence = std::nullopt);
     /* Both parts of a bundle (#195) in one clipboard write: CF_UNICODETEXT
        beside the PNG / CF_DIBV5 / CF_DIB set `deliver_image` publishes. Two
@@ -105,12 +109,18 @@ class Clipboard {
     /* Put references to files that arrived on the clipboard as CF_HDROP. The
        files themselves are already on disk (FileStore); this is only what the
        user pastes. */
-    bool deliver_files(const std::vector<std::wstring> &paths);
+    void deliver_files(const std::vector<std::wstring> &paths);
 
   private:
     /* A clipboard update, or a read's end: start a read if one is owed. */
     void on_update();
     void start_read();
+    /* The writes themselves, behind the deliver_ calls above. */
+    void write_text(const std::vector<uint8_t> &utf8);
+    bool write_image(const std::vector<uint8_t> &png, std::optional<DWORD> expected_sequence);
+    void write_bundle(const std::vector<uint8_t> &utf8, const std::vector<uint8_t> &png);
+    bool write_files(const std::vector<std::wstring> &paths);
+    void claim_lazy_image(uint32_t id, uint64_t total);
     bool open_with_retry();
     bool load_lazy_image();
 
@@ -127,10 +137,8 @@ class Clipboard {
        behind one change would otherwise both read the same clipboard and send
        the same payload twice. */
     ClipboardReads reads_;
-    /* How long the read in flight has waited, and who owned the clipboard
-       when it started (#330). */
+    /* How long the read in flight has waited (#330). */
     SlowRead slow_read_;
-    std::string read_owner_;
     ULONG_PTR gdiplus_token_{0};
     UINT png_format_{0};
     uint32_t lazy_image_id_{0};

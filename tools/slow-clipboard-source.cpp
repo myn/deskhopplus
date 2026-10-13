@@ -22,9 +22,9 @@
 // Expected with a helper that reads the clipboard on its beat thread: the
 // helper log goes quiet, the board ends the session for liveness, and the
 // log says "in the ~Nms before that the board's USB took 1 report(s)".
-// The ~30 s stalls in #326 suggest Windows stops a reader's wait at about
-// 30 s; if so, N is about 30000 for any wait of 30 s or more. A shorter wait
-// (say 10) shows whether N follows it.
+// N follows the wait: on hardware a 40 s wait gave N = 40813. Windows does
+// not cap a reader's wait at 30 s: the reader waits as long as the source
+// app takes.
 
 #include <cstdio>
 #include <cstdlib>

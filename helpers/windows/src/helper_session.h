@@ -18,8 +18,9 @@
  * chances to be got right, failing differently on two operating systems under
  * load, in a way that looks like a hardware fault.
  *
- * Single-threaded by construction, like the rest of the helper — the core
- * assumes one caller and there is nothing here to lock.
+ * Single-threaded by construction: the core assumes one caller and there is
+ * nothing here to lock. The helper's only other threads are the clipboard
+ * reads (#329), which never touch the session.
  */
 
 #include <cstdint>

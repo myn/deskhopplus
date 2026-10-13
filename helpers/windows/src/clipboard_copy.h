@@ -6,7 +6,7 @@
  * One local copy in two steps (#328): `Clipboard` reads the clipboard into a
  * `ClipboardCopy` and calls nothing; `act_on_copy` decides what that copy
  * sends and calls the callbacks. No Win32 here, so the decision tests on any
- * machine, and the read alone can move off the window's thread (#326).
+ * machine. The read alone runs off the window's thread (#329).
  */
 
 #include <cctype>
@@ -49,7 +49,13 @@ struct ClipboardCopy {
     /* Log lines the read would have written, in order. The act writes them
        first, so a copy logs exactly what it did before the split. */
     std::vector<std::string> notes;
-    /* What the clipboard offered, before any of it was read. */
+    /* The sequence and owner the read found once it had the clipboard open
+       (#329): what it took, which may be newer than the update that started
+       it. 0 and 0 when it never opened it. */
+    uint32_t sequence{0};
+    uintptr_t owner{0};
+    /* What the clipboard offered. Set only once the read has it open, so a
+       copy that could not be opened offers nothing. */
     bool has_text{false};
     bool has_image{false};
     /* Ordinary files found, and the closure that reads them on accept. */

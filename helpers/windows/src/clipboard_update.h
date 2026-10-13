@@ -5,6 +5,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace deskhop {
 
@@ -32,6 +34,14 @@ constexpr bool prefetched_image_is_current(uint32_t offered_sequence,
  * sequence then, so a copy made meanwhile is read once, and an unmoved
  * sequence is not read twice.
  *
+ * `read_done` takes the sequence the read found once it had the clipboard
+ * open — a copy can land between the update and that open — so the copy it
+ * took is the one marked handled. 0 is "took nothing" and changes nothing.
+ *
+ * A read holds the clipboard open, so a write of what arrived from the other
+ * computer would fail and its payload be lost. `write` holds it instead, the
+ * latest replacing any held before it, and `read_done` hands it back to run.
+ *
  * `external` is `clipboard_update_is_external`. The helper's own write is
  * handled without a read, as before.
  */
@@ -46,13 +56,24 @@ class ClipboardReads {
         reading_ = external;
         return external;
     }
-    void read_done() { reading_ = false; }
+    /* Runs `apply` now, or holds it until the read ends. */
+    void write(std::function<void()> apply) {
+        if (reading_) held_ = std::move(apply);
+        else apply();
+    }
+    /* The held write, if any, for the caller to run. */
+    std::function<void()> read_done(uint32_t sequence_read) {
+        reading_ = false;
+        if (sequence_read != 0) handled_ = sequence_read;
+        return std::exchange(held_, nullptr);
+    }
     bool reading() const { return reading_; }
     uint32_t handled() const { return handled_; }
 
   private:
     uint32_t handled_;
     bool reading_{false};
+    std::function<void()> held_;
 };
 
 /*

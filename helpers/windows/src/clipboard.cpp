@@ -331,13 +331,20 @@ bool Clipboard::handle(UINT message, WPARAM parameter, LPARAM detail) {
         return true;
     }
     if (message == kReadDoneMessage) {
-        ClipboardCopy *copy = reinterpret_cast<ClipboardCopy *>(detail);
-        reads_.read_done();
+        std::unique_ptr<ClipboardCopy> copy(reinterpret_cast<ClipboardCopy *>(detail));
+        const std::function<void()> held = reads_.read_done(copy->sequence);
         if (slow_read_.end() && callbacks_.log)
             callbacks_.log("the slow clipboard read ended after " +
                            std::to_string(slow_read_.waited(clock_ms())) + " ms");
-        act_on_copy(std::move(*copy), callbacks_, ClipService::kEagerImageThreshold);
-        delete copy;
+        /* Decided on what the read found open, not on the update that started
+           it: a write of this helper's that landed before the read opened the
+           clipboard is what it took, and must not echo back. */
+        if (clipboard_update_is_external(copy->sequence, self_sequence_, copy->owner,
+                                         reinterpret_cast<uintptr_t>(window_)))
+            act_on_copy(std::move(*copy), callbacks_, ClipService::kEagerImageThreshold);
+        /* An arriving write held while the read had the clipboard. Its own
+           self_sequence_ keeps the update it causes from reading it back. */
+        if (held) held();
         /* A copy made while that read waited started nothing; read it now. */
         on_update();
         return true;
@@ -389,11 +396,9 @@ void Clipboard::on_update() {
 
 void Clipboard::start_read() {
     if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) {
-        reads_.read_done();
+        reads_.read_done(0);
         return;
     }
-    /* The owner now: by the time the read is slow, another copy may own it. */
-    read_owner_ = clipboard_owner_name();
     slow_read_.start(clock_ms());
     /* Plain copies, so the thread shares nothing with this one. */
     auto *job = new ReadJob{ReadSource{png_format_, gdiplus_token_ != 0,
@@ -414,14 +419,15 @@ void Clipboard::start_read() {
     handle(kReadDoneMessage, 0, reinterpret_cast<LPARAM>(copy));
 }
 
-void Clipboard::tick() {
-    const uint32_t now = clock_ms();
+void Clipboard::tick(uint32_t now) {
+    /* The owner is looked up only now: the read holds the clipboard open, so
+       it is still the one the read started on. */
     if (slow_read_.warn(now) && callbacks_.log)
         callbacks_.log("a clipboard read has waited " + std::to_string(slow_read_.waited(now)) +
-                       " ms on " + read_owner_ + ", which owns the clipboard");
+                       " ms on " + clipboard_owner_name() + ", which owns the clipboard");
 }
 
-void Clipboard::lazy_image(uint32_t id, uint64_t total) {
+void Clipboard::claim_lazy_image(uint32_t id, uint64_t total) {
     trace_lazy_lifecycle_ = true;
     if (callbacks_.log)
         callbacks_.log("[clipboard-debug] claiming lazy image id=" + std::to_string(id) +
@@ -473,6 +479,26 @@ void Clipboard::cancel_lazy_image(uint32_t id) {
     }
     if (callbacks_.log) callbacks_.log("lazy image " + std::to_string(id) +
                                        " was removed before it could be pasted");
+}
+
+/* While a read holds the clipboard, each of these is held and runs at its end
+   (#329): the latest only, since each replaces the clipboard anyway. */
+void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
+    reads_.write([this, utf8] { write_text(utf8); });
+}
+void Clipboard::deliver_image(const std::vector<uint8_t> &png,
+                              std::optional<DWORD> expected_sequence) {
+    reads_.write([this, png, expected_sequence] { write_image(png, expected_sequence); });
+}
+void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
+                               const std::vector<uint8_t> &png) {
+    reads_.write([this, utf8, png] { write_bundle(utf8, png); });
+}
+void Clipboard::deliver_files(const std::vector<std::wstring> &paths) {
+    reads_.write([this, paths] { write_files(paths); });
+}
+void Clipboard::lazy_image(uint32_t id, uint64_t total) {
+    reads_.write([this, id, total] { claim_lazy_image(id, total); });
 }
 
 bool Clipboard::open_with_retry() {
@@ -588,6 +614,8 @@ ClipboardCopy read_copy(const ReadSource &source) {
     if (!has_files && !has_text && !has_image) return copy;
     if (!open_clipboard(nullptr, [&copy](const std::string &line) { copy.notes.push_back(line); }))
         return copy;
+    copy.sequence = GetClipboardSequenceNumber();
+    copy.owner = reinterpret_cast<uintptr_t>(GetClipboardOwner());
     copy.has_text = has_text;
     copy.has_image = has_image;
     const bool files_found = has_files && read_files(copy, source);
@@ -656,7 +684,7 @@ ClipboardCopy read_copy(const ReadSource &source) {
  * Clipboard of its own to leak onto, which is why only the macOS side carries
  * that flag.
  */
-bool Clipboard::deliver_files(const std::vector<std::wstring> &paths) {
+bool Clipboard::write_files(const std::vector<std::wstring> &paths) {
     if (paths.empty()) return false;
 
     size_t characters = 1; /* the second terminator */
@@ -695,14 +723,16 @@ bool Clipboard::deliver_files(const std::vector<std::wstring> &paths) {
     if (!wrote) GlobalFree(block);
     self_sequence_ = GetClipboardSequenceNumber();
     CloseClipboard();
-    if (!wrote && callbacks_.log)
-        callbacks_.log("the clipboard refused a list of " + std::to_string(paths.size()) +
-                       " arriving file(s)");
+    if (callbacks_.log)
+        callbacks_.log(wrote ? std::to_string(paths.size()) +
+                                   " file(s) written and put on the clipboard"
+                             : "the clipboard refused a list of " +
+                                   std::to_string(paths.size()) + " arriving file(s)");
     return wrote;
 }
 
-bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
-                              std::optional<DWORD> expected_sequence) {
+bool Clipboard::write_image(const std::vector<uint8_t> &png,
+                            std::optional<DWORD> expected_sequence) {
     const ClipboardImageRepresentations representations = clipboard_image_representations(png);
     HGLOBAL png_block = png_format_ != 0 ? bytes_to_global(representations.png) : nullptr;
     HGLOBAL dibv5_block = bytes_to_global(representations.dibv5);
@@ -758,8 +788,8 @@ bool Clipboard::deliver_image(const std::vector<uint8_t> &png,
     return dibv5_written && dib_written;
 }
 
-void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
-                               const std::vector<uint8_t> &png) {
+void Clipboard::write_bundle(const std::vector<uint8_t> &utf8,
+                             const std::vector<uint8_t> &png) {
     /* Every handle is built before the clipboard is opened, so nothing else is
        kept waiting on this process's allocator or its image codec. */
     const std::wstring wide = utf8_to_wide(utf8.data(), utf8.size());
@@ -782,7 +812,7 @@ void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
         if (callbacks_.log)
             callbacks_.log("an arriving bundle's picture could not build PNG, CF_DIBV5, and "
                            "CF_DIB; its text is written alone");
-        deliver_text(utf8);
+        write_text(utf8);
         return;
     }
     if (text_block == nullptr) {
@@ -790,7 +820,7 @@ void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
         if (callbacks_.log)
             callbacks_.log("an arriving bundle's text would not convert to wide text; its "
                            "picture is written alone");
-        deliver_image(png);
+        write_image(png, std::nullopt);
         return;
     }
     if (!open_with_retry()) {
@@ -819,7 +849,7 @@ void Clipboard::deliver_bundle(const std::vector<uint8_t> &utf8,
                        (written[3] ? "yes" : "no"));
 }
 
-void Clipboard::deliver_text(const std::vector<uint8_t> &utf8) {
+void Clipboard::write_text(const std::vector<uint8_t> &utf8) {
     const std::wstring wide = utf8_to_wide(utf8.data(), utf8.size());
     if (wide.empty() && !utf8.empty()) {
         if (callbacks_.log)

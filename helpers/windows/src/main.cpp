@@ -207,9 +207,7 @@ class Helper : public HelperEffects {
                 " file(s) arrived and could not be written; nothing was put on the clipboard");
             return;
         }
-        if (clipboard_.deliver_files(written.paths))
-            log(std::to_string(written.paths.size()) +
-                " file(s) written and put on the clipboard");
+        clipboard_.deliver_files(written.paths);
     }
     std::vector<ClipOutput> clip_policy_changed(uint8_t flags, uint8_t cap_mb) override {
         std::vector<ClipOutput> outputs = clipboard_service_->policy_changed(flags);
@@ -675,7 +673,7 @@ void Helper::tick(uint32_t now, bool nested) {
     dh_device_drops drops{};
     const bool stated = session_->device_drops(&drops);
     dispatch_.emit(clipboard_service_->tick(now, stated ? &drops : nullptr));
-    clipboard_.tick();
+    clipboard_.tick(now);
 
     /* What the tray shows about the arriving transfer, refreshed only
        when it has moved. It changes the icon and tooltip, not the menu, so
