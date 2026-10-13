@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <cwchar>
+#include <memory>
 #include <propidl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -127,6 +128,56 @@ HGLOBAL bytes_to_global(const std::vector<uint8_t> &bytes) {
     return block;
 }
 
+using Log = std::function<void(const std::string &)>;
+
+/* OpenClipboard with the bounded retry. `window` null opens it for the calling
+   thread, which is how a read's thread opens it: it only reads. */
+bool open_clipboard(HWND window, const Log &log) {
+    DWORD delay = kFirstRetryMs;
+    for (int attempt = 1; attempt <= kOpenAttempts; attempt++) {
+        if (OpenClipboard(window)) {
+            if (attempt > 1 && log)
+                log("the clipboard took " + std::to_string(attempt) + " attempts to open");
+            return true;
+        }
+        if (attempt < kOpenAttempts) {
+            Sleep(delay);
+            delay *= 2;
+        }
+    }
+    if (log)
+        log("another program held the clipboard open through " + std::to_string(kOpenAttempts) +
+            " attempts");
+    return false;
+}
+
+/* What a read's thread needs, copied off the Clipboard when it starts (#329). */
+struct ReadSource {
+    UINT png_format;
+    bool gdiplus;
+    bool want_files;
+    Log log; /* only for the files' read closure, which runs on accept */
+};
+
+ClipboardCopy read_copy(const ReadSource &source); /* below, beside the writes */
+
+struct ReadJob {
+    ReadSource source;
+    HWND reply;
+};
+
+DWORD WINAPI read_thread(void *parameter) {
+    std::unique_ptr<ReadJob> job(static_cast<ReadJob *>(parameter));
+    /* The image paths make IStreams; the window's thread has COM, this one
+       needs its own. */
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    auto *copy = new ClipboardCopy(read_copy(job->source));
+    if (SUCCEEDED(com)) CoUninitialize();
+    if (!PostMessageW(job->reply, Clipboard::kReadDoneMessage, 0, reinterpret_cast<LPARAM>(copy)))
+        delete copy;
+    return 0;
+}
+
 } // namespace
 
 void Clipboard::attach(HWND window, Callbacks callbacks) {
@@ -144,7 +195,7 @@ void Clipboard::attach(HWND window, Callbacks callbacks) {
     /* Whatever is on the clipboard when the helper starts was not copied *now*
        and is not this helper's to send. Both counters start there. */
     self_sequence_ = GetClipboardSequenceNumber();
-    handled_sequence_ = self_sequence_;
+    reads_ = ClipboardReads(self_sequence_);
     listening_ = AddClipboardFormatListener(window) != FALSE;
     if (!listening_ && callbacks_.log)
         callbacks_.log("the clipboard listener could not be registered; copies made on this "
@@ -156,7 +207,10 @@ void Clipboard::detach() {
     if (listening_ && window_ != nullptr) RemoveClipboardFormatListener(window_);
     listening_ = false;
     window_ = nullptr;
-    if (gdiplus_token_ != 0) Gdiplus::GdiplusShutdown(gdiplus_token_);
+    /* A read still in flight may be inside GDI+ (a CF_BITMAP copy), and may
+       never end: its source app can wait for ever. GDI+ is left up then, and
+       the process exit that follows a detach takes it down. */
+    if (gdiplus_token_ != 0 && !reads_.reading()) Gdiplus::GdiplusShutdown(gdiplus_token_);
     gdiplus_token_ = 0;
     png_format_ = 0;
 }
@@ -180,7 +234,7 @@ bool Clipboard::load_lazy_image() {
     return true;
 }
 
-bool Clipboard::handle(UINT message, WPARAM parameter) {
+bool Clipboard::handle(UINT message, WPARAM parameter, LPARAM detail) {
     if (message == WM_DESTROYCLIPBOARD) {
         /* Another owner replaced our lazy placeholder. Forget it before a
            later transfer cancellation can empty that owner's newer copy. */
@@ -256,20 +310,33 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
         lazy_image_png_.clear();
         return true;
     }
+    if (message == kReadDoneMessage) {
+        ClipboardCopy *copy = reinterpret_cast<ClipboardCopy *>(detail);
+        reads_.read_done();
+        act_on_copy(std::move(*copy), callbacks_, ClipService::kEagerImageThreshold);
+        delete copy;
+        /* A copy made while that read waited started nothing; read it now. */
+        on_update();
+        return true;
+    }
     if (message != WM_CLIPBOARDUPDATE) return false;
+    on_update();
+    return true;
+}
 
+void Clipboard::on_update() {
     /*
      * The message is *posted*, so what it names is "something changed", not
      * which change. By the time it is handled the sequence number is whatever
      * the clipboard holds now — so two messages queued behind one change both
-     * read the same clipboard, and without this the same payload crosses the
-     * link twice.
+     * read the same clipboard, and without `reads_` the same payload crosses
+     * the link twice.
      */
     const DWORD sequence = GetClipboardSequenceNumber();
     if (trace_lazy_lifecycle_ && callbacks_.log)
         callbacks_.log("[clipboard-debug] WM_CLIPBOARDUPDATE sequence=" +
                        std::to_string(sequence) + " handled=" +
-                       std::to_string(handled_sequence_) + " self=" +
+                       std::to_string(reads_.handled()) + " self=" +
                        std::to_string(self_sequence_) + " owner=" +
                        std::to_string(reinterpret_cast<uintptr_t>(GetClipboardOwner())) +
                        " helper=" + std::to_string(reinterpret_cast<uintptr_t>(window_)) +
@@ -279,24 +346,46 @@ bool Clipboard::handle(UINT message, WPARAM parameter) {
                        std::to_string(png_format_ != 0 &&
                                       IsClipboardFormatAvailable(png_format_) != FALSE) +
                        " has_bitmap=" +
-                       std::to_string(IsClipboardFormatAvailable(CF_BITMAP) != FALSE));
-    if (sequence == handled_sequence_) return true;
-    handled_sequence_ = sequence;
+                       std::to_string(IsClipboardFormatAvailable(CF_BITMAP) != FALSE) +
+                       " reading=" + std::to_string(reads_.reading()));
 
     /* A delayed-format close can advance the sequence after self_sequence_ was
        sampled. The owner window remains ours, and is the authoritative second
        signal that this update must not echo back across the channel. */
-    if (clipboard_update_is_external(
-            sequence, self_sequence_, reinterpret_cast<uintptr_t>(GetClipboardOwner()),
-            reinterpret_cast<uintptr_t>(window_))) {
-        if (callbacks_.local_replaced) callbacks_.local_replaced();
-        act_on_copy(read_copy(), callbacks_, ClipService::kEagerImageThreshold);
-        /* The first external update is the replacement under investigation.
-           One line records it; ordinary copies after it stay off the helper's
-           synchronously flushed diagnostic path. */
-        trace_lazy_lifecycle_ = false;
+    const bool external = clipboard_update_is_external(
+        sequence, self_sequence_, reinterpret_cast<uintptr_t>(GetClipboardOwner()),
+        reinterpret_cast<uintptr_t>(window_));
+    if (!reads_.update(sequence, external)) return;
+    if (callbacks_.local_replaced) callbacks_.local_replaced();
+    /* The first external update is the replacement under investigation.
+       One line records it; ordinary copies after it stay off the helper's
+       synchronously flushed diagnostic path. */
+    trace_lazy_lifecycle_ = false;
+    start_read();
+}
+
+void Clipboard::start_read() {
+    if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) {
+        reads_.read_done();
+        return;
     }
-    return true;
+    /* Plain copies, so the thread shares nothing with this one. */
+    auto *job = new ReadJob{ReadSource{png_format_, gdiplus_token_ != 0,
+                                       static_cast<bool>(callbacks_.local_files), callbacks_.log},
+                            window_};
+    HANDLE thread = CreateThread(nullptr, 0, read_thread, job, 0, nullptr);
+    if (thread != nullptr) {
+        /* Detached, never joined: a read can wait on its source app for ever,
+           and a quit must not wait with it. Its reply to a window already gone
+           fails and frees the copy; the process exit ends the thread. */
+        CloseHandle(thread);
+        return;
+    }
+    /* No thread: read here, as before #329, rather than drop the copy. */
+    if (callbacks_.log) callbacks_.log("a clipboard read thread could not start; reading inline");
+    auto *copy = new ClipboardCopy(read_copy(job->source));
+    delete job;
+    handle(kReadDoneMessage, 0, reinterpret_cast<LPARAM>(copy));
 }
 
 void Clipboard::lazy_image(uint32_t id, uint64_t total) {
@@ -353,28 +442,11 @@ void Clipboard::cancel_lazy_image(uint32_t id) {
                                        " was removed before it could be pasted");
 }
 
-bool Clipboard::open_with_retry(std::vector<std::string> *notes) {
-    if (window_ == nullptr) return false;
-    const auto log = [&](const std::string &line) {
-        if (notes != nullptr) notes->push_back(line);
-        else if (callbacks_.log) callbacks_.log(line);
-    };
-    DWORD delay = kFirstRetryMs;
-    for (int attempt = 1; attempt <= kOpenAttempts; attempt++) {
-        if (OpenClipboard(window_)) {
-            if (attempt > 1)
-                log("the clipboard took " + std::to_string(attempt) + " attempts to open");
-            return true;
-        }
-        if (attempt < kOpenAttempts) {
-            Sleep(delay);
-            delay *= 2;
-        }
-    }
-    log("another program held the clipboard open through " + std::to_string(kOpenAttempts) +
-        " attempts");
-    return false;
+bool Clipboard::open_with_retry() {
+    return window_ != nullptr && open_clipboard(window_, callbacks_.log);
 }
+
+namespace {
 
 /*
  * The files on the clipboard, as a list and a way to read them later.
@@ -390,7 +462,7 @@ bool Clipboard::open_with_retry(std::vector<std::string> *notes) {
  * closed, because the clipboard is a machine-wide lock that every other
  * application is waiting on.
  */
-bool Clipboard::read_files(ClipboardCopy &copy) {
+bool read_files(ClipboardCopy &copy, const ReadSource &source) {
     HANDLE handle = GetClipboardData(CF_HDROP);
     if (handle == nullptr) return false;
     auto *drop = static_cast<HDROP>(handle);
@@ -425,7 +497,7 @@ bool Clipboard::read_files(ClipboardCopy &copy) {
                              "carried — and were left out");
     if (entries.empty()) return false;
 
-    copy.read_files = [readable, log = callbacks_.log](std::vector<uint8_t> &payload) -> bool {
+    copy.read_files = [readable, log = source.log](std::vector<uint8_t> &payload) -> bool {
         payload.clear();
         for (const auto &[path, file] : readable) {
             /* Each file at its offered length (#182). The name and not the
@@ -458,30 +530,34 @@ bool Clipboard::read_files(ClipboardCopy &copy) {
     return true;
 }
 
-ClipboardCopy Clipboard::read_copy() {
+/* Take the copy off the clipboard (#328). Calls nothing, the log included:
+   its lines go in the snapshot's notes. Runs on a read's thread (#329), so it
+   touches only `source` and opens the clipboard with no window. */
+ClipboardCopy read_copy(const ReadSource &source) {
     ClipboardCopy copy;
-    if (!callbacks_.local_copy && !callbacks_.local_image && !callbacks_.local_files) return copy;
 
     /* Ask first so unrelated clipboard formats cost nothing and do not open
        the clipboard against another program that wants it. */
     const bool has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != FALSE;
-    const bool has_png = png_format_ != 0 && IsClipboardFormatAvailable(png_format_) != FALSE;
+    const bool has_png =
+        source.png_format != 0 && IsClipboardFormatAvailable(source.png_format) != FALSE;
     const bool has_dibv5 = IsClipboardFormatAvailable(CF_DIBV5) != FALSE;
     const bool has_dib = IsClipboardFormatAvailable(CF_DIB) != FALSE;
-    const bool has_bitmap = gdiplus_token_ != 0 && IsClipboardFormatAvailable(CF_BITMAP) != FALSE;
+    const bool has_bitmap = source.gdiplus && IsClipboardFormatAvailable(CF_BITMAP) != FALSE;
     const ClipboardImageFormat image_format =
         select_clipboard_image_format(has_png, has_dibv5, has_dib, has_bitmap);
     const bool has_image = image_format != ClipboardImageFormat::None;
-    const bool has_files = callbacks_.local_files && IsClipboardFormatAvailable(CF_HDROP);
+    const bool has_files = source.want_files && IsClipboardFormatAvailable(CF_HDROP);
 
     /* One open for files, text and image. The has_ flags stay false until it
        succeeds, so a copy that could not be read sends nothing and says only
        why (`act_on_copy`). */
     if (!has_files && !has_text && !has_image) return copy;
-    if (!open_with_retry(&copy.notes)) return copy;
+    if (!open_clipboard(nullptr, [&copy](const std::string &line) { copy.notes.push_back(line); }))
+        return copy;
     copy.has_text = has_text;
     copy.has_image = has_image;
-    const bool files_found = has_files && read_files(copy);
+    const bool files_found = has_files && read_files(copy, source);
     /* Files that will be sent need nothing else read: see `clipboard_files_win`. */
     if (clipboard_files_win(copy)) {
         CloseClipboard();
@@ -499,7 +575,8 @@ ClipboardCopy Clipboard::read_copy() {
     const char *captured_format = nullptr;
     switch (image_format) {
     case ClipboardImageFormat::Png:
-        image = capture_clipboard_image(image_format, global_bytes(GetClipboardData(png_format_)));
+        image = capture_clipboard_image(image_format,
+                                        global_bytes(GetClipboardData(source.png_format)));
         captured_format = "registered PNG";
         break;
     case ClipboardImageFormat::DibV5:
@@ -535,6 +612,8 @@ ClipboardCopy Clipboard::read_copy() {
     CloseClipboard();
     return copy;
 }
+
+} // namespace
 
 /*
  * References to files that arrived, as CF_HDROP: a DROPFILES header followed

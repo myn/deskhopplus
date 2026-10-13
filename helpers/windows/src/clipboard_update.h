@@ -24,6 +24,36 @@ constexpr bool prefetched_image_is_current(uint32_t offered_sequence,
     return offered_sequence == current_sequence;
 }
 
+/*
+ * When a clipboard update starts a read (#329). The read runs off the window's
+ * thread, so a source app slow to render cannot stop the heartbeat — and only
+ * one runs at a time. An update that comes during a read starts nothing and
+ * leaves the sequence unhandled; the read's end asks `update` again with the
+ * sequence then, so a copy made meanwhile is read once, and an unmoved
+ * sequence is not read twice.
+ *
+ * `external` is `clipboard_update_is_external`. The helper's own write is
+ * handled without a read, as before.
+ */
+class ClipboardReads {
+  public:
+    explicit ClipboardReads(uint32_t handled = 0) : handled_(handled) {}
+
+    /* True: start a read now. */
+    bool update(uint32_t sequence, bool external) {
+        if (reading_ || sequence == handled_) return false;
+        handled_ = sequence;
+        reading_ = external;
+        return external;
+    }
+    void read_done() { reading_ = false; }
+    bool reading() const { return reading_; }
+    uint32_t handled() const { return handled_; }
+
+  private:
+    uint32_t handled_;
+    bool reading_{false};
+};
 
 /*
  * What one copy sends when it holds text, a picture, or both (#195).

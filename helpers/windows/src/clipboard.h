@@ -12,14 +12,22 @@
  * hands over a callable rather than a payload.
  *
  * ---------------------------------------------------------------------------
- * WHY THIS LIVES ON THE HELPER'S OWN WINDOW, AND NOT A THREAD OF ITS OWN
+ * WHY THIS LIVES ON THE HELPER'S OWN WINDOW, AND READS ON A THREAD OF ITS OWN
  *
  * Setting clipboard data requires being the clipboard owner, which requires a
  * window handle — so a console-only helper is ruled out (spec #42). The helper
  * already has a message-only window for WM_DEVICECHANGE, and it already runs
- * everything on the thread that owns it. Attaching here rather than starting a
- * second thread keeps that true: the shared core assumes one caller, and there
- * is nothing to lock.
+ * everything on the thread that owns it. Writes, ownership and the act on a
+ * copy stay there: the shared core assumes one caller.
+ *
+ * The read of a local copy does not (#329). GetClipboardData waits for as long
+ * as the source app takes to render a delayed format, and on this thread that
+ * wait stopped the heartbeat until the board dropped the helper (#327). So
+ * each read runs on a short-lived thread with the clipboard opened by no
+ * window, on plain copies of what it needs, and posts its `ClipboardCopy`
+ * back as kReadDoneMessage; `act_on_copy` then runs here as before. While a
+ * read waits, this helper's own writes find the clipboard held, as they would
+ * if any other program held it.
  *
  * A message-only window does not receive *broadcast* messages, but
  * WM_CLIPBOARDUPDATE is sent to listeners registered with
@@ -64,9 +72,13 @@ class Clipboard {
     void attach(HWND window, Callbacks callbacks);
     void detach();
 
+    /* A read's thread posts this to the window when it ends, with its
+       heap-allocated ClipboardCopy in LPARAM (#329). */
+    static constexpr UINT kReadDoneMessage = WM_APP + 2;
+
     /* Called from the window procedure. True when the message was this
        object's and needs no further handling. */
-    bool handle(UINT message, WPARAM parameter = 0);
+    bool handle(UINT message, WPARAM parameter = 0, LPARAM detail = 0);
 
     /* Write what arrived from the other computer. The bytes are handed to the
        platform exactly as they arrived: ADR-0003 makes this channel
@@ -92,15 +104,10 @@ class Clipboard {
     bool deliver_files(const std::vector<std::wstring> &paths);
 
   private:
-    /* Take the copy off the clipboard (#328). Calls no callback, the log
-       included: its lines go in the snapshot's notes, so this step alone can
-       move to another thread (#326). */
-    ClipboardCopy read_copy();
-    /* The files on the clipboard, if any, as a list and a way to read them
-       later. Called with the clipboard already open. */
-    bool read_files(ClipboardCopy &copy);
-    /* Lines go to `notes` when given, else to the log callback. */
-    bool open_with_retry(std::vector<std::string> *notes = nullptr);
+    /* A clipboard update, or a read's end: start a read if one is owed. */
+    void on_update();
+    void start_read();
+    bool open_with_retry();
     bool load_lazy_image();
 
     HWND window_{nullptr};
@@ -110,11 +117,12 @@ class Clipboard {
        arrived from the other computer looks exactly like a fresh local copy,
        and the two helpers hand the same payload back and forth for ever. */
     DWORD self_sequence_{0};
-    /* The sequence number the last update was acted on at. WM_CLIPBOARDUPDATE
-       is posted, so by the time it is handled the number is whatever the
-       clipboard holds *now* — two messages queued behind one change would
-       otherwise both read the same clipboard and send the same payload twice. */
-    DWORD handled_sequence_{0};
+    /* The sequence number the last update was acted on at, and whether a read
+       is in flight. WM_CLIPBOARDUPDATE is posted, so by the time it is handled
+       the number is whatever the clipboard holds *now* — two messages queued
+       behind one change would otherwise both read the same clipboard and send
+       the same payload twice. */
+    ClipboardReads reads_;
     ULONG_PTR gdiplus_token_{0};
     UINT png_format_{0};
     uint32_t lazy_image_id_{0};

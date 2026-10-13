@@ -865,10 +865,11 @@ LRESULT Helper::handle(UINT message, WPARAM w, LPARAM l) {
         return TRUE;
 
     case WM_CLIPBOARDUPDATE:
-        /* Something was copied on this computer. Handled on this thread
-           because setting clipboard data requires owning a window, and this is
-           the window (clipboard.h). */
-        clipboard_.handle(message, w);
+    case Clipboard::kReadDoneMessage:
+        /* Something was copied on this computer, or its read has ended. The
+           read runs on its own thread so a slow source app cannot stop the
+           heartbeat; what it sends is decided here (clipboard.h, #329). */
+        clipboard_.handle(message, w, l);
         return 0;
 
     case WM_RENDERFORMAT:
