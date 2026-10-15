@@ -94,7 +94,7 @@ transport is a sign the framing layer has leaked.
 
 **The channel is shared, not exclusive.** On macOS a second
 `kIOHIDOptionsTypeSeizeDevice` open succeeded (#95, measured 2026-08-13), so the **listener**
-of `CONTEXT.md` is a real thing on that platform and every rule below is written for it.
+of `GLOSSARY.md` is a real thing on that platform and every rule below is written for it.
 Re-measured on macOS 15.7.9 (#191, 2026-09-14): the second open — seize or plain — is refused
 while the helper holds the channel. The rules stand as written: they were built to hold with
 no exclusivity at all, and an OS behaviour that changed once between versions is not a property
@@ -735,7 +735,7 @@ it is not mistaken for an oversight.
 
 **The CRC32 stays** and stays inside the seal. GCM already authenticates, so the CRC32 is no
 longer the integrity check against a hostile change — it is the **fidelity** check of
-`CONTEXT.md` and [ADR-0003](adr/0003-content-fidelity-over-content-validation.md), covering the
+`GLOSSARY.md` and [ADR-0003](adr/0003-content-fidelity-over-content-validation.md), covering the
 plaintext end to end and catching a bug in the seal layer itself, which an authenticator that
 sits *outside* the plaintext cannot.
 

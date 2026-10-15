@@ -103,7 +103,7 @@ rather than discovered later.
 
 ### The firmware still never reads a payload
 
-[ADR-0003](0003-content-fidelity-over-content-validation.md) and `CONTEXT.md`'s **opaque relay** stand
+[ADR-0003](0003-content-fidelity-over-content-validation.md) and `GLOSSARY.md`'s **opaque relay** stand
 word for word, and this decision strengthens them: the bulk payload is sealed between the helpers, so
 a board relays bytes it *could not* read even if it wanted to. That matters because ADR-0007 accepts
 that a compromised board can flash its peer — a board is already a thing you cannot fully trust, and

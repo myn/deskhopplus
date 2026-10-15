@@ -82,7 +82,7 @@ typedef struct {
  * The chunk. `id` and `seq` travel in the head; `crc32` stays inside the seal.
  *
  * The CRC32 is not the integrity check against a hostile change — GCM already
- * authenticates — it is fidelity (CONTEXT.md, ADR-0003), covering the plaintext
+ * authenticates — it is fidelity (GLOSSARY.md, ADR-0003), covering the plaintext
  * end to end and catching a bug in the seal layer itself, which an
  * authenticator sitting outside the plaintext cannot.
  */

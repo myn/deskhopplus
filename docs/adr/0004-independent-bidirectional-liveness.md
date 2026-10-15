@@ -118,7 +118,7 @@ broken sessions — and only once #52 landed, which is the deadline it was writt
   established, exposed once and tested here.
 - **#49 inherits the constants and the wire format**, which is all there is to inherit; #68's
   acceptance criterion was amended to say so.
-- The glossary (`CONTEXT.md`) now separates **Link**, **Connection** and **Session**. Having one
+- The glossary (`GLOSSARY.md`) now separates **Link**, **Connection** and **Session**. Having one
   word for all three is why this defect was invisible: a dead session and a live connection look
   identical when you cannot name the difference.
 

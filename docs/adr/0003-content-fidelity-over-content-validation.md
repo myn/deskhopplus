@@ -80,7 +80,7 @@ peer, so an egress-board validator is not a boundary).
   headers only, never payloads, with no carve-outs.
 - **#62 is unchanged but sharpened**: it now stands purely as a firmware-security question, no
   longer entangled with a clipboard containment argument.
-- The glossary (`CONTEXT.md`) defines **Fidelity** as the canonical term for this property.
+- The glossary (`GLOSSARY.md`) defines **Fidelity** as the canonical term for this property.
 
 ## Amendment, 2026-09-01 — PNG is the cross-platform image edge encoding
 

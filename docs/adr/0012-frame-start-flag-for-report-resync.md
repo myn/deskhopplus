@@ -9,7 +9,7 @@
 
 ## Decision
 
-Byte 0 of every 64-byte HID **report** (see `CONTEXT.md`) is a **frame-start flag**: `1` when a
+Byte 0 of every 64-byte HID **report** (see `GLOSSARY.md`) is a **frame-start flag**: `1` when a
 frame begins in this report, `0` when the report continues the frame in progress. The other 63
 bytes are the byte stream the framing layer already owns.
 

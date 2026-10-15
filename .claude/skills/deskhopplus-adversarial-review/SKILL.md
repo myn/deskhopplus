@@ -13,7 +13,7 @@ Use only after normal code review is complete. Skip genuinely trivial documentat
 
 Confirm the reviewed change and its baseline: the linked issue, reviewed diff/commit range, and test and code-review evidence. Do not treat unrelated worktree changes as part of the review. If normal code review is incomplete, stop and request that it be completed first.
 
-Before exploring the implementation, read `CONTEXT.md`, then the ADRs relevant to the changed area, following `docs/agents/domain.md`. Use the repository's terms in findings and explicitly surface ADR conflicts.
+Before exploring the implementation, read `GLOSSARY.md`, then the ADRs relevant to the changed area, following `docs/agents/domain.md`. Use the repository's terms in findings and explicitly surface ADR conflicts.
 
 Identify each changed subsystem, its state ownership, inputs/outputs, and affected peers. For each affected path, trace:
 

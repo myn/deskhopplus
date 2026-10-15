@@ -32,7 +32,7 @@ reader until the slot frees.
 
 | Option | Why not |
 | --- | --- |
-| **Enforce CLIP_CREDIT on the device** | `credits`/`id` are payload fields. The firmware parses frame headers only, never payloads — the opaque-relay principle (CONTEXT.md, reaffirmed in ADR-0003) and the credit window's own design (ADR-0002: end-to-end between helpers, protecting *their* memory) both rule this out. Not just expensive — out of bounds. |
+| **Enforce CLIP_CREDIT on the device** | `credits`/`id` are payload fields. The firmware parses frame headers only, never payloads — the opaque-relay principle (GLOSSARY.md, reaffirmed in ADR-0003) and the credit window's own design (ADR-0002: end-to-end between helpers, protecting *their* memory) both rule this out. Not just expensive — out of bounds. |
 | **Refuse at the reader** | The reader differs by path, and both are worse than they look. Path (b)'s reader is the vendor HID OUT endpoint, which at the shipped `N=1` channel count (ADR-0002) also carries session/control traffic — refusing to re-arm it would stall session frames behind bulk, the exact priority-inversion ADR-0004's idle-gated heartbeat exists to avoid. Path (a)'s reader is the inter-board UART, shared with keyboard/mouse packets for the *other* computer — refusing to drain it stalls those too. |
 
 ## Consequences

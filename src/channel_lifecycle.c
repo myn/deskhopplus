@@ -384,7 +384,7 @@ static void pump_owed(channel_lifecycle *c, bool *owed_flag, uint8_t type, uint3
     if (!owed)
         return;
     /* The placement path is reused for its priority lane and small frame buffer;
-       ARRIVAL is not a placement (CONTEXT.md). `empty` is a real pointer
+       ARRIVAL is not a placement (GLOSSARY.md). `empty` is a real pointer
        because memcpy from NULL is undefined even for zero bytes. */
     static const uint8_t empty[1];
     const bool done = !c->session.present ||

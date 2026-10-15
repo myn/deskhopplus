@@ -7,7 +7,7 @@
  * ADR-0008's other half. dh_auth.h authenticates one *hop*: helper to board,
  * board to helper, with the tag rewritten at each end. This file encrypts the
  * bulk payload *end to end*, between the two helpers, so that the boards relay
- * ciphertext and hold no key that opens it. That turns CONTEXT.md's **opaque
+ * ciphertext and hold no key that opens it. That turns GLOSSARY.md's **opaque
  * relay** from a discipline into a property: a board relays bytes it could not
  * read even if it wanted to, which matters because ADR-0007 already accepts
  * that a compromised board can flash its peer.

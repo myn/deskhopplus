@@ -8,7 +8,7 @@
  * _wfsopen; this owns the setting and what to do with helper.log at start.
  *
  * The setting is a machine-local preference, the deliberate exception to the
- * device holding every setting (see Debug logging in CONTEXT.md). It is a
+ * device holding every setting (see Debug logging in GLOSSARY.md). It is a
  * marker file beside `autostart`: present is on, absent is off, so a machine
  * that ran an older helper starts off like a fresh one.
  */
