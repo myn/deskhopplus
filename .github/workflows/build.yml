@@ -159,6 +159,7 @@ jobs:
       with:
         name: deskhop-gha-${{ github.run_number }}
         path: build/deskhop.uf2
+        retention-days: 7
 
   # The Windows helper (#49, ADR-0006). A separate job because it needs MSVC,
   # and parallel with the other two because none of them depends on another's
@@ -221,6 +222,7 @@ jobs:
       with:
         name: deskhop-helper-windows-${{ github.run_number }}
         path: helpers/windows/build/Release/deskhop-helper.exe
+        retention-days: 7
 
   # The macOS helper's own suite (#77). A separate job because it needs a
   # macOS runner, and parallel with the firmware because neither depends on
@@ -308,6 +310,7 @@ jobs:
       with:
         name: deskhop-helper-macos-${{ github.run_number }}
         path: .build/app/deskhopplus-helper-macos.zip
+        retention-days: 7
 
   # The release (#203, #197). A pushed v* tag makes a GitHub release holding
   # the three files the README names, with no hand step. A push to main runs
